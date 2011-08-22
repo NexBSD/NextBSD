@@ -29,26 +29,22 @@
  * $FreeBSD$
  */
 
-#ifndef _DIRENT_PRIVATE_H_
-#define	_DIRENT_PRIVATE_H_
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-struct _telldir;		/* see telldir.h */
-struct pthread_mutex;
+#include "namespace.h"
+#include <sys/param.h>
 
-/* structure describing an open directory. */
-struct _dirdesc {
-	int	dd_fd;		/* file descriptor associated with directory */
-	long	dd_loc;		/* offset in current buffer */
-	long	dd_size;	/* amount of data returned by getdirentries */
-	char	*dd_buf;	/* data buffer */
-	int	dd_len;		/* size of data buffer */
-	long	dd_seek;	/* magic cookie returned by getdirentries */
-	long	dd_rewind;	/* magic cookie for rewinding */
-	int	dd_flags;	/* flags for readdir */
-	struct pthread_mutex	*dd_lock;	/* lock */
-	struct _telldir *dd_td;	/* telldir position recording */
-};
+#include <dirent.h>
+#include "un-namespace.h"
 
-#define	_dirfd(dirp)	((dirp)->dd_fd)
+#include "dirent-private.h"
 
-#endif /* !_DIRENT_PRIVATE_H_ */
+int
+dirfd(DIR *dirp)
+{
+	if (dirp == NULL)
+		return (-1);
+
+	return (_dirfd(dirp));
+}

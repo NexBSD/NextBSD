@@ -80,6 +80,7 @@ int	 alphasort(const struct dirent **, const struct dirent **);
 DIR	*__opendir2(const char *, int);
 int	 getdents(int, char *, int);
 int	 getdirentries(int, char *, int, long *);
+int	 dirfd(DIR *);
 #endif
 DIR	*opendir(const char *);
 DIR	*fdopendir(int);
