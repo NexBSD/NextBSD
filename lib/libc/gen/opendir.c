@@ -46,6 +46,7 @@ __FBSDID("$FreeBSD$");
 #include <unistd.h>
 #include "un-namespace.h"
 
+#include "dirent-private.h"
 #include "telldir.h"
 
 static DIR * __opendir_common(int, const char *, int);

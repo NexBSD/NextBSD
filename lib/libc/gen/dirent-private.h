@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 1983, 1993
+/*-
+ * Copyright (c) 1989, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -10,7 +10,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -25,36 +25,30 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)seekdir.c	8.1 (Berkeley) 6/4/93";
-#endif /* LIBC_SCCS and not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#ifndef _DIRENT_PRIVATE_H_
+#define	_DIRENT_PRIVATE_H_
 
-#include "namespace.h"
-#include <sys/param.h>
-#include <dirent.h>
-#include <pthread.h>
-#include "un-namespace.h"
+struct _telldir;		/* see telldir.h */
+struct pthread_mutex;
 
-#include "libc_private.h"
-#include "dirent-private.h"
-#include "telldir.h"
+/* structure describing an open directory. */
+struct _dirdesc {
+	int	dd_fd;		/* file descriptor associated with directory */
+	long	dd_loc;		/* offset in current buffer */
+	long	dd_size;	/* amount of data returned by getdirentries */
+	char	*dd_buf;	/* data buffer */
+	int	dd_len;		/* size of data buffer */
+	long	dd_seek;	/* magic cookie returned by getdirentries */
+	long	dd_rewind;	/* magic cookie for rewinding */
+	int	dd_flags;	/* flags for readdir */
+	struct pthread_mutex	*dd_lock;	/* lock */
+	struct _telldir *dd_td;	/* telldir position recording */
+};
 
-/*
- * Seek to an entry in a directory.
- * _seekdir is in telldir.c so that it can share opaque data structures.
- */
-void
-seekdir(dirp, loc)
-	DIR *dirp;
-	long loc;
-{
-	if (__isthreaded)
-		_pthread_mutex_lock(&dirp->dd_lock);
-	_seekdir(dirp, loc);
-	if (__isthreaded)
-		_pthread_mutex_unlock(&dirp->dd_lock);
-}
+#define	dirfd(dirp)	((dirp)->dd_fd)
+
+#endif /* !_DIRENT_PRIVATE_H_ */

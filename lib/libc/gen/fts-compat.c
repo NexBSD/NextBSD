@@ -52,6 +52,8 @@ __FBSDID("$FreeBSD$");
 #include "fts-compat.h"
 #include "un-namespace.h"
 
+#include "dirent-private.h"
+
 FTSENT	*__fts_children_44bsd(FTS *, int);
 int	 __fts_close_44bsd(FTS *);
 void	*__fts_get_clientptr_44bsd(FTS *);

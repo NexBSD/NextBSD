@@ -55,24 +55,8 @@
 /* definitions for library routines operating on directories. */
 #define	DIRBLKSIZ	1024
 
-struct _telldir;		/* see telldir.h */
-struct pthread_mutex;
-
-/* structure describing an open directory. */
-typedef struct _dirdesc {
-	int	dd_fd;		/* file descriptor associated with directory */
-	long	dd_loc;		/* offset in current buffer */
-	long	dd_size;	/* amount of data returned by getdirentries */
-	char	*dd_buf;	/* data buffer */
-	int	dd_len;		/* size of data buffer */
-	long	dd_seek;	/* magic cookie returned by getdirentries */
-	long	dd_rewind;	/* magic cookie for rewinding */
-	int	dd_flags;	/* flags for readdir */
-	struct pthread_mutex	*dd_lock;	/* lock */
-	struct _telldir *dd_td;	/* telldir position recording */
-} DIR;
-
-#define	dirfd(dirp)	((dirp)->dd_fd)
+struct _dirdesc;
+typedef struct _dirdesc DIR;
 
 /* flags for opendir2 */
 #define DTF_HIDEW	0x0001	/* hide whiteout entries */

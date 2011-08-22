@@ -43,6 +43,7 @@ __FBSDID("$FreeBSD$");
 #include "un-namespace.h"
 
 #include "libc_private.h"
+#include "dirent-private.h"
 #include "telldir.h"
 
 /*
