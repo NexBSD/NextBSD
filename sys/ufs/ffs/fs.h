@@ -338,7 +338,7 @@ struct fs {
 	ufs2_daddr_t fs_csaddr;		/* blk addr of cyl grp summary area */
 	int64_t	 fs_pendingblocks;	/* (u) blocks being freed */
 	u_int32_t fs_pendinginodes;	/* (u) inodes being freed */
-	ino_t	 fs_snapinum[FSMAXSNAP];/* list of snapshot inode numbers */
+	u_int32_t fs_snapinum[FSMAXSNAP];/* list of snapshot inode numbers */
 	u_int32_t fs_avgfilesize;	/* expected average file size */
 	u_int32_t fs_avgfpdir;		/* expected # of files per directory */
 	int32_t	 fs_save_cgsize;	/* save real cg size to use fs_bsize */
@@ -695,8 +695,8 @@ struct jsegrec {
  */
 struct jrefrec {
 	uint32_t	jr_op;
-	ino_t		jr_ino;
-	ino_t		jr_parent;
+	uint32_t	jr_ino;
+	uint32_t	jr_parent;
 	uint16_t	jr_nlink;
 	uint16_t	jr_mode;
 	off_t		jr_diroff;
@@ -709,8 +709,8 @@ struct jrefrec {
  */
 struct jmvrec {
 	uint32_t	jm_op;
-	ino_t		jm_ino;
-	ino_t		jm_parent;
+	uint32_t	jm_ino;
+	uint32_t	jm_parent;
 	uint16_t	jm_unused;
 	off_t		jm_oldoff;
 	off_t		jm_newoff;
