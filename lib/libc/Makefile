@@ -140,6 +140,12 @@ libkern.${LIBC_ARCH}:: ${KMSRCS}
 	cp -p ${.ALLSRC} ${DESTDIR}/sys/libkern/${LIBC_ARCH}
 .endif
 
+# LIBC_EXTRAMK is used by the shlib-compat check script.  Normally
+# libc syscalls are assembly files with no dwarf debug output.
+.if defined(LIBC_EXTRAMK) && !empty(LIBC_EXTRAMK)
+.include "${LIBC_EXTRAMK}"
+.endif
+
 .include <bsd.lib.mk>
 
 # Disable warnings in contributed sources.
