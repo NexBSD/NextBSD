@@ -43,8 +43,6 @@ __FBSDID("$FreeBSD$");
 int
 dirfd(DIR *dirp)
 {
-	if (dirp == NULL)
-		return (-1);
 
 	return (_dirfd(dirp));
 }
