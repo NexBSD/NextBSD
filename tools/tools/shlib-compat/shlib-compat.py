@@ -44,6 +44,9 @@ class Config(object):
     # debug
     cmpcache_enabled = True
     dwarfcache_enabled = True
+    w_alias = True
+    w_cached = False
+    w_symbol = True
 
     class FileConfig(object):
         filename = None
@@ -62,6 +65,10 @@ class Config(object):
 
 class App(object):
     result_code = 0
+
+def warn(cond, msg):
+    if cond:
+        print >> sys.stderr, "WARN: " + msg
 
 # {{{ misc
 
@@ -125,8 +132,8 @@ class Cache(object):
             if self.items.has_key(id) and obj is not self.items[id]:
                 #raise ValueError("Item is already cached: %d (%s, %s)" %
                 #        (id, self.items[id], obj))
-                print >> sys.stderr, "WARN: Item is already cached: %d (%s, %s)" % \
-                        (id, self.items[id], obj)
+                warn(Config.w_cached, "Item is already cached: %d (%s, %s)" % \
+                        (id, self.items[id], obj))
             self.items[id] = obj
 
     def replace(self, id, obj):
@@ -325,8 +332,9 @@ class PointerDef(AnonymousDef):
         return "%s*" % (t,)
 
 class BaseTypeDef(Def):
+    inttypes = ['DW_ATE_signed', 'DW_ATE_unsigned', 'DW_ATE_unsigned_char']
     def _pp(self, pp):
-        if self.encoding in ['DW_ATE_signed', 'DW_ATE_unsigned', 'DW_ATE_unsigned_char' ]:
+        if self.encoding in self.inttypes:
             sign = '' if self.encoding == 'DW_ATE_signed' else 'u'
             bits = int(self.byte_size) * 8
             return '%sint%s_t' % (sign, bits)
@@ -449,7 +457,11 @@ class UnionDef(Def):
 class MemberDef(Def):
     def _pp(self, pp):
         t = pp.run(self.type)
-        return "%s %s;" % (t, self._name_opt())
+        if self.bit_size:
+            bits = ":%s" % self.bit_size
+        else:
+            bits = ""
+        return "%s %s%s;" % (t, self._name_opt(), bits)
 
 class Dwarf(object):
 
@@ -465,6 +477,8 @@ class Dwarf(object):
         return type
 
     def build_subprogram(self, raw):
+        if raw.optname == None:
+            raw.setname('SUBPROGRAM_NONAME_' + raw.arg('low_pc'));
         params = [ self.build(x) for x in raw.nested ]
         result = self._build_optarg_type(raw)
         return FunctionDef(raw.id, raw.name, params=params, result=result)
@@ -475,7 +489,7 @@ class Dwarf(object):
         return FunctionTypeDef(raw.id, raw.optname, params=params, result=result)
 
     def build_formal_parameter(self, raw):
-        type = self.buildref(raw.unit, raw.arg('type'))
+        type = self._build_optarg_type(raw)
         return ParameterDef(raw.id, raw.optname, type=type)
 
     def build_pointer_type(self, raw):
@@ -484,7 +498,8 @@ class Dwarf(object):
 
     def build_member(self, raw):
         type = self.buildref(raw.unit, raw.arg('type'))
-        return MemberDef(raw.id, raw.name, type=type)
+        return MemberDef(raw.id, raw.name, type=type,
+                bit_size=raw.optarg('bit_size', None))
 
     def build_structure_type(self, raw):
         incomplete = raw.unit.incomplete.get(raw.id)
@@ -519,7 +534,7 @@ class Dwarf(object):
         return obj
 
     def build_typedef(self, raw):
-        type = self.buildref(raw.unit, raw.arg('type'))
+        type = self._build_optarg_type(raw)
         return TypeAliasDef(raw.id, raw.name, type=type)
 
     def build_const_type(self, raw):
@@ -527,7 +542,7 @@ class Dwarf(object):
         return ConstTypeDef(raw.id, type=type)
 
     def build_volatile_type(self, raw):
-        type = self.buildref(raw.unit, raw.arg('type'))
+        type = self._build_optarg_type(raw)
         return VolatileTypeDef(raw.id, type=type)
 
     def build_enumeration_type(self, raw):
@@ -547,7 +562,7 @@ class Dwarf(object):
     def build_subrange_type(self, raw):
         type = self.buildref(raw.unit, raw.arg('type'))
         return ArraySubrangeDef(raw.id, type=type,
-                upper_bound=raw.arg('upper_bound'))
+                upper_bound=raw.optarg('upper_bound', 0))
 
     def build_unspecified_parameters(self, raw):
         return VarArgs(raw.id)
@@ -614,10 +629,10 @@ class Shlib(object):
                         prevalias = self.alias_syms[alias.name]
                         if alias.name != prevalias.name or \
                                 alias.offset != prevalias.offset:
-                            print >> sys.stderr, "WARN: Symbol alias is " \
+                            warn(Config.w_alias, "Symbol alias is " \
                                     "already defined: %s: %s at %08x -- %s at %08x" % \
                                     (alias.alias, alias.name,  alias.offset,
-                                            prevalias.name, prevalias.offset)
+                                            prevalias.name, prevalias.offset))
                     self.alias_syms[alias.name] = alias
 
     def parse_dwarfdump(self):
@@ -645,14 +660,17 @@ class Shlib(object):
             for sym in ver.symbols.values():
                 raw = lookup(sym);
                 if not raw:
-                    print >> sys.stderr, "WARN: Symbol %s (%s) not found at offset 0x%x" % \
-                            (sym.name_ver, self.libfile, sym.offset)
+                    warn(Config.w_symbol, "Symbol %s (%s) not found at offset 0x%x" % \
+                            (sym.name_ver, self.libfile, sym.offset))
                     continue
                 if Config.verbose >= 3:
                     print "Parsing symbol %s (%s)" % (sym.name_ver, self.libfile)
                 sym.definition = dwarf.build(raw)
 
     def parse(self):
+        if not os.path.isfile(self.libfile):
+            print >> sys.stderr, ("No such file: %s" % self.libfile)
+            sys.exit(1)
         self.parse_objdump()
         self.parse_dwarfdump()
 
@@ -672,6 +690,10 @@ class Parser(object):
             line = line.strip()
             if (line):
                 self.parser(line)
+        err = fd.close()
+        if err:
+            print >> sys.stderr, ("Execution failed: %s" % self.proc)
+            sys.exit(2)
 
     def parse_begin(self, line):
         print(line)
@@ -771,6 +793,9 @@ class DwarfdumpParser(Parser):
         @property
         def optname(self):
             return self.optarg('name', None)
+
+        def setname(self, name):
+            self.args['DW_AT_name'] = name
 
         def arg(self, a):
             name = 'DW_AT_' + a
@@ -979,8 +1004,8 @@ def dump_symbols(commonver):
             sym = ver.symbols[symname]
             if not sym.origsym.definition or not sym.newsym.definition:
                 # XXX
-                print >> sys.stderr, 'WARN: Missing symbol definition: %s@%s' % \
-                        (symname, ver.name)
+                warn(Config.w_symbol, 'Missing symbol definition: %s@%s' % \
+                        (symname, ver.name))
                 continue
             d_orig.run(sym.origsym)
             d_new.run(sym.newsym)
@@ -1007,6 +1032,11 @@ if __name__ == '__main__':
     parser.add_option('--include-ver', action='append', metavar="RE")
     parser.add_option('--exclude-sym', action='append', metavar="RE")
     parser.add_option('--include-sym', action='append', metavar="RE")
+    for opt in ['alias', 'cached', 'symbol']:
+        parser.add_option("--w-" + opt,
+                action="store_true", dest="w_" + opt)
+        parser.add_option("--w-no-" + opt,
+                action="store_false", dest="w_" + opt)
     (opts, args) = parser.parse_args()
 
     if len(args) != 2:
@@ -1036,6 +1066,11 @@ if __name__ == '__main__':
                 getattr(v, a).extend(opt)
     Config.version_filter.compile()
     Config.symbol_filter.compile()
+    for w in ['w_alias', 'w_cached', 'w_symbol']:
+        if hasattr(opts, w):
+            v = getattr(opts, w)
+            if v != None:
+                setattr(Config, w, v)
 
     (Config.origfile.filename, Config.newfile.filename) = (args[0], args[1])
 

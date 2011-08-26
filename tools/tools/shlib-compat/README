@@ -14,6 +14,7 @@ adding the following to /etc/make.conf:
 LIBC_EXTRAMK=/usr/src/tools/tools/shlib-compat/Makefile.sysfake
 
 To compare libc.so versions compiled with sysfake stubs:
-./shlib-compat -v --alias-prefix __sysfake_ --alias-prefix __sysfake_freebsd8_ \
+./shlib-compat.py -v --alias-prefix __sysfake_ \
+	--alias-prefix __sysfake_freebsd8_ \
 	--exclude-ver FBSDprivate \
 	--out-orig out-orig.c --out-new out-new.c libc.so.7.orig libc.so.7.new
