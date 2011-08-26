@@ -4637,24 +4637,31 @@ struct fhstat_args {
 };
 #endif
 int
-fhstat(td, uap)
-	struct thread *td;
-	register struct fhstat_args /* {
-		struct fhandle *u_fhp;
-		struct stat *sb;
-	} */ *uap;
+fhstat(struct thread *td, struct fhstat_args *uap)
 {
 	struct stat sb;
-	fhandle_t fh;
+	struct fhandle fh;
+	int error;
+
+	error = copyin(uap->u_fhp, &fh, sizeof(fh));
+	if (error != 0)
+		return (error);
+	error = kern_fhstat(td, fh, &sb);
+	if (error != 0)
+		return (error);
+	error = copyout(&sb, uap->sb, sizeof(sb));
+	return (error);
+}
+
+int
+kern_fhstat(struct thread *td, struct fhandle fh, struct stat *sb)
+{
 	struct mount *mp;
 	struct vnode *vp;
 	int vfslocked;
 	int error;
 
 	error = priv_check(td, PRIV_VFS_FHSTAT);
-	if (error)
-		return (error);
-	error = copyin(uap->u_fhp, &fh, sizeof(fhandle_t));
 	if (error)
 		return (error);
 	if ((mp = vfs_busyfs(&fh.fh_fsid)) == NULL)
@@ -4666,12 +4673,9 @@ fhstat(td, uap)
 		VFS_UNLOCK_GIANT(vfslocked);
 		return (error);
 	}
-	error = vn_stat(vp, &sb, td->td_ucred, NOCRED, td);
+	error = vn_stat(vp, sb, td->td_ucred, NOCRED, td);
 	vput(vp);
 	VFS_UNLOCK_GIANT(vfslocked);
-	if (error)
-		return (error);
-	error = copyout(&sb, uap->sb, sizeof(sb));
 	return (error);
 }
 
