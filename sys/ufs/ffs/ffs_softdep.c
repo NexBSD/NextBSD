@@ -4441,8 +4441,8 @@ softdep_setup_mkdir(dp, ip)
 		KASSERT(jaddref != NULL,
 		    ("softdep_setup_mkdir: No addref structure present."));
 		KASSERT(jaddref->ja_parent == dp->i_number, 
-		    ("softdep_setup_mkdir: bad parent %d",
-		    jaddref->ja_parent));
+		    ("softdep_setup_mkdir: bad parent %ju",
+		    (uintmax_t)jaddref->ja_parent));
 		TAILQ_INSERT_BEFORE(&jaddref->ja_ref, &dotaddref->ja_ref,
 		    if_deps);
 	}
@@ -8706,8 +8706,8 @@ newdirrem(bp, dp, ip, isrmdir, prevdirremp)
 	if ((dap->da_state & ATTACHED) == 0)
 		panic("newdirrem: not ATTACHED");
 	if (dap->da_newinum != ip->i_number)
-		panic("newdirrem: inum %d should be %d",
-		    ip->i_number, dap->da_newinum);
+		panic("newdirrem: inum %ju should be %ju",
+		    (uintmax_t)ip->i_number, (uintmax_t)dap->da_newinum);
 	/*
 	 * If we are deleting a changed name that never made it to disk,
 	 * then return the dirrem describing the previous inode (which
@@ -9585,9 +9585,10 @@ initiate_write_filepage(pagedep, bp)
 			ep = (struct direct *)
 			    ((char *)bp->b_data + dap->da_offset);
 			if (ep->d_ino != dap->da_newinum)
-				panic("%s: dir inum %d != new %d",
+				panic("%s: dir inum %ju != new %ju",
 				    "initiate_write_filepage",
-				    ep->d_ino, dap->da_newinum);
+				    (uintmax_t)ep->d_ino,
+				    (uintmax_t)dap->da_newinum);
 			if (dap->da_state & DIRCHG)
 				ep->d_ino = dap->da_previous->dm_oldinum;
 			else
@@ -9816,9 +9817,10 @@ initiate_write_inodeblock_ufs2(inodedep, bp)
 		inon = TAILQ_NEXT(inodedep, id_unlinked);
 		freelink = inon ? inon->id_ino : 0;
 		if (freelink != dp->di_freelink)
-			panic("ino %p(0x%X) %d, %d != %d",
-			    inodedep, inodedep->id_state, inodedep->id_ino,
-			    freelink, dp->di_freelink);
+			panic("ino %p(0x%X) %ju, %ju != %ju",
+			    inodedep, inodedep->id_state,
+			    (uintmax_t)inodedep->id_ino,
+			    (uintmax_t)freelink, (uintmax_t)dp->di_freelink);
 	}
 	/*
 	 * If the bitmap is not yet written, then the allocated
@@ -10156,10 +10158,11 @@ softdep_setup_inofree(mp, bp, ino, wkhd)
 	cgp = (struct cg *)bp->b_data;
 	inosused = cg_inosused(cgp);
 	if (isset(inosused, ino % fs->fs_ipg))
-		panic("softdep_setup_inofree: inode %d not freed.", ino);
+		panic("softdep_setup_inofree: inode %ju not freed",
+		    (uintmax_t)ino);
 	if (inodedep_lookup(mp, ino, 0, &inodedep))
-		panic("softdep_setup_inofree: ino %d has existing inodedep %p",
-		    ino, inodedep);
+		panic("softdep_setup_inofree: ino %ju has existing inodedep %p",
+		    (uintmax_t)ino, inodedep);
 	if (wkhd) {
 		LIST_FOREACH_SAFE(wk, wkhd, wk_list, wkn) {
 			if (wk->wk_type != D_JADDREF)
@@ -10385,8 +10388,8 @@ initiate_write_bmsafemap(bmsafemap, bp)
 				jaddref->ja_state |= UNDONE;
 				stat_jaddref++;
 			} else if ((bp->b_xflags & BX_BKGRDMARKER) == 0)
-				panic("initiate_write_bmsafemap: inode %d "
-				    "marked free", jaddref->ja_ino);
+				panic("%s: inode %ju marked free",
+				    __func__, (uintmax_t)jaddref->ja_ino);
 		}
 	}
 	/*
@@ -12462,7 +12465,8 @@ retry:
 		if (dap == LIST_FIRST(diraddhdp)) {
 			inodedep_lookup(UFSTOVFS(ump), inum, 0, &inodedep);
 			panic("flush_pagedep_deps: failed to flush " 
-			    "inodedep %p ino %d dap %p", inodedep, inum, dap);
+			    "inodedep %p ino %ju dap %p", inodedep,
+			    (uintmax_t)inum, dap);
 		}
 	}
 	if (error)

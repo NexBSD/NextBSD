@@ -129,7 +129,9 @@ ntfs_read(ap)
 	int resid, off, toread;
 	int error;
 
-	dprintf(("ntfs_read: ino: %d, off: %d resid: %d, segflg: %d\n",ip->i_number,(u_int32_t)uio->uio_offset,uio->uio_resid,uio->uio_segflg));
+	dprintf(("ntfs_read: ino: %ju, off: %jd resid: %zd, segflg: %d\n",
+	    (uintmax_t)ip->i_number, (intmax_t)uio->uio_offset,
+	    uio->uio_resid,uio->uio_segflg));
 
 	dprintf(("ntfs_read: filesize: %d",(u_int32_t)fp->f_size));
 
@@ -181,7 +183,8 @@ ntfs_getattr(ap)
 	register struct ntnode *ip = FTONT(fp);
 	register struct vattr *vap = ap->a_vap;
 
-	dprintf(("ntfs_getattr: %d, flags: %d\n",ip->i_number,ip->i_flag));
+	dprintf(("ntfs_getattr: %ju, flags: %d\n",
+	    (uintmax_t)ip->i_number, ip->i_flag));
 
 	vap->va_fsid = dev2udev(ip->i_dev);
 	vap->va_fileid = ip->i_number;
@@ -216,8 +219,8 @@ ntfs_inactive(ap)
 	register struct ntnode *ip = VTONT(ap->a_vp);
 #endif
 
-	dprintf(("ntfs_inactive: vnode: %p, ntnode: %d\n", ap->a_vp,
-	    ip->i_number));
+	dprintf(("ntfs_inactive: vnode: %p, ntnode: %ju\n", ap->a_vp,
+	    (uintmax_t)ip->i_number));
 
 	/* XXX since we don't support any filesystem changes
 	 * right now, nothing more needs to be done
@@ -239,7 +242,8 @@ ntfs_reclaim(ap)
 	register struct ntnode *ip = FTONT(fp);
 	int error;
 
-	dprintf(("ntfs_reclaim: vnode: %p, ntnode: %d\n", vp, ip->i_number));
+	dprintf(("ntfs_reclaim: vnode: %p, ntnode: %ju\n", vp,
+	    (uintmax_t)ip->i_number));
 
 	/*
 	 * Destroy the vm object and flush associated pages.
@@ -352,7 +356,9 @@ ntfs_write(ap)
 	size_t written;
 	int error;
 
-	dprintf(("ntfs_write: ino: %d, off: %d resid: %d, segflg: %d\n",ip->i_number,(u_int32_t)uio->uio_offset,uio->uio_resid,uio->uio_segflg));
+	dprintf(("ntfs_write: ino: %ju, off: %jd resid: %zd, segflg: %d\n",
+	    (uintmax_t)ip->i_number, (intmax_t)uio->uio_offset,
+	    uio->uio_resid,uio->uio_segflg));
 	dprintf(("ntfs_write: filesize: %d",(u_int32_t)fp->f_size));
 
 	if (uio->uio_resid + uio->uio_offset > fp->f_size) {
@@ -387,7 +393,7 @@ ntfs_access(ap)
 	struct ntnode *ip = VTONT(vp);
 	accmode_t accmode = ap->a_accmode;
 
-	dprintf(("ntfs_access: %d\n",ip->i_number));
+	dprintf(("ntfs_access: %ju\n", (uintmax_t)ip->i_number));
 
 	/*
 	 * Disallow write attempts on read-only filesystems;
@@ -428,7 +434,7 @@ ntfs_open(ap)
 	register struct vnode *vp = ap->a_vp;
 	register struct ntnode *ip = VTONT(vp);
 
-	printf("ntfs_open: %d\n",ip->i_number);
+	printf("ntfs_open: %ju\n", (uintmax_t)ip->i_number);
 #endif
 
 	vnode_create_vobject(ap->a_vp, VTOF(ap->a_vp)->f_size, ap->a_td);
@@ -459,7 +465,7 @@ ntfs_close(ap)
 	register struct vnode *vp = ap->a_vp;
 	register struct ntnode *ip = VTONT(vp);
 
-	printf("ntfs_close: %d\n",ip->i_number);
+	printf("ntfs_close: %ju\n", (uintmax_t)ip->i_number);
 #endif
 
 	return (0);
@@ -487,7 +493,9 @@ ntfs_readdir(ap)
 	struct dirent cde;
 	off_t off;
 
-	dprintf(("ntfs_readdir %d off: %d resid: %d\n",ip->i_number,(u_int32_t)uio->uio_offset,uio->uio_resid));
+	dprintf(("ntfs_readdir %ju off: %jd resid: %zd\n",
+	    (uintmax_t)ip->i_number, (intmax_t)uio->uio_offset,
+	    uio->uio_resid));
 
 	off = uio->uio_offset;
 
@@ -573,10 +581,10 @@ ntfs_readdir(ap)
 		}
 	}
 
-	dprintf(("ntfs_readdir: %d entries (%d bytes) read\n",
-		ncookies,(u_int)(uio->uio_offset - off)));
-	dprintf(("ntfs_readdir: off: %d resid: %d\n",
-		(u_int32_t)uio->uio_offset,uio->uio_resid));
+	dprintf(("ntfs_readdir: %d entries (%jd bytes) read\n",
+	    ncookies, (intmax_t)(uio->uio_offset - off)));
+	dprintf(("ntfs_readdir: off: %jd resid: %zd\n",
+	    (intmax_t)uio->uio_offset, uio->uio_resid));
 
 	if (!error && ap->a_ncookies != NULL) {
 		struct dirent* dpStart;
@@ -622,9 +630,9 @@ ntfs_lookup(ap)
 	struct componentname *cnp = ap->a_cnp;
 	struct ucred *cred = cnp->cn_cred;
 	int error;
-	dprintf(("ntfs_lookup: \"%.*s\" (%ld bytes) in %d\n",
+	dprintf(("ntfs_lookup: \"%.*s\" (%ld bytes) in %ju\n",
 		(int)cnp->cn_namelen, cnp->cn_nameptr, cnp->cn_namelen,
-		dip->i_number));
+		(uintmax_t)dip->i_number));
 
 	error = VOP_ACCESS(dvp, VEXEC, cred, cnp->cn_thread);
 	if(error)
@@ -636,8 +644,8 @@ ntfs_lookup(ap)
 		return (EROFS);
 
 	if(cnp->cn_namelen == 1 && cnp->cn_nameptr[0] == '.') {
-		dprintf(("ntfs_lookup: faking . directory in %d\n",
-			dip->i_number));
+		dprintf(("ntfs_lookup: faking . directory in %ju\n",
+			(uintmax_t)dip->i_number));
 
 		VREF(dvp);
 		*ap->a_vpp = dvp;
@@ -645,8 +653,8 @@ ntfs_lookup(ap)
 	} else if (cnp->cn_flags & ISDOTDOT) {
 		struct ntvattr *vap;
 
-		dprintf(("ntfs_lookup: faking .. directory in %d\n",
-			 dip->i_number));
+		dprintf(("ntfs_lookup: faking .. directory in %ju\n",
+			 (uintmax_t)dip->i_number));
 
 		error = ntfs_ntvattrget(ntmp, dip, NTFS_A_NAME, NULL, 0, &vap);
 		if(error)
@@ -669,8 +677,8 @@ ntfs_lookup(ap)
 			return (error);
 		}
 
-		dprintf(("ntfs_lookup: found ino: %d\n", 
-			VTONT(*ap->a_vpp)->i_number));
+		dprintf(("ntfs_lookup: found ino: %ju\n",
+			(uintmax_t)VTONT(*ap->a_vpp)->i_number));
 	}
 
 	if (cnp->cn_flags & MAKEENTRY)

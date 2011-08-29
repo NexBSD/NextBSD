@@ -1485,8 +1485,8 @@ relock:
 		if (error)
 			panic("ufs_rename: from entry went away!");
 		if (ino != fip->i_number)
-			panic("ufs_rename: ino mismatch %d != %d\n", ino,
-			    fip->i_number);
+			panic("ufs_rename: ino mismatch %ju != %ju",
+			    (uintmax_t)ino, (uintmax_t)fip->i_number);
 	}
 	/*
 	 * If the source is a directory with a

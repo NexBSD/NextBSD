@@ -475,6 +475,7 @@ cd9660_readdir(ap)
 	struct iso_mnt *imp;
 	struct buf *bp = NULL;
 	struct iso_directory_record *ep;
+	ino_t rripino;
 	int entryoffsetinblock;
 	doff_t endsearch;
 	u_long bmask;
@@ -579,7 +580,8 @@ cd9660_readdir(ap)
 		switch (imp->iso_ftype) {
 		case ISO_FTYPE_RRIP:
 			cd9660_rrip_getname(ep,idp->current.d_name, &namelen,
-					   &idp->current.d_fileno,imp);
+					   &rripino, imp);
+			idp->current.d_fileno = rripino;
 			idp->current.d_namlen = (u_char)namelen;
 			if (idp->current.d_namlen)
 				error = iso_uiodir(idp,&idp->current,idp->curroff);

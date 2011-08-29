@@ -28,7 +28,7 @@
  * $FreeBSD$
  */
 
-/*#define NTFS_DEBUG 1*/
+#define NTFS_DEBUG 2/*XXX don't commit me*/
 
 typedef u_int64_t cn_t;
 typedef u_int16_t wchar;

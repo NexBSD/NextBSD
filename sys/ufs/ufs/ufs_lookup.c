@@ -1209,8 +1209,8 @@ ufs_dirremove(dvp, ip, flags, isrmdir)
 		ufsdirhash_remove(dp, rep, dp->i_offset);
 #endif
 	if (ip && rep->d_ino != ip->i_number)
-		panic("ufs_dirremove: ip %d does not match dirent ino %d\n",
-		    ip->i_number, rep->d_ino);
+		panic("ufs_dirremove: ip %ju does not match dirent ino %ju",
+		    (uintmax_t)ip->i_number, (uintmax_t)rep->d_ino);
 	if (dp->i_count == 0) {
 		/*
 		 * First entry in block: set d_ino to zero.
