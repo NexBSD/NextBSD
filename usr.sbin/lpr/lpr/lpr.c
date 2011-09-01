@@ -70,6 +70,7 @@ __FBSDID("$FreeBSD$");
 #include <err.h>
 #include <locale.h>
 #include <signal.h>
+#include <stdint.h>
 #include <syslog.h>
 #include <pwd.h>
 #include <grp.h>
@@ -386,8 +387,8 @@ main(int argc, char *argv[])
 			continue;	/* file unreasonable */
 
 		if (sflag && (cp = linked(arg)) != NULL) {
-			(void) snprintf(buf, sizeof(buf), "%u %u", statb.st_dev,
-				statb.st_ino);
+			(void) snprintf(buf, sizeof(buf), "%u %ju",
+			    statb.st_dev, (uintmax_t)statb.st_ino);
 			card('S', buf);
 			if (format == 'p')
 				card('T', title ? title : arg);

@@ -372,6 +372,7 @@ initcg(int cylno, time_t modtime, int fso, unsigned int Nflag)
 {
 	DBG_FUNC("initcg")
 	static caddr_t iobuf;
+	ino_t ino;
 	long blkno, start;
 	ufs2_daddr_t i, cbase, dmax;
 	struct ufs1_dinode *dp1;
@@ -441,8 +442,8 @@ initcg(int cylno, time_t modtime, int fso, unsigned int Nflag)
 	}
 	acg.cg_cs.cs_nifree += sblock.fs_ipg;
 	if (cylno == 0)
-		for (i = 0; i < ROOTINO; i++) {
-			setbit(cg_inosused(&acg), i);
+		for (ino = 0; ino < ROOTINO; ino++) {
+			setbit(cg_inosused(&acg), ino);
 			acg.cg_cs.cs_nifree--;
 		}
 	/*
@@ -1847,6 +1848,7 @@ ginode(ino_t inumber, int fsi, int cg)
 {
 	DBG_FUNC("ginode")
 	static ino_t	startinum = 0;	/* first inode in cached block */
+	uintptr_t ioff;
 
 	DBG_ENTER;
 
@@ -1868,19 +1870,20 @@ ginode(ino_t inumber, int fsi, int cg)
 		return NULL;
 	}
 	if (inumber > maxino)
-		errx(8, "bad inode number %d to ginode", inumber);
+		errx(8, "bad inode number %ju to ginode", (uintmax_t)inumber);
 	if (startinum == 0 ||
 	    inumber < startinum || inumber >= startinum + INOPB(&sblock)) {
 		inoblk = fsbtodb(&sblock, ino_to_fsba(&sblock, inumber));
 		rdfs(inoblk, (size_t)sblock.fs_bsize, inobuf, fsi);
 		startinum = (inumber / INOPB(&sblock)) * INOPB(&sblock);
 	}
+	ioff = inumber % INOPB(&sblock);
 	DBG_LEAVE;
 	if (sblock.fs_magic == FS_UFS1_MAGIC)
 		return (union dinode *)((uintptr_t)inobuf +
-		    (inumber % INOPB(&sblock)) * sizeof(struct ufs1_dinode));
+		    ioff * sizeof(struct ufs1_dinode));
 	return (union dinode *)((uintptr_t)inobuf +
-	    (inumber % INOPB(&sblock)) * sizeof(struct ufs2_dinode));
+	    ioff * sizeof(struct ufs2_dinode));
 }
 
 /* ****************************************************** charsperline ***** */

@@ -559,9 +559,10 @@ display(const FTSENT *p, FTSENT *list, int options)
 	DISPLAY d;
 	FTSENT *cur;
 	NAMES *np;
+	uintmax_t maxinode;
 	off_t maxsize;
 	long maxblock;
-	u_long btotal, labelstrlen, maxinode, maxlen, maxnlink;
+	u_long btotal, labelstrlen, maxlen, maxnlink;
 	u_long maxlabelstr;
 	u_int devstrlen;
 	int maxflags;
@@ -581,8 +582,9 @@ display(const FTSENT *p, FTSENT *list, int options)
 	btotal = 0;
 	initmax = getenv("LS_COLWIDTHS");
 	/* Fields match -lios order.  New ones should be added at the end. */
-	maxlabelstr = maxblock = maxinode = maxlen = maxnlink =
+	maxlabelstr = maxblock = maxlen = maxnlink =
 	    maxuser = maxgroup = maxflags = maxsize = 0;
+	maxinode = 0;
 	if (initmax != NULL && *initmax != '\0') {
 		char *initmax2, *jinitmax;
 		int ninitmax;
@@ -610,7 +612,7 @@ display(const FTSENT *p, FTSENT *list, int options)
 			strcpy(initmax2, "0");
 
 		ninitmax = sscanf(jinitmax,
-		    " %lu : %ld : %lu : %u : %u : %i : %jd : %lu : %lu ",
+		    " %ju : %ld : %lu : %u : %u : %i : %jd : %lu : %lu ",
 		    &maxinode, &maxblock, &maxnlink, &maxuser,
 		    &maxgroup, &maxflags, &maxsize, &maxlen, &maxlabelstr);
 		f_notabs = 1;
@@ -842,7 +844,7 @@ label_out:
 		d.s_flags = maxflags;
 		d.s_label = maxlabelstr;
 		d.s_group = maxgroup;
-		(void)snprintf(buf, sizeof(buf), "%lu", maxinode);
+		(void)snprintf(buf, sizeof(buf), "%ju", maxinode);
 		d.s_inode = strlen(buf);
 		(void)snprintf(buf, sizeof(buf), "%lu", maxnlink);
 		d.s_nlink = strlen(buf);
