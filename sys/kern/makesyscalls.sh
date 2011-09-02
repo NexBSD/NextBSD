@@ -611,7 +611,7 @@ s/\$//g
 
 		if (ncompat9 != 0) {
 			printf "\n#ifdef %s\n", compat9 > sysinc
-			printf "#define compat9(n, name) n, (sy_call_t *)__CONCAT(freebsd7_,name)\n" > sysinc
+			printf "#define compat9(n, name) n, (sy_call_t *)__CONCAT(freebsd9_,name)\n" > sysinc
 			printf "#else\n" > sysinc
 			printf "#define compat9(n, name) 0, (sy_call_t *)nosys\n" > sysinc
 			printf "#endif\n" > sysinc
