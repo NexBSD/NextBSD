@@ -211,7 +211,7 @@ static void	em_identify_hardware(struct adapter *);
 static int	em_allocate_pci_resources(struct adapter *);
 static int	em_allocate_legacy(struct adapter *);
 static int	em_allocate_msix(struct adapter *);
-static int	em_if_queues_alloc(iflib_ctx_t, int, int);
+static int	em_if_queues_alloc(iflib_ctx_t);
 static int	em_setup_msix(struct adapter *);
 static void	em_free_pci_resources(struct adapter *);
 static void	em_reset(struct adapter *);
@@ -229,7 +229,7 @@ static void	em_if_intr_disable(iflib_ctx_t);
 static void	em_update_stats_counters(struct adapter *);
 static void	em_add_hw_stats(struct adapter *adapter);
 static void	em_if_txeof(iflib_tx_ring_t);
-static bool	em_rxeof(struct rx_ring *, int, int *);
+static bool em_if_packet_get(void *, int, rx_info_t);
 #ifndef __NO_STRICT_ALIGNMENT
 static int	em_fixup_rx(struct rx_ring *);
 #endif
@@ -272,8 +272,6 @@ static void	em_set_sysctl_value(struct adapter *, const char *,
 		    const char *, int *, int);
 static int	em_set_flowcntl(SYSCTL_HANDLER_ARGS);
 static int	em_sysctl_eee(SYSCTL_HANDLER_ARGS);
-
-static __inline void em_rx_discard(struct rx_ring *, int);
 
 #ifdef DEVICE_POLLING
 static poll_handler_drv_t em_poll;
@@ -2103,7 +2101,7 @@ em_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
  *
  **********************************************************************/
 static int
-em_if_queues_alloc(iflib_ctx_t ctx, int tsize, int rsize)
+em_if_queues_alloc(iflib_ctx_t ctx)
 {
 	struct adapter      *adapter = iflib_softc_get(ctx);
 	struct tx_ring		*txr = NULL;
@@ -2138,20 +2136,11 @@ em_if_queues_alloc(iflib_ctx_t ctx, int tsize, int rsize)
 
 		/* get the virtual address of the hardware queues */
 		txr->tx_base = (struct e1000_tx_desc *)iflib_txq_vaddr_get(ctx, i);
-		bzero((void *)txr->tx_base, tsize);
 		txr->rx_base = (struct e1000_rx_desc *)iflib_rxq_vaddr_get(ctx, i);
-		bzero((void *)rxr->rx_base, rsize);
 	}
 
 	return (0);
 
-err_rx_desc:
-	for (rxr = adapter->rx_rings; rxconf > 0; rxr++, rxconf--)
-		em_dma_free(adapter, &rxr->rxdma);
-err_tx_desc:
-	for (txr = adapter->tx_rings; txconf > 0; txr++, txconf--)
-		em_dma_free(adapter, &txr->txdma);
-	free(adapter->rx_rings, M_DEVBUF);
 rx_fail:
 	free(adapter->tx_rings, M_DEVBUF);
 fail:
@@ -2649,7 +2638,6 @@ em_refresh_mbufs(struct rx_ring *rxr, int limit)
 		rxbuf->m_head = m;
 		bus_dmamap_sync(rxr->rxtag,
 		    rxbuf->map, BUS_DMASYNC_PREREAD);
-		rxr->rx_base[i].buffer_addr = htole64(segs[0].ds_addr);
 		cleaned = TRUE;
 
 		i = j; /* Next is precalulated for us */
@@ -2664,8 +2652,7 @@ update:
 	** and as far as we have refreshed.
 	*/
 	if (cleaned)
-		E1000_WRITE_REG(&adapter->hw,
-		    E1000_RDT(rxr->me), rxr->next_to_refresh);
+
 
 	return;
 }
@@ -2803,7 +2790,33 @@ em_initialize_receive_unit(struct adapter *adapter)
 	return;
 }
 
+static void
+em_if_refill_rxd(iflib_cxt_t ctx, int rxqid, int pidx, uint64_t paddr)
+{
+	struct adapter *adapter = iflib_softc_get(ctx);
+	struct rx_ring *rxr = adapter->rx_rings[rxqid];
 
+	rxr->rx_base[pidx].buffer_addr = htole64(paddr);
+}
+
+static void
+em_if_refill_flush(iflib_ctx_t ctx, int rxqid, int pidx)
+{
+	struct adapter *adapter = iflib_softc_get(ctx);
+	E1000_WRITE_REG(&adapter->hw,
+		    E1000_RDT(rxqid), pidx);
+}
+
+static int
+em_if_is_new(void *_rxr, int idx)
+{
+	struct rx_ring *rxr = _rxr;
+	struct e1000_rx_desc	*cur;
+
+	cur = &rxr->rx_base[idx];
+	return ((cur->status & E1000_RXD_STAT_DD) != 0);
+}
+	
 /*********************************************************************
  *
  *  This routine executes in interrupt context. It replenishes
@@ -2816,160 +2829,67 @@ em_initialize_receive_unit(struct adapter *adapter)
  *  For polling we also now return the number of cleaned packets
  *********************************************************************/
 static bool
-em_rxeof(struct rx_ring *rxr, int count, int *done)
+em_if_packet_get(void *_rxr, int i, rx_info_t ri)
 {
+	struct rx_ring *rxr = _rxr;
 	struct adapter		*adapter = rxr->adapter;
 	struct mbuf		*mp, *sendmp;
-	u8			status = 0;
+	u8			status;
 	u16 			len;
-	int			i, processed, rxdone = 0;
+	int			processed, rxdone = 0;
 	bool			eop;
 	struct e1000_rx_desc	*cur;
+	uint64_t csum_flags, csum_data;
+	
+	cur = &rxr->rx_base[i];
+	status = cur->status;
+	mp = sendmp = NULL;
 
-	EM_RX_LOCK(rxr);
+	len = le16toh(cur->length);
+	eop = (status & E1000_RXD_STAT_EOP) != 0;
 
-#ifdef DEV_NETMAP
-	if (netmap_rx_irq(ifp, rxr->me, &processed)) {
-		EM_RX_UNLOCK(rxr);
-		return (FALSE);
+	if ((cur->errors & E1000_RXD_ERR_FRAME_ERR_MASK) ||
+		(rxr->discard == TRUE)) {
+		adapter->dropped_pkts++;
+		++rxr->rx_discarded;
+		if (!eop) /* Catch subsequent segs */
+			rxr->discard = TRUE;
+		else
+			rxr->discard = FALSE;
+		/* XXX recycle buffer if there was an error */
+		em_rx_discard(rxr, i);
+		goto next_desc;
 	}
-#endif /* DEV_NETMAP */
+	
+	/* Assign correct length to the current fragment */
+	ri->ri_flags = RXD_SOP_EOP;
+	ri->ri_qidx = rxr->me;
+	ri->ri_cidx = i;
+	ri->ri_len = len;
 
-	for (i = rxr->next_to_check, processed = 0; count != 0;) {
-
-		if (!iflib_getactive(adapter->ctx))
-			break;
-
-		bus_dmamap_sync(rxr->rxdma.dma_tag, rxr->rxdma.dma_map,
-		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-
-		cur = &rxr->rx_base[i];
-		status = cur->status;
-		mp = sendmp = NULL;
-
-		if ((status & E1000_RXD_STAT_DD) == 0)
-			break;
-
-		len = le16toh(cur->length);
-		eop = (status & E1000_RXD_STAT_EOP) != 0;
-
-		if ((cur->errors & E1000_RXD_ERR_FRAME_ERR_MASK) ||
-		    (rxr->discard == TRUE)) {
-			adapter->dropped_pkts++;
-			++rxr->rx_discarded;
-			if (!eop) /* Catch subsequent segs */
-				rxr->discard = TRUE;
-			else
-				rxr->discard = FALSE;
-			em_rx_discard(rxr, i);
-			goto next_desc;
-		}
-		bus_dmamap_unload(rxr->rxtag, rxr->rx_buffers[i].map);
-
-		/* Assign correct length to the current fragment */
-		mp = rxr->rx_buffers[i].m_head;
-		mp->m_len = len;
-
-		/* Trigger for refresh */
-		rxr->rx_buffers[i].m_head = NULL;
-
-		/* First segment? */
-		if (rxr->fmp == NULL) {
-			mp->m_pkthdr.len = len;
-			rxr->fmp = rxr->lmp = mp;
-		} else {
-			/* Chain mbuf's together */
-			mp->m_flags &= ~M_PKTHDR;
-			rxr->lmp->m_next = mp;
-			rxr->lmp = mp;
-			rxr->fmp->m_pkthdr.len += len;
-		}
-
-		if (eop) {
-			--count;
-			sendmp = rxr->fmp;
-			if_setrcvif(sendmp, ifp);
-			if_incipackets(ifp, 1);
-			em_receive_checksum(cur, &sendmp->m_pkthdr.csum_flags,
-				&sendmp->m_pkthdr.csum_data);
+	if (eop) {
+		em_receive_checksum(cur, &ri->csum_flags,
+							&ri->csum_data);
 #ifndef __NO_STRICT_ALIGNMENT
-			if (adapter->hw.mac.max_frame_size >
-			    (MCLBYTES - ETHER_ALIGN) &&
-			    em_fixup_rx(rxr) != 0)
-				goto skip;
+		if (adapter->hw.mac.max_frame_size >
+			(MCLBYTES - ETHER_ALIGN) &&
+			em_fixup_rx(rxr) != 0)
+			goto skip;
 #endif
-			if (status & E1000_RXD_STAT_VP) {
-				if_setvtag(sendmp, 
-				    le16toh(cur->special));
-				sendmp->m_flags |= M_VLANTAG;
-			}
+		if (status & E1000_RXD_STAT_VP) {
+			ri->ri_flags |= RXD_VLAN;
+			ri->ri_vtag = le16toh(cur->special);
+		}
 #ifndef __NO_STRICT_ALIGNMENT
 skip:
 #endif
-			rxr->fmp = rxr->lmp = NULL;
 		}
 next_desc:
 		/* Zero out the receive descriptors status. */
 		cur->status = 0;
-		++rxdone;	/* cumulative for POLL */
-		++processed;
-
-		/* Advance our pointers to the next descriptor. */
-		if (++i == adapter->num_rx_desc)
-			i = 0;
-
-		/* Send to the stack */
-		if (sendmp != NULL) {
-			rxr->next_to_check = i;
-			EM_RX_UNLOCK(rxr);
-			if_input(ifp, sendmp);
-			EM_RX_LOCK(rxr);
-			i = rxr->next_to_check;
-		}
-
-		/* Only refresh mbufs every 8 descriptors */
-		if (processed == 8) {
-			em_refresh_mbufs(rxr, i);
-			processed = 0;
-		}
 	}
-
-	/* Catch any remaining refresh work */
-	if (e1000_rx_unrefreshed(rxr))
-		em_refresh_mbufs(rxr, i);
-
-	rxr->next_to_check = i;
-	if (done != NULL)
-		*done = rxdone;
-	EM_RX_UNLOCK(rxr);
 
 	return ((status & E1000_RXD_STAT_DD) ? TRUE : FALSE);
-}
-
-static __inline void
-em_rx_discard(struct rx_ring *rxr, int i)
-{
-	struct em_buffer	*rbuf;
-
-	rbuf = &rxr->rx_buffers[i];
-	bus_dmamap_unload(rxr->rxtag, rbuf->map);
-
-	/* Free any previous pieces */
-	if (rxr->fmp != NULL) {
-		rxr->fmp->m_flags |= M_PKTHDR;
-		m_freem(rxr->fmp);
-		rxr->fmp = NULL;
-		rxr->lmp = NULL;
-	}
-	/*
-	** Free buffer and allow em_refresh_mbufs()
-	** to clean up and recharge buffer.
-	*/
-	if (rbuf->m_head) {
-		m_free(rbuf->m_head);
-		rbuf->m_head = NULL;
-	}
-	return;
 }
 
 #ifndef __NO_STRICT_ALIGNMENT

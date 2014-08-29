@@ -275,65 +275,45 @@ struct em_int_delay_info {
  * The transmit ring, one per tx queue
  */
 struct tx_ring {
-        struct adapter          *adapter;
-        struct mtx              tx_mtx;
-        char                    mtx_name[16];
-        u32                     me;
-        u32                     msix;
+	u32                     me;
+	u32                     msix;
 	u32			ims;
-        int			queue_status;
-        int                     watchdog_time;
 	struct em_dma_alloc	txdma;
 	struct e1000_tx_desc	*tx_base;
-        struct task             tx_task;
-        struct taskqueue        *tq;
-        u32                     next_avail_desc;
-        u32                     next_to_clean;
-        struct em_buffer	*tx_buffers;
-        volatile u16            tx_avail;
 	u32			tx_tso;		/* last tx was tso */
-        u16			last_hw_offload;
+	u16			last_hw_offload;
 	u8			last_hw_ipcso;
 	u8			last_hw_ipcss;
 	u8			last_hw_tucso;
 	u8			last_hw_tucss;
-#if __FreeBSD_version >= 800000
-	struct buf_ring         *br;
-#endif
 	/* Interrupt resources */
-        bus_dma_tag_t           txtag;
 	void                    *tag;
 	struct resource         *res;
-        unsigned long		tx_irq;
-        unsigned long		no_desc_avail;
+	unsigned long		tx_irq;
 };
 
 /*
  * The Receive ring, one per rx queue
  */
 struct rx_ring {
-        struct adapter          *adapter;
-        u32                     me;
-        u32                     msix;
-	u32			ims;
-        struct mtx              rx_mtx;
-        char                    mtx_name[16];
-        u32                     payload;
-        struct task             rx_task;
-        struct taskqueue        *tq;
-        struct e1000_rx_desc	*rx_base;
-        struct em_dma_alloc	rxdma;
-        u32			next_to_refresh;
-        u32			next_to_check;
-        struct em_buffer	*rx_buffers;
-	struct mbuf		*fmp;
-	struct mbuf		*lmp;
-
-        /* Interrupt resources */
-        void                    *tag;
-        struct resource         *res;
-        bus_dma_tag_t           rxtag;
-	bool			discard;
+	struct adapter         *adapter;
+	u32                     me;
+	u32                     msix;
+	u32			            ims;
+	
+	u32                     payload;
+	struct e1000_rx_desc   *rx_base;
+	struct em_dma_alloc	    rxdma;
+	u32			            next_to_refresh;
+	u32			            next_to_check;
+	struct mbuf		       *fmp;
+	struct mbuf		       *lmp;
+	
+	/* Interrupt resources */
+	void                    *tag;
+	struct resource         *res;
+	bus_dma_tag_t           rxtag;
+	bool			        discard;
 
         /* Soft stats */
         unsigned long		rx_irq;
