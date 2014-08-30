@@ -332,6 +332,8 @@ struct adapter {
 	struct iflib_shared_context shared;
 #define ctx shared.isc_ctx
 #define media shared.isc_media
+#define dev shared.isc_dev
+#define ifp shared.isc_ifp
 	
 	struct e1000_hw	hw;
 	/* FreeBSD operating-system-specific structures. */
