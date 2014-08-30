@@ -225,7 +225,7 @@ static int  em_if_media_change(iflib_ctx_t);
 static void em_if_timer(iflib_ctx_t);
 static int	em_if_tx(iflib_ctx_t, void *, pkt_info_t);
 static void	em_if_txeof(iflib_ctx_t, void *);
-static int  em_if_packet_get(void *, int, rx_info_t);
+static int  em_if_packet_get(iflib_ctx_t, void *, int, rx_info_t);
 static void	em_if_led_func(iflib_ctx_t, int);
 static void em_if_watchdog_reset(iflib_ctx_t);
 
@@ -235,10 +235,9 @@ static void	em_if_vlan_register(iflib_ctx_t, u16);
 static void	em_if_vlan_unregister(iflib_ctx_t, u16);
 static void em_if_txq_setup(iflib_ctx_t, void *);
 
-static void em_if_refill_rxd(iflib_cxt_t, int, int, uint64_t);
-static void em_if_refill_flush(iflib_ctx_t, int, int);
-static void em_if_is_new(void *, int);
-
+static void em_if_rxd_refill(iflib_cxt_t, int, int, uint64_t);
+static void em_if_rxd_refill_flush(iflib_ctx_t, int, int);
+static void em_if_is_new(iflib_ctx_t, void *, int);
 
 static void	em_identify_hardware(struct adapter *);
 static int	em_allocate_pci_resources(struct adapter *);
@@ -308,6 +307,47 @@ devclass_t em_devclass;
 DRIVER_MODULE(em, pci, em_driver, em_devclass, 0, 0);
 MODULE_DEPEND(em, pci, 1, 1, 1);
 MODULE_DEPEND(em, ether, 1, 1, 1);
+
+
+static device_method_t em_if_methods[] = {
+	DEVMETHOD(ifc_detach, em_if_detach),
+	DEVMETHOD(ifc_suspend, em_if_suspend),
+	DEVMETHOD(ifc_resume, em_if_resume),
+	DEVMETHOD(ifc_init, em_if_init),
+	DEVMETHOD(ifc_stop, em_if_stop),
+	DEVMETHOD(ifc_intr_disable, em_if_intr_disable),
+	DEVMETHOD(ifc_intr_enable, em_if_intr_enable),
+	DEVMETHOD(ifc_tx_intr_enable, em_if_tx-intr_enable),
+	DEVMETHOD(ifc_rx_intr_enable, em_if_rx_intr_enable),
+	DEVMETHOD(ifc_link_intr_enable, em_if_link_intr_enable),
+	DEVMETHOD(ifc_multi_set, em_if_multi_set),
+	DEVMETHOD(ifc_queues_alloc, em_if_queues_alloc),
+	DEVMETHOD(ifc_update_link_status, em_if_update_link_status),
+	DEVMETHOD(ifc_mtu_set, em_if_mtu_set),
+	DEVMETHOD(ifc_media_set, em_if_media_set),
+	DEVMETHOD(ifc_media_status, em_if_media_status),
+	DEVMETHOD(ifc_media_change, em_if_media_change),
+	DEVMETHOD(ifc_timer, em_if_timer),
+	DEVMETHOD(ifc_tx, em_if_tx),
+	DEVMETHOD(ifc_txeof, em_if_txeof),
+	DEVMETHOD(ifc_packet_get, em_if_packet_get),
+	DEVMETHOD(ifc_led_func, em_if_led_func),
+	DEVMETHOD(ifc_watchdog_reset, em_if_watchdog_reset),
+	DEVMETHOD(ifc_promisc_config, em_if_promisc_config),
+	DEVMETHOD(ifc_promisc_disable, em_if_promisc_disable),
+	DEVMETHOD(ifc_vlan_register, em_if_vlan_register),
+	DEVMETHOD(ifc_vlan_unregister, em_if_vlan_unregister),
+	DEVMETHOD(ifc_txq_setup, em_if_txq_setup),
+	DEVMETHOD(ifc_rxd_refill, em_rxd_refill),
+	DEVMETHOD(ifc_rxd_refill_flush, em_if_rxd_refill_flush),
+	DEVMETHOD(ifc_is_new, em_if_is_new),
+	DEVMOTHED_END
+};
+
+static driver_t em_if_driver = {
+	"em_if", em_if_methods, 0,
+};
+
 
 /*********************************************************************
  *  Tunable default values.
@@ -446,8 +486,7 @@ em_probe(device_t dev)
 static int
 em_attach(device_t dev)
 {
-	device_t dev = iflib_device_get(ctx);
-	struct adapter	*adapter = iflib_softc_get(ctx);
+	struct adapter	*adapter = device_get_softc(dev);
 	struct e1000_hw	*hw;
 	int		error = 0;
 	
@@ -458,7 +497,7 @@ em_attach(device_t dev)
 		return (ENXIO);
 	}
 
-	if ((error = iflib_attach(dev)) != 0)
+	if ((error = iflib_attach(dev, em_if_driver)) != 0)
 		return (error);
 	
 	hw = &adapter->hw;
@@ -700,9 +739,6 @@ em_attach(device_t dev)
 	hw->mac.get_link_status = 1;
 	em_if_update_link_status(ctx);
 
-	/* Register for VLAN events */
-	iflib_vlan_register(ctx, em_register_vlan, em_unregister_vlan);
-	
 	em_add_hw_stats(adapter);
 
 	/* Non-AMT based hardware can now take control from firmware */
@@ -750,11 +786,7 @@ em_if_detach(iflib_ctx_t ctx)
 
 	INIT_DEBUGOUT("em_if_detach: begin");
 
-	if (adapter->led_dev != NULL)
-		led_destroy(adapter->led_dev);
-
 	e1000_phy_hw_reset(&adapter->hw);
-
 	em_release_manageability(adapter);
 	em_release_hw_control(adapter);
 	em_free_pci_resources(adapter);
@@ -1033,7 +1065,7 @@ em_if_tx_intr_enable(void *arg)
  **********************************************************************/
 
 static void
-em_if_rx_intr_enable(void *_rxr)
+em_if_rx_intr_enable(iflib_ctx_t _unused, void *_rxr)
 {
 	struct rx_ring *rxr = _rxr;
 	struct adapter	*adapter = rxr->adapter;
@@ -1466,7 +1498,6 @@ em_if_update_link_status(iflib_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_softc_get(ctx);
 	struct e1000_hw *hw = &adapter->hw;
-	device_t dev = adapter->dev;
 	struct tx_ring *txr = adapter->tx_rings;
 	u32 link_check = 0;
 
@@ -2006,7 +2037,6 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	
 	INIT_DEBUGOUT("em_setup_interface: begin");
 
-	ctx = iflib_drv_init(device_get_name(dev), device_get_unit(dev), adapter);
 	/*
 	 *..., maxsize, nsegments, maxsegsize
 	 */
@@ -2708,7 +2738,7 @@ em_initialize_receive_unit(struct adapter *adapter)
 }
 
 static void
-em_if_refill_rxd(iflib_cxt_t ctx, int rxqid, int pidx, uint64_t paddr)
+em_if_rxd_refill(iflib_cxt_t ctx, int rxqid, int pidx, uint64_t paddr)
 {
 	struct adapter *adapter = iflib_softc_get(ctx);
 	struct rx_ring *rxr = adapter->rx_rings[rxqid];
@@ -2717,7 +2747,7 @@ em_if_refill_rxd(iflib_cxt_t ctx, int rxqid, int pidx, uint64_t paddr)
 }
 
 static void
-em_if_refill_flush(iflib_ctx_t ctx, int rxqid, int pidx)
+em_if_rxd_refill_flush(iflib_ctx_t ctx, int rxqid, int pidx)
 {
 	struct adapter *adapter = iflib_softc_get(ctx);
 	E1000_WRITE_REG(&adapter->hw,
@@ -2725,7 +2755,7 @@ em_if_refill_flush(iflib_ctx_t ctx, int rxqid, int pidx)
 }
 
 static int
-em_if_is_new(void *_rxr, int idx)
+em_if_is_new(iflib_ctx_t _unused, void *_rxr, int idx)
 {
 	struct rx_ring *rxr = _rxr;
 	struct e1000_rx_desc	*cur;

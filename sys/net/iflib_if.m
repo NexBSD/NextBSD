@@ -2,7 +2,7 @@
 #include <sys/systm.h>
 #include <sys/bus.h>
 
-INTERFACE iflib;
+INTERFACE ifc;
 
 
 METHOD int detach {
@@ -131,4 +131,23 @@ METHOD void vlan_unregister {
 METHOD void txq_setup {
 	iflib_ctx_t _ctx;
 	void *_arg;
+};
+
+METHOD void rxd_refill {
+	iflib_ctx_t _ctx;
+	int _rxqid;
+	int _pidx;
+	uint64_t paddr;
+};
+
+METHOD void rxd_refill_flush {
+	iflib_ctx_t _ctx;
+	int _rxqid;
+	int _pidx;
+};
+
+METHOD int is_new {
+	iflib_ctx_t _ctx;
+	void *_rxr;
+	int _idx;
 };
