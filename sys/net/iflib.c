@@ -1,30 +1,21 @@
 struct iflib_ctx {
+
+	KOBJ_FIELDS;
 	int ifc_ntxq;
 	int ifc_nrxq;
 	if_t ifc_ifp;
 	iflib_txq_t ifc_txq;
 	iflib_rxq_t ifc_rxq;
-	
-	ifc_init(iflib_ctx_t);
-	ifc_resume(iflib_ctx_t);
+	iflib_shared_ctx_t *ifc_sctx;
 };
 
-#define RXD_SOP       (1 << 0)
-#define RXD_SOP_EOP   (1 << 1)
-#define RXD_EOP       (1 << 2)
-#define RXD_NSOP_NEOP (1 << 3)
-#define RXD_VLAN      (1 << 4)
+void *
+iflib_softc_get(iflib_ctx_t ctx)
+{
 
-typedef struct rxd_info {
-	uint16_t ri_qidx;
-	uint16_t ri_vtag;
-	int      ri_flags;
-	int      ri_cidx;
-	uint32_t ri_len;
-	struct mbuf *ri_m;
-	uint64_t ri_csum_flags;
-	uint64_t ri_csum_data;
-} rxd_info_t;
+	return (ctx->ifc_sc);
+}
+
 
 static void
 _recycle_rx_buf(iflib_ctx_t ctx, iflib_rxq_t rxq, uint32_t idx)
@@ -34,13 +25,14 @@ _recycle_rx_buf(iflib_ctx_t ctx, iflib_rxq_t rxq, uint32_t idx)
 	rxq->ifr_credits++;
 	if (++rxq->ifr_pidx == rxq->ifr_size)
 		q->pidx = 0;
+
 }
-			   
+
 /*
- * Process one descriptor
+ * Process one software descriptor
  */
 static void
-iflib_packet_get(iflib_ctx_t ctx, rxd_info_t ri)
+_iflib_packet_get(iflib_ctx_t ctx, rxd_info_t ri)
 {
 	iflib_rxq_t rxq = ctx->ifc_rxqs[ri->qidx];
 	iflib_sd_t sd = &rxq->ift_sds[ri->cidx];
@@ -117,13 +109,20 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);		
 		if (__predict_false(!ctx->ifc_is_new(rxq->ifr_hwq, cidx)))
 			break;		
-		ctx->ifc_packet_get(rxq->ifr_hwq, cidx, &ri);
+		err = ctx->ifc_packet_get(rxq->ifr_hwq, cidx, &ri);
 		bus_dmamap_unload(rxq->ifr_dtag, rxq->ifr_sds[cidx].ifsd_map);
-		
+
 		if (++cidx == ctx->ifc_nrxd)
 			cidx = 0;
+		if (err) {
+			_recycle_rx_buf(ctx, rxq, ri->ri_cidx);
+			continue;
+		}
+
+		_iflib_packet_get(ctx, &ri);
+		m = ri->ri_m;
 		if (mh == NULL)
-			mh = mt = rx->ri_m;
+			mh = mt = m;
 		else {
 			mt->m_nextpkt = m;
 			mt = m;
@@ -199,18 +198,6 @@ struct iflib_dma_info_t {
         bus_dma_segment_t       ifd_seg;
         int                     ifd_nseg;
 };
-
-/*
- * XXX Incomplete
- */
-
-iflib_ctx_t
-iflib_dev_init(void *sc)
-{
-	ctx->ifc_sc = sc;
-	CTX_LOCK_INIT(ctx);
-	callout_init_mtx(&ctx->ifc_timer, &ctx->ifc_mtx, 0);
-}
 
 /*
  * Trivial ifnet accessor wrappers
@@ -493,11 +480,23 @@ iflib_drv_init(device_t dev, int unit, void *sc)
 	return (ctx);
 }
 
+
+static void
+_iflib_init(iflib_ctx_t ctx)
+{
+	ctx->ifc_disable_intr(ctx);
+	callout_stop(ctx->ifc_timer);
+	ctx->ifc_init(ctx);
+	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_RUNNING, 0);
+	callout_reset(ctx->ifc_timer, hz, iflib_timer, ctx);
+}
+
 void
 iflib_init(iflib_ctx_t *ctx)
 {
-
-	iflib_if_init(ctx);
+	CTX_LOCK(ctx);
+	_iflib_init(ctx);
+	CTX_UNLOCK(ctx);
 }
 
 static void
@@ -505,15 +504,15 @@ _task_fn_legacy_intr(void *context, int pending)
 {
 	iflib_ctx_t ctx = context;
 	if_t ifp = ctx->ifc_ifp;
-	iflib_txq_t	txr = ctx->ifc_txqs;
-	iflib_rxq_t	rxr = ctx->ifc_rxqs;
+	iflib_txq_t	txq = ctx->ifc_txqs;
+	iflib_rxq_t	rxq = ctx->ifc_rxqs;
 	bool more;
 
 	/* legacy do it all crap function */
 	if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING)  == 0)
 		goto enable;
 
-	more = em_rxeof(rxr, adapter->rx_process_limit, NULL);
+	more = iflib_rxeof(rxq, ctx->rx_process_limit);
 
 	if(TXR_TRYLOCK(tx)) {
 		_iflib_txr_transmit(txr, NULL);
@@ -553,7 +552,7 @@ _task_fn_rx(void *context, int pending)
 
 	
 	if (RX_TRY_LOCK(rxr)) {
-		if ((more = ctx->ifc_rxeof(rxr, ctx->rx_process_limit, NULL)) == 0)
+		if ((more = iflib_rxeof(rxq, ctx->rx_process_limit)) == 0)
 			ctx->ifc_rx_intr_enable(rxr);
 		RX_UNLOCK(rxr);
 	}
@@ -867,13 +866,13 @@ iflib_rx_structures_setup(iflib_ctx_t ctx)
 	return (0);
 fail:
 	/*
-	 * Free RX buffers allocated so far, we will only handle
+	 * Free RX software descriptors allocated so far, we will only handle
 	 * the rings that completed, the failing case will have
 	 * cleaned up for itself. 'q' failed, so its the terminus.
 	 */
 	rxq = ctx->ifc_rxqs;
 	for (i = 0; i < q; ++i; rxq++) {
-		iflib_rx_bufs_free(ctx, rxq);
+		iflib_rx_sds_free(ctx, rxq);
 		rxq->next_to_check = 0;
 		rxq->next_to_refresh = 0;
 	}
@@ -892,7 +891,7 @@ iflib_rx_structures_free(iflib_ctx_t ctx)
 	iflib_txq_t rxq = ctx->ifc_rxq;
 
 	for (int i = 0; i < ctx->ifc_nqueues; i++, rxq++) {
-		iflib_rx_bufs_free(rxq);
+		iflib_rx_sds_free(rxq);
 		iflib_dma_free(&rxq->ift_dma_info);
 	}
 }
@@ -904,19 +903,16 @@ iflib_rx_structures_free(iflib_ctx_t ctx)
  *
  **********************************************************************/
 static void
-iflib_rx_bufs_free(iflib_rxq_t rxq)
+iflib_rx_sds_free(iflib_rxq_t rxq)
 {
 	iflib_ctx_t ctx = rxq->ifr_ctx;
 
 	INIT_DEBUGOUT("free_receive_buffers: begin");
 
 	if (rxq->ifr_sds != NULL) {
-		for (int i = 0; i < ctx->ifc_nrxd; i++) {
-			iflib_rx_bufs_free(rxq);
 
-			free(rxr->ifr_buffers, M_DEVBUF);
-			rxr->rx_buffers = NULL;
-		}
+		free(rxq->ifr_sds, M_DEVBUF);
+		rxq->ifr_sds = NULL;
 		rxr->next_to_check = 0;
 		rxr->next_to_refresh = 0;
 	}
@@ -927,6 +923,14 @@ iflib_rx_bufs_free(iflib_rxq_t rxq)
 	}
 
 	return;
+}
+
+static void
+_iflib_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
+{
+	if (error)
+		return;
+	*(bus_addr_t *) arg = segs[0].ds_addr;
 }
 
 static int
@@ -965,7 +969,7 @@ iflib_dma_alloc(iflib_ctx_t ctx, bus_size_t size, iflib_dma_info_t dma,
 
 	dma->ifd_paddr = 0;
 	err = bus_dmamap_load(dma->ifd_tag, dma->ifd_map, dma->ifd_vaddr,
-	    size, em_dmamap_cb, &dma->ifd_paddr, mapflags | BUS_DMA_NOWAIT);
+	    size, _iflib_dmamap_cb, &dma->ifd_paddr, mapflags | BUS_DMA_NOWAIT);
 	if (err || dma->ifd_paddr == 0) {
 		device_printf(adapter->dev,
 		    "%s: bus_dmamap_load failed: %d\n",
@@ -1124,11 +1128,16 @@ rx_fail:
 	free(ctx->ifc_txqs, M_DEVBUF);
 fail:
 	return (err);
-
 }
 
+
+/*
+ *
+ *
+ */
+
 static void
-iflib_transmit_ring_setup(iflib_txq_t txq)
+iflib_txq_setup(iflib_txq_t txq)
 {
 	iflib_ctx_t ctx = txq->ift_ctx;
 	iflib_buf_t txbuf;
@@ -1171,7 +1180,7 @@ iflib_transmit_ring_setup(iflib_txq_t txq)
 		txbuf->next_eop = -1;
 	}
 
-	ctx->ifc_transmit_ring_setup(txr->ift_hw_txr);
+	ctx->ifc_txq_setup(txr->ift_hw_txr);
 	bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	TX_UNLOCK(txr);	
@@ -1190,9 +1199,17 @@ iflib_tx_structures_setup(iflib_ctx_t ctx)
 int
 iflib_attach(device_t dev)
 {
-	iflib_ctx_t ctx = iflib_dev_init(dev);
-
-	return(ctx->ifc_attach(ctx));
+	iflib_shared_ctx_t sctx = device_get_softc(dev);
+	iflib_ctx_t ctx;
+	
+	ctx = malloc(sizeof(struct iflib_ctx), M_DEVBUF, M_WAITOK);
+	if (ctx == NULL)
+		return (ENOMEM);
+	CTX_LOCK_INIT(ctx);
+	callout_init_mtx(&ctx->ifc_timer, &ctx->ifc_mtx, 0);
+	sctx->isc_ctx = ctx;
+	ctx->ifc_sctx = sctx;
+	return (0);
 }
 
 
@@ -1218,7 +1235,8 @@ iflib_stop(iflib_ctx_t ctx)
 int
 iflib_detach(device_t dev)
 {
-	iflib_ctx_t ctx = device_get_softc(dev);
+	iflib_shared_ctx_t sctx = device_get_softc(dev);
+	iflib_ctx_t ctx = sctx->isc_ctx;
 	if_t ifp = ctx->ifc_ifp;
 
 	/* Make sure VLANS are not using driver */
@@ -1259,7 +1277,8 @@ iflib_detach(device_t dev)
 int
 iflib_suspend(device_t dev)
 {
-	iflib_ctx_t ctx = device_get_softc(dev);
+	iflib_shared_ctx_t sctx = device_get_softc(dev);
+	iflib_ctx_t ctx = sctx->isc_ctx;
 	
 	CTX_LOCK(ctx);
 	ctx->ifc_suspend(ctx);
@@ -1271,7 +1290,8 @@ iflib_suspend(device_t dev)
 int
 iflib_resume(device_t dev)
 {
-	iflib_ctx_t ctx = device_get_softc(dev);
+	iflib_shared_ctx_t sctx = device_get_softc(dev);
+	iflib_ctx_t ctx = sctx->isc_ctx;
 	
 	CTX_LOCK(ctx);
 	ctx->ifc_resume(ctx);
@@ -1344,14 +1364,8 @@ static void
 iflib_if_init(void *arg)
 {
 	iflib_ctx_t ctx = arg;
-	
-	CTX_LOCK(ctx);
-	ctx->ifc_disable_intr(ctx);
-	callout_stop(ctx->ifc_timer);
-	ctx->ifc_init(ctx);
-	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_RUNNING, 0);
-	callout_reset(ctx->ifc_timer, hz, iflib_timer, ctx);
-	CTX_UNLOCK(ctx);
+
+	iflib_init(ctx);
 }
 
 static int
@@ -1435,16 +1449,18 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		break;
 	case SIOCSIFMTU:
 		CTX_LOCK(ctx);
-		ctx->ifc_set_mtu(ctx, mtu);
-		CTX_UNLOCK(ctx);
+		ctx->ifc_mtu_set(ctx, mtu);
+		_iflib_init(ctx);
 		if_setmtu(ifp, mtu);
+		CTX_UNLOCK(ctx);
+		break;
 	case SIOCSIFFLAGS:
 		CTX_LOCK(ctx);
 		if (if_getflags(ifp) & IFF_UP) {
 			if (if_getdrvflags(ifp) & IFF_DRV_RUNNING) {
 				if ((if_getflags(ifp) ^ adapter->if_flags) &
 				    (IFF_PROMISC | IFF_ALLMULTI)) {
-					ctx->ifc_promisc_config(ctx->ifc_sc, if_getflags(ifp));
+					ctx->ifc_promisc_config(ctx->ifc_sctx, if_getflags(ifp));
 				}
 			} else
 				ctx->ifc_init(ctx);
@@ -1562,7 +1578,7 @@ iflib_timer(void *arg)
 	** can be done without the lock because its RO
 	** and the HUNG state will be static if set.
 	*/
-	ctx->ifc_timer(ctx->ifc_sc);
+	ctx->ifc_timer(ctx->ifc_sctx);
 	for (int i = 0; i < ctx->ifc_nqueues; i++, txr++) {
 		if ((txr->ift_qstatus == IFLIB_QUEUE_HUNG) &&
 		    (ctx->_ifc_pause_frames == 0))
@@ -1586,17 +1602,23 @@ unlock:
 	CTX_UNLOCK(ctx);
 }
 
-
-
-/*
- * XXX BLEH
- *
- */
 static void
-(tx_ring_t *txr)
+_iflib_led_func(void *arg, int onoff)
 {
+	iflib_ctx_t ctx = arg;
+
+	CTX_LOCK(ctx);
+	ctx->ifc_led_func(ctx, onoff);
+	CTX_UNLOCK(ctx);
 }
 
+void
+iflib_led_create(iflib_ctx_t ctx, led_t *func)
+{
+	ctx->ifc_led_func = func;
+	ctx->ifc_led_dev = led_create(_iflib_led_func, ctx,
+								  device_get_nameunit(ctx->ifc_dev));
+}
 
 static int
 _iflib_tx(iflib_txq_t txr, struct mbuf **m_headp)

@@ -41,29 +41,22 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#if __FreeBSD_version >= 800000
-#include <sys/buf_ring.h>
-#endif
 #include <sys/bus.h>
 #include <sys/endian.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
 #include <sys/malloc.h>
-#include <sys/mbuf.h>
 #include <sys/module.h>
 #include <sys/rman.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <sys/sysctl.h>
-#include <sys/taskqueue.h>
-#include <sys/eventhandler.h>
 #include <machine/bus.h>
 #include <machine/resource.h>
 
 #include <net/bpf.h>
 #include <net/ethernet.h>
 #include <net/if.h>
-#include <net/if_var.h>
 #include <net/if_arp.h>
 #include <net/if_dl.h>
 #include <net/if_media.h>
@@ -200,52 +193,71 @@ static char *em_strings[] = {
  *  Function prototypes
  *********************************************************************/
 static int	em_probe(device_t);
-static int	em_if_attach(iflib_ctx_t);
+static int	em_attach(device_t);
+
+/*
+ * Library functions for the hardware independent
+ * iflib layer
+ */
 static int	em_if_detach(iflib_ctx_t);
 static int	em_if_suspend(iflib_ctx_t);
 static int	em_if_resume(iflib_ctx_t);
-static void	em_stop(void *);
-static void	em_media_status(iflib_ctx_t, struct ifmediareq *);
-static int	em_media_change(iflib_ctx_t);
+
+static void em_if_init(iflib_ctx_t);
+static void	em_if_stop(iflib_ctx_t);
+
+static void	em_if_intr_enable(iflib_ctx_t);
+static void	em_if_intr_disable(iflib_ctx_t);
+static void em_if_tx_intr_enable(iflib_ctx_t, void *);
+static void em_if_rx_intr_enable(iflib_ctx_t, void *);
+static void em_if_link_intr_enable(iflib_ctx_t);
+
+static void	em_if_multi_set(iflib_ctx_t);
+static int	em_if_queues_alloc(iflib_ctx_t);
+static void	em_if_update_link_status(iflib_ctx_t);
+
+static int  em_if_mtu_set(iflib_ctx_t, uint32_t);
+
+static void em_if_media_set(iflib_ctx_t);
+static void em_if_media_status(iflib_ctx_t, struct ifmediareq *);
+static int  em_if_media_change(iflib_ctx_t);
+
+static void em_if_timer(iflib_ctx_t);
+static int	em_if_tx(iflib_ctx_t, void *, pkt_info_t);
+static void	em_if_txeof(iflib_ctx_t, void *);
+static int  em_if_packet_get(void *, int, rx_info_t);
+static void	em_if_led_func(iflib_ctx_t, int);
+static void em_if_watchdog_reset(iflib_ctx_t);
+
+static void	em_if_promisc_config(iflib_ctx_t, int);
+static void	em_if_promisc_disable(iflib_ctx_t, int);
+static void	em_if_vlan_register(iflib_ctx_t, u16);
+static void	em_if_vlan_unregister(iflib_ctx_t, u16);
+static void em_if_txq_setup(iflib_ctx_t, void *);
+
+static void em_if_refill_rxd(iflib_cxt_t, int, int, uint64_t);
+static void em_if_refill_flush(iflib_ctx_t, int, int);
+static void em_if_is_new(void *, int);
+
+
 static void	em_identify_hardware(struct adapter *);
 static int	em_allocate_pci_resources(struct adapter *);
 static int	em_allocate_legacy(struct adapter *);
 static int	em_allocate_msix(struct adapter *);
-static int	em_if_queues_alloc(iflib_ctx_t);
 static int	em_setup_msix(struct adapter *);
 static void	em_free_pci_resources(struct adapter *);
 static void	em_reset(struct adapter *);
 static int	em_setup_interface(device_t, struct adapter *);
 static void	em_initialize_transmit_unit(struct adapter *);
 
-static int	em_setup_receive_structures(struct adapter *);
-static int	em_allocate_receive_buffers(struct rx_ring *);
 static void	em_initialize_receive_unit(struct adapter *);
-static void	em_free_receive_structures(struct adapter *);
-static void	em_free_receive_buffers(struct rx_ring *);
-
-static void	em_if_intr_enable(iflib_ctx_t);
-static void	em_if_intr_disable(iflib_ctx_t);
 static void	em_update_stats_counters(struct adapter *);
 static void	em_add_hw_stats(struct adapter *adapter);
-static void	em_if_txeof(iflib_tx_ring_t);
-static bool em_if_packet_get(void *, int, rx_info_t);
-#ifndef __NO_STRICT_ALIGNMENT
-static int	em_fixup_rx(struct rx_ring *);
-#endif
 static void	em_receive_checksum(struct e1000_rx_desc *, int *, int *);
 static void	em_transmit_checksum_setup(struct tx_ring *, int, int,
 		    struct ip *, u32 *, u32 *);
 static void	em_tso_setup(struct tx_ring *, pkt_info_t, u32 *, u32 *);
-static void	em_if_promisc_config(iflib_ctx_t, int);
-static void	em_if_promisc_disable(iflib_ctx_t, int);
-static void	em_if_multi_set(iflib_ctx_t);
-static void	em_if_update_link_status(iflib_ctx_t);
-static void	em_refresh_mbufs(struct rx_ring *, int);
-static void	em_if_vlan_register(iflib_ctx_t, u16);
-static void	em_if_vlan_unregister(iflib_ctx_t, u16);
 static void	em_setup_vlan_hw_support(struct adapter *);
-static int	em_if_tx(iflib_tx_ring_t, pkt_info_t);
 static int	em_sysctl_nvm_info(SYSCTL_HANDLER_ARGS);
 static void	em_print_nvm_info(struct adapter *);
 static int	em_sysctl_debug_info(SYSCTL_HANDLER_ARGS);
@@ -259,10 +271,9 @@ static void	em_init_manageability(struct adapter *);
 static void	em_release_manageability(struct adapter *);
 static void     em_get_hw_control(struct adapter *);
 static void     em_release_hw_control(struct adapter *);
-static void	em_get_wakeup(iflib_ctx_t);
-static void     em_enable_wakeup(iflib_ctx_t);
+static void	em_get_wakeup(struct adapter *);
+static void     em_enable_wakeup(struct adapter *);
 static int	em_enable_phy_wakeup(struct adapter *);
-static void	em_led_func(void *, int);
 static void	em_disable_aspm(struct adapter *);
 
 static int	em_irq_fast(void *);
@@ -272,9 +283,6 @@ static void	em_set_sysctl_value(struct adapter *, const char *,
 		    const char *, int *, int);
 static int	em_set_flowcntl(SYSCTL_HANDLER_ARGS);
 static int	em_sysctl_eee(SYSCTL_HANDLER_ARGS);
-
-#ifdef DEVICE_POLLING
-static poll_handler_drv_t em_poll;
 #endif /* POLLING */
 
 /*********************************************************************
@@ -284,7 +292,7 @@ static poll_handler_drv_t em_poll;
 static device_method_t em_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe, em_probe),
-	DEVMETHOD(device_attach, iflib_attach),
+	DEVMETHOD(device_attach, em_attach),
 	DEVMETHOD(device_detach, iflib_detach),
 	DEVMETHOD(device_shutdown, iflib_suspend),
 	DEVMETHOD(device_suspend, iflib_suspend),
@@ -436,7 +444,7 @@ em_probe(device_t dev)
  *********************************************************************/
 
 static int
-em_if_attach(iflib_ctx_t ctx)
+em_attach(device_t dev)
 {
 	device_t dev = iflib_device_get(ctx);
 	struct adapter	*adapter = iflib_softc_get(ctx);
@@ -450,6 +458,9 @@ em_if_attach(iflib_ctx_t ctx)
 		return (ENXIO);
 	}
 
+	if ((error = iflib_attach(dev)) != 0)
+		return (error);
+	
 	hw = &adapter->hw;
 	
 	/* SYSCTL stuff */
@@ -630,7 +641,6 @@ em_if_attach(iflib_ctx_t ctx)
 	*/
 	e1000_reset_hw(hw);
 
-
 	/* Make sure we have a good EEPROM before we read from it */
 	if (e1000_validate_nvm_checksum(hw) < 0) {
 		/*
@@ -701,8 +711,7 @@ em_if_attach(iflib_ctx_t ctx)
 
 	iflib_clearactive(ctx);
 
-	adapter->led_dev = led_create(em_led_func, adapter,
-	    device_get_nameunit(dev));
+	iflib_led_create(ctx, em_if_led_func);
 #ifdef DEV_NETMAP
 	em_netmap_attach(adapter);
 #endif /* DEV_NETMAP */
@@ -713,14 +722,13 @@ em_if_attach(iflib_ctx_t ctx)
 
 err_late:
 	iflib_transmit_structures_free(ctx);
-	em_free_receive_structures(adapter);
+	iflib_rx_structures_free(adapter);
 	em_release_hw_control(adapter);
 	if (adapter->ctx != (void *)NULL)
 		iflib_free_ctx(adapter->ctx);
 err_pci:
 	em_free_pci_resources(adapter);
 	free(adapter->mta, M_DEVBUF);
-	EM_CORE_LOCK_DESTROY(adapter);
 
 	return (error);
 }
@@ -771,7 +779,7 @@ em_if_suspend(iflib_ctx_t ctx)
 
 	em_release_manageability(adapter);
 	em_release_hw_control(adapter);
-	em_enable_wakeup(ctx);
+	em_enable_wakeup(adapter);
 }
 
 static int
@@ -802,7 +810,6 @@ em_if_mtu_set(iflib_ctx_t ctx, uint32_t mtu)
 		
 		IOCTL_DEBUGOUT("ioctl rcv'd: SIOCSIFMTU (Set Interface MTU)");
 
-		EM_CORE_LOCK(adapter);
 		switch (adapter->hw.mac.type) {
 		case e1000_82571:
 		case e1000_82572:
@@ -827,18 +834,16 @@ em_if_mtu_set(iflib_ctx_t ctx, uint32_t mtu)
 		}
 		if (mtu > max_frame_size - ETHER_HDR_LEN -
 		    ETHER_CRC_LEN) {
-			EM_CORE_UNLOCK(adapter);
 			error = EINVAL;
 			break;
 		}
 		adapter->hw.mac.max_frame_size =
 		    mtu + ETHER_HDR_LEN + ETHER_CRC_LEN;
-		em_init_locked(adapter);
-		EM_CORE_UNLOCK(adapter);
+		iflib_init(ctx);
 }
 
 static void
-em_if_set_media(iflib_ctx_t ctx)
+em_if_media_set(iflib_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_softc_get(ctx);
 
@@ -863,7 +868,7 @@ em_if_set_media(iflib_ctx_t ctx)
  **********************************************************************/
 
 static void
-em_if_init(ctx_t ctx)
+em_if_init(iflib_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_softc_get(ctx);
 
@@ -920,9 +925,9 @@ em_if_init(ctx_t ctx)
 		adapter->rx_mbuf_sz = MJUM9BYTES;
 
 	/* Prepare receive descriptors and buffers */
-	if (em_setup_receive_structures(adapter)) {
+	if (iflib_rx_structures_setup(ctx)) {
 		device_printf(dev, "Could not setup receive structures\n");
-		em_stop(adapter);
+		em_if_stop(ctx);
 		return;
 	}
 	em_initialize_receive_unit(adapter);
@@ -1028,8 +1033,9 @@ em_if_tx_intr_enable(void *arg)
  **********************************************************************/
 
 static void
-em_if_rx_intr_enable(struct rx_ring *rxr)
+em_if_rx_intr_enable(void *_rxr)
 {
+	struct rx_ring *rxr = _rxr;
 	struct adapter	*adapter = rxr->adapter;
 
 	/* Reenable this interrupt */
@@ -1059,9 +1065,9 @@ em_msix_link(void *arg)
 }
 
 static void
-em_if_link_intr_enable(void *arg)
+em_if_link_intr_enable(iflib_ctx_t ctx)
 {
-	struct adapter	*adapter = arg;
+	struct adapter	*adapter = iflib_softc_get(ctx);
 
 	E1000_WRITE_REG(&adapter->hw, E1000_IMS,
 					EM_MSIX_LINK | E1000_IMS_LSC);
@@ -1082,7 +1088,7 @@ em_if_media_status(iflib_ctx_t ctx, struct ifmediareq *ifmr)
 	struct adapter *adapter = iflib_softc_get(ctx);
 	u_char fiber_type = IFM_1000_SX;
 
-	INIT_DEBUGOUT("em_media_status: begin");
+	INIT_DEBUGOUT("em_if_media_status: begin");
 
 	em_if_update_link_status(ctx);
 
@@ -1179,7 +1185,7 @@ em_if_media_change(iflib_ctx_t ctx)
  **********************************************************************/
 
 static int
-em_if_tx(void *hw_txr, pkt_info_t pi)
+em_if_tx(iflib_ctx_t ctx, void *hw_txr, pkt_info_t pi)
 {
 	struct tx_ring *txr = hw_txr;
 	struct e1000_tx_desc	*ctxd = NULL;
@@ -1536,7 +1542,7 @@ em_if_stop(iflib_ctx_t ctx)
 {
 	struct adapter	*adapter = iflib_softc_get(ctx);;
 
-	INIT_DEBUGOUT("em_stop: begin");
+	INIT_DEBUGOUT("em_if_stop: begin");
 
 	e1000_reset_hw(&adapter->hw);
 	E1000_WRITE_REG(&adapter->hw, E1000_WUC, 0);
@@ -2054,7 +2060,7 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	 * callbacks to update media and link information
 	 */
 	ifmedia_init_drv(&adapter->media, IFM_IMASK,
-	    em_media_change, em_media_status);
+					 em_media_change, em_media_status);
 	if ((adapter->hw.phy.media_type == e1000_media_type_fiber) ||
 	    (adapter->hw.phy.media_type == e1000_media_type_internal_serdes)) {
 		u_char fiber_type = IFM_1000_SX;	/* default type */
@@ -2080,18 +2086,6 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	ifmedia_add(&adapter->media, IFM_ETHER | IFM_AUTO, 0, NULL);
 	ifmedia_set(&adapter->media, IFM_ETHER | IFM_AUTO);
 	return (0);
-}
-
-
-/*
- * Manage DMA'able memory.
- */
-static void
-em_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
-{
-	if (error)
-		return;
-	*(bus_addr_t *) arg = segs[0].ds_addr;
 }
 
 /*********************************************************************
@@ -2154,7 +2148,7 @@ fail:
  *
  **********************************************************************/
 static void
-em_if_transmit_ring_setup(void *arg)
+em_if_txq_setup(void *arg)
 {
 	struct tx_ring *txr = arg;
 	struct adapter *adapter = txr->adapter;
@@ -2495,8 +2489,9 @@ em_tso_setup(struct tx_ring *txr, pkt_info_t pi, u32 *txd_upper, u32 *txd_lower)
  *
  **********************************************************************/
 static void
-em_if_txeof(struct tx_ring *txr)
+em_if_txeof(iflib_ctx_t ctx, void *_txr)
 {
+	struct tx_ring *txr = _txr;
 	struct adapter	*adapter = txr->adapter;
 	int first, last, done, processed;
 	struct e1000_tx_desc   *tx_desc, *eop_desc;
@@ -2577,84 +2572,6 @@ em_if_txeof(struct tx_ring *txr)
 	if (txr->tx_avail == adapter->num_tx_desc) {
 		txr->queue_status = EM_QUEUE_IDLE;
 	} 
-}
-
-
-/*********************************************************************
- *
- *  Refresh RX descriptor mbufs from system mbuf buffer pool.
- *
- **********************************************************************/
-static void
-em_refresh_mbufs(struct rx_ring *rxr, int limit)
-{
-	struct adapter		*adapter = rxr->adapter;
-	struct mbuf		*m;
-	bus_dma_segment_t	segs[1];
-	struct em_buffer	*rxbuf;
-	int			i, j, error, nsegs;
-	bool			cleaned = FALSE;
-
-	i = j = rxr->next_to_refresh;
-	/*
-	** Get one descriptor beyond
-	** our work mark to control
-	** the loop.
-	*/
-	if (++j == adapter->num_rx_desc)
-		j = 0;
-
-	while (j != limit) {
-		rxbuf = &rxr->rx_buffers[i];
-		if (rxbuf->m_head == NULL) {
-			m = m_getjcl(M_NOWAIT, MT_DATA,
-			    M_PKTHDR, adapter->rx_mbuf_sz);
-			/*
-			** If we have a temporary resource shortage
-			** that causes a failure, just abort refresh
-			** for now, we will return to this point when
-			** reinvoked from em_rxeof.
-			*/
-			if (m == NULL)
-				goto update;
-		} else
-			m = rxbuf->m_head;
-
-		m->m_len = m->m_pkthdr.len = adapter->rx_mbuf_sz;
-		m->m_flags |= M_PKTHDR;
-		m->m_data = m->m_ext.ext_buf;
-
-		/* Use bus_dma machinery to setup the memory mapping  */
-		error = bus_dmamap_load_virtual_buffer(rxr->rxtag, rxbuf->map,
-					m->m_data, adapter->rx_mbuf_sz, segs, &nsegs,
-					BUS_DMA_NOWAIT|BUS_DMA_LOAD_MBUF);
-		if (error != 0) {
-			printf("Refresh mbufs: hdr dmamap load"
-			    " failure - %d\n", error);
-			m_free(m);
-			rxbuf->m_head = NULL;
-			goto update;
-		}
-		rxbuf->m_head = m;
-		bus_dmamap_sync(rxr->rxtag,
-		    rxbuf->map, BUS_DMASYNC_PREREAD);
-		cleaned = TRUE;
-
-		i = j; /* Next is precalulated for us */
-		rxr->next_to_refresh = i;
-		/* Calculate next controlling index */
-		if (++j == adapter->num_rx_desc)
-			j = 0;
-	}
-update:
-	/*
-	** Update the tail pointer only if,
-	** and as far as we have refreshed.
-	*/
-	if (cleaned)
-
-
-	return;
 }
 
 /*********************************************************************
@@ -2828,18 +2745,16 @@ em_if_is_new(void *_rxr, int idx)
  *  
  *  For polling we also now return the number of cleaned packets
  *********************************************************************/
-static bool
+static int
 em_if_packet_get(void *_rxr, int i, rx_info_t ri)
 {
 	struct rx_ring *rxr = _rxr;
 	struct adapter		*adapter = rxr->adapter;
-	struct mbuf		*mp, *sendmp;
 	u8			status;
 	u16 			len;
-	int			processed, rxdone = 0;
+	int			err;
 	bool			eop;
 	struct e1000_rx_desc	*cur;
-	uint64_t csum_flags, csum_data;
 	
 	cur = &rxr->rx_base[i];
 	status = cur->status;
@@ -2852,13 +2767,16 @@ em_if_packet_get(void *_rxr, int i, rx_info_t ri)
 		(rxr->discard == TRUE)) {
 		adapter->dropped_pkts++;
 		++rxr->rx_discarded;
+#ifdef notyet
 		if (!eop) /* Catch subsequent segs */
 			rxr->discard = TRUE;
 		else
 			rxr->discard = FALSE;
+#endif
 		/* XXX recycle buffer if there was an error */
 		em_rx_discard(rxr, i);
-		goto next_desc;
+		cur->status = 0;
+		return (EBADMSG);
 	}
 	
 	/* Assign correct length to the current fragment */
@@ -2868,77 +2786,22 @@ em_if_packet_get(void *_rxr, int i, rx_info_t ri)
 	ri->ri_len = len;
 
 	if (eop) {
-		em_receive_checksum(cur, &ri->csum_flags,
+		em_receive_checksum(cur, &ri->ri_csum_flags,
 							&ri->csum_data);
-#ifndef __NO_STRICT_ALIGNMENT
-		if (adapter->hw.mac.max_frame_size >
-			(MCLBYTES - ETHER_ALIGN) &&
-			em_fixup_rx(rxr) != 0)
-			goto skip;
-#endif
 		if (status & E1000_RXD_STAT_VP) {
 			ri->ri_flags |= RXD_VLAN;
 			ri->ri_vtag = le16toh(cur->special);
 		}
-#ifndef __NO_STRICT_ALIGNMENT
-skip:
-#endif
-		}
-next_desc:
-		/* Zero out the receive descriptors status. */
-		cur->status = 0;
 	}
-
-	return ((status & E1000_RXD_STAT_DD) ? TRUE : FALSE);
+	cur->status = 0;
+	return (err);
 }
 
-#ifndef __NO_STRICT_ALIGNMENT
 /*
- * When jumbo frames are enabled we should realign entire payload on
- * architecures with strict alignment. This is serious design mistake of 8254x
- * as it nullifies DMA operations. 8254x just allows RX buffer size to be
- * 2048/4096/8192/16384. What we really want is 2048 - ETHER_ALIGN to align its
- * payload. On architecures without strict alignment restrictions 8254x still
- * performs unaligned memory access which would reduce the performance too.
- * To avoid copying over an entire frame to align, we allocate a new mbuf and
- * copy ethernet header to the new mbuf. The new mbuf is prepended into the
- * existing mbuf chain.
- *
- * Be aware, best performance of the 8254x is achived only when jumbo frame is
- * not used at all on architectures with strict alignment.
+ * Hardware requiring this would perform terribly
  */
-static int
-em_fixup_rx(struct rx_ring *rxr)
-{
-	struct adapter *adapter = rxr->adapter;
-	struct mbuf *m, *n;
-	int error;
-
-	error = 0;
-	m = rxr->fmp;
-	if (m->m_len <= (MCLBYTES - ETHER_HDR_LEN)) {
-		bcopy(m->m_data, m->m_data + ETHER_HDR_LEN, m->m_len);
-		m->m_data += ETHER_HDR_LEN;
-	} else {
-		MGETHDR(n, M_NOWAIT, MT_DATA);
-		if (n != NULL) {
-			bcopy(m->m_data, n->m_data, ETHER_HDR_LEN);
-			m->m_data += ETHER_HDR_LEN;
-			m->m_len -= ETHER_HDR_LEN;
-			n->m_len = ETHER_HDR_LEN;
-			M_MOVE_PKTHDR(n, m);
-			n->m_next = m;
-			rxr->fmp = n;
-		} else {
-			adapter->dropped_pkts++;
-			m_freem(rxr->fmp);
-			rxr->fmp = NULL;
-			error = ENOMEM;
-		}
-	}
-
-	return (error);
-}
+#ifndef __NO_STRICT_ALIGNMENT
+#error "unsupported alignment"
 #endif
 
 /*********************************************************************
@@ -3178,9 +3041,8 @@ em_is_valid_ether_addr(u8 *addr)
 ** later use.
 */
 static void
-em_get_wakeup(iflib_ctx_t ctx)
+em_get_wakeup(struct adapter *adapter)
 {
-	struct adapter	*adapter = iflib_softc_get(ctx);
 	u16		eeprom_data = 0, device_id, apme_mask;
 
 	adapter->has_manage = e1000_enable_mng_pass_thru(&adapter->hw);
@@ -3243,18 +3105,15 @@ em_get_wakeup(iflib_ctx_t ctx)
 			global_quad_port_a = 0;
                 break;
 	}
-	return;
 }
-
 
 /*
  * Enable PCI Wake On Lan capability
  */
 static void
-em_enable_wakeup(iflib_ctx_t ctx)
+em_enable_wakeup(struct adapter *adapter)
 {
-	device_t dev = iflib_device_get(ctx);
-	struct adapter	*adapter = iflib_softc_get(ctx);
+	device_t dev = iflib_device_get(adapter->ctx);
 	u32		pmc, ctrl, ctrl_ext, rctl;
 	u16     	status;
 
@@ -3393,11 +3252,10 @@ out:
 }
 
 static void
-em_led_func(void *arg, int onoff)
+em_if_led_func(iflib_ctx_t ctx, int onoff)
 {
-	struct adapter	*adapter = arg;
- 
-	EM_CORE_LOCK(adapter);
+	struct adapter	*adapter = iflib_softc_get(ctx);
+
 	if (onoff) {
 		e1000_setup_led(&adapter->hw);
 		e1000_led_on(&adapter->hw);
@@ -3405,7 +3263,6 @@ em_led_func(void *arg, int onoff)
 		e1000_led_off(&adapter->hw);
 		e1000_cleanup_led(&adapter->hw);
 	}
-	EM_CORE_UNLOCK(adapter);
 }
 
 /*

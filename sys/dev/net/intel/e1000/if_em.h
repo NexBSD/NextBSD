@@ -325,13 +325,16 @@ struct rx_ring {
 
 /* Our adapter structure */
 struct adapter {
-	if_t 		ifp;
-	struct e1000_hw	hw;
+	/*
+	 * Shared context must be at the very start
+	 * of the structure
+	 */
+	struct iflib_shared_context shared;
+#define ctx shared.isc_ctx
 
+	struct e1000_hw	hw;
 	/* FreeBSD operating-system-specific structures. */
 	struct e1000_osdep osdep;
-	struct device	*dev;
-	struct cdev	*led_dev;
 
 	struct resource *memory;
 	struct resource *flash;
@@ -343,21 +346,13 @@ struct adapter {
 	u32		ivars;
 
 	struct ifmedia	media;
-	struct callout	timer;
 	int		msix;
 	int		if_flags;
 	int		max_frame_size;
 	int		min_frame_size;
-	int		pause_frames;
-	struct mtx	core_mtx;
 	int		em_insert_vlan_header;
 	u32		ims;
 	bool		in_detach;
-
-	/* Task for FAST handling */
-	struct task     link_task;
-	struct task     que_task;
-	struct taskqueue *tq;           /* private task queue */
 
 	eventhandler_tag vlan_attach;
 	eventhandler_tag vlan_detach;
