@@ -2,8 +2,6 @@
 #include <sys/kobj.h>
 
 #include <net/iflib.h>
-#include "iflib_if.h"
-
 
 struct iflib_ctx {
 	KOBJ_FIELDS;
@@ -32,7 +30,7 @@ typedef struct iflib_txq {
 	u32                     ift_next_to_clean;
 	volatile u16            ift_tx_avail;
 	unsigned long		    ift_no_desc_avail;
-	void                   *ift_hw_txr;
+	void                   *ift_hwq;
 	struct task             ift_task;
 	int			            ift_qstatus;
 	int                     ift_watchdog_time;
@@ -46,6 +44,7 @@ typedef struct iflib_rxq {
 	struct task             ifr_task;
 	iflib_sd_t              ifr_sds;
 	bus_dma_tag_t           ifr_tag;
+	void                   *ifr_hwq;
 } *iflib_rxq_t;
 
 
@@ -64,12 +63,6 @@ x									   */
 	int		        ifsd_next_eop;    /* Index of the last buffer */
 	int             ifsd_flags;
 } *iflib_sd_t;
-
-struct iflib_irq {
-	struct resource  *ifi_res;
-	int               ifi_rid;
-	void             *ifi_tag;
-};
 
 struct iflib_dma_info_t {
         bus_addr_t              ifd_paddr;
@@ -93,7 +86,6 @@ iflib_device_get(iflib_ctx_t ctx)
 
 	return (ctx->ifc_dev);
 }
-
 
 static void
 _recycle_rx_buf(iflib_ctx_t ctx, iflib_rxq_t rxq, uint32_t idx)
@@ -351,20 +343,20 @@ iflib_setactive(iflib_ctx_t ctx)
 }
 
 int
-iflib_getactive(iflib_ctx_t ctx)
+iflib_active_get(iflib_ctx_t ctx)
 {
 		return ((if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING) != 0)
 }
 
 void
-iflib_clearactive(iflib_ctx_t ctx)
+iflib_active_clear(iflib_ctx_t ctx)
 {
 	/* Tell the stack that the interface is not active */
 	if_setdrvflagbits(ctx->ifc_ifp, 0, IFF_DRV_RUNNING);
 }
 	
 void
-iflib_sethwassist(iflib_ctx_t ctx)
+iflib_hwassist_set(iflib_ctx_t ctx)
 {
 	struct ifnet *ifp = ctx->ifc_ifp;
 
@@ -396,6 +388,7 @@ iflib_multiaddr_array(iflib_ctx_t ctx, u8 *mta, int *mcnt, int n)
 int
 iflib_printf(iflib_ctx_t ctx, const char * fmt, ...)
 {
+	device_t dev = ctx->ifc_dev;
 	va_list ap;
 	int retval;
 
@@ -502,9 +495,9 @@ _task_fn_legacy_intr(void *context, int pending)
 
 	more = iflib_rxeof(rxq, ctx->rx_process_limit);
 
-	if(TXR_TRYLOCK(tx)) {
-		_iflib_txr_transmit(txr, NULL);
-		TXR_UNLOCK(tx);
+	if(TXQ_TRYLOCK(txq)) {
+		_iflib_txq_transmit(txq, NULL);
+		TXQ_UNLOCK(txq);
 	}
 
 	if (more) {
@@ -552,7 +545,7 @@ static void
 _task_fn_link(void *context, int pending)
 {
 	iflib_ctx_t ctx = context;
-	iflib_txq_t txr = ctx->ifc_txr;
+	iflib_txq_t txq = ctx->ifc_txq;
 
 	if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING))
 		return;
@@ -567,7 +560,7 @@ _task_fn_link(void *context, int pending)
 	if (ctx->ifc_link_active == 0)
 		return;
 	
-	for (int i = 0; i < ctx->ifc_nqueues; i++, txr++) {
+	for (int i = 0; i < ctx->ifc_nqueues; i++, txq++) {
 		if (TXQ_TRYLOCK(txq) == 0)
 			continue;
 		_iflib_txq_transmit(txq, NULL);
@@ -592,16 +585,8 @@ iflib_legacy_setup(iflib_ctx_t ctx, driver_filter_t filter, int *rid)
 	 * deferred processing contexts.
 	 */
 	TASK_INIT(&ctx->ifc_legacy_task, 0, _task_fn_legacy_intr, ctx);
-	tq = taskqueue_create_fast("legacy_taskq", M_NOWAIT,
-	    taskqueue_thread_enqueue, &tq);
-	taskqueue_start_threads(&tq, 1, PI_NET, "%s que",
-	    device_get_nameunit(dev));
 	/* Use a TX only tasklet for local timer */
-	TASK_INIT(&txr->tx_task, 0, _task_fn_tx, txr);
-	tx_tq = taskqueue_create_fast("iflib_txq", M_NOWAIT,
-	    taskqueue_thread_enqueue, tx_tq);
-	taskqueue_start_threads(tx_tq, 1, PI_NET, "%s txq",
-	    device_get_nameunit(dev));
+	TASK_INIT(&txq->ift_task, 0, _task_fn_tx, txr);
 	TASK_INIT(&ctx->ifc_link_task, 0, _task_fn_link, ctx);
 	return (0);
 }
@@ -679,6 +664,11 @@ fail:
 	iflib_tx_structures_free(ctx);
 	return (err);
 }
+
+/*
+ * XXX Review tx cleaning and buffer mapping
+ *
+ */
 
 static void
 iflib_txq_destroy(iflib_txq_t txq)
@@ -1177,6 +1167,28 @@ iflib_tx_structures_setup(iflib_ctx_t ctx)
 		iflib_txq_setup(txq);
 }
 
+static int
+iflib_media_change(if_t ifp)
+{
+	iflib_ctx_t ctx = if_getsoftc(ifp);
+	int err;
+
+	CTX_LOCK(ctx);
+	err = IFC_MEDIA_CHANGE(ctx);
+	CTX_UNLOCK(ctx);
+	return (err);
+}
+
+static int
+iflib_media_status(if_t ifp, struct ifmediareq *ifmr)
+{
+	iflib_ctx_t ctx = if_getsoftc(ifp);
+
+	CTX_LOCK(ctx);
+	IFC_MEDIA_STATUS(ctx, ifmr);
+	CTX_UNLOCK(ctx);
+}
+
 int
 iflib_attach(device_t dev, driver_t *driver)
 {
@@ -1224,13 +1236,17 @@ iflib_attach(device_t dev, driver_t *driver)
 	ctx->vlan_detach_event =
 		EVENTHANDLER_REGISTER(vlan_unconfig, iflib_vlan_unregister, adapter,
 							  EVENTHANDLER_PRI_FIRST);
+
+	ifmedia_init_drv(&ctx->ifc_sctx->isc_media, IFM_IMASK,
+					 iflib_media_change, iflib_media_status);
+
 	return (ctx);
 }
 
 static void
 iflib_stop(iflib_ctx_t ctx)
 {
-	iflib_txq_t txr = ctx->ifc_txqs;
+	iflib_txq_t txq = ctx->ifc_txqs;
 
 	IFC_DISABLE_INTR(ctx);
 	callout_stop(ctx->ifc_timer);
@@ -1239,9 +1255,9 @@ iflib_stop(iflib_ctx_t ctx)
 
 	/* Wait for curren tx queue users to exit to disarm watchdog timer. */
 	for (int i = 0; i < ctx->ifc_nqueues; i++, txr++) {
-		TX_LOCK(txr);
-		txr->ift_qstatus = IFLIB_QUEUE_IDLE;
-		TX_UNLOCK(txr);
+		TX_LOCK(txq);
+		txq->ift_qstatus = IFLIB_QUEUE_IDLE;
+		TX_UNLOCK(txq);
 	}
 	IFC_STOP(ctx);
 }
@@ -1285,8 +1301,8 @@ iflib_detach(device_t dev)
 	bus_generic_detach(dev);
 	iflib_ctx_free(ctx);
 
-	iflib_transmit_structures_free(ctx);
-	iflib_receive_structures_free(ctx);
+	iflib_tx_structures_free(ctx);
+	iflib_rx_structures_free(ctx);
 	return (0);
 }
 

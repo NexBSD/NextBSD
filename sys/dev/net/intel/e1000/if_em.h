@@ -331,7 +331,8 @@ struct adapter {
 	 */
 	struct iflib_shared_context shared;
 #define ctx shared.isc_ctx
-
+#define media shared.isc_media
+	
 	struct e1000_hw	hw;
 	/* FreeBSD operating-system-specific structures. */
 	struct e1000_osdep osdep;
@@ -345,7 +346,6 @@ struct adapter {
 	u32		linkvec;
 	u32		ivars;
 
-	struct ifmedia	media;
 	int		msix;
 	int		if_flags;
 	int		max_frame_size;

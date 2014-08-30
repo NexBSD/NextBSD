@@ -77,6 +77,8 @@
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
 
+#include <net/iflib.h>
+
 #include "e1000_api.h"
 #include "e1000_82571.h"
 #include "if_em.h"
@@ -745,9 +747,9 @@ em_attach(device_t dev)
 	if (adapter->has_manage && !adapter->has_amt)
 		em_get_hw_control(adapter);
 
-	iflib_clearactive(ctx);
+	iflib_active_clear(ctx);
 
-	iflib_led_create(ctx, em_if_led_func);
+	iflib_led_create(ctx);
 #ifdef DEV_NETMAP
 	em_netmap_attach(adapter);
 #endif /* DEV_NETMAP */
@@ -757,11 +759,11 @@ em_attach(device_t dev)
 	return (0);
 
 err_late:
-	iflib_transmit_structures_free(ctx);
-	iflib_rx_structures_free(adapter);
+	iflib_tx_structures_free(ctx);
+	iflib_rx_structures_free(ctx);
 	em_release_hw_control(adapter);
 	if (adapter->ctx != (void *)NULL)
-		iflib_free_ctx(adapter->ctx);
+		iflib_ctx_free(ctx);
 err_pci:
 	em_free_pci_resources(adapter);
 	free(adapter->mta, M_DEVBUF);
@@ -907,7 +909,7 @@ em_if_init(iflib_ctx_t ctx)
 	INIT_DEBUGOUT("em_init: begin");
 
 	/* Get the latest mac address, User can use a LAA */
-	bcopy(iflib_getlladdr(ctx), adapter->hw.mac.addr,
+	bcopy(iflib_lladdr_get(ctx), adapter->hw.mac.addr,
 		  ETHER_ADDR_LEN);
 
 	/* Put the address into the Receive Address Array */
@@ -933,13 +935,13 @@ em_if_init(iflib_ctx_t ctx)
 	E1000_WRITE_REG(&adapter->hw, E1000_VET, ETHERTYPE_VLAN);
 
 	/* Set hardware offload abilities */
-	iflib_sethwassist(ctx);
+	iflib_hwassist_set(ctx);
 
 	/* Configure for OS presence */
 	em_init_manageability(adapter);
 
 	/* Prepare transmit descriptors and buffers */
-	iflib_transmit_structures_setup(ctx);
+	iflib_tx_structures_setup(ctx);
 	em_initialize_transmit_unit(adapter);
 
 	/* Setup Multicast table */
@@ -2050,9 +2052,7 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	 */
 	iflib_queue_tag_prop_set(ctx, EM_DBA_ALIGN);
 
-	
-	iflib_settx_fn(ctx, ...);
-	iflib_setcapabilitiesbit(ctx, IFCAP_HWCSUM | IFCAP_VLAN_HWCSUM |
+	iflib_capabilitiesbit_set(ctx, IFCAP_HWCSUM | IFCAP_VLAN_HWCSUM |
 	    IFCAP_TSO4);
 	
 	/*
@@ -2061,8 +2061,8 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	 *  XXX is this a more generic operation common to all VLAN
 	 * setting?
 	 */
-	iflib_setifheaderlen(ctx, sizeof(struct ether_vlan_header));
-	if_setcapabilitiesbit(ctx, IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWTSO |
+	iflib_ifheaderlen_set(ctx, sizeof(struct ether_vlan_header));
+	iflib_capabilitiesbit_set(ctx, IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWTSO |
 						  IFCAP_VLAN_MTU);
 
 	/*
@@ -2073,7 +2073,7 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	** using vlans directly on the em driver you can
 	** enable this and get full hardware tag filtering.
 	*/
-	if_setcapabilitiesbit(ctx, IFCAP_VLAN_HWFILTER);
+	iflib_capabilitiesbit_set(ctx, IFCAP_VLAN_HWFILTER);
 
 #ifdef DEVICE_POLLING
 	iflib_setcapabilitiesbit(ctx, IFCAP_POLLING);
@@ -2081,16 +2081,15 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 
 	/* Enable only WOL MAGIC by default */
 	if (adapter->wol)
-		iflib_setcapabilitiesbit(ctx, IFCAP_WOL);
+		iflib_capabilitiesbit_set(ctx, IFCAP_WOL);
 
- 	iflib_setcapenable(ctx);
+ 	iflib_capenable_set(ctx);
 	
 	/*
 	 * Specify the media types supported by this adapter and register
 	 * callbacks to update media and link information
+	 * XXX call from iflib 
 	 */
-	ifmedia_init_drv(&adapter->media, IFM_IMASK,
-					 em_media_change, em_media_status);
 	if ((adapter->hw.phy.media_type == e1000_media_type_fiber) ||
 	    (adapter->hw.phy.media_type == e1000_media_type_internal_serdes)) {
 		u_char fiber_type = IFM_1000_SX;	/* default type */
@@ -2155,8 +2154,8 @@ em_if_queues_alloc(iflib_ctx_t ctx)
 		rxr->me = txr->me = i;
 
 		/* set the hardware independent queues hardware queue ptr */
-		iflib_tx_softc_set(ctx, txr, i);
-		iflib_rx_softc_set(ctx, rxr, i);
+		iflib_tx_hwq_set(ctx, txr, i);
+		iflib_rx_hwq_set(ctx, rxr, i);
 
 		/* get the virtual address of the hardware queues */
 		txr->tx_base = (struct e1000_tx_desc *)iflib_txq_vaddr_get(ctx, i);
@@ -2516,6 +2515,7 @@ em_tso_setup(struct tx_ring *txr, pkt_info_t pi, u32 *txd_upper, u32 *txd_lower)
  *  Examine each tx_buffer in the used queue. If the hardware is done
  *  processing the packet then free associated resources. The
  *  tx_buffer is put back on the free queue.
+ *  XXX REWRITE 
  *
  **********************************************************************/
 static void
@@ -2650,7 +2650,7 @@ em_initialize_receive_unit(struct adapter *adapter)
 	}
 
 	rxcsum = E1000_READ_REG(hw, E1000_RXCSUM);
-	if (iflib_getcapenable(ctx) & IFCAP_RXCSUM)
+	if (iflib_capenable_get(ctx) & IFCAP_RXCSUM)
 		rxcsum |= E1000_RXCSUM_TUOFL;
 	else
 		rxcsum &= ~E1000_RXCSUM_TUOFL;
@@ -2682,7 +2682,7 @@ em_initialize_receive_unit(struct adapter *adapter)
 		 * an init() while a netmap client is active must
 		 * preserve the rx buffers passed to userspace.
 		 */
-		if (iflib_getcapenable(ctx) & IFCAP_NETMAP) {
+		if (iflib_capenable_get(ctx) & IFCAP_NETMAP) {
 			struct netmap_adapter *na = netmap_getna(adapter->ifp);
 			rdt -= nm_kr_rxspace(&na->rx_rings[i]);
 		}
@@ -3174,10 +3174,10 @@ em_enable_wakeup(struct adapter *adapter)
 	** Determine type of Wakeup: note that wol
 	** is set with all bits on by default.
 	*/
-	if ((iflib_getcapenable(ctx) & IFCAP_WOL_MAGIC) == 0)
+	if ((iflib_capenable_get(ctx) & IFCAP_WOL_MAGIC) == 0)
 		adapter->wol &= ~E1000_WUFC_MAG;
 
-	if ((iflib_getcapenable(ctx) & IFCAP_WOL_MCAST) == 0)
+	if ((iflib_capenable_get(ctx) & IFCAP_WOL_MCAST) == 0)
 		adapter->wol &= ~E1000_WUFC_MC;
 	else {
 		rctl = E1000_READ_REG(&adapter->hw, E1000_RCTL);
@@ -3200,7 +3200,7 @@ em_enable_wakeup(struct adapter *adapter)
         /* Request PME */
         status = pci_read_config(dev, pmc + PCIR_POWER_STATUS, 2);
 	status &= ~(PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE);
-	if (iflib_getcapenable(ctx) & IFCAP_WOL)
+	if (iflib_capenable_get(ctx) & IFCAP_WOL)
 		status |= PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE;
         pci_write_config(dev, pmc + PCIR_POWER_STATUS, status, 2);
 
@@ -3957,7 +3957,7 @@ em_print_debug_info(struct adapter *adapter)
 	struct tx_ring *txr = adapter->tx_rings;
 	struct rx_ring *rxr = adapter->rx_rings;
 
-	if (iflib_getactive(adapter->ctx))
+	if (iflib_active_get(adapter->ctx))
 		printf("Interface is RUNNING ");
 	else
 		printf("Interface is NOT RUNNING\n");
