@@ -1,4 +1,4 @@
-#includes <sys/types.h>
+#include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
 
@@ -6,22 +6,22 @@ INTERFACE ifc;
 
 CODE {
 	void
-	null_op(if_shared_ctx _ctx __unused)
+	null_op(if_shared_ctx_t _ctx __unused)
 	{
 	}
 
 	void
-	null_led_func(if_shared_ctx _ctx __unused, int _onoff __unused)
+	null_led_func(if_shared_ctx_t _ctx __unused, int _onoff __unused)
 	{
 	}
 
 	void
-	null_vlan_register_op(if_shared_ctx _ctx __unused, uint16_t vtag __unused)
+	null_vlan_register_op(if_shared_ctx_t _ctx __unused, uint16_t vtag __unused)
 	{
 	}
 
 	void
-	null_q_setup(if_shared_ctx _ctx __unused, int _qid __unused)
+	null_q_setup(if_shared_ctx_t _ctx __unused, int _qid __unused)
 	{
 	}
 };
