@@ -125,10 +125,6 @@ int iflib_resume(device_t dev);
 
 int iflib_queues_alloc(if_shared_ctx_t ctx, int txq_size, int rxq_size);
 
-void iflib_tx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
-void iflib_rx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
-void iflib_queue_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
-
 void iflib_tx_structures_setup(if_shared_ctx_t);
 void iflib_tx_structures_free(if_shared_ctx_t);
 void iflib_rx_structures_setup(if_shared_ctx_t);

@@ -2048,33 +2048,27 @@ em_reset(struct adapter *adapter)
 static int
 em_setup_interface(device_t dev, struct adapter *adapter)
 {
-	if_shared_ctx_t sctx;
+	if_shared_ctx_t sctx = UPCAST(adapter);
+	if_t ifp = sctx->isc_ifp;
 	
 	INIT_DEBUGOUT("em_setup_interface: begin");
 
-	/*
-	 *..., maxsize, nsegments, maxsegsize
-	 */
-	iflib_tx_tag_prop_set(sctx, EM_TSO_SIZE, EM_MAX_SCATTER, PAGE_SIZE);
-	/*
-	 *..., maxsize, nsegments, maxsegsize
-	 */
-	iflib_rx_tag_prop_set(sctx, MJUM9BYTES, 1, MJUM9BYTES);
-	/*
-	 *..., alignment
-	 */
-	iflib_queue_tag_prop_set(sctx, EM_DBA_ALIGN);
+	sctx->isc_q_align = EM_DBA_ALIGN;
+	sctx->isc_tx_maxsize = EM_TSO_SIZE;
+	sctx->isc_tx_nsegments = EM_MAX_SCATTER;
+	sctx->isc_tx_maxsegsize = PAGE_SIZE;
+	sctx->isc_rx_maxsize = MJUM9BYTES
+	sctx->isc_rx_nsegments = 1;
+	sctx->isc_rx_maxsegsize = MJUM9BYTES;
 
-	if_setcapabilitiesbit(sctx->isc_ifp, IFCAP_HWCSUM | IFCAP_VLAN_HWCSUM |
+	if_setcapabilitiesbit(ifp, IFCAP_HWCSUM | IFCAP_VLAN_HWCSUM |
 						  IFCAP_TSO4, 0);
 	/*
 	 * Tell the upper layer(s) we
 	 * support full VLAN capability
-	 *  XXX is this a more generic operation common to all VLAN
-	 * setting?
 	 */
-	if_setifheaderlen(sctx->isc_ifp, sizeof(struct ether_vlan_header));
-	if_setcapabilitiesbit(sctx->isc_ifp, IFCAP_VLAN_HWTAGGING |
+	if_setifheaderlen(ifp, sizeof(struct ether_vlan_header));
+	if_setcapabilitiesbit(ifp, IFCAP_VLAN_HWTAGGING |
 						  IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU, 0);
 
 	/*
@@ -2085,17 +2079,17 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	** using vlans directly on the em driver you can
 	** enable this and get full hardware tag filtering.
 	*/
-	if_setcapabilitiesbit(sctx->isc_ifp, IFCAP_VLAN_HWFILTER, 0);
+	if_setcapabilitiesbit(ifp, IFCAP_VLAN_HWFILTER, 0);
 
 #ifdef DEVICE_POLLING
-	if_setcapabilitiesbit(sctx->isc_ifp, IFCAP_POLLING, 0);
+	if_setcapabilitiesbit(ifp, IFCAP_POLLING, 0);
 #endif
 
 	/* Enable only WOL MAGIC by default */
 	if (adapter->wol)
-		if_setcapabilitiesbit(sctx->isc_ifp, IFCAP_WOL, 0);
+		if_setcapabilitiesbit(ifp, IFCAP_WOL, 0);
 
-	if_setcapeneable(sctx->isc_ifp, if_getcapabilitiesbit(sctx->isc_ifp));
+	if_setcapeneable(ifp, if_getcapabilitiesbit(ifp));
 	
 	/*
 	 * Specify the media types supported by this adapter and register

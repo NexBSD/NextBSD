@@ -84,33 +84,14 @@ struct iflib_ctx {
 };
 #define LINK_ACTIVE(ctx) ((ctx)->ifc_link_state == LINK_STATE_UP)
 
-typedef struct iflib_txq {
-	iflib_ctx_t             ift_ctx;
-	struct mtx              ift_mtx;
-	char                    ift_mtx_name[16];
-	int                     ift_id;
-	iflib_sd_t              ift_sds;
-	struct buf_ring        *ift_br;
-	bus_dma_tag_t		    ift_txtag;
-	u32                     ift_next_avail_desc;
-	u32                     ift_next_to_clean;
-	volatile u16            ift_tx_avail;
-	unsigned long		    ift_no_desc_avail;
-	struct task             ift_task;
-	int			            ift_qstatus;
-	int                     ift_watchdog_time;
-
-} *iflib_txq_t;
-
-typedef struct iflib_rxq {
-	iflib_ctx_t             ifr_ctx;
-	struct mtx              ifr_mtx;
-	char                    ifr_mtx_name[16];
-	int                     ifr_id;
-	struct task             ifr_task;
-	iflib_sd_t              ifr_sds;
-	bus_dma_tag_t           ifr_tag;
-} *iflib_rxq_t;
+typedef struct iflib_dma_info {
+        bus_addr_t              ifd_paddr;
+        caddr_t                 ifd_vaddr;
+        bus_dma_tag_t           ifd_tag;
+        bus_dmamap_t            ifd_map;
+        bus_dma_segment_t       ifd_seg;
+        int                     ifd_nseg;
+} *iflib_dma_info_t;
 
 
 #define RX_SW_DESC_MAP_CREATED	(1 << 0)
@@ -122,22 +103,50 @@ typedef struct iflib_sw_desc {
 	bus_dmamap_t    ifsd_map;         /* bus_dma map for packet */
 	struct mbuf    *ifsd_m;           /* rx: uninitialized mbuf
 									   * tx: pkthdr for the packet
-x									   */
+									   */
 	caddr_t         ifsd_cl;          /* direct cluster pointer for rx */
 	/* XXX needed? */
 	int		        ifsd_next_eop;    /* Index of the last buffer */
 	int             ifsd_flags;
 } *iflib_sd_t;
 
-typedef struct iflib_dma_info {
-        bus_addr_t              ifd_paddr;
-        caddr_t                 ifd_vaddr;
-        bus_dma_tag_t           ifd_tag;
-        bus_dmamap_t            ifd_map;
-        bus_dma_segment_t       ifd_seg;
-        int                     ifd_nseg;
-} *iflib_dma_info_t;
+typedef struct iflib_txq {
+	iflib_ctx_t	ift_ctx;
+	uint64_t	ift_flags;
+	uint32_t	ift_in_use;
+	uint32_t	ift_size;
+	uint32_t	ift_processed;
+	uint32_t	ift_cleaned;
+	uint32_t	ift_stop_thres;
+	uint32_t	ift_cidx;
+	uint32_t	ift_pidx;
+	uint32_t	ift_db_pending;
+	struct mtx              ift_mtx;
+	char                    ift_mtx_name[16];
+	bus_dma_tag_t		    ift_tag;
+	iflib_dma_info_t        ift_dma_info;
+	int                     ift_id;
+	iflib_sd_t              ift_sds;
+	struct buf_ring        *ift_br;
+	struct task             ift_task;
+	int			            ift_qstatus;
+	int                     ift_active;
+	int                     ift_watchdog_time;
+	bus_dma_segment_t      *ift_segs;
+	struct task             ift_task;
+} *iflib_txq_t;
 
+#define TXQ_AVAIL(txq) ((txq)->ift_size - (txq)->ift_pidx + (txq)->ift_cidx);
+
+typedef struct iflib_rxq {
+	iflib_ctx_t             ifr_ctx;
+	struct mtx              ifr_mtx;
+	char                    ifr_mtx_name[16];
+	int                     ifr_id;
+	struct task             ifr_task;
+	iflib_sd_t              ifr_sds;
+	bus_dma_tag_t           ifr_tag;
+} *iflib_rxq_t;
 
 static void
 _iflib_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
@@ -272,7 +281,7 @@ _iflib_irq_alloc(iflib_ctx_t sctx, iflib_irq_t *irq, int rid, driver_filter_t fi
 static int
 iflib_txsd_alloc(iflib_txq_t txq)
 {
-	iflib_ctx_t ctx = txr->ift_ctx;
+	iflib_ctx_t ctx = txq->ift_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	device_t dev = sctx->isc_dev;
 	iflib_sd_t txsd;
@@ -384,7 +393,7 @@ iflib_txq_setup(iflib_txq_t txq)
 	txr->next_to_clean = 0;
 
 	/* Free any existing tx buffers. */
-	txbuf = txr->ift_buffers;
+	txsd = txq->ift_sds;
 	for (i = 0; i < adapter->ntxd; i++, txbuf++) {
 		iflib_tx_free(ctx, txr, txbuf);
 #ifdef DEV_NETMAP
@@ -1182,7 +1191,7 @@ retry:
 
 	if (nsegs > (txr->tx_avail - 2)) {
 		txr->no_desc_avail++;
-		bus_dmamap_unload(txr->ift_txtag, map);
+		bus_dmamap_unload(txr->ift_tag, map);
 		return (ENOBUFS);
 	}
 	m_head = *m_headp;
@@ -1262,7 +1271,7 @@ _iflib_txq_transmit(iflib_txq_t txq, struct mbuf *m)
 	if (txr->ift_tx_avail < sctx->isc_tx_nsegments)
 		iflib_txeof(txr);
 	if (txr->ift_tx_avail < sctx->isc_tx_nsegments)
-		txq->ift_tx_active = 0;
+		txq->ift_active = 0;
 	return (err);
 }
 
@@ -1796,24 +1805,6 @@ rx_fail:
 	free(ctx->ifc_txqs, M_DEVBUF);
 fail:
 	return (err);
-}
-
-void
-iflib_tx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value)
-{
-
-}
-
-void
-iflib_rx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value)
-{
-
-}
-
-void
-iflib_queue_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value)
-{
-
 }
 
 void
