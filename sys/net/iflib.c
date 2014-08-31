@@ -10,6 +10,26 @@
  *  - ifnet functions
  *  - vlan registry and other exported functions
  *  - iflib public core functions
+ *
+ *
+ * Next steps:
+ *  - add all fields to private structures
+ *  - validate queue initialization paths
+ *  - validate interrupt setup and tq thread creation
+ *  - validate queue teardown
+ *  - validate that all structure fields are initialized
+ *  - validate the default tx path
+ *  - validate the TSO path
+ *  - validate SOP_EOP packet receipt
+ *  - add rx_buf recycling
+ *  - add multiple buf_ring support - i.e. fan in to single hardware queue
+ *  - add SW RSS to demux received data packets to buf_rings for deferred processing
+ *    look at handling tx ack processing
+ *
+ *  - document the kobj interface in iflib_if.m and export that to the wiki
+ *  - port ixgbe to iflib
+ *
+ *  - convert iflib to pseudo-bus between PCI and supporting NICs
  */
 
 struct iflib_ctx {
@@ -439,7 +459,7 @@ iflib_rxsd_alloc(struct iflib_rxq_t rxq)
 	return (0);
 
 fail:
-	iflib_receive_structures_free(ctx);
+	iflib_rx_structures_free(ctx);
 	return (err);
 }
 
@@ -521,7 +541,6 @@ iflib_rx_sds_free(iflib_rxq_t rxq)
 	INIT_DEBUGOUT("free_receive_buffers: begin");
 
 	if (rxq->ifr_sds != NULL) {
-
 		free(rxq->ifr_sds, M_DEVBUF);
 		rxq->ifr_sds = NULL;
 		rxr->next_to_check = 0;
@@ -535,7 +554,6 @@ iflib_rx_sds_free(iflib_rxq_t rxq)
 
 	return;
 }
-
 
 static void
 _iflib_init(if_shared_ctx_t sctx)
@@ -901,7 +919,6 @@ _task_fn_link(void *context, int pending)
 	}
 }
 
-
 /*
  * MI independent logic
  *
@@ -1251,7 +1268,7 @@ iflib_if_init(void *arg)
 static int
 iflib_if_transmit(if_t ifp, struct mbuf *m)
 {
-	ctx_t	*ctx = if_getsoftc(ifp);
+	iflib_ctx_t	ctx = if_getsoftc(ifp);
 	struct tx_ring	*txr;
 	int 		err;
 
@@ -1274,7 +1291,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 static void
 iflib_if_qflush(if_t ifp)
 {
-	ctx_t ctx = if_getsoftc(ifp);
+	iflib_ctx_t ctx = if_getsoftc(ifp);
 	struct tx_ring  *txr = ctx->ifc_txqs;
 	struct mbuf     *m;
 
@@ -1527,8 +1544,7 @@ iflib_attach(device_t dev, driver_t *driver)
 	/*
 	 * Initialize our contexts device specific methods
 	 */
-	driver->size = sizeof(*iflib_ctx_t);
-	kobj_init((kobj_t) ctx, (kobj_class_t) driver);
+	kobj_init((kobj_t) sctx, (kobj_class_t) driver);
 	kobj_class_compile((kobj_class_t) driver);
 	driver->refs++;
 
@@ -1667,7 +1683,7 @@ iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)
 		txq->ift_ctx = ctx;
 		txq->ift_id = i;
 
-		if (iflib_allocate_transmit_buffers(txr)) {
+		if (iflib_tx_sds_alloc(txr)) {
 			device_printf(dev,
 						  "Critical Failure setting up transmit buffers\n");
 			err = ENOMEM;

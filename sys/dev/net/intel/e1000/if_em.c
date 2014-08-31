@@ -349,7 +349,7 @@ static device_method_t em_if_methods[] = {
 };
 
 static driver_t em_if_driver = {
-	"em_if", em_if_methods, 0,
+	"em_if", em_if_methods, sizeof(struct if_shared_ctx),
 };
 
 #define DOWNCAST(sctx) ((struct adapter *)(sctx))
