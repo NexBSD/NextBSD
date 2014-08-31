@@ -94,13 +94,31 @@ typedef struct if_shared_ctx {
 	iflib_ctx_t isc_ctx;
 	device_t isc_dev;
 	if_t isc_ifp;
+	int isc_nqsets;
+	int isc_nrxq;
+	int isc_ntxd;
+	int isc_nrxd;
+	bus_size_t isc_q_align;
+	bus_size_t isc_tx_maxsize;
+	bus_size_t isc_tx_maxsegsize;
+	int isc_tx_nsegments;
+	bus_size_t isc_rx_maxsize;
+	bus_size_t isc_rx_maxsegsize;
+	int isc_rx_nsegments;
+	int isc_pause_frames;
+	int isc_watchdog_events;
+
 	struct ifmedia	isc_media;
 	struct if_common_stats isc_common_stats;
 } if_shared_ctx_t;
 
 #define UPCAST(sc) ((if_shared_ctx_t)(sc))
+#ifndef ETH_ADDR_LEN
+#define ETH_ADDR_LEN 6
+#endif
 
-int iflib_attach(device_t dev, driver_t *driver);
+
+int iflib_attach(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN]);
 int iflib_detach(device_t dev);
 int iflib_suspend(device_t dev);
 int iflib_resume(device_t dev);

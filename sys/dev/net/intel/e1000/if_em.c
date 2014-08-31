@@ -502,10 +502,6 @@ em_attach(device_t dev)
 		device_printf(dev, "Disabled by device hint\n");
 		return (ENXIO);
 	}
-
-	if ((error = iflib_attach(dev, em_if_driver)) != 0)
-		return (error);
-	
 	hw = &adapter->hw;
 	
 	/* SYSCTL stuff */
@@ -526,6 +522,9 @@ em_attach(device_t dev)
 
 	/* Determine hardware and mac info */
 	em_identify_hardware(adapter);
+
+	if ((error = iflib_attach(dev, em_if_driver, hw.mac.addr)) != 0)
+		return (error);
 
 	/* Setup PCI resources */
 	if (em_allocate_pci_resources(adapter)) {
