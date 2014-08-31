@@ -128,6 +128,7 @@ typedef struct iflib_txq {
 	iflib_dma_info_t        ift_dma_info;
 	int                     ift_id;
 	iflib_sd_t              ift_sds;
+	int                     ift_nbr;
 	struct buf_ring        *ift_br;
 	struct task             ift_task;
 	int			            ift_qstatus;
@@ -390,7 +391,7 @@ iflib_txq_setup(iflib_txq_t txq)
 	struct netmap_adapter *na = netmap_getna(sctx->isc_ifp);
 #endif /* DEV_NETMAP */
 
-	TX_LOCK(txr);
+	TXQ_LOCK(txr);
 #ifdef DEV_NETMAP
 	slot = netmap_reset(na, NR_TX, txq->ift_id, 0);
 #endif /* DEV_NETMAP */
@@ -566,7 +567,7 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 #endif
 
 	/* Clear the ring contents */
-	RX_LOCK(rxq);
+	RXQ_LOCK(rxq);
 	bzero((void *)rxq->ifr_dma_info.ifd_vaddr, ctx->ifc_rxq_size);
 #ifdef DEV_NETMAP
 	slot = netmap_reset(na, NR_RX, rxq->ifr_id, 0);
@@ -585,7 +586,7 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 fail:
-	RX_UNLOCK(rxr);
+	RXQ_UNLOCK(rxq);
 	return (err);
 }
 
@@ -604,16 +605,13 @@ iflib_rx_sds_free(iflib_rxq_t rxq)
 	if (rxq->ifr_sds != NULL) {
 		free(rxq->ifr_sds, M_DEVBUF);
 		rxq->ifr_sds = NULL;
-		rxr->next_to_check = 0;
-		rxr->next_to_refresh = 0;
+		rxq->ifr_cidx = rxq->ifr_pidx = 0;
 	}
 
-	if (rxr->rxtag != NULL) {
-		bus_dma_tag_destroy(rxr->rxtag);
-		rxr->rxtag = NULL;
+	if (rxq->ifr_desc_tag != NULL) {
+		bus_dma_tag_destroy(rxq->ifr_desc_tag);
+		rxq->ifr_desc_tag = NULL;
 	}
-
-	return;
 }
 
 static void
@@ -836,8 +834,10 @@ static bool
 iflib_rxeof(iflib_rxq_t rxq, int budget)
 {
 	iflib_ctx_t ctx = rxq->ctx;
+	if_shared_ctx_t sctx = ctx->isc_sctx;
 	int cidx = rxq->ifr_cidx;
 	struct rxd_info ri;
+	iflib_dma_info_t di;
 
 	/*
 	 * XXX early demux data packets so that if_input processing only handles
@@ -845,11 +845,11 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	 */
 	struct mbuf *mh, *mt;
 
-	if (!RX_TRYLOCK(rxq))
+	if (!RXQ_TRYLOCK(rxq))
 		return (false);
 #ifdef DEV_NETMAP
-	if (netmap_rx_irq(ifp, rxr->me, &processed)) {
-		RX_UNLOCK(rxq);
+	if (netmap_rx_irq(ifp, rxq->ifr_id, &processed)) {
+		RXQ_UNLOCK(rxq);
 		return (FALSE);
 	}
 #endif /* DEV_NETMAP */
@@ -858,12 +858,13 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	while (__predict_true(budget_left--)) {
 		if (__predict_false(!iflib_getactive(ctx)))
 			break;
-		bus_dmamap_sync(rxr->rxdma.dma_tag, rxr->rxdma.dma_map,
+		di = &rxq->ifr_dma_info;
+		bus_dmamap_sync(di->ifsd_tag, di->ifsd_map,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 		if (__predict_false(!IFC_IS_NEW(ctx->ifc_sctx, rxq->ifr_id, cidx)))
-			break;
+			return (false);
 		err = IFC_PACKET_GET(ctx->ifc_sctx, rxq->ifr_id, cidx, &ri);
-		bus_dmamap_unload(rxq->ifr_dtag, rxq->ifr_sds[cidx].ifsd_map);
+		bus_dmamap_unload(rxq->ifr_desc_tag, rxq->ifr_sds[cidx].ifsd_map);
 
 		if (++cidx == sctx->isc_nrxd)
 			cidx = 0;
@@ -883,14 +884,16 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		_iflib_rxq_refill_lt(ctx, rxq, /* XXX em value */ 8);
 	}
 	rxq->ifr_cidx = cidx;
-	RX_UNLOCK(rxq);
+	RXQ_UNLOCK(rxq);
 
 	while (mh != NULL) {
 		m = mh;
 		mh = mh->m_nextpkt;
 		m->m_nextpkt = NULL;
-		if_input(ctx->isc_ifp, m);
+		if_input(sctx->isc_ifp, m);
 	}
+
+	return IFC_IS_NEW(sctx, rxq->ifr_id, rxq->ifr_cidx);
 }
 
 static void
@@ -1334,19 +1337,19 @@ static int
 iflib_if_transmit(if_t ifp, struct mbuf *m)
 {
 	iflib_ctx_t	ctx = if_getsoftc(ifp);
-	struct tx_ring	*txr;
+	iflib_txq_t txq;
 	int 		err;
 
 	/*
 	* XXX calculate txr and buf_ring based on flowid
 	* or other policy flag
 	*/
-	txr = &ctx->ifc_txqs[0];
+	txq = &ctx->ifc_txqs[0];
 	br = &txr->tx_br[0];
 	err = 0;
-	if (TX_TRYLOCK(txr)) {
+	if (TXQ_TRYLOCK(txq)) {
 		err = _iflib_txr_transmit(txr, m);
-		TX_UNLOCK(txr);
+		TXQ_UNLOCK(txq);
 	} else if (m != NULL)
 		err = drbr_enqueue(ifp, br, m);
 
@@ -1357,16 +1360,16 @@ static void
 iflib_if_qflush(if_t ifp)
 {
 	iflib_ctx_t ctx = if_getsoftc(ifp);
-	struct tx_ring  *txr = ctx->ifc_txqs;
+	iflib_txq_t txq = ctx->ifc_txqs;
 	struct mbuf     *m;
 
-	for (int i = 0; i < adapter->nqsets; i++, txr++) {
-		TX_LOCK(txr);
-		for (int j = 0; j < txr->tx_nbr; j++) {
-			while ((m = buf_ring_dequeue_sc(&txr->br[j])) != NULL)
+	for (int i = 0; i < sctx->isc_nqsets; i++, txq++) {
+		TXQ_LOCK(txq);
+		for (int j = 0; j < txq->ift_nbr; j++) {
+			while ((m = buf_ring_dequeue_sc(&txq->ift_br[j])) != NULL)
 				m_freem(m);
 		}
-		TX_UNLOCK(txr);
+		TXQ_UNLOCK(txq);
 	}
 	if_qflush(ifp);
 }
