@@ -4,6 +4,31 @@
 
 INTERFACE ifc;
 
+CODE {
+	void
+	null_op(if_shared_ctx _ctx __unused)
+	{
+	}
+
+	void
+	null_led_func(if_shared_ctx _ctx __unused, int _onoff __unused)
+	{
+	}
+
+	void
+	null_vlan_register_op(if_shared_ctx _ctx __unused, uint16_t vtag __unused)
+	{
+	}
+
+	void
+	null_q_setup(if_shared_ctx _ctx __unused, int _qid __unused)
+	{
+	}
+};
+
+/*
+ * driver bus methods
+ */
 
 METHOD int detach {
 	if_shared_ctx_t _ctx;
@@ -17,6 +42,19 @@ METHOD int resume {
 	if_shared_ctx_t _ctx;
 };
 
+/*
+ * downcall to driver to allocate its
+ * own queue state and tie it to the parent
+ */
+
+METHOD int queues_alloc {
+	if_shared_ctx_t _ctx;
+};
+
+/*
+ * interface reset / stop
+ */
+
 METHOD void init {
 	if_shared_ctx_t _ctx;
 };
@@ -24,6 +62,10 @@ METHOD void init {
 METHOD void stop {
 	if_shared_ctx_t _ctx;
 };
+
+/*
+ * interrupt manipulation
+ */
 
 METHOD void intr_enable {
 	if_shared_ctx_t _ctx;
@@ -35,27 +77,23 @@ METHOD void intr_disable {
 
 METHOD void tx_intr_enable {
 	if_shared_ctx_t _ctx;
-	void *_txq;
+	int _txqid;
 };
 
 METHOD void rx_intr_enable {
 	if_shared_ctx_t _ctx;
-	void *_rxq;
+	int _rxqid;
 };
 
 METHOD void link_intr_enable {
 	if_shared_ctx_t _ctx;
-};
+} DEFAULT null_op;
+
+/*
+ * interface configuration
+ */
 
 METHOD void multi_set {
-	if_shared_ctx_t _ctx;
-};
-
-METHOD int queues_alloc {
-	if_shared_ctx_t _ctx;
-};
-
-METHOD void update_link_status {
 	if_shared_ctx_t _ctx;
 };
 
@@ -65,52 +103,6 @@ METHOD int mtu_set {
 };
 
 METHOD void media_set{
-	if_shared_ctx_t _ctx;
-};
-
-METHOD void media_status {
-	if_shared_ctx_t _ctx;
-	struct ifmediareq *_ifm;
-};
-
-METHOD int media_change {
-	if_shared_ctx_t _ctx;
-};
-
-METHOD int timer {
-	if_shared_ctx_t _ctx;
-};
-
-METHOD int tx {
-	if_shared_ctx_t _ctx;
-	void *_txr;
-	pkt_info_t _pi;
-};
-
-METHOD void tx_flush {
-	if_shared_ctx_t _ctx;
-	void *_txr;
-	int _pidx;
-};
-
-METHOD void txeof {
-	if_shared_ctx_t _ctx;
-	void *_txr;
-};
-
-METHOD int packet_get {
-	if_shared_ctx_t _ctx;
-	void *_txr;
-	int _idx;
-	rx_info_t _ri;
-};
-
-METHOD void led_func {
-	if_shared_ctx_t _ctx;
-	int _onoff;
-};
-
-METHOD void watchdog_reset {
 	if_shared_ctx_t _ctx;
 };
 
@@ -124,19 +116,42 @@ METHOD void promisc_disable {
 	int _flags;
 };
 
-METHOD void vlan_register {
+/*
+ * tx methods
+ */
+
+METHOD int tx {
 	if_shared_ctx_t _ctx;
-	u16 _vtag;
+	int _txqid;
+	pkt_info_t _pi;
 };
 
-METHOD void vlan_unregister {
+METHOD void tx_flush {
 	if_shared_ctx_t _ctx;
-	u16 _vtag;
-};	
-	
-METHOD void txq_setup {
+	int _txqid;
+	int _pidx;
+};
+
+METHOD void txeof {
 	if_shared_ctx_t _ctx;
-	void *_arg;
+	int _txqid;
+};
+
+/*
+ * rx methods
+ */
+
+METHOD int is_new {
+	if_shared_ctx_t _ctx;
+	int _rxqid;
+	int _idx;
+};
+
+METHOD int packet_get {
+	if_shared_ctx_t _ctx;
+	int _txqid;
+	int _idx;
+	rx_info_t _ri;
 };
 
 METHOD void rxd_refill {
@@ -152,8 +167,59 @@ METHOD void rxd_refill_flush {
 	int _pidx;
 };
 
-METHOD int is_new {
+/*
+ * Device status
+ */
+
+METHOD void update_link_status {
 	if_shared_ctx_t _ctx;
-	void *_rxr;
-	int _idx;
 };
+
+METHOD void media_status {
+	if_shared_ctx_t _ctx;
+	struct ifmediareq *_ifm;
+};
+
+METHOD int media_change {
+	if_shared_ctx_t _ctx;
+};
+
+
+/*
+ * optional methods
+ */
+
+METHOD void txq_setup {
+	if_shared_ctx_t _ctx;
+	int _txqid;
+} DEFAULT null_q_setup;
+
+METHOD void rxq_setup {
+	if_shared_ctx_t _ctx;
+	int _txqid;
+} DEFAULT null_q_setup;
+
+METHOD int timer {
+	if_shared_ctx_t _ctx;
+} DEFAULT null_op;
+
+METHOD void watchdog_reset {
+	if_shared_ctx_t _ctx;
+} DEFAULT null_op;
+
+METHOD void led_func {
+	if_shared_ctx_t _ctx;
+	int _onoff;
+} DEFAULT null_led_func;
+
+METHOD void vlan_register {
+	if_shared_ctx_t _ctx;
+	u16 _vtag;
+} DEFAULT null_vlan_register_op;
+
+METHOD void vlan_unregister {
+	if_shared_ctx_t _ctx;
+	u16 _vtag;
+} DEFAULT null_vlan_register_op;
+
+
