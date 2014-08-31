@@ -121,9 +121,10 @@ typedef struct iflib_txq {
 	uint32_t	ift_cidx;
 	uint32_t	ift_pidx;
 	uint32_t	ift_db_pending;
+	bus_dma_tag_t		    ift_desc_tag;
+
 	struct mtx              ift_mtx;
 	char                    ift_mtx_name[16];
-	bus_dma_tag_t		    ift_tag;
 	iflib_dma_info_t        ift_dma_info;
 	int                     ift_id;
 	iflib_sd_t              ift_sds;
@@ -139,13 +140,21 @@ typedef struct iflib_txq {
 #define TXQ_AVAIL(txq) ((txq)->ift_size - (txq)->ift_pidx + (txq)->ift_cidx);
 
 typedef struct iflib_rxq {
-	iflib_ctx_t             ifr_ctx;
+	iflib_ctx_t	ifr_ctx;
+	uint32_t	ifr_buf_size;
+	uint32_t	ifr_credits;
+	uint32_t	ifr_size;
+	uint32_t	ifr_cidx;
+	uint32_t	ifr_pidx;
+	uint32_t	ifr_db_pending;
+	struct iflib_dma_info	ifr_dma_info;
 	struct mtx              ifr_mtx;
 	char                    ifr_mtx_name[16];
 	int                     ifr_id;
 	struct task             ifr_task;
 	iflib_sd_t              ifr_sds;
-	bus_dma_tag_t           ifr_tag;
+	bus_dma_tag_t           ifr_desc_tag;
+	uma_zone_t              ifr_zone;
 } *iflib_rxq_t;
 
 static void
@@ -162,8 +171,9 @@ iflib_dma_alloc(iflib_ctx_t ctx, bus_size_t size, iflib_dma_info_t dma,
 {
 	int err;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
+	device_t dev = sctx->isc_dev;
 
-	err = bus_dma_tag_create(bus_get_dma_tag(sctx->isc_dev), /* parent */
+	err = bus_dma_tag_create(bus_get_dma_tag(dev), /* parent */
 				sctx->isc_q_align, 0,	/* alignment, bounds */
 				BUS_SPACE_MAXADDR,	/* lowaddr */
 				BUS_SPACE_MAXADDR,	/* highaddr */
@@ -176,7 +186,7 @@ iflib_dma_alloc(iflib_ctx_t ctx, bus_size_t size, iflib_dma_info_t dma,
 				NULL,			/* lockarg */
 				&dma->ifd_tag);
 	if (err) {
-		iflib_printf(ctx,
+		device_printf(dev,
 		    "%s: bus_dma_tag_create failed: %d\n",
 		    __func__, err);
 		goto fail_0;
@@ -185,7 +195,7 @@ iflib_dma_alloc(iflib_ctx_t ctx, bus_size_t size, iflib_dma_info_t dma,
 	err = bus_dmamem_alloc(dma->ifd_tag, (void**) &dma->ifd_vaddr,
 	    BUS_DMA_NOWAIT | BUS_DMA_COHERENT, &dma->ifd_map);
 	if (err) {
-		iflib_printf(ctx,
+		device_printf(dev,
 		    "%s: bus_dmamem_alloc(%ju) failed: %d\n",
 		    __func__, (uintmax_t)size, err);
 		goto fail_2;
@@ -195,7 +205,7 @@ iflib_dma_alloc(iflib_ctx_t ctx, bus_size_t size, iflib_dma_info_t dma,
 	err = bus_dmamap_load(dma->ifd_tag, dma->ifd_map, dma->ifd_vaddr,
 	    size, _iflib_dmamap_cb, &dma->ifd_paddr, mapflags | BUS_DMA_NOWAIT);
 	if (err || dma->ifd_paddr == 0) {
-		device_printf(adapter->dev,
+		device_printf(dev,
 		    "%s: bus_dmamap_load failed: %d\n",
 		    __func__, err);
 		goto fail_3;
@@ -301,7 +311,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
 			       0,			/* flags */
 			       NULL,			/* lockfunc */
 			       NULL,			/* lockfuncarg */
-			       &txq->ift_tag))) {
+			       &txq->ift_desc_tag))) {
 		device_printf(dev,"Unable to allocate TX DMA tag\n");
 		goto fail;
 	}
@@ -317,7 +327,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
         /* Create the descriptor buffer dma maps */
 	txsd = txq->ift_sds;
 	for (i = 0; i < sctx->isc_ntxd; i++, txsd++) {
-		err = bus_dmamap_create(txq->ift_tag, 0, &txsd->ifsd_map);
+		err = bus_dmamap_create(txq->ift_desc_tag, 0, &txsd->ifsd_map);
 		if (err != 0) {
 			device_printf(dev, "Unable to create TX DMA map\n");
 			goto fail;
@@ -343,14 +353,14 @@ iflib_txq_destroy(iflib_txq_t txq)
 	iflib_sd_t sd = txq->ift_sds;
 
 	for (int i = 0; i < sctx->isc_ntxd; i++, sd++)
-		iflib_txbuf_destroy(ctx, txq, sd);
+		iflib_txsd_destroy(ctx, txq, sd);
 	if (txq->ift_sds != NULL) {
 		free(txq->ift_sds, M_DEVBUF);
 		txq->ift_sds = NULL;
 	}
-	if (txq->ift_tag != NULL) {
-		bus_dma_tag_destroy(txq->ift_tag);
-		txq->ift_tag = NULL;
+	if (txq->ift_desc_tag != NULL) {
+		bus_dma_tag_destroy(txq->ift_desc_tag);
+		txq->ift_desc_tag = NULL;
 	}
 	TXQ_LOCK_DESTROY(txq);
 }
@@ -373,83 +383,85 @@ static void
 iflib_txq_setup(iflib_txq_t txq)
 {
 	iflib_ctx_t ctx = txq->ift_ctx;
-	iflib_buf_t txbuf;
+	if_shared_ctx_t sctx = ctx->isc_sctx;
+	iflib_sd_t txsd;
 #ifdef DEV_NETMAP
 	struct netmap_slot *slot;
-	struct netmap_adapter *na = netmap_getna(adapter->ifp);
+	struct netmap_adapter *na = netmap_getna(sctx->isc_ifp);
 #endif /* DEV_NETMAP */
 
 	TX_LOCK(txr);
 #ifdef DEV_NETMAP
-	slot = netmap_reset(na, NR_TX, txr->me, 0);
+	slot = netmap_reset(na, NR_TX, txq->ift_id, 0);
 #endif /* DEV_NETMAP */
 
     /* Set number of descriptors available */
-	txr->tx_avail = adapter->ntxd;
 	txr->qstatus = IFLIB_QUEUE_IDLE;
 
 	/* Reset indices */
-	txr->next_avail_desc = 0;
-	txr->next_to_clean = 0;
+	txq->ift_cidx = 0;
+	txq->ift_pidx = 0;
 
 	/* Free any existing tx buffers. */
 	txsd = txq->ift_sds;
-	for (i = 0; i < adapter->ntxd; i++, txbuf++) {
-		iflib_tx_free(ctx, txr, txbuf);
+	for (i = 0; i < sctx->isc_ntxd; i++, txsd++) {
+		iflib_tx_free(ctx, txq, txsd);
 #ifdef DEV_NETMAP
 		if (slot) {
-			int si = netmap_idx_n2k(&na->tx_rings[txr->me], i);
+			int si = netmap_idx_n2k(&na->tx_rings[txq->ift_id], i);
 			uint64_t paddr;
 			void *addr;
 
 			addr = PNMB(na, slot + si, &paddr);
+			/*
+			 * XXX need netmap down call
+			 */
 			txr->tx_base[i].buffer_addr = htole64(paddr);
 			/* reload the map for netmap mode */
-			netmap_load_map(na, txr->txtag, txbuf->map, addr);
+			netmap_load_map(na, txq->ift_desc_tag, txsd->ifsd_map, addr);
 		}
 #endif /* DEV_NETMAP */
 
-		/* clear the watch index */
-		txbuf->next_eop = -1;
+		/* clear the watch index  XXX really needed?*/
+		txsd->next_eop = -1;
 	}
 
 	bzero((void *)txq->ift_dma_info.ifd_vaddr, ctx->ifc_txq_size);
-	IFC_TXQ_SETUP(sctx, txr->ift_id);
-	bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
-	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	IFC_TXQ_SETUP(sctx, txq->ift_id);
+	bus_dmamap_sync(txq->ift_dma_info.ifd_tag, txq->ift_dma_info.ifd_map,
+					BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	TXQ_UNLOCK(txq);
 }
 
 static void
-iflib_txbuf_free(iflib_ctx_t ctx, struct tx_ring *txr, iflib_buf_t *tx_buffer)
+iflib_txsd_free(iflib_ctx_t ctx, iflib_txq_t txq, iflib_sd_t txsd)
 {
-	if (tx_buffer->m_head == NULL)
+	if (txsd->ifsd_m == NULL)
 		return;
-	bus_dmamap_sync(txr->txtag,
-				    tx_buffer->map,
+	bus_dmamap_sync(txq->ift_entry_tag,
+				    txsd->ifsd_map,
 				    BUS_DMASYNC_POSTWRITE);
-	bus_dmamap_unload(txr->txtag,
-					  tx_buffer->map);
-	m_freem(tx_buffer->m_head);
-	tx_buffer->m_head = NULL;
+	bus_dmamap_unload(txq->ift_entry_tag,
+					  txsd->ifsd_map);
+	m_freem(txsd->ifsd_m);
+	txsd->ifsd_m = NULL;
 }
 
 static void
-iflib_txbuf_destroy(iflib_ctx_t ctx, struct tx_ring *txr, iflib_buf_t *tx_buffer)
+iflib_txsd_destroy(iflib_ctx_t ctx, iflib_txq_t txq, iflib_sd_t txsd)
 {
-	if (tx_buffer->m_head != NULL) {
-		iflib_tx_free(ctx, txr, tx_buffer);
-		if (txbuf->map != NULL) {
-			bus_dmamap_destroy(txr->txtag,
-				    txbuf->map);
-			txbuf->map = NULL;
+	if (txsd->ifsd_m != NULL) {
+		iflib_txsd_free(ctx, txq, txsd);
+		if (txsd->ifsd_map != NULL) {
+			bus_dmamap_destroy(txq->ift_desc_tag, txsd->ifsd_map);
+			txsd->ifsd_map = NULL;
 		}
-	} else if (txbuf->map != NULL) {
-		bus_dmamap_unload(txr->txtag,
-						  tx_buffer->map);
-		bus_dmamap_destroy(txr->txtag,
-						   tx_buffer->map);
-		tx_buffer->map = NULL;
+	} else if (txsd->ifsd_map != NULL) {
+		bus_dmamap_unload(txq->ift_desc_tag,
+						  txsd->ifsd_map);
+		bus_dmamap_destroy(txq->ift_desc_tag,
+						   txsd->ifsd_map);
+		txsd->ifsd_map = NULL;
 	}
 }
 
@@ -467,7 +479,7 @@ iflib_rxsd_alloc(struct iflib_rxq_t rxq)
 	iflib_ctx_t ctx = rxq->ifr_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	device_t dev = sctx->isc_dev;
-	iflib_sd_t	rxbuf;
+	iflib_sd_t	rxsd;
 	int			err;
 
 	rxq->ifr_sds = malloc(sizeof(struct iflib_sw_desc) *
@@ -488,16 +500,16 @@ iflib_rxsd_alloc(struct iflib_rxq_t rxq)
 				0,			/* flags */
 				NULL,			/* lockfunc */
 				NULL,			/* lockarg */
-				&rxq->ifr_tag);
+				&rxq->ifr_desc_tag);
 	if (err) {
 		device_printf(dev, "%s: bus_dma_tag_create failed %d\n",
 		    __func__, err);
 		goto fail;
 	}
 
-	rxbuf = rxq->ifr_sds;
-	for (int i = 0; i < sctx->isc_nrxd; i++, rxbuf++) {
-		err = bus_dmamap_create(rxr->ifr_tag, 0, &rxbuf->ifsd_map);
+	rxsd = rxq->ifr_sds;
+	for (int i = 0; i < sctx->isc_nrxd; i++, rxsd++) {
+		err = bus_dmamap_create(rxq->ifr_desc_tag, 0, &rxsd->ifsd_map);
 		if (err) {
 			device_printf(dev, "%s: bus_dmamap_create failed: %d\n",
 			    __func__, err);
@@ -521,12 +533,12 @@ iflib_rx_bufs_free(iflib_rxq_t rxq)
 		iflib_sd_t d = rxq->ifr_sds[cidx];
 
 		if (d->ifsd_flags & RX_SW_DESC_INUSE) {
-			bus_dmamap_unload(q->ifr_dtag, d->ifsd_map);
-			bus_dmamap_destroy(q->ifr_dtag, d->ifsd_map);
-			m_init(d->m, zone_mbuf, MLEN,
+			bus_dmamap_unload(rxq->ifr_desc_tag, d->ifsd_map);
+			bus_dmamap_destroy(rxq->ifr_desc_tag, d->ifsd_map);
+			m_init(d->ifsd_m, zone_mbuf, MLEN,
 				   M_NOWAIT, MT_DATA, 0);
 			uma_zfree(zone_mbuf, d->ifsd_m);
-			uma_zfree(q->rxq_zone, d->ifsd_cl);
+			uma_zfree(q->ifr_zone, d->ifsd_cl);
 		}				
 		d->ifsd_cl = NULL;
 		d->ifsd_m = NULL;
@@ -557,14 +569,13 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 	RX_LOCK(rxq);
 	bzero((void *)rxq->ifr_dma_info.ifd_vaddr, ctx->ifc_rxq_size);
 #ifdef DEV_NETMAP
-	slot = netmap_reset(na, NR_RX, rxr->ifr_id, 0);
+	slot = netmap_reset(na, NR_RX, rxq->ifr_id, 0);
 #endif
 
 	/*
 	** Free current RX buffer structs and their mbufs
 	*/
-	for (i = 0; i < sctx->isc_nrxd; i++)
-		iflib_rx_free(ctx, rxr, &rxr->ifr_buffers[i]);
+	iflib_rx_bufs_free(rxq);
 
 	/* Now replenish the mbufs */
 	_iflib_refill_rxq(ctx, rxq, sctx->isc_nrxd);
@@ -788,12 +799,15 @@ _iflib_refill_rxq(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
 		{
 			struct refill_fl_cb_arg cb_arg;
 			cb_arg.error = 0;
-			err = bus_dmamap_load(q->entry_tag, sd->map,
-		         cl, q->buf_size, refill_fl_cb, &cb_arg, 0);
+			err = bus_dmamap_load(q->ifr_desc_tag, sd->ifsd_map,
+		         cl, q->ifr_buf_size, refill_fl_cb, &cb_arg, 0);
 
 			if (err != 0 || cb_arg.error) {
+				/*
+				 * !zone_pack ?
+				 */
 				if (q->zone == zone_pack)
-					uma_zfree(q->zone, cl);
+					uma_zfree(q->ifr_zone, cl);
 				m_free(m);
 				goto done;
 			}
@@ -1016,7 +1030,7 @@ _iflib_tx(iflib_txq_t txr, struct mbuf **m_headp)
 	struct adapter		*adapter = txr->adapter;
 	bus_dma_segment_t	*segs /* [EM_MAX_SCATTER]*/;
 	bus_dmamap_t		map;
-	iflib_buf_t	tx_buffer, tx_buffer_mapped;
+	iflib_sd_t	txsd, tx_buffer_mapped;
 	struct mbuf		*m_head;
 	struct ether_header	*eh;
 	struct ip		*ip = NULL;
@@ -1191,7 +1205,7 @@ retry:
 
 	if (nsegs > (txr->tx_avail - 2)) {
 		txr->no_desc_avail++;
-		bus_dmamap_unload(txr->ift_tag, map);
+		bus_dmamap_unload(txq->ift_desc_tag, map);
 		return (ENOBUFS);
 	}
 	m_head = *m_headp;
@@ -1840,11 +1854,11 @@ iflib_rx_structures_setup(if_shared_ctx_t sctx)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	iflib_rxq_t rxq = ctx->ifc_rxqs;
-	iflib_sd_t rxbuf;
+	iflib_sd_t rxsd;
 	int i, n, q;
 
 	for (q = 0; q < ctx->ifc_nrxq; q++, rxq++)
-		if (iflib_rxq_setup(rxr))
+		if (iflib_rxq_setup(rxq))
 			goto fail;
 
 	return (0);
@@ -1857,8 +1871,7 @@ fail:
 	rxq = ctx->ifc_rxqs;
 	for (i = 0; i < q; ++i; rxq++) {
 		iflib_rx_sds_free(ctx, rxq);
-		rxq->next_to_check = 0;
-		rxq->next_to_refresh = 0;
+		rxq->ifr_cidx = rxq->ifr_pidx = 0;
 	}
 
 	return (ENOBUFS);
