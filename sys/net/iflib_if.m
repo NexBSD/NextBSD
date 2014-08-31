@@ -5,6 +5,8 @@
 INTERFACE ifc;
 
 CODE {
+	extern int iflib_recycle_enable;
+
 	void
 	null_op(if_shared_ctx_t _ctx __unused)
 	{
@@ -23,6 +25,13 @@ CODE {
 	void
 	null_q_setup(if_shared_ctx_t _ctx __unused, int _qid __unused)
 	{
+	}
+
+	int
+	null_recycle_rx_buf(if_shared_ctx_t _ctx __unused, int _qid __unused, int _idx __unused)
+	{
+		iflib_recycle_enable = 0;
+		return (ENOTSUP);
 	}
 };
 
@@ -198,6 +207,12 @@ METHOD void rxq_setup {
 	if_shared_ctx_t _ctx;
 	int _txqid;
 } DEFAULT null_q_setup;
+
+METHOD void recycle_rx_buf {
+	if_shared_ctx_t _ctx;
+	int qidx;
+	int idx;
+} DEFAULT null_recycle_rx_buf;
 
 METHOD int timer {
 	if_shared_ctx_t _ctx;
