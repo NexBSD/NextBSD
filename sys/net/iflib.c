@@ -31,14 +31,14 @@ typedef struct iflib_txq {
 	iflib_ctx_t             ift_ctx;
 	struct mtx              ift_mtx;
 	char                    ift_mtx_name[16];
-	iflib_buffer_t          ift_bufs;
+	int                     ift_id;
+	iflib_sd_t              ift_sds;
 	struct buf_ring        *ift_br;
 	bus_dma_tag_t		    ift_txtag;
 	u32                     ift_next_avail_desc;
 	u32                     ift_next_to_clean;
 	volatile u16            ift_tx_avail;
 	unsigned long		    ift_no_desc_avail;
-	void                   *ift_hwq;
 	struct task             ift_task;
 	int			            ift_qstatus;
 	int                     ift_watchdog_time;
@@ -49,10 +49,10 @@ typedef struct iflib_rxq {
 	iflib_ctx_t             ifr_ctx;
 	struct mtx              ifr_mtx;
 	char                    ifr_mtx_name[16];
+	int                     ifr_id;
 	struct task             ifr_task;
 	iflib_sd_t              ifr_sds;
 	bus_dma_tag_t           ifr_tag;
-	void                   *ifr_hwq;
 } *iflib_rxq_t;
 
 
@@ -300,9 +300,9 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 			break;
 		bus_dmamap_sync(rxr->rxdma.dma_tag, rxr->rxdma.dma_map,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);		
-		if (__predict_false(!IFC_IS_NEW(ctx->ifc_sctx, rxq->ifr_hwq, cidx)))
+		if (__predict_false(!IFC_IS_NEW(ctx->ifc_sctx, rxq->ifr_id, cidx)))
 			break;		
-		err = IFC_PACKET_GET(ctx->ifc_sctx, rxq->ifr_hwq, cidx, &ri);
+		err = IFC_PACKET_GET(ctx->ifc_sctx, rxq->ifr_id, cidx, &ri);
 		bus_dmamap_unload(rxq->ifr_dtag, rxq->ifr_sds[cidx].ifsd_map);
 
 		if (++cidx == ctx->ifc_nrxd)
@@ -331,21 +331,6 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		m->m_nextpkt = NULL;
 		if_input(ctx->ifc_ifp, m);
 	}
-}
-
-
-void
-iflib_tx_hwq_set(if_shared_ctx_t sctx, void *hwq, int idx)
-{
-
-	sctx->isc_ctx->ifc_txqs[idx].ift_hwq = hwq;
-}
-
-void
-iflib_rx_hwq_set(if_shared_ctx_t sctx, void *hwq, int idx)
-{
-
-	sctx->isc_ctx->ifc_rxqs[idx].ift_hwq = hwq;
 }
 
 
@@ -474,7 +459,7 @@ _task_fn_tx(void *context, int pending)
 	
 	TXQ_LOCK(txq);
 	_iflib_txq_transmit(txq, NULL);
-	IFC_TX_INTR_ENABLE(sctx, txq->ift_hwq);
+	IFC_TX_INTR_ENABLE(sctx, txq->ift_id);
 	TXQ_UNLOCK(txq);
 }
 
@@ -757,7 +742,7 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 
 	/* Clear the ring contents */
 	RX_LOCK(rxq);
-	bzero((void *)rxr->rx_base, ctx->ifc_rxq_size);
+	bzero((void *)rxq->ifr_dma_info.ifd_vaddr, ctx->ifc_rxq_size);
 #ifdef DEV_NETMAP
 	slot = netmap_reset(na, NR_RX, rxr->ifr_id, 0);
 #endif
@@ -771,7 +756,8 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 	/* Now replenish the mbufs */
 	_iflib_refill_rxq(ctx, rxq, ctx->ifc_nrxd);
 
-	bus_dmamap_sync(rxr->rxdma.dma_tag, rxr->rxdma.dma_map,
+	IFC_RXQ_SETUP(sctx, rxq->ifr_id);
+	bus_dmamap_sync(rxq->ifr_ifd.ifd_tag, rxq->ifr_ifd.ifd_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 fail:
@@ -1049,7 +1035,7 @@ iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)
 	ctx->ifc_rxqs = rxqs;
 	ctx->ifc_txq_size = txq_size;
 	ctx->ifc_rxq_size = rxq_size;
-	if ((err = ctx->ifc_queues_alloc(ctx)) != 0)
+	if ((err = IFC_QUEUES_ALLOC(sctx)) != 0)
 		iflib_tx_structures_free(ctx);
 		
 	return (0);
@@ -1117,7 +1103,8 @@ iflib_txq_setup(iflib_txq_t txq)
 		txbuf->next_eop = -1;
 	}
 
-	IFC_TXQ_SETUP(sctx, txr->ift_hw_txr);
+	bzero((void *)txq->ift_dma_info.ifd_vaddr, ctx->ifc_txq_size);
+	IFC_TXQ_SETUP(sctx, txr->ift_id);
 	bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	TX_UNLOCK(txr);	
@@ -1801,12 +1788,12 @@ retry:
 
 	pi->pi_segs = segs;
 	pi->pi_nsegs = nsegs;
-	if ((err = IFC_TX(ctx->ifc_sctx, txq->ift_hwq, pi)) == 0)
+	if ((err = IFC_TX(ctx->ifc_sctx, txq->ift_id, pi)) == 0)
 		tx_buffer->next_eop = pi->pi_last;
 
 	bus_dmamap_sync(txq->ift_dma_info.idi_tag, txq->ift_dma_info.idi_map,
 					BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-	IFC_TX_FLUSH(ctx->ifc_sctx, txq->ifc_hwq, pi->ipi_last);
+	IFC_TX_FLUSH(ctx->ifc_sctx, txq->ift_id, pi->ipi_last);
 	return (err);
 }
 

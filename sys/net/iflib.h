@@ -94,8 +94,6 @@ int iflib_irq_alloc_generic(if_shared_ctx_t ctx, if_irq_t irq, int rid,
 void iflib_tx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
 void iflib_rx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
 void iflib_queue_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
-void iflib_tx_hwq_set(if_shared_ctx_t, void *hwq, int idx);
-void iflib_rx_hwq_set(if_shared_ctx_t, void *hwq, int idx);
 void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 void iflib_stats_update(if_shared_ctx_t);

@@ -210,8 +210,8 @@ static void	em_if_stop(if_shared_ctx_t);
 
 static void	em_if_intr_enable(if_shared_ctx_t);
 static void	em_if_intr_disable(if_shared_ctx_t);
-static void em_if_tx_intr_enable(if_shared_ctx_t, void *);
-static void em_if_rx_intr_enable(if_shared_ctx_t, void *);
+static void em_if_tx_intr_enable(if_shared_ctx_t, int);
+static void em_if_rx_intr_enable(if_shared_ctx_t, int);
 static void em_if_link_intr_enable(if_shared_ctx_t);
 
 static void	em_if_multi_set(if_shared_ctx_t);
@@ -225,10 +225,10 @@ static void em_if_media_status(if_shared_ctx_t, struct ifmediareq *);
 static int  em_if_media_change(if_shared_ctx_t);
 
 static void em_if_timer(if_shared_ctx_t);
-static int	em_if_tx(if_shared_ctx_t, void *, pkt_info_t);
-static void em_if_tx_flush(if_shared_ctx_t, void *, int);
-static void	em_if_txeof(if_shared_ctx_t, void *);
-static int  em_if_packet_get(if_shared_ctx_t, void *, int, rx_info_t);
+static int	em_if_tx(if_shared_ctx_t, int, pkt_info_t);
+static void em_if_tx_flush(if_shared_ctx_t, int, int);
+static void	em_if_txeof(if_shared_ctx_t, int);
+static int  em_if_packet_get(if_shared_ctx_t, int, int, rx_info_t);
 static void	em_if_led_func(if_shared_ctx_t, int);
 static void em_if_watchdog_reset(if_shared_ctx_t);
 
@@ -236,11 +236,11 @@ static void	em_if_promisc_config(if_shared_ctx_t, int);
 static void	em_if_promisc_disable(if_shared_ctx_t, int);
 static void	em_if_vlan_register(if_shared_ctx_t, u16);
 static void	em_if_vlan_unregister(if_shared_ctx_t, u16);
-static void em_if_txq_setup(if_shared_ctx_t, void *);
+static void em_if_txq_setup(if_shared_ctx_t, int);
 
 static void em_if_rxd_refill(iflib_cxt_t, int, int, uint64_t);
 static void em_if_rxd_refill_flush(if_shared_ctx_t, int, int);
-static void em_if_is_new(if_shared_ctx_t, void *, int);
+static void em_if_is_new(if_shared_ctx_t, int, int);
 
 static void	em_identify_hardware(struct adapter *);
 static int	em_allocate_pci_resources(struct adapter *);
@@ -1061,10 +1061,10 @@ em_irq_fast(void *arg)
  *
  **********************************************************************/
 static void
-em_if_tx_intr_enable(void *arg)
+em_if_tx_intr_enable(if_shared_ctx_t sctx, int txqid)
 {
-	struct tx_ring *txr = arg;
-	struct adapter *adapter = txr->adapter;
+	struct adapter *adapter = DOWNCAST(sctx);
+	struct tx_ring *txr = &adapter->tx_rings[txqid];
 	
 	/* Reenable this interrupt */
 	E1000_WRITE_REG(&adapter->hw, E1000_IMS, txr->ims);
@@ -1077,10 +1077,10 @@ em_if_tx_intr_enable(void *arg)
  **********************************************************************/
 
 static void
-em_if_rx_intr_enable(iflib_ctx_t _unused, void *_rxr)
+em_if_rx_intr_enable(if_shared_ctx_t sctx, int rxqid)
 {
-	struct rx_ring *rxr = _rxr;
-	struct adapter	*adapter = rxr->adapter;
+	struct adapter	*adapter = DOWNCAST(sctx);
+	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
 
 	/* Reenable this interrupt */
 	E1000_WRITE_REG(&adapter->hw, E1000_IMS, rxr->ims);
@@ -1229,9 +1229,10 @@ em_if_media_change(if_shared_ctx_t sctx)
  **********************************************************************/
 
 static int
-em_if_tx(if_shared_ctx_t sctx, void *hw_txr, pkt_info_t pi)
+em_if_tx(if_shared_ctx_t sctx, int txqid, pkt_info_t pi)
 {
-	struct tx_ring *txr = hw_txr;
+	adapter *adapter = DOWNCAST(sctx);
+	struct tx_ring *txr = &adapter->tx_rings[txqid];
 	struct e1000_tx_desc	*ctxd = NULL;
 	u32 txd_upper, txd_lower, txd_used, txd_saved;
 	bus_dma_segment_t *segs = pi->pi_segs;
@@ -1354,16 +1355,15 @@ em_if_tx(if_shared_ctx_t sctx, void *hw_txr, pkt_info_t pi)
 }
 
 static void
-em_if_tx_flush(if_shared_ctx_t sctx, void *hwq, int pidx)
+em_if_tx_flush(if_shared_ctx_t sctx, int txqid, int pidx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
-	struct tx_ring *txr = hwq;
 	/*
 	 * Advance the Transmit Descriptor Tail (TDT), this tells the E1000
 	 * that this frame is available to transmit.
 	 */
 
-	E1000_WRITE_REG(&adapter->hw, E1000_TDT(txr->me), pidx);
+	E1000_WRITE_REG(&adapter->hw, E1000_TDT(txqid), pidx);
 }
 
 static void
@@ -2195,14 +2195,9 @@ fail:
  *
  **********************************************************************/
 static void
-em_if_txq_setup(void *arg)
+em_if_txq_setup(if_shared_ctx_t sctx, int txqid)
 {
-	struct tx_ring *txr = arg;
-	struct adapter *adapter = txr->adapter;
-
-	/* Clear the old descriptor contents */
-	bzero((void *)txr->tx_base,
-	      (sizeof(struct e1000_tx_desc)) * adapter->num_tx_desc);
+	struct tx_ring *txr = &DOWNCAST(sctx)->rx_rings[txqid];
 
 	/* Clear checksum offload context. */
 	txr->last_hw_offload = 0;
@@ -2537,10 +2532,10 @@ em_tso_setup(struct tx_ring *txr, pkt_info_t pi, u32 *txd_upper, u32 *txd_lower)
  *
  **********************************************************************/
 static void
-em_if_txeof(if_shared_ctx_t sctx, void *_txr)
+em_if_txeof(if_shared_ctx_t sctx, int txqid)
 {
-	struct tx_ring *txr = _txr;
-	struct adapter	*adapter = txr->adapter;
+	struct adapter	*adapter = DOWNCAST(sctx);
+	struct tx_ring *txr = adapter->tx_rings[txqid];
 	int first, last, done, processed;
 	struct e1000_tx_desc   *tx_desc, *eop_desc;
 	
@@ -2757,7 +2752,7 @@ em_initialize_receive_unit(struct adapter *adapter)
 }
 
 static void
-em_if_rxd_refill(iflib_cxt_t ctx, int rxqid, int pidx, uint64_t paddr)
+em_if_rxd_refill(if_shared_cxt_t ctx, int rxqid, int pidx, uint64_t paddr)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = adapter->rx_rings[rxqid];
@@ -2774,9 +2769,9 @@ em_if_rxd_refill_flush(if_shared_ctx_t sctx, int rxqid, int pidx)
 }
 
 static int
-em_if_is_new(iflib_ctx_t _unused, void *_rxr, int idx)
+em_if_is_new(if_shared_ctx_t sctx, int rxqid, int idx)
 {
-	struct rx_ring *rxr = _rxr;
+	struct rx_ring *rxr = &DOWNCAST(sctx)->rx_rings[rxqid];
 	struct e1000_rx_desc	*cur;
 
 	cur = &rxr->rx_base[idx];
@@ -2795,10 +2790,10 @@ em_if_is_new(iflib_ctx_t _unused, void *_rxr, int idx)
  *  For polling we also now return the number of cleaned packets
  *********************************************************************/
 static int
-em_if_packet_get(void *_rxr, int i, rx_info_t ri)
+em_if_packet_get(if_shared_ctx_t sctx, int rxqid, int i, rx_info_t ri)
 {
-	struct rx_ring *rxr = _rxr;
-	struct adapter		*adapter = rxr->adapter;
+	struct adapter	*adapter = DOWNCAST(sctx);
+	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
 	u8			status;
 	u16 			len;
 	int			err;
