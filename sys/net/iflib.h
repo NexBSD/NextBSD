@@ -86,13 +86,13 @@ void iflib_rx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
 void iflib_queue_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
 
 void iflib_tx_structures_setup(if_shared_ctx_t);
-void iflib_rx_structures_setup(if_shared_ctx_t);
-void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
-void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 void iflib_tx_structures_free(if_shared_ctx_t);
+void iflib_rx_structures_setup(if_shared_ctx_t);
 void iflib_rx_structures_free(if_shared_ctx_t);
 void iflib_ctx_free(if_shared_ctx_t);
 
+void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
+void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 
 int iflib_irq_alloc(if_shared_ctx_t, if_irq_t, int, driver_intr_t, void *arg, char *name);
 int iflib_irq_alloc_generic(if_shared_ctx_t ctx, if_irq_t irq, int rid,
