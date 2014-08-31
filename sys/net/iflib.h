@@ -75,27 +75,38 @@ typedef struct if_shared_ctx {
 #define UPCAST(sc) ((if_shared_ctx_t)(sc))
 
 int iflib_attach(device_t dev, driver_t *driver);
+int iflib_detach(device_t dev);
+int iflib_suspend(device_t dev);
+int iflib_resume(device_t dev);
+
 int iflib_queues_alloc(if_shared_ctx_t ctx, int txq_size, int rxq_size);
-void iflib_led_create(if_shared_ctx_t);
+
+void iflib_tx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
+void iflib_rx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
+void iflib_queue_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
+
 void iflib_tx_structures_setup(if_shared_ctx_t);
 void iflib_rx_structures_setup(if_shared_ctx_t);
+void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
+void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 void iflib_tx_structures_free(if_shared_ctx_t);
 void iflib_rx_structures_free(if_shared_ctx_t);
 void iflib_ctx_free(if_shared_ctx_t);
-void iflib_init(if_shared_ctx_t);
-void iflib_legacy_intr_deferred(if_shared_ctx_t);
-void iflib_link_intr_deferred(if_shared_ctx_t);
-void iflib_linkstate_change(if_shared_ctx_t, uint64_t, int);
-int iflib_legacy_setup(if_shared_ctx_t, driver_filter_t, int *);
+
 
 int iflib_irq_alloc(if_shared_ctx_t, if_irq_t, int, driver_intr_t, void *arg, char *name);
 int iflib_irq_alloc_generic(if_shared_ctx_t ctx, if_irq_t irq, int rid,
 							intr_type_t type, void *arg, char *name);
-void iflib_tx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
-void iflib_rx_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
-void iflib_queue_tag_prop_set(if_shared_ctx_t, int field_name, uint64_t value);
-void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
-void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
+
+int iflib_legacy_setup(if_shared_ctx_t, driver_filter_t, int *);
+void iflib_led_create(if_shared_ctx_t);
+
+void iflib_init(if_shared_ctx_t);
+
+void iflib_legacy_intr_deferred(if_shared_ctx_t);
+void iflib_link_intr_deferred(if_shared_ctx_t);
+void iflib_linkstate_change(if_shared_ctx_t, uint64_t, int);
+
 void iflib_stats_update(if_shared_ctx_t);
 
 #endif /*  __IFLIB_H_ */
