@@ -40,12 +40,14 @@
  *
  *
  * Next steps:
- *  - add all fields to private structures
+ *  - validate the default tx path
+ *  - validate the default rx path
+ *
  *  - validate queue initialization paths
- *  - validate interrupt setup and tq thread creation
+ *  - validate interrupt setup
  *  - validate queue teardown
  *  - validate that all structure fields are initialized
- *  - validate the default tx path
+
  *  - validate the TSO path
  *  - validate SOP_EOP packet receipt
  *  - add rx_buf recycling
@@ -141,9 +143,9 @@ typedef struct iflib_txq {
 #define TXQ_AVAIL(txq) ((txq)->ift_size - (txq)->ift_pidx + (txq)->ift_cidx);
 
 typedef struct iflib_global_context {
-	struct taskqueue **igc_rx_tqs;	/* per-cpu taskqueues for rx */
-	struct taskqueue **igc_tx_tqs;	/* per-cpu taskqueues for tx */
-	struct taskqueue *igc_config_tq; /* taskqueue for config operations */
+	struct taskqueue	**igc_rx_tqs;		/* per-cpu taskqueues for rx */
+	struct taskqueue	**igc_tx_tqs;		/* per-cpu taskqueues for tx */
+	struct taskqueue	 *igc_config_tq;	/* taskqueue for config operations */
 } iflib_global_context_t;
 
 struct iflib_global_context global_ctx, *gctx;
@@ -151,12 +153,13 @@ struct iflib_global_context global_ctx, *gctx;
 typedef struct iflib_rxq {
 	iflib_ctx_t	ifr_ctx;
 	uint32_t	ifr_buf_size;
+	uint32_t	ifr_type;
 	uint32_t	ifr_credits;
 	uint32_t	ifr_size;
 	uint32_t	ifr_cidx;
 	uint32_t	ifr_pidx;
 	uint32_t	ifr_db_pending;
-	uint32_t	ift_tqid;
+	uint32_t	ifr_tqid;
 	struct iflib_dma_info	ifr_dma_info;
 	struct mtx              ifr_mtx;
 	char                    ifr_mtx_name[16];
@@ -578,7 +581,7 @@ iflib_rx_bufs_free(iflib_rxq_t rxq)
 		}				
 		d->ifsd_cl = NULL;
 		d->ifsd_m = NULL;
-		if (++cidx == q->ifr_size)
+		if (++cidx == rxq->ifr_size)
 			cidx = 0;
 	}
 }
@@ -736,7 +739,6 @@ _refill_rxq_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
 	cb_arg->error = error;
 	cb_arg->seg = segs[0];
 	cb_arg->nseg = nseg;
-
 }
 #endif
 
@@ -830,10 +832,10 @@ _iflib_refill_rxq(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
 		}
 #if !defined(__i386__) && !defined(__amd64__)
 		{
-			struct refill_fl_cb_arg cb_arg;
+			struct refill_rxq_cb_arg cb_arg;
 			cb_arg.error = 0;
 			err = bus_dmamap_load(q->ifr_desc_tag, sd->ifsd_map,
-		         cl, q->ifr_buf_size, refill_fl_cb, &cb_arg, 0);
+		         cl, q->ifr_buf_size, refill_rxq_cb, &cb_arg, 0);
 
 			if (err != 0 || cb_arg.error) {
 				/*
