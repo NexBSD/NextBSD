@@ -194,16 +194,17 @@ static char *em_strings[] = {
 /*********************************************************************
  *  Function prototypes
  *********************************************************************/
+
 static int	em_probe(device_t);
 static int	em_attach(device_t);
+static int	em_detach(device_t);
+static int	em_suspend(device_t);
+static int	em_resume(device_t);
 
 /*
  * Library functions for the hardware independent
  * iflib layer
  */
-static int	em_if_detach(if_shared_ctx_t);
-static int	em_if_suspend(if_shared_ctx_t);
-static int	em_if_resume(if_shared_ctx_t);
 
 static void em_if_init(if_shared_ctx_t);
 static void	em_if_stop(if_shared_ctx_t);
@@ -295,6 +296,10 @@ static device_method_t em_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe, em_probe),
 	DEVMETHOD(device_attach, em_attach),
+	DEVMETHOD(device_detach, em_detach),
+	DEVMETHOD(device_shutdown, em_suspend),
+	DEVMETHOD(device_suspend, em_suspend),
+	DEVMETHOD(device_resume, em_resume),
 	DEVMETHOD_END
 };
 
@@ -781,9 +786,9 @@ err_pci:
  *********************************************************************/
 
 static int
-em_if_detach(if_shared_ctx_t sctx)
+em_detach(device_t dev)
 {
-	struct adapter	*adapter = DOWNCAST(sctx);
+	struct adapter	*adapter = device_get_softc(dev);
 
 	INIT_DEBUGOUT("em_if_detach: begin");
 
@@ -806,9 +811,9 @@ em_if_detach(if_shared_ctx_t sctx)
  * Suspend/resume device methods.
  */
 static int
-em_if_suspend(if_shared_ctx_t sctx)
+em_suspend(device_t dev)
 {
-	struct adapter *adapter = DOWNCAST(sctx);
+	struct adapter *adapter = device_get_softc(dev);
 
 	em_release_manageability(adapter);
 	em_release_hw_control(adapter);
@@ -816,9 +821,9 @@ em_if_suspend(if_shared_ctx_t sctx)
 }
 
 static int
-em_if_resume(if_shared_ctx_t sctx)
+em_resume(device_t dev)
 {
-	struct adapter *adapter = DOWNCAST(sctx);
+	struct adapter *adapter = device_get_softc(dev);
 
 	if (adapter->hw.mac.type == e1000_pch2lan)
 		e1000_resume_workarounds_pchlan(&adapter->hw);

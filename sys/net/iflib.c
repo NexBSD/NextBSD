@@ -184,6 +184,16 @@ DRIVER_MODULE(iflib, pci, iflib_driver, iflib_devclass, 0, 0);
 MODULE_DEPEND(iflib, pci, 1, 1, 1);
 MODULE_DEPEND(iflib, ether, 1, 1, 1);
 
+/* Our boot-time initialization hook */
+static int	iflib_module_event_handler(module_t, int, void *);
+
+static moduledata_t iflib_moduledata = {
+	"iflib",
+	iflib_module_event_handler,
+	NULL
+};
+
+DECLARE_MODULE(iflib_mod, iflib_moduledata, SI_SUB_CONFIGURE, SI_ORDER_SECOND);
 
 static void
 _iflib_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
@@ -1660,7 +1670,7 @@ iflib_detach(device_t dev)
 	ether_ifdetach_drv(ctx->ifc_ifp);
 	if (ctx->ifc_led_dev != NULL)
 		led_destroy(ctx->ifc_led_dev);
-	IFC_DETACH(sctx);
+	DEVICE_DETACH(device_get_child(dev));
 	callout_drain(&ctx->ifc_timer);
 
 #ifdef DEV_NETMAP
@@ -1678,11 +1688,11 @@ iflib_detach(device_t dev)
 static int
 iflib_suspend(device_t dev)
 {
-	iflib_shared_ctx_t sctx = device_get_softc(dev);
+	iflib_ctx_t ctx = device_get_softc(dev);
 
-	SCTX_LOCK(sctx);
-	IFC_SUSPEND(sctx);
-	SCTX_UNLOCK(sctx);
+	CTX_LOCK(ctx);
+	DEVICE_SUSPEND(device_get_child(dev));
+	CTX_UNLOCK(ctx);
 
 	return bus_generic_suspend(dev);
 }
@@ -1690,16 +1700,46 @@ iflib_suspend(device_t dev)
 static int
 iflib_resume(device_t dev)
 {
-	iflib_shared_ctx_t sctx = device_get_softc(dev);
-	iflib_ctx_t ctx = sctx->isc_ctx;
+	iflib_ctx_t ctx = device_get_softc(dev);
 
 	CTX_LOCK(ctx);
-	IFC_RESUME(sctx);
+	DEVICE_RESUME(device_get_child(dev));
 	CTX_UNLOCK(ctx);
 	for (int i = 0; i < ctx->ifc_nqsets; i++)
 		iflib_txq_transmit(&ctx->ifc_txqs[i], NULL);
 
 	return (bus_generic_resume(dev));
+}
+
+/*********************************************************************
+ *
+ *  MODULE FUNCTION DEFINITION
+ *
+ **********************************************************************/
+static int
+iflib_module_init(void)
+{
+
+	return (0);
+}
+
+static int
+iflib_module_event_handler(module_t mod, int what, void *arg)
+{
+	int error;
+
+	switch (what) {
+	case MOD_LOAD:
+		if ((error = iflib_module_init()) != 0)
+			return (error);
+		break;
+	case MOD_UNLOAD:
+		return EBUSY;
+	default:
+		return EOPNOTSUPP;
+	}
+
+	return 0;
 }
 
 /*********************************************************************

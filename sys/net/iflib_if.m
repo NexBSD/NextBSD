@@ -63,22 +63,6 @@ CODE {
 };
 
 /*
- * driver bus methods
- */
-
-METHOD int detach {
-	if_shared_ctx_t _ctx;
-};
-
-METHOD int suspend {
-	if_shared_ctx_t _ctx;
-};
-
-METHOD int resume {
-	if_shared_ctx_t _ctx;
-};
-
-/*
  * downcall to driver to allocate its
  * own queue state and tie it to the parent
  */
