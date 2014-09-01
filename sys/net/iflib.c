@@ -158,6 +158,33 @@ typedef struct iflib_rxq {
 	uma_zone_t              ifr_zone;
 } *iflib_rxq_t;
 
+static int iflib_probe(device_t dev);
+static int iflib_attach(device_t dev);
+static int iflib_detach(device_t dev);
+static int iflib_suspend(device_t dev);
+static int iflib_resume(device_t dev);
+
+static device_method_t iflib_methods[] = {
+	/* Device interface */
+	DEVMETHOD(device_probe, iflib_probe),
+	DEVMETHOD(device_attach, iflib_attach),
+	DEVMETHOD(device_detach, iflib_detach),
+	DEVMETHOD(device_shutdown, iflib_suspend),
+	DEVMETHOD(device_suspend, iflib_suspend),
+	DEVMETHOD(device_resume, iflib_resume),
+	DEVMETHOD_END
+};
+
+static driver_t iflib_driver = {
+	"iflib", iflib_methods, sizeof(struct iflib_ctx),
+};
+
+devclass_t iflib_devclass;
+DRIVER_MODULE(iflib, pci, iflib_driver, iflib_devclass, 0, 0);
+MODULE_DEPEND(iflib, pci, 1, 1, 1);
+MODULE_DEPEND(iflib, ether, 1, 1, 1);
+
+
 static void
 _iflib_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
 {
@@ -1584,13 +1611,106 @@ _iflib_led_func(void *arg, int onoff)
 
 /*********************************************************************
  *
+ *  BUS FUNCTION DEFINITIONS
+ *
+ **********************************************************************/
+
+static int
+iflib_probe(device_t dev)
+{
+
+	device_set_desc(dev, "DI layer");
+
+	/* Allow other subclasses to override this driver. */
+	return (BUS_PROBE_GENERIC);
+}
+
+static int
+iflib_attach(device_t dev)
+{
+
+	return (bus_generic_attach(dev));
+}
+
+static int
+iflib_detach(device_t dev)
+{
+	iflib_shared_ctx_t sctx = device_get_softc(dev);
+	iflib_ctx_t ctx = sctx->isc_ctx;
+	if_t ifp = sctx->isc_ifp;
+
+	/* Make sure VLANS are not using driver */
+	if (if_vlantrunkinuse(ifp)) {
+		device_printf(dev,"Vlan in use, detach first\n");
+		return (EBUSY);
+	}
+
+	CTX_LOCK(ctx);
+	ctx->in_detach = 1;
+	iflib_stop(ctx);
+	CTX_UNLOCK(ctx);
+	CTX_LOCK_DESTROY(ctx);
+
+	/* Unregister VLAN events */
+	if (ctx->ifc_vlan_attach_event != NULL)
+		EVENTHANDLER_DEREGISTER(vlan_config, ctx->ifc_vlan_attach_event);
+	if (ctx->ifc_vlan_detach_event != NULL)
+		EVENTHANDLER_DEREGISTER(vlan_unconfig, ctx->ifc_vlan_detach_event);
+
+	ether_ifdetach_drv(ctx->ifc_ifp);
+	if (ctx->ifc_led_dev != NULL)
+		led_destroy(ctx->ifc_led_dev);
+	IFC_DETACH(sctx);
+	callout_drain(&ctx->ifc_timer);
+
+#ifdef DEV_NETMAP
+	netmap_detach(ifp);
+#endif /* DEV_NETMAP */
+
+	bus_generic_detach(dev);
+	iflib_ctx_free(sctx);
+
+	iflib_tx_structures_free(sctx);
+	iflib_rx_structures_free(sctx);
+	return (0);
+}
+
+static int
+iflib_suspend(device_t dev)
+{
+	iflib_shared_ctx_t sctx = device_get_softc(dev);
+
+	SCTX_LOCK(sctx);
+	IFC_SUSPEND(sctx);
+	SCTX_UNLOCK(sctx);
+
+	return bus_generic_suspend(dev);
+}
+
+static int
+iflib_resume(device_t dev)
+{
+	iflib_shared_ctx_t sctx = device_get_softc(dev);
+	iflib_ctx_t ctx = sctx->isc_ctx;
+
+	CTX_LOCK(ctx);
+	IFC_RESUME(sctx);
+	CTX_UNLOCK(ctx);
+	for (int i = 0; i < ctx->ifc_nqsets; i++)
+		iflib_txq_transmit(&ctx->ifc_txqs[i], NULL);
+
+	return (bus_generic_resume(dev));
+}
+
+/*********************************************************************
+ *
  *  PUBLIC FUNCTION DEFINITIONS
  *     ordered as in iflib.h
  *
  **********************************************************************/
 
 int
-iflib_attach(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN])
+iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN])
 {
 	iflib_shared_ctx_t sctx = device_get_softc(dev);
 	iflib_ctx_t ctx;
@@ -1641,78 +1761,6 @@ iflib_attach(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN])
 
 	return (ctx);
 }
-
-int
-iflib_detach(device_t dev)
-{
-	iflib_shared_ctx_t sctx = device_get_softc(dev);
-	iflib_ctx_t ctx = sctx->isc_ctx;
-	if_t ifp = sctx->isc_ifp;
-
-	/* Make sure VLANS are not using driver */
-	if (if_vlantrunkinuse(ifp)) {
-		device_printf(dev,"Vlan in use, detach first\n");
-		return (EBUSY);
-	}
-
-	CTX_LOCK(ctx);
-	ctx->in_detach = 1;
-	iflib_stop(ctx);
-	CTX_UNLOCK(ctx);
-	CTX_LOCK_DESTROY(ctx);
-
-	/* Unregister VLAN events */
-	if (ctx->ifc_vlan_attach_event != NULL)
-		EVENTHANDLER_DEREGISTER(vlan_config, ctx->ifc_vlan_attach_event);
-	if (ctx->ifc_vlan_detach_event != NULL)
-		EVENTHANDLER_DEREGISTER(vlan_unconfig, ctx->ifc_vlan_detach_event);
-
-	ether_ifdetach_drv(ctx->ifc_ifp);
-	if (ctx->ifc_led_dev != NULL)
-		led_destroy(ctx->ifc_led_dev);
-	IFC_DETACH(sctx);
-	callout_drain(&ctx->ifc_timer);
-
-#ifdef DEV_NETMAP
-	netmap_detach(ifp);
-#endif /* DEV_NETMAP */
-
-	bus_generic_detach(dev);
-	iflib_ctx_free(sctx);
-
-	iflib_tx_structures_free(sctx);
-	iflib_rx_structures_free(sctx);
-	return (0);
-}
-
-
-int
-iflib_suspend(device_t dev)
-{
-	iflib_shared_ctx_t sctx = device_get_softc(dev);
-
-	SCTX_LOCK(sctx);
-	IFC_SUSPEND(sctx);
-	SCTX_UNLOCK(sctx);
-
-	return bus_generic_suspend(dev);
-}
-
-int
-iflib_resume(device_t dev)
-{
-	iflib_shared_ctx_t sctx = device_get_softc(dev);
-	iflib_ctx_t ctx = sctx->isc_ctx;
-
-	CTX_LOCK(ctx);
-	IFC_RESUME(sctx);
-	CTX_UNLOCK(ctx);
-	for (int i = 0; i < ctx->ifc_nqsets; i++)
-		iflib_txq_transmit(&ctx->ifc_txqs[i], NULL);
-
-	return (bus_generic_resume(dev));
-}
-
 
 int
 iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)

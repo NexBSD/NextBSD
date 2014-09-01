@@ -118,10 +118,7 @@ typedef struct if_shared_ctx {
 #endif
 
 
-int iflib_attach(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN]);
-int iflib_detach(device_t dev);
-int iflib_suspend(device_t dev);
-int iflib_resume(device_t dev);
+int iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN]);
 
 int iflib_queues_alloc(if_shared_ctx_t ctx, int txq_size, int rxq_size);
 

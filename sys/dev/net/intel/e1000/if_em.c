@@ -295,10 +295,6 @@ static device_method_t em_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe, em_probe),
 	DEVMETHOD(device_attach, em_attach),
-	DEVMETHOD(device_detach, iflib_detach),
-	DEVMETHOD(device_shutdown, iflib_suspend),
-	DEVMETHOD(device_suspend, iflib_suspend),
-	DEVMETHOD(device_resume, iflib_resume),
 	DEVMETHOD_END
 };
 
@@ -307,8 +303,8 @@ static driver_t em_driver = {
 };
 
 devclass_t em_devclass;
-DRIVER_MODULE(em, pci, em_driver, em_devclass, 0, 0);
-MODULE_DEPEND(em, pci, 1, 1, 1);
+DRIVER_MODULE(em, iflib, em_driver, em_devclass, 0, 0);
+MODULE_DEPEND(em, iflib, 1, 1, 1);
 MODULE_DEPEND(em, ether, 1, 1, 1);
 
 
@@ -523,7 +519,7 @@ em_attach(device_t dev)
 	/* Determine hardware and mac info */
 	em_identify_hardware(adapter);
 
-	if ((error = iflib_attach(dev, em_if_driver, hw.mac.addr)) != 0)
+	if ((error = iflib_register(dev, em_if_driver, hw.mac.addr)) != 0)
 		return (error);
 
 	/* Setup PCI resources */
