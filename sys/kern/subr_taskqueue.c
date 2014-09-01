@@ -60,6 +60,7 @@ struct taskqueue {
 	STAILQ_HEAD(, task)	tq_queue;
 	taskqueue_enqueue_fn	tq_enqueue;
 	void			*tq_context;
+	char			*tq_name;
 	TAILQ_HEAD(, taskqueue_busy) tq_active;
 	struct mtx		tq_mutex;
 	struct thread		**tq_threads;
@@ -117,7 +118,7 @@ TQ_SLEEP(struct taskqueue *tq, void *p, struct mtx *m, int pri, const char *wm,
 }
 
 static struct taskqueue *
-_taskqueue_create(const char *name __unused, int mflags,
+_taskqueue_create(const char *name, int mflags,
 		 taskqueue_enqueue_fn enqueue, void *context,
 		 int mtxflags, const char *mtxname)
 {
@@ -131,6 +132,7 @@ _taskqueue_create(const char *name __unused, int mflags,
 	TAILQ_INIT(&queue->tq_active);
 	queue->tq_enqueue = enqueue;
 	queue->tq_context = context;
+	queue->tq_name = strdup(name, M_TASKQUEUE);
 	queue->tq_spin = (mtxflags & MTX_SPIN) != 0;
 	queue->tq_flags |= TQ_FLAGS_ACTIVE;
 	if (enqueue == taskqueue_fast_enqueue ||
@@ -138,7 +140,7 @@ _taskqueue_create(const char *name __unused, int mflags,
 	    enqueue == taskqueue_swi_giant_enqueue ||
 	    enqueue == taskqueue_thread_enqueue)
 		queue->tq_flags |= TQ_FLAGS_UNLOCKED_ENQUEUE;
-	mtx_init(&queue->tq_mutex, mtxname, NULL, mtxflags);
+	mtx_init(&queue->tq_mutex, strdup(mtxname, M_TASKQUEUE), NULL, mtxflags);
 
 	return queue;
 }
@@ -147,8 +149,11 @@ struct taskqueue *
 taskqueue_create(const char *name, int mflags,
 		 taskqueue_enqueue_fn enqueue, void *context)
 {
+	char mtx_name[16];
+
+	snprintf(mtx_name, 16, "taskq %s", name);
 	return _taskqueue_create(name, mflags, enqueue, context,
-			MTX_DEF, "taskqueue");
+			MTX_DEF, mtx_name);
 }
 
 void
@@ -192,6 +197,7 @@ taskqueue_free(struct taskqueue *queue)
 	KASSERT(queue->tq_callouts == 0, ("Armed timeout tasks"));
 	mtx_destroy(&queue->tq_mutex);
 	free(queue->tq_threads, M_TASKQUEUE);
+	free(queue->tq_name, M_TASKQUEUE);
 	free(queue, M_TASKQUEUE);
 }
 
