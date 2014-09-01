@@ -56,7 +56,6 @@
  *  - document the kobj interface in iflib_if.m and export that to the wiki
  *  - port ixgbe to iflib
  *
- *  - convert iflib to pseudo-bus between PCI and supporting NICs
  */
 
 struct iflib_ctx {
@@ -121,6 +120,7 @@ typedef struct iflib_txq {
 	uint32_t	ift_cidx;
 	uint32_t	ift_pidx;
 	uint32_t	ift_db_pending;
+	uint32_t	ift_tqid;
 	bus_dma_tag_t		    ift_desc_tag;
 
 	struct mtx              ift_mtx;
@@ -140,6 +140,14 @@ typedef struct iflib_txq {
 
 #define TXQ_AVAIL(txq) ((txq)->ift_size - (txq)->ift_pidx + (txq)->ift_cidx);
 
+typedef struct iflib_global_context {
+	struct taskqueue **igc_rx_tqs;	/* per-cpu taskqueues for rx */
+	struct taskqueue **igc_tx_tqs;	/* per-cpu taskqueues for tx */
+	struct taskqueue *igc_config_tq; /* taskqueue for config operations */
+} iflib_global_context_t;
+
+struct iflib_global_context global_ctx, *gctx;
+
 typedef struct iflib_rxq {
 	iflib_ctx_t	ifr_ctx;
 	uint32_t	ifr_buf_size;
@@ -148,6 +156,7 @@ typedef struct iflib_rxq {
 	uint32_t	ifr_cidx;
 	uint32_t	ifr_pidx;
 	uint32_t	ifr_db_pending;
+	uint32_t	ift_tqid;
 	struct iflib_dma_info	ifr_dma_info;
 	struct mtx              ifr_mtx;
 	char                    ifr_mtx_name[16];
@@ -169,6 +178,20 @@ static moduledata_t iflib_moduledata = {
 };
 
 DECLARE_MODULE(iflib_mod, iflib_moduledata, SI_SUB_CONFIGURE, SI_ORDER_SECOND);
+
+static inline void
+iflib_rxtq_enqueue(iflib_rxq_t rxq)
+{
+
+	taskqueue_enqueue(gctx->igc_rx_tqs[rxq->ifr_tqid], &rxq->ifr_task)
+}
+
+static inline void
+iflib_txtq_enqueue(iflib_txq_t txq)
+{
+
+	taskqueue_enqueue(gctx->igc_tx_tqs[txq->ift_tqid], &txq->ift_task)
+}
 
 static void
 _iflib_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
@@ -967,7 +990,7 @@ _task_fn_rx(void *context, int pending)
 		RXQ_UNLOCK(rxq);
 	}
 	if (more)
-		taskqueue_enqueue(rxr->ifr_tq, &rxr->ifr_task);
+		iflib_rxtq_enqueue(rxq);
 }
 
 static void
@@ -1021,8 +1044,8 @@ iflib_timer(void *arg)
 		    (sctx->isc_pause_frames == 0))
 			goto hung;
 
-		if (txq->tx_avail <= sctx->isc_tx_nsegments)
-			taskqueue_enqueue(txr->ift_tq, &txq->ift_task);
+		if (TXQ_AVAIL(txq) <= sctx->isc_tx_nsegments)
+			iflib_txtq_enqueue(txq);
 	}
 	sctx->isc_pause_frames = 0;
 	callout_reset(&ctx->ifc_timer, hz, iflib_timer, ctx);
@@ -1682,7 +1705,40 @@ iflib_resume(device_t dev)
 static int
 iflib_module_init(void)
 {
+	int i;
+	char buf[32];
+	struct taskqueue *tq;
+	/*
+	 * XXX handle memory allocation failures
+	 */
+	gctx = &global_ctx;
+	gctx->igc_rx_tqs = malloc(sizeof(struct taskqueue *) * mp_ncpus, M_DEVBUF, M_WAITOK);
+	gctx->igc_tx_tqs = malloc(sizeof(struct taskqueue *) * mp_ncpus, M_DEVBUF, M_WAITOK);
+	for (i = 0; i < mp_ncpus; i++) {
+		snprintf(buf, 32, "if rx tq %d", i);
+		gctx->igc_rx_tqs[i] =
+			taskqueue_create_fast(buf, M_WAITOK, taskqueue_thread_enqueue,
+								  &gctx->igc_rx_tqs[i]);
+		if (gctx->igc_rx_tqs[i] == NULL)
+			return (ENOMEM);
+		/*
+		 * Assume contiguous cpuids
+		 */
+		taskqueue_start_threads_pinned(&gctx->igc_rx_tqs[i], 1, PI_NET, i, buf);
 
+		snprintf(buf, 32, "if tx tq %d", i);
+		gctx->igc_rx_tqs[i] = taskqueue_create_(buf, M_WAITOK, taskqueue_thread_enqueue, &gctx->igc_tx_tqs[i]);
+		if (gctx->igc_tx_tqs[i] == NULL)
+			return (ENOMEM);
+		taskqueue_start_threads_pinned(&gctx->igc_tx_tqs[i], 1, PI_NET, i, buf);
+	}
+	tq = gctx->igc_config_tq =
+		taskqueue_create("if config tq", M_WAITOK, taskqueue_thread_enqueue,
+						 &gctx->igc_config_tq);
+	if (tq == NULL)
+		return (ENOMEM);
+
+	taskqueue_start_threads(&gctx->igc_config_tq, 1, PI_NET, "if config tq");
 	return (0);
 }
 
@@ -2031,7 +2087,9 @@ iflib_init(if_shared_ctx_t *sctx)
 void
 iflib_legacy_intr_deferred(if_shared_ctx_t sctx)
 {
-
+	/*
+	 * XXX how does legacy fit in
+	 */
 	taskqueue_enqueue(gctx->ifc_tq, &sctx->isc_ctx->ifc_legacy_task);
 }
 
