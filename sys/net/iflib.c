@@ -158,31 +158,6 @@ typedef struct iflib_rxq {
 	uma_zone_t              ifr_zone;
 } *iflib_rxq_t;
 
-static int iflib_probe(device_t dev);
-static int iflib_attach(device_t dev);
-static int iflib_detach(device_t dev);
-static int iflib_suspend(device_t dev);
-static int iflib_resume(device_t dev);
-
-static device_method_t iflib_methods[] = {
-	/* Device interface */
-	DEVMETHOD(device_probe, iflib_probe),
-	DEVMETHOD(device_attach, iflib_attach),
-	DEVMETHOD(device_detach, iflib_detach),
-	DEVMETHOD(device_shutdown, iflib_suspend),
-	DEVMETHOD(device_suspend, iflib_suspend),
-	DEVMETHOD(device_resume, iflib_resume),
-	DEVMETHOD_END
-};
-
-static driver_t iflib_driver = {
-	"iflib", iflib_methods, sizeof(struct iflib_ctx),
-};
-
-devclass_t iflib_devclass;
-DRIVER_MODULE(iflib, pci, iflib_driver, iflib_devclass, 0, 0);
-MODULE_DEPEND(iflib, pci, 1, 1, 1);
-MODULE_DEPEND(iflib, ether, 1, 1, 1);
 
 /* Our boot-time initialization hook */
 static int	iflib_module_event_handler(module_t, int, void *);
@@ -1625,25 +1600,8 @@ _iflib_led_func(void *arg, int onoff)
  *
  **********************************************************************/
 
-static int
-iflib_probe(device_t dev)
-{
-
-	device_set_desc(dev, "DI layer");
-
-	/* Allow other subclasses to override this driver. */
-	return (BUS_PROBE_GENERIC);
-}
-
-static int
-iflib_attach(device_t dev)
-{
-
-	return (bus_generic_attach(dev));
-}
-
-static int
-iflib_detach(device_t dev)
+int
+iflib_device_detach(device_t dev)
 {
 	iflib_shared_ctx_t sctx = device_get_softc(dev);
 	iflib_ctx_t ctx = sctx->isc_ctx;
@@ -1670,7 +1628,7 @@ iflib_detach(device_t dev)
 	ether_ifdetach_drv(ctx->ifc_ifp);
 	if (ctx->ifc_led_dev != NULL)
 		led_destroy(ctx->ifc_led_dev);
-	DEVICE_DETACH(device_get_child(dev));
+	IFC_DETACH(sctx);
 	callout_drain(&ctx->ifc_timer);
 
 #ifdef DEV_NETMAP
@@ -1678,44 +1636,49 @@ iflib_detach(device_t dev)
 #endif /* DEV_NETMAP */
 
 	bus_generic_detach(dev);
-	iflib_ctx_free(sctx);
+	if_free_drv(sctx->isc_ifp);
 
 	iflib_tx_structures_free(sctx);
 	iflib_rx_structures_free(sctx);
 	return (0);
 }
 
-static int
-iflib_suspend(device_t dev)
+int
+iflib_device_suspend(device_t dev)
 {
-	iflib_ctx_t ctx = device_get_softc(dev);
+	if_shared_ctx_t sctx = device_get_softc(dev);
 
-	CTX_LOCK(ctx);
-	DEVICE_SUSPEND(device_get_child(dev));
-	CTX_UNLOCK(ctx);
+	SCTX_LOCK(sctx);
+	IFC_SUSPEND(sctx);
+	SCTX_UNLOCK(sctx);
 
 	return bus_generic_suspend(dev);
 }
 
-static int
+int
 iflib_resume(device_t dev)
 {
-	iflib_ctx_t ctx = device_get_softc(dev);
+	if_shared_ctx_t sctx = device_get_softc(dev);
 
-	CTX_LOCK(ctx);
-	DEVICE_RESUME(device_get_child(dev));
-	CTX_UNLOCK(ctx);
-	for (int i = 0; i < ctx->ifc_nqsets; i++)
-		iflib_txq_transmit(&ctx->ifc_txqs[i], NULL);
+	SCTX_LOCK(sctx);
+	IFC_RESUME(sctx);
+	CTX_UNLOCK(sctx);
+	for (int i = 0; i < sctx->isc_nqsets; i++)
+		iflib_txq_transmit(&sctx->isc_ctx->ifc_txqs[i], NULL);
 
 	return (bus_generic_resume(dev));
 }
 
 /*********************************************************************
  *
- *  MODULE FUNCTION DEFINITION
+ *  MODULE FUNCTION DEFINITIONS
  *
  **********************************************************************/
+
+/*
+ * - Start a fast taskqueue thread for each core
+ * - Start a taskqueue for control operations
+ */
 static int
 iflib_module_init(void)
 {
@@ -1734,12 +1697,12 @@ iflib_module_event_handler(module_t mod, int what, void *arg)
 			return (error);
 		break;
 	case MOD_UNLOAD:
-		return EBUSY;
+		return (EBUSY);
 	default:
-		return EOPNOTSUPP;
+		return (EOPNOTSUPP);
 	}
 
-	return 0;
+	return (0);
 }
 
 /*********************************************************************
@@ -1983,13 +1946,6 @@ iflib_rx_structures_free(if_shared_ctx_t sctx)
 		iflib_rx_sds_free(rxq);
 		iflib_dma_free(&rxq->ift_dma_info);
 	}
-}
-
-void
-iflib_ctx_free(if_shared_ctx_t sctx)
-{
-
-	if_free_drv(sctx->isc_ifp);
 }
 
 void

@@ -197,14 +197,15 @@ static char *em_strings[] = {
 
 static int	em_probe(device_t);
 static int	em_attach(device_t);
-static int	em_detach(device_t);
-static int	em_suspend(device_t);
-static int	em_resume(device_t);
 
 /*
  * Library functions for the hardware independent
  * iflib layer
  */
+
+static int	em_if_detach(if_shared_ctx_t);
+static int	em_if_suspend(if_shared_ctx_t);
+static int	em_if_resume(if_shared_ctx_t);
 
 static void em_if_init(if_shared_ctx_t);
 static void	em_if_stop(if_shared_ctx_t);
@@ -296,10 +297,10 @@ static device_method_t em_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe, em_probe),
 	DEVMETHOD(device_attach, em_attach),
-	DEVMETHOD(device_detach, em_detach),
-	DEVMETHOD(device_shutdown, em_suspend),
-	DEVMETHOD(device_suspend, em_suspend),
-	DEVMETHOD(device_resume, em_resume),
+	DEVMETHOD(device_detach, iflib_device_detach),
+	DEVMETHOD(device_shutdown, iflib_device_suspend),
+	DEVMETHOD(device_suspend, iflib_device_suspend),
+	DEVMETHOD(device_resume, iflib_device_resume),
 	DEVMETHOD_END
 };
 
@@ -308,7 +309,8 @@ static driver_t em_driver = {
 };
 
 devclass_t em_devclass;
-DRIVER_MODULE(em, iflib, em_driver, em_devclass, 0, 0);
+DRIVER_MODULE(em, pci, em_driver, em_devclass, 0, 0);
+MODULE_DEPEND(em, pci, 1, 1, 1);
 MODULE_DEPEND(em, iflib, 1, 1, 1);
 MODULE_DEPEND(em, ether, 1, 1, 1);
 
@@ -766,8 +768,9 @@ err_late:
 	iflib_tx_structures_free(ctx);
 	iflib_rx_structures_free(ctx);
 	em_release_hw_control(adapter);
-	if (adapter->ctx != (void *)NULL)
-		iflib_ctx_free(ctx);
+	if (adapter->ifp != (void *)NULL)
+		if_free_drv(adapter->ifp);
+
 err_pci:
 	em_free_pci_resources(adapter);
 	free(adapter->mta, M_DEVBUF);

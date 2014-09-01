@@ -117,6 +117,9 @@ typedef struct if_shared_ctx {
 #define ETH_ADDR_LEN 6
 #endif
 
+int iflib_device_detach(device_t);
+int iflib_device_suspend(device_t);
+int iflib_device_resume(device_t);
 
 int iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN]);
 
@@ -126,7 +129,6 @@ void iflib_tx_structures_setup(if_shared_ctx_t);
 void iflib_tx_structures_free(if_shared_ctx_t);
 void iflib_rx_structures_setup(if_shared_ctx_t);
 void iflib_rx_structures_free(if_shared_ctx_t);
-void iflib_ctx_free(if_shared_ctx_t);
 
 void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
