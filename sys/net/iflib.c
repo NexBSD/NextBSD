@@ -143,8 +143,8 @@ typedef struct iflib_txq {
 #define TXQ_AVAIL(txq) ((txq)->ift_size - (txq)->ift_pidx + (txq)->ift_cidx);
 
 typedef struct iflib_global_context {
-	struct taskqueue	**igc_rx_tqs;		/* per-cpu taskqueues for rx */
-	struct taskqueue	**igc_tx_tqs;		/* per-cpu taskqueues for tx */
+	struct taskqgroup	*igc_rx_tqs;		/* per-cpu taskqueues for rx */
+	struct taskqgroup	*igc_tx_tqs;		/* per-cpu taskqueues for tx */
 	struct taskqueue	 *igc_config_tq;	/* taskqueue for config operations */
 } iflib_global_context_t;
 
@@ -182,19 +182,8 @@ static moduledata_t iflib_moduledata = {
 
 DECLARE_MODULE(iflib_mod, iflib_moduledata, SI_SUB_CONFIGURE, SI_ORDER_SECOND);
 
-static inline void
-iflib_rxtq_enqueue(iflib_rxq_t rxq)
-{
-
-	taskqueue_enqueue(gctx->igc_rx_tqs[rxq->ifr_tqid], &rxq->ifr_task)
-}
-
-static inline void
-iflib_txtq_enqueue(iflib_txq_t txq)
-{
-
-	taskqueue_enqueue(gctx->igc_tx_tqs[txq->ift_tqid], &txq->ift_task)
-}
+TASKQGROUP_DEFINE(if_rx_tqg, mp_ncpus, 1);
+TASKQGROUP_DEFINE(if_tx_tqg, mp_ncpus, 1);
 
 static void
 _iflib_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
@@ -335,7 +324,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
 	device_t dev = sctx->isc_dev;
 	iflib_sd_t txsd;
 	int err, i;
-	
+
 	/*
 	 * Setup DMA descriptor areas.
 	 */
@@ -992,7 +981,7 @@ _task_fn_rx(void *context, int pending)
 		RXQ_UNLOCK(rxq);
 	}
 	if (more)
-		iflib_rxtq_enqueue(rxq);
+		GROUPTASK_ENQUEUE(rxq->ifr_task);
 }
 
 static void
@@ -1047,7 +1036,7 @@ iflib_timer(void *arg)
 			goto hung;
 
 		if (TXQ_AVAIL(txq) <= sctx->isc_tx_nsegments)
-			iflib_txtq_enqueue(txq);
+			GROUPTASK_ENQUEUE(&txq->ift_task);
 	}
 	sctx->isc_pause_frames = 0;
 	callout_reset(&ctx->ifc_timer, hz, iflib_timer, ctx);
@@ -1708,39 +1697,19 @@ static int
 iflib_module_init(void)
 {
 	int i;
-	char buf[32];
-	struct taskqueue *tq;
+
 	/*
 	 * XXX handle memory allocation failures
 	 */
 	gctx = &global_ctx;
-	gctx->igc_rx_tqs = malloc(sizeof(struct taskqueue *) * mp_ncpus, M_DEVBUF, M_WAITOK);
-	gctx->igc_tx_tqs = malloc(sizeof(struct taskqueue *) * mp_ncpus, M_DEVBUF, M_WAITOK);
-	for (i = 0; i < mp_ncpus; i++) {
-		snprintf(buf, 32, "if rx tq %d", i);
-		gctx->igc_rx_tqs[i] =
-			taskqueue_create_fast(buf, M_WAITOK, taskqueue_thread_enqueue,
-								  &gctx->igc_rx_tqs[i]);
-		if (gctx->igc_rx_tqs[i] == NULL)
-			return (ENOMEM);
-		/*
-		 * Assume contiguous cpuids
-		 */
-		taskqueue_start_threads_pinned(&gctx->igc_rx_tqs[i], 1, PI_NET, i, buf);
-
-		snprintf(buf, 32, "if tx tq %d", i);
-		gctx->igc_rx_tqs[i] = taskqueue_create_(buf, M_WAITOK, taskqueue_thread_enqueue, &gctx->igc_tx_tqs[i]);
-		if (gctx->igc_tx_tqs[i] == NULL)
-			return (ENOMEM);
-		taskqueue_start_threads_pinned(&gctx->igc_tx_tqs[i], 1, PI_NET, i, buf);
-	}
-	tq = gctx->igc_config_tq =
+	gct->igc_tx_tqg = qgroup_if_tx_tqg;
+	gct->igc_rx_tqg = qgroup_if_rx_tqg;
+	gctx->igc_config_tq =
 		taskqueue_create("if config tq", M_WAITOK, taskqueue_thread_enqueue,
 						 &gctx->igc_config_tq);
-	if (tq == NULL)
-		return (ENOMEM);
 
-	taskqueue_start_threads(&gctx->igc_config_tq, 1, PI_NET, "if config tq");
+	taskqueue_start_threads(&gctx->igc_config_tq, 1, PSOCK, "if config tq");
+
 	return (0);
 }
 
@@ -2062,11 +2031,12 @@ iflib_legacy_setup(if_shared_ctx_t sctx, driver_filter_t filter, int *rid)
 	/*
 	 * Allocate a fast interrupt and the associated
 	 * deferred processing contexts.
+	 *
+	 * XXX call taskqgroup_attach
 	 */
-	TASK_INIT(&ctx->ifc_legacy_task, 0, _task_fn_legacy_intr, ctx);
-	/* Use a TX only tasklet for local timer */
-	TASK_INIT(&txq->ift_task, 0, _task_fn_tx, txr);
-	TASK_INIT(&ctx->ifc_link_task, 0, _task_fn_link, ctx);
+	GROUPTASK_INIT(&ctx->ifc_legacy_task, 0, _task_fn_legacy_intr, ctx);
+	GROUPTASK_INIT(&txq->ift_task, 0, _task_fn_tx, txr);
+	GROUPTASK_INIT(&ctx->ifc_link_task, 0, _task_fn_link, ctx);
 	return (0);
 }
 
@@ -2092,14 +2062,14 @@ iflib_legacy_intr_deferred(if_shared_ctx_t sctx)
 	/*
 	 * XXX how does legacy fit in
 	 */
-	taskqueue_enqueue(gctx->ifc_tq, &sctx->isc_ctx->ifc_legacy_task);
+	GROUPTASK_ENQUEUE(&sctx->isc_ctx->ifc_legacy_task);
 }
 
 void
 iflib_link_intr_deferred(if_shared_ctx_t sctx)
 {
 
-	taskqueue_enqueue(taskqueue_fast, &sctx->isc_ctx->ifc_link_task);
+	GROUPTASK_ENQUEUE(&sctx->isc_ctx->ifc_link_task);
 }
 
 void
