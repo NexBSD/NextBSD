@@ -769,7 +769,7 @@ err_late:
 	iflib_rx_structures_free(ctx);
 	em_release_hw_control(adapter);
 	if (adapter->ifp != (void *)NULL)
-		if_free_drv(adapter->ifp);
+		if_free(adapter->ifp);
 
 err_pci:
 	em_free_pci_resources(adapter);
@@ -798,6 +798,7 @@ em_detach(device_t dev)
 	e1000_phy_hw_reset(&adapter->hw);
 	em_release_manageability(adapter);
 	em_release_hw_control(adapter);
+
 	em_free_pci_resources(adapter);
 	em_release_hw_control(adapter);
 	free(adapter->mta, M_DEVBUF);
@@ -888,11 +889,11 @@ em_if_media_set(if_shared_ctx_t sctx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 
+
 	/* Check SOL/IDER usage */
 	if (e1000_check_reset_block(&adapter->hw)) {
 		device_printf(sctx->isc_dev, "Media change is"
 					  " blocked due to SOL/IDER session.\n");
-		break;
 	}
 }
 
