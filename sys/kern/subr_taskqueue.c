@@ -34,6 +34,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/interrupt.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
+#include <sys/libkern.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -120,9 +121,15 @@ TQ_SLEEP(struct taskqueue *tq, void *p, struct mtx *m, int pri, const char *wm,
 static struct taskqueue *
 _taskqueue_create(const char *name, int mflags,
 		 taskqueue_enqueue_fn enqueue, void *context,
-		 int mtxflags, const char *mtxname)
+		 int mtxflags, const char *mtxname __unused)
 {
 	struct taskqueue *queue;
+	char *tq_name = NULL;
+
+	if (name != NULL)
+		tq_name = strndup(name, 32, M_TASKQUEUE);
+	if (tq_name == NULL)
+		tq_name = "taskqueue";
 
 	queue = malloc(sizeof(struct taskqueue), M_TASKQUEUE, mflags | M_ZERO);
 	if (!queue)
@@ -132,7 +139,7 @@ _taskqueue_create(const char *name, int mflags,
 	TAILQ_INIT(&queue->tq_active);
 	queue->tq_enqueue = enqueue;
 	queue->tq_context = context;
-	queue->tq_name = strdup(name, M_TASKQUEUE);
+	queue->tq_name = tq_name;
 	queue->tq_spin = (mtxflags & MTX_SPIN) != 0;
 	queue->tq_flags |= TQ_FLAGS_ACTIVE;
 	if (enqueue == taskqueue_fast_enqueue ||
@@ -140,7 +147,7 @@ _taskqueue_create(const char *name, int mflags,
 	    enqueue == taskqueue_swi_giant_enqueue ||
 	    enqueue == taskqueue_thread_enqueue)
 		queue->tq_flags |= TQ_FLAGS_UNLOCKED_ENQUEUE;
-	mtx_init(&queue->tq_mutex, strdup(mtxname, M_TASKQUEUE), NULL, mtxflags);
+	mtx_init(&queue->tq_mutex, tq_name, NULL, mtxflags);
 
 	return queue;
 }
@@ -149,11 +156,9 @@ struct taskqueue *
 taskqueue_create(const char *name, int mflags,
 		 taskqueue_enqueue_fn enqueue, void *context)
 {
-	char mtx_name[16];
 
-	snprintf(mtx_name, 16, "taskq %s", name);
 	return _taskqueue_create(name, mflags, enqueue, context,
-			MTX_DEF, mtx_name);
+			MTX_DEF, name);
 }
 
 void
