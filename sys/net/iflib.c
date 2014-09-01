@@ -40,11 +40,11 @@
  *
  *
  * Next steps:
+ *  - validate interrupt setup and binding to taskqgroups
  *  - validate the default tx path
  *  - validate the default rx path
  *
  *  - validate queue initialization paths
- *  - validate interrupt setup
  *  - validate queue teardown
  *  - validate that all structure fields are initialized
 
@@ -81,7 +81,7 @@ struct iflib_ctx {
 
 	struct iflib_irq ifc_legacy_irq;
 	struct task ifc_legacy_task;
-	struct task ifc_link_task;
+	struct grouptask ifc_link_task;
 };
 #define LINK_ACTIVE(ctx) ((ctx)->ifc_link_state == LINK_STATE_UP)
 
@@ -132,7 +132,7 @@ typedef struct iflib_txq {
 	iflib_sd_t              ift_sds;
 	int                     ift_nbr;
 	struct buf_ring        *ift_br;
-	struct task             ift_task;
+	struct grouptask		ift_task;
 	int			            ift_qstatus;
 	int                     ift_active;
 	int                     ift_watchdog_time;
@@ -164,7 +164,7 @@ typedef struct iflib_rxq {
 	struct mtx              ifr_mtx;
 	char                    ifr_mtx_name[16];
 	int                     ifr_id;
-	struct task             ifr_task;
+	struct grouptask        ifr_task;
 	iflib_sd_t              ifr_sds;
 	bus_dma_tag_t           ifr_desc_tag;
 	uma_zone_t              ifr_zone;
@@ -270,16 +270,25 @@ iflib_dma_free(iflib_dma_info_t dma)
 	bus_dma_tag_destroy(dma->ifd_tag);
 	dma->ifd_tag = NULL;
 }
-	
 
 static int
-_iflib_irq_alloc(iflib_ctx_t sctx, iflib_irq_t *irq, int rid, driver_filter_t filter,
-				 driver_intr_t handler, void *arg, char *name)
+iflib_fast_intr(void *arg)
+{
+	struct grouptask *gtask = arg;
+
+	GROUPTASK_ENQUEUE(gtask);
+	return (FILTER_HANDLED);
+}
+
+static int
+_iflib_irq_alloc(iflib_ctx_t ctx, iflib_irq_t *irq, int rid,
+	driver_filter_t filter, driver_intr_t handler, void *arg,
+	char *name)
 {
 	int rc;
 	struct resource *res;
 	void *tag;
-	device_t dev = sctx->isc_dev;
+	device_t dev = ctx->ifc_sctx->isc_dev;
 
 	irq->ifi_rid = rid;
 	res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &irq->ifi_rid,
@@ -2003,16 +2012,34 @@ iflib_irq_alloc(if_shared_ctx_t sctx, iflib_irq_t *irq, int rid,
 
 int
 iflib_irq_alloc_generic(if_shared_ctx_t ctx, iflib_irq_t *irq, int rid,
-						intr_type_t type, void *arg, char *name)
+						intr_type_t type, int qid, char *name)
 {
+	iflib_ctx_t ctx = sctx->isc_ctx;
+	struct grouptask *gtask;
+	void *q;
+	int err;
+
 	switch (type) {
 	case IFLIB_INTR_TX:
+		q = &ctx->ifc_txqs[qid];
+		gtask = &ctx->ifc_txqs[qid].ift_task;
 		break;
 	case IFLIB_INTR_RX:
+		q = &ctx->ifc_rxqs[qid];
+		gtask = &ctx->ifr_rxqs[qid].ifr_task;
 		break;
 	case IFLIB_INTR_LINK:
+		q = ctx;
+		gtask = &ctx->ifc_link_task;
 		break;
+	default:
+		panic("unknown net intr type");
 	}
+
+	err = _iflib_irq_alloc(ctx, irq, rid, iflib_fast_intr, q, gtask, name);
+	if (err != 0)
+		return (err);
+	taskqgroup_attach(gctx->igc_tx_tqs, gtask, q, irq->ii_rid, name);
 }
 
 int
