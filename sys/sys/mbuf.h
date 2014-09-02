@@ -415,7 +415,7 @@ void sf_ext_free(void *, void *);
 #define	CSUM_L4_VALID		0x08000000	/* checksum is correct */
 #define	CSUM_L5_CALC		0x10000000	/* calculated layer 5 csum */
 #define	CSUM_L5_VALID		0x20000000	/* checksum is correct */
-#define	CSUM_COALESED		0x40000000	/* contains merged segments */
+#define	CSUM_COALESCED		0x40000000	/* contains merged segments */
 
 /*
  * CSUM flag description for use with printf(9) %b identifier.
