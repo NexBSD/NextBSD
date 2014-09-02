@@ -91,6 +91,14 @@ typedef struct if_shared_ctx {
 	 * Do not move
 	 */
 	KOBJ_FIELDS;
+	int (*isc_txd_encap) (if_shared_ctx_t, int, pkt_info_t);
+	int (*isc_txd_flush) (if_shared_ctx_t, int, int);
+
+	int (*isc_rxd_is_new) (if_shared_ctx_t, int, int);
+	int (*isc_rxd_pkt_get) (if_shared_ctx_t, int, int, rxd_info_t);
+	int (*isc_rxd_refill) (if_shared_ctx_t, int, int, uint64_t);
+	int (*isc_rxd_flush) (if_shared_ctx_t, int, int);
+
 	iflib_ctx_t isc_ctx;
 	device_t isc_dev;
 	if_t isc_ifp;

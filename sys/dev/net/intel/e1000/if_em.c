@@ -227,12 +227,9 @@ static void em_if_media_status(if_shared_ctx_t, struct ifmediareq *);
 static int  em_if_media_change(if_shared_ctx_t);
 
 static void em_if_timer(if_shared_ctx_t);
-static int	em_if_tx(if_shared_ctx_t, int, pkt_info_t);
-static void em_if_tx_flush(if_shared_ctx_t, int, int);
-static void	em_if_txeof(if_shared_ctx_t, int);
-static int  em_if_packet_get(if_shared_ctx_t, int, int, rx_info_t);
 static void	em_if_led_func(if_shared_ctx_t, int);
 static void em_if_watchdog_reset(if_shared_ctx_t);
+static void	em_if_txeof(if_shared_ctx_t, int); /* XXX */
 
 static void	em_if_promisc_config(if_shared_ctx_t, int);
 static void	em_if_promisc_disable(if_shared_ctx_t, int);
@@ -240,9 +237,16 @@ static void	em_if_vlan_register(if_shared_ctx_t, u16);
 static void	em_if_vlan_unregister(if_shared_ctx_t, u16);
 static void em_if_txq_setup(if_shared_ctx_t, int);
 
-static void em_if_rxd_refill(iflib_cxt_t, int, int, uint64_t);
-static void em_if_rxd_refill_flush(if_shared_ctx_t, int, int);
-static void em_if_is_new(if_shared_ctx_t, int, int);
+
+static int	em_isc_txd_encap(if_shared_ctx_t, int, pkt_info_t);
+static void em_isc_txd_flush(if_shared_ctx_t, int, int);
+static int  em_isc_rxd_pkt_get(if_shared_ctx_t, int, int, rx_info_t);
+static void em_isc_rxd_refill(iflib_cxt_t, int, int, uint64_t);
+static void em_isc_rxd_flush(if_shared_ctx_t, int, int);
+static void em_isc_rxd_is_new(if_shared_ctx_t, int, int);
+
+
+
 
 static void	em_identify_hardware(struct adapter *);
 static int	em_allocate_pci_resources(struct adapter *);
@@ -334,10 +338,7 @@ static device_method_t em_if_methods[] = {
 	DEVMETHOD(ifc_media_status, em_if_media_status),
 	DEVMETHOD(ifc_media_change, em_if_media_change),
 	DEVMETHOD(ifc_timer, em_if_timer),
-	DEVMETHOD(ifc_tx, em_if_tx),
-	DEVMETHOD(ifc_tx_flush, em_if_tx_flush),
 	DEVMETHOD(ifc_txeof, em_if_txeof),
-	DEVMETHOD(ifc_packet_get, em_if_packet_get),
 	DEVMETHOD(ifc_led_func, em_if_led_func),
 	DEVMETHOD(ifc_watchdog_reset, em_if_watchdog_reset),
 	DEVMETHOD(ifc_promisc_config, em_if_promisc_config),
@@ -345,9 +346,6 @@ static device_method_t em_if_methods[] = {
 	DEVMETHOD(ifc_vlan_register, em_if_vlan_register),
 	DEVMETHOD(ifc_vlan_unregister, em_if_vlan_unregister),
 	DEVMETHOD(ifc_txq_setup, em_if_txq_setup),
-	DEVMETHOD(ifc_rxd_refill, em_rxd_refill),
-	DEVMETHOD(ifc_rxd_refill_flush, em_if_rxd_refill_flush),
-	DEVMETHOD(ifc_is_new, em_if_is_new),
 	DEVMOTHED_END
 };
 
@@ -1233,7 +1231,7 @@ em_if_media_change(if_shared_ctx_t sctx)
  **********************************************************************/
 
 static int
-em_if_tx(if_shared_ctx_t sctx, int txqid, pkt_info_t pi)
+em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, pkt_info_t pi)
 {
 	adapter *adapter = DOWNCAST(sctx);
 	struct tx_ring *txr = &adapter->tx_rings[txqid];
@@ -1359,7 +1357,7 @@ em_if_tx(if_shared_ctx_t sctx, int txqid, pkt_info_t pi)
 }
 
 static void
-em_if_tx_flush(if_shared_ctx_t sctx, int txqid, int pidx)
+em_isc_txd_flush(if_shared_ctx_t sctx, int txqid, int pidx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	/*
@@ -1715,7 +1713,7 @@ em_allocate_msix(struct adapter *adapter)
 		rid = vector + 1;
 		snprintf(buf, sizeof(buf), "rx %d", i);
 		error = iflib_irq_alloc(UPCAST(adapter), &rxr->irq, rid,
-								IFLIB_INTR_RX, rxr->hi_rxr, buf);
+								IFLIB_INTR_RX, rxr->me, buf);
 
 		rxr->msix = vector++; /* NOTE increment vector for TX */
 		/*
@@ -2066,6 +2064,13 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	sctx->isc_rx_nsegments = 1;
 	sctx->isc_rx_maxsegsize = MJUM9BYTES;
 
+	sctx->isc_txd_encap = em_isc_txd_encap;
+	sctx->isc_txd_flush = em_isc_txd_flush;
+
+	sctx->isc_rxd_is_new = em_isc_rxd_is_new;
+	sctx->isc_rxd_pkt_get = em_isc_rxd_pkt_get;
+	sctx->isc_rxd_refill = em_isc_rxd_refill;
+	sctx->isc_rxd_flush = em_isc_rxd_flush;
 	if_setcapabilitiesbit(ifp, IFCAP_HWCSUM | IFCAP_VLAN_HWCSUM |
 						  IFCAP_TSO4, 0);
 	/*
@@ -2750,7 +2755,7 @@ em_initialize_receive_unit(struct adapter *adapter)
 }
 
 static void
-em_if_rxd_refill(if_shared_cxt_t ctx, int rxqid, int pidx, uint64_t paddr)
+em_isc_rxd_refill(if_shared_cxt_t ctx, int rxqid, int pidx, uint64_t paddr)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = adapter->rx_rings[rxqid];
@@ -2759,15 +2764,16 @@ em_if_rxd_refill(if_shared_cxt_t ctx, int rxqid, int pidx, uint64_t paddr)
 }
 
 static void
-em_if_rxd_refill_flush(if_shared_ctx_t sctx, int rxqid, int pidx)
+em_isc_rxd_flush(if_shared_ctx_t sctx, int rxqid, int pidx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
+
 	E1000_WRITE_REG(&adapter->hw,
 		    E1000_RDT(rxqid), pidx);
 }
 
 static int
-em_if_is_new(if_shared_ctx_t sctx, int rxqid, int idx)
+em_isc_rxd_is_new(if_shared_ctx_t sctx, int rxqid, int idx)
 {
 	struct rx_ring *rxr = &DOWNCAST(sctx)->rx_rings[rxqid];
 	struct e1000_rx_desc	*cur;
@@ -2788,7 +2794,7 @@ em_if_is_new(if_shared_ctx_t sctx, int rxqid, int idx)
  *  For polling we also now return the number of cleaned packets
  *********************************************************************/
 static int
-em_if_packet_get(if_shared_ctx_t sctx, int rxqid, int i, rx_info_t ri)
+em_isc_rxd_pkt_get(if_shared_ctx_t sctx, int rxqid, int i, rx_info_t ri)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];

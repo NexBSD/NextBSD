@@ -32,7 +32,6 @@
 INTERFACE ifc;
 
 CODE {
-	extern int iflib_recycle_enable;
 
 	void
 	null_op(if_shared_ctx_t _ctx __unused)
@@ -52,13 +51,6 @@ CODE {
 	void
 	null_q_setup(if_shared_ctx_t _ctx __unused, int _qid __unused)
 	{
-	}
-
-	int
-	null_recycle_rx_buf(if_shared_ctx_t _ctx __unused, int _qid __unused, int _idx __unused)
-	{
-		iflib_recycle_enable = 0;
-		return (ENOTSUP);
 	}
 };
 
@@ -153,57 +145,6 @@ METHOD void promisc_disable {
 };
 
 /*
- * tx methods
- */
-
-METHOD int tx {
-	if_shared_ctx_t _ctx;
-	int _txqid;
-	pkt_info_t _pi;
-};
-
-METHOD void tx_flush {
-	if_shared_ctx_t _ctx;
-	int _txqid;
-	int _pidx;
-};
-
-METHOD void txeof {
-	if_shared_ctx_t _ctx;
-	int _txqid;
-};
-
-/*
- * rx methods
- */
-
-METHOD int is_new {
-	if_shared_ctx_t _ctx;
-	int _rxqid;
-	int _idx;
-};
-
-METHOD int packet_get {
-	if_shared_ctx_t _ctx;
-	int _txqid;
-	int _idx;
-	rx_info_t _ri;
-};
-
-METHOD void rxd_refill {
-	if_shared_ctx_t _ctx;
-	int _rxqid;
-	int _pidx;
-	uint64_t paddr;
-};
-
-METHOD void rxd_refill_flush {
-	if_shared_ctx_t _ctx;
-	int _rxqid;
-	int _pidx;
-};
-
-/*
  * Device status
  */
 
@@ -234,12 +175,6 @@ METHOD void rxq_setup {
 	if_shared_ctx_t _ctx;
 	int _txqid;
 } DEFAULT null_q_setup;
-
-METHOD void recycle_rx_buf {
-	if_shared_ctx_t _ctx;
-	int qidx;
-	int idx;
-} DEFAULT null_recycle_rx_buf;
 
 METHOD int timer {
 	if_shared_ctx_t _ctx;

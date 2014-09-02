@@ -53,6 +53,7 @@
  *  - add multiple buf_ring support - i.e. fan in to single hardware queue
  *  - add SW RSS to demux received data packets to buf_rings for deferred processing
  *    look at handling tx ack processing
+ *  - batch per-interface statistics updates
  *
  *  - document the kobj interface in iflib_if.m and export that to the wiki
  *  - port ixgbe to iflib
@@ -807,6 +808,7 @@ _iflib_refill_rxq(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
 	caddr_t cl;
 	int err;
 	uint64_t phys_addr;
+	if_shared_ctx_t sctx = ctx->ifc_sctx;
 
 	while (n--) {
 		/*
@@ -851,7 +853,7 @@ _iflib_refill_rxq(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
 		rxsd->ifsd_flags |= RX_SW_DESC_INUSE;
 		rxsd->ifsd_cl = cl;
 		rxsd->ifsd_m = m;
-		IFC_RXD_REFILL_FLUSH(ctx->ifc_sctx, rxq->ifr_id, rxq->ifr_pidx, phys_addr);
+		sctx->isc_rxd_refill(sctx, rxq->ifr_id, rxq->ifr_pidx, phys_addr);
 
 		if (++rxq->ifr_pidx == rxq->ifr_qsize) {
 			rxq->ifr_pidx = 0;
@@ -861,7 +863,7 @@ _iflib_refill_rxq(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
 	}
 
 done:
-	IFC_RXD_REFILL_FLUSH(ctx->ifc_sctx, q->ifr_id, q->ifr_pidx);
+	sctx->isc_rxd_flush(sctx, q->ifr_id, q->ifr_pidx);
 }
 
 static bool
@@ -895,9 +897,9 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		di = &rxq->ifr_dma_info;
 		bus_dmamap_sync(di->ifsd_tag, di->ifsd_map,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-		if (__predict_false(!IFC_IS_NEW(ctx->ifc_sctx, rxq->ifr_id, cidx)))
+		if (__predict_false(!sctx->isc_rxd_is_new(sctx, rxq->ifr_id, cidx)))
 			return (false);
-		err = IFC_PACKET_GET(ctx->ifc_sctx, rxq->ifr_id, cidx, &ri);
+		err = sctx->isc_rxd_pkt_get(sctx, rxq->ifr_id, cidx, &ri);
 		bus_dmamap_unload(rxq->ifr_desc_tag, rxq->ifr_sds[cidx].ifsd_map);
 
 		if (++cidx == sctx->isc_nrxd)
@@ -927,7 +929,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		if_input(sctx->isc_ifp, m);
 	}
 
-	return IFC_IS_NEW(sctx, rxq->ifr_id, rxq->ifr_cidx);
+	return sctx->isc_rxd_is_new(sctx, rxq->ifr_id, rxq->ifr_cidx);
 }
 
 static void
@@ -1252,7 +1254,7 @@ retry:
 
 	pi->pi_segs = segs;
 	pi->pi_nsegs = nsegs;
-	if ((err = IFC_TX(ctx->ifc_sctx, txq->ift_id, pi)) == 0) {
+	if ((err = sctx->isc_txd_encap(sctx, txq->ift_id, pi)) == 0) {
 		/*
 		* XXX track the eop in the driver itself
 		*     need to add a per txq array of integers
@@ -1359,10 +1361,12 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 static __inline void
 iflib_tx_db_check(iflib_ctx_t ctx, iflib_txq_t txq, int ring)
 {
+	if_shared_ctx_t sctx;
 
 	if (ring || ++txq->ift_db_pending >= 32) {
+		sctx = ctx->ifc_sctx;
 		wmb();
-		IFC_TX_FLUSH(ctx->ifc_sctx, txq->ift_id, txq->ift_pidx);
+		sctx->isc_txd_flush(sctx, txq->ift_id, txq->ift_pidx);
 	}
 }
 
