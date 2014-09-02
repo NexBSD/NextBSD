@@ -107,6 +107,7 @@ typedef struct if_shared_ctx {
 	int isc_rx_nsegments;
 	int isc_pause_frames;
 	int isc_watchdog_events;
+	int isc_tx_reclaim_thresh;
 
 	struct ifmedia	isc_media;
 	struct if_common_stats isc_common_stats;
@@ -135,7 +136,7 @@ void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 
 int iflib_irq_alloc(if_shared_ctx_t, if_irq_t, int, driver_intr_t, void *arg, char *name);
 int iflib_irq_alloc_generic(if_shared_ctx_t ctx, if_irq_t irq, int rid,
-							intr_type_t type, void *arg, char *name);
+							intr_type_t type, int qid, char *name);
 
 int iflib_legacy_setup(if_shared_ctx_t, driver_filter_t, int *);
 void iflib_led_create(if_shared_ctx_t);

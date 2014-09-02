@@ -40,7 +40,6 @@
  *
  *
  * Next steps:
- *  - validate interrupt setup and binding to taskqgroups
  *  - validate the default tx path
  *  - validate the default rx path
  *
@@ -116,7 +115,7 @@ typedef struct iflib_txq {
 	uint64_t	ift_flags;
 	uint32_t	ift_in_use;
 	uint32_t	ift_size;
-	uint32_t	ift_processed;
+	uint32_t	ift_processed; /* need to have device tx interrupt update this with credits */
 	uint32_t	ift_cleaned;
 	uint32_t	ift_stop_thres;
 	uint32_t	ift_cidx;
@@ -948,7 +947,7 @@ _task_fn_legacy_intr(void *context, int pending)
 	more = iflib_rxeof(rxq, ctx->rx_process_limit);
 
 	if(TXQ_TRYLOCK(txq)) {
-		_iflib_txq_transmit(txq, NULL);
+		iflib_txq_transmit(ifp, txq, NULL);
 		TXQ_UNLOCK(txq);
 	}
 
@@ -1062,8 +1061,11 @@ unlock:
 	CTX_UNLOCK(ctx);
 }
 
+/*
+ * XXX rework to be properly device independent
+ */
 static int
-_iflib_tx(iflib_txq_t txr, struct mbuf **m_headp)
+iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 {
 	struct adapter		*adapter = txr->adapter;
 	bus_dma_segment_t	*segs /* [EM_MAX_SCATTER]*/;
@@ -1250,81 +1252,204 @@ retry:
 
 	pi->pi_segs = segs;
 	pi->pi_nsegs = nsegs;
-	if ((err = IFC_TX(ctx->ifc_sctx, txq->ift_id, pi)) == 0)
+	if ((err = IFC_TX(ctx->ifc_sctx, txq->ift_id, pi)) == 0) {
+		/*
+		* XXX track the eop in the driver itself
+		*     need to add a per txq array of integers
+		*     to track the linked list of eops for credit
+		*     updates
+		*/
 		tx_buffer->next_eop = pi->pi_last;
 
-	bus_dmamap_sync(txq->ift_dma_info.idi_tag, txq->ift_dma_info.idi_map,
-					BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-	IFC_TX_FLUSH(ctx->ifc_sctx, txq->ift_id, pi->ipi_last);
+		bus_dmamap_sync(txq->ift_dma_info.idi_tag, txq->ift_dma_info.idi_map,
+						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+		IFC_TX_FLUSH(ctx->ifc_sctx, txq->ift_id, pi->ipi_last);
+		txq->ift_in_use += nsegs;
+	}
+	return (err);
+}
+
+#define BRBITS 8
+#define FIRST_QSET(ctx) 0
+#define NQSETS(ctx) ((ctx)->ifc_sctx->isc_nqsets)
+#define QIDX(ctx, m) ((((m)->m_pkthdr.flowid >> BRBITS) % NQSETS(ctx)) + FIRST_QSET(ctx))
+#define BRIDX(txq, m) ((m)->m_pkthdr.flowid % txq->ift_br)
+#define DESC_RECLAIMABLE(q) ((int)((q)->ift_processed - (q)->ift_cleaned - (q)->ift_ctx->ifc_nsegments))
+#define RECLAIM_THRESH(ctx) ((ctx)->ifc_sctx->isc_tx_reclaim_thresh)
+#define MAX_TX_DESC(ctx) ((ctx)->ifc_sctx->isc_tx_nsegments)
+
+
+static inline int
+iflib_enqueue_pkt(if_t ifp, iflib_txq_t txq, struct mbuf *m)
+{
+	int bridx = 0;
+
+	if (m->m_flags & M_FLOWID)
+		bridx = BRIDX(txq, m);
+
+	return (drbr_enqueue(ifp, &txq->ift_br[bridx], m));
+}
+
+static inline int
+iflib_txq_softq_empty(if_t ifp, iflib_txq_t txq)
+{
+	int i;
+
+	for (i = 0; i < txq->ift_nbr; i++)
+		if (drbr_peek(ifp, txq->ift_br[i]) != NULL)
+			return (FALSE);
+
+	return (TRUE);
+}
+
+static void
+iflib_tx_desc_free(iflib_txq_t txq, int n)
+{
+	iflib_sd_t txsd;
+	uint32_t cidx, mask;
+
+	TXQ_LOCK_ASSERT(txq);
+	cidx = txq->ift_cidx;
+	mask = txq->ift_size;
+	txsd = txq->ift_sds[cidx];
+
+	while (n--) {
+		prefetch(txq->ift_sds[(cidx + 1) & mask].ifsd_m);
+		prefetch(txq->ift_sds[(cidx + 2) & mask].ifsd_m);
+
+		if (txsd->ifsd_m != NULL) {
+			if (txsd->ifsd_flags & TX_SW_DESC_MAPPED) {
+				bus_dmamap_unload(txq->ift_desc_tag, txsd->ifsd_map);
+				txsd->ifsd_flags &= ~TX_SW_DESC_MAPPED;
+			}
+			m_freem(txsd->ifsd_m);
+			txsd->ifsd_m = NULL;
+		}
+
+		++txsd;
+		if (++cidx == q->ift_size) {
+			cidx = 0;
+			txsd = txq->ift_sds;
+		}
+	}
+	txq->ift_cidx = cidx;
+}
+
+static __inline int
+iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
+{
+	int reclaim = DESC_RECLAIMABLE(txq);
+
+	KASSERT(thresh >= 0, ("invalid threshold to reclaim"));
+	TXQ_LOCK_ASSERT(txq);
+
+	if (reclaim <= thresh)
+		return (0);
+
+	iflib_tx_desc_free(txq, reclaim);
+	txq->ift_cleaned += reclaim;
+	txq->ift_in_use -= reclaim;
+
+	if (txq->ift_active == FALSE)
+		txq->ift_active = TRUE;
+
+	return (reclaim);
+}
+
+static __inline void
+iflib_tx_db_check(iflib_ctx_t ctx, iflib_txq_t txq, int ring)
+{
+
+	if (ring || ++txq->ift_db_pending >= 32) {
+		wmb();
+		IFC_TX_FLUSH(ctx->ifc_sctx, txq->ift_id, txq->ift_pidx);
+	}
+}
+
+static void
+iflib_start(iflib_txq_t txq)
+{
+	int bridx;
+	struct mbuf *next;
+	struct buf_ring *br;
+	int resid, enq;
+
+	enq = 0;
+	do {
+		resid = FALSE;
+		for (bridx = 0; bridx < txq->ift_br; bridx++) {
+			if ((next = drbr_peek(ifp, txq->ift_br[bridx])) == NULL)
+				continue;
+			if (!(ifp->if_drv_flags & IFF_DRV_RUNNING) ||
+				!LINK_ACTIVE(txq->ift_ctx))
+				goto done;
+			resid = TRUE;
+			iflib_completed_tx_reclaim(txq, RECLAIM_THRESH(ctx));
+			if (TXQ_AVAIL(txq) < MAX_TX_DESC(ctx))
+				break;
+			if ((err = iflib_encap(txr, &next)) != 0) {
+				if (next == NULL)
+					drbr_advance(ifp, txq->ift_br[bridx]);
+				else
+					drbr_putback(ifp, txr->br, next);
+				goto done;
+			}
+			drbr_advance(ifp, txr->br);
+			enq++;
+			/*
+			 * Slow global counter
+			 */
+			if_incobytes(ifp,  next->m_pkthdr.len);
+			if (next->m_flags & M_MCAST)
+				if_incomcasts(ifp, 1);
+			if_etherbpfmtap(ifp, next);
+		}
+	} while (resid);
+
+	done:
+	if (enq > 0) {
+		/* Set the watchdog */
+		txq->ift_qstatus = IFLIB_QUEUE_WORKING;
+		txq->ift_watchdog_time = ticks;
+	}
+	if (txq->ift_db_pending)
+		iflib_tx_db_check(ctx, txq, 1);
+	if (!iflib_txq_softq_empty(ifp, txq) && LINK_ACTIVE(ctx))
+		callout_reset_on(&txq->ift_timer, 1, iflib_tx_timeout, txq,
+						 txq->ift_timer.c_cpu);
+
 	return (err);
 }
 
 static int
-_iflib_txq_transmit(iflib_txq_t txq, struct mbuf *m)
+iflib_txq_transmit(if_t ifp, iflib_txq_t txq, struct mbuf *m)
 {
 	iflib_ctx_t ctx = txq->ift_ctx;
-	if_shared_ctx_t sctx = ctx->ifc_sctx;
-	if_t ifp = sctx->isc_ifp;
 	struct mbuf     *next, *mp = m;
-	int             err = 0, enq = 0;
+	int             avail, err = 0, enq = 0;
 
-	if (((if_getdrvflags(ifp) & IFF_DRV_RUNNING) != IFF_DRV_RUNNING) ||
-		LINK_ACTIVE(ctx) == 0) {
-		if (m != NULL)
-			err = drbr_enqueue(ifp, txr->br, m);
+	avail = txq->ift_size - txq->ift_in_use;
+	TXQ_LOCK_ASSERT(txq);
+
+	if (iflib_txq_softq_empty(ifp, txq) && avail >= MAX_TX_DESC(ctx)) {
+		if (iflib_encap(txq, &m)) {
+			if (m != NULL && (err = iflib_txq_transmit(ifp, txq, m)) != 0)
+				return (err);
+		} else {
+			if (txq->ift_db_pending)
+				iflib_check_txq_db(ctx, txq, 1);
+			txq->ift_direct_packets++;
+			txq->ift_direct_bytes += m->m_pkthdr.len;
+		}
+	} else if ((err = iflib_enqueue_pkt(ifp, txq, m)) != 0)
 		return (err);
-	}
-	/*
-	* Transmit in the order of arrival if other packets
-	* are already waiting
-	*/
-	if ((m != NULL) && (drbr_peek(ifp, txr->br) != NULL)) {
-		if ((err = drbr_enqueue(ifp, txr->br, m)) != 0)
-			return (err);
-		mp = NULL;
-	}
 
-	/*
-	* Handle immediate fast path
-	*/
-	if (mp != NULL) {
-		if ((err = _iflib_tx(txr, &m)) != 0) {
-			if (drbr_enqueue(ifp, txr->br, m) != 0)
-				m_freem(m);
-			goto done;
-		}
-		enq = 1;
-	}
-	/* Process the queue */
-	while ((next = drbr_peek(ifp, txr->br)) != NULL) {
-		if ((err = _iflib_tx(txr, &next)) != 0) {
-			if (next == NULL)
-				drbr_advance(ifp, txr->br);
-			else
-				drbr_putback(ifp, txr->br, next);
-			break;
-		}
-		drbr_advance(ifp, txr->br);
-		enq++;
-		if_incobytes(ifp,  next->m_pkthdr.len);
-		if (next->m_flags & M_MCAST)
-			if_incomcasts(ifp, 1);
-		if_etherbpfmtap(ifp, next);
-		if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0)
-                        break;
-	}
-	done:
-	if (enq > 0) {
-		/* Set the watchdog */
-		txr->ift_qstatus = IFLIB_QUEUE_WORKING;
-		txr->ift_watchdog_time = ticks;
-	}
+	iflib_completed_tx_reclaim(txq, RECLAIM_THRESH(ctx));
 
-	if (txr->ift_tx_avail < sctx->isc_tx_nsegments)
-		iflib_txeof(txr);
-	if (txr->ift_tx_avail < sctx->isc_tx_nsegments)
-		txq->ift_active = 0;
-	return (err);
+	if (!iflib_txq_softq_empty(ifp, txq) && LINK_ACTIVE(ctx))
+		iflib_start(txq);
+
+	return (0);
 }
 
 void
@@ -1374,19 +1499,25 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	iflib_ctx_t	ctx = if_getsoftc(ifp);
 	iflib_txq_t txq;
 	int 		err;
+	int qidx = 0;
 
+	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 ||!LINK_ACTIVE(ctx)) {
+		m_freem(m);
+		return (0);
+	}
+
+	if ((NQSETS(ctx) > 1) && (m->m_flags & M_FLOWID))
+		qidx = QIDX(ctx, m);
 	/*
-	* XXX calculate txr and buf_ring based on flowid
-	* or other policy flag
-	*/
-	txq = &ctx->ifc_txqs[0];
-	br = &txr->tx_br[0];
-	err = 0;
+	 * XXX calculate buf_ring based on flowid (divvy up bits?)
+	 */
+	txq = &ctx->ifc_txqs[qidx];
+
 	if (TXQ_TRYLOCK(txq)) {
-		err = _iflib_txr_transmit(txr, m);
+		err = iflib_txq_transmit(ifp, txq, m);
 		TXQ_UNLOCK(txq);
 	} else if (m != NULL)
-		err = drbr_enqueue(ifp, br, m);
+		err = drbr_enqueue(ifp, &txq->ift_br[0], m);
 
 	return (err);
 }
@@ -1398,7 +1529,7 @@ iflib_if_qflush(if_t ifp)
 	iflib_txq_t txq = ctx->ifc_txqs;
 	struct mbuf     *m;
 
-	for (int i = 0; i < sctx->isc_nqsets; i++, txq++) {
+	for (int i = 0; i < NQSETS(ctx); i++, txq++) {
 		TXQ_LOCK(txq);
 		for (int j = 0; j < txq->ift_nbr; j++) {
 			while ((m = buf_ring_dequeue_sc(&txq->ift_br[j])) != NULL)
