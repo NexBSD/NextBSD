@@ -61,7 +61,7 @@ typedef struct if_rxd_info {
 	struct mbuf *iri_m;
 	uint64_t iri_csum_flags;
 	uint64_t rii_csum_data;
-} *rxd_info_t;
+} *if_rxd_info_t;
 
 typedef struct if_pkt_info {
 	bus_dma_segment_t *ipi_segs;
@@ -91,11 +91,11 @@ typedef struct if_shared_ctx {
 	 * Do not move
 	 */
 	KOBJ_FIELDS;
-	int (*isc_txd_encap) (if_shared_ctx_t, int, pkt_info_t);
+	int (*isc_txd_encap) (if_shared_ctx_t, int, if_pkt_info_t);
 	int (*isc_txd_flush) (if_shared_ctx_t, int, int);
 
 	int (*isc_rxd_is_new) (if_shared_ctx_t, int, int);
-	int (*isc_rxd_pkt_get) (if_shared_ctx_t, int, int, rxd_info_t);
+	int (*isc_rxd_pkt_get) (if_shared_ctx_t, int, int, if_rxd_info_t);
 	int (*isc_rxd_refill) (if_shared_ctx_t, int, int, uint64_t);
 	int (*isc_rxd_flush) (if_shared_ctx_t, int, int);
 

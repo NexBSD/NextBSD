@@ -238,10 +238,10 @@ static void	em_if_vlan_unregister(if_shared_ctx_t, u16);
 static void em_if_txq_setup(if_shared_ctx_t, int);
 
 
-static int	em_isc_txd_encap(if_shared_ctx_t, int, pkt_info_t);
+static int	em_isc_txd_encap(if_shared_ctx_t, int, if_pkt_info_t);
 static void em_isc_txd_flush(if_shared_ctx_t, int, int);
-static int  em_isc_rxd_pkt_get(if_shared_ctx_t, int, int, rx_info_t);
-static void em_isc_rxd_refill(iflib_cxt_t, int, int, uint64_t);
+static int  em_isc_rxd_pkt_get(if_shared_ctx_t, int, int, if_rxd_info_t);
+static void em_isc_rxd_refill(if_shared_cxt_t, int, int, uint64_t);
 static void em_isc_rxd_flush(if_shared_ctx_t, int, int);
 static void em_isc_rxd_is_new(if_shared_ctx_t, int, int);
 
@@ -1231,7 +1231,7 @@ em_if_media_change(if_shared_ctx_t sctx)
  **********************************************************************/
 
 static int
-em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, pkt_info_t pi)
+em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
 {
 	adapter *adapter = DOWNCAST(sctx);
 	struct tx_ring *txr = &adapter->tx_rings[txqid];
@@ -2453,7 +2453,7 @@ em_transmit_checksum_setup(struct tx_ring *txr, int csum_flags,	int ip_off,
  *
  **********************************************************************/
 static void
-em_tso_setup(struct tx_ring *txr, pkt_info_t pi, u32 *txd_upper, u32 *txd_lower)
+em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_lower)
 {
 	struct adapter			*adapter = txr->adapter;
 	struct e1000_context_desc	*TXD;
