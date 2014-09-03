@@ -31,7 +31,6 @@ struct iflib_ctx;
 typedef struct iflib_ctx *iflib_ctx_t;
 #include "iflib_if.h"
 
-
 /*
  * File organization:
  *  - public structures
@@ -40,17 +39,11 @@ typedef struct iflib_ctx *iflib_ctx_t;
  *  - iflib core functions
  */
 
-typedef struct if_irq {
-	struct resource  *ii_res;
-	int               ii_rid;
-	void             *ii_tag;
-} *if_irq_t;
-
-#define RXD_SOP       (1 << 0)
-#define RXD_SOP_EOP   (1 << 1)
-#define RXD_EOP       (1 << 2)
-#define RXD_NSOP_NEOP (1 << 3)
-#define RXD_VLAN      (1 << 4)
+#define	IF_RXD_SOP				(1 << 0)
+#define	IF_RXD_SOP_EOP		(1 << 1)
+#define	IF_RXD_EOP				(1 << 2)
+#define	IF_RXD_NSOP_NEOP	(1 << 3)
+#define	IF_RXD_VLAN				(1 << 4)
 
 typedef struct if_rxd_info {
 	uint16_t iri_qidx;
@@ -60,7 +53,7 @@ typedef struct if_rxd_info {
 	uint32_t iri_len;
 	struct mbuf *iri_m;
 	uint64_t iri_csum_flags;
-	uint64_t rii_csum_data;
+	uint64_t iri_csum_data;
 } *if_rxd_info_t;
 
 typedef struct if_pkt_info {
@@ -80,6 +73,12 @@ struct if_common_stats {
 	uint64_t ics_ierrs;
 	uint64_t ics_oerrs;
 };
+
+typedef struct if_irq {
+	struct resource  *ii_res;
+	int               ii_rid;
+	void             *ii_tag;
+} *if_irq_t;
 
 /*
  * Context shared between the driver and the iflib layer

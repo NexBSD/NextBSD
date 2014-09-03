@@ -752,7 +752,7 @@ _refill_rxq_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
 /*
  * Process one software descriptor
  */
-static void
+static struct mbuf *
 iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 {
 	iflib_rxq_t rxq = ctx->ifc_rxqs[ri->iri_qidx];
@@ -792,12 +792,10 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 		if_setvtag(m, ri->iri_vtag);
 		m->m_flags |= M_VLANTAG;
 	}
-	ri->iri_m = m;
 
-	/*
-	 *  XXX should be per-cpu counter
-	 */
-	if_incipackets(ifp, 1);
+	rxq->ifr_rx_packets++;
+	rxq->ifr_rx_bytes += m->m_pkthdr.len;
+	return (m);
 }
 
 /**
@@ -920,8 +918,8 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 			continue;
 		}
 
-		iflib_rxd_pkt_get(ctx, &ri);
-		m = ri->ri_m;
+		m = iflib_rxd_pkt_get(ctx, &ri);
+
 		if (mh == NULL)
 			mh = mt = m;
 		else {
@@ -2152,7 +2150,7 @@ iflib_stats_update(if_shared_ctx_t ctx)
 		packets += sctx->isc_txqs[i].ift_tx_packets;
 	}
 	if_setobytes(ifp, bytes);
-	if_setopacketss(ifp, packets);
+	if_setopackets(ifp, packets);
 	for (packets = bytes = 0, i = 0; i < sctx->isc_nqsets; i++) {
 		bytes += sctx->isc_rxqs[i].ifr_rx_bytes;
 		packets += sctx->isc_rxqs[i].ifr_rx_packets;
