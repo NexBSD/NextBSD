@@ -1069,19 +1069,6 @@ unlock:
 #define M_CSUM_FLAGS(m) ((m)->m_pkthdr.csum_flags)
 #define M_HAS_VLANTAG(m) (m->m_flags & M_VLANTAG)
 
-static __inline int
-iflib_tx_ctx_setup(iflib_txq_t txq, struct mbuf *m, if_pkt_info_t pi)
-{
-	bool offload = TRUE;
-
-
-
-	return (0);
-}
-
-/*
- * XXX rework to be properly device independent
- */
 static int
 iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 {
