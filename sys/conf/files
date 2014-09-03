@@ -615,7 +615,7 @@ dev/advansys/adwcam.c		optional adw
 dev/advansys/adwlib.c		optional adw
 dev/advansys/adwmcode.c		optional adw
 dev/ae/if_ae.c			optional ae pci
-dev/age/if_age.c		optional age pci
+dev/net/atheros/age/if_age.c		optional age pci
 dev/agp/agp.c			optional agp pci
 dev/agp/agp_if.m		optional agp pci
 dev/aha/aha.c			optional aha
@@ -642,8 +642,8 @@ dev/aic7xxx/aic7xxx_93cx6.c	optional ahc
 dev/aic7xxx/aic7xxx_osm.c	optional ahc
 dev/aic7xxx/aic7xxx_pci.c	optional ahc pci
 dev/aic7xxx/aic7xxx_reg_print.c	optional ahc ahc_reg_pretty_print
-dev/alc/if_alc.c		optional alc pci
-dev/ale/if_ale.c		optional ale pci
+dev/net/atheros/alc/if_alc.c		optional alc pci
+dev/net/atheros/ale/if_ale.c		optional ale pci
 dev/altera/avgen/altera_avgen.c		optional altera_avgen
 dev/altera/avgen/altera_avgen_fdt.c	optional altera_avgen fdt
 dev/altera/avgen/altera_avgen_nexus.c	optional altera_avgen
@@ -1064,9 +1064,9 @@ dev/ath/ath_rate/sample/sample.c	optional ath_rate_sample \
 dev/ath/ath_dfs/null/dfs_null.c	optional ath \
 	compile-with "${NORMAL_C} -I$S/dev/ath"
 #
-dev/bce/if_bce.c		optional bce
-dev/bfe/if_bfe.c		optional bfe
-dev/bge/if_bge.c		optional bge
+dev/net/qlogic/bce/if_bce.c		optional bce
+dev/net/broadcom/bfe/if_bfe.c		optional bfe
+dev/net/broadcom/bge/if_bge.c		optional bge
 dev/bktr/bktr_audio.c		optional bktr pci
 dev/bktr/bktr_card.c		optional bktr pci
 dev/bktr/bktr_core.c		optional bktr pci
@@ -1296,46 +1296,46 @@ dev/ed/if_ed_pccard.c		optional ed pccard
 dev/ed/if_ed_pci.c		optional ed pci
 dev/eisa/eisa_if.m		standard
 dev/eisa/eisaconf.c		optional eisa
-dev/e1000/if_em.c		optional em \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/if_lem.c		optional em \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/if_igb.c		optional igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_80003es2lan.c	optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_82540.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_82541.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_82542.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_82543.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_82571.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_82575.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_ich8lan.c	optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_i210.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_api.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_mac.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_manage.c	optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_nvm.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_phy.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_vf.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_mbx.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
-dev/e1000/e1000_osdep.c		optional em | igb \
-	compile-with "${NORMAL_C} -I$S/dev/e1000"
+dev/net/intel/e1000/if_em.c		optional em \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/if_lem.c		optional em \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/if_igb.c		optional igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_80003es2lan.c	optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_82540.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_82541.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_82542.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_82543.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_82571.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_82575.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_ich8lan.c	optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_i210.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_api.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_mac.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_manage.c	optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_nvm.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_phy.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_vf.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_mbx.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
+dev/net/intel/e1000/e1000_osdep.c		optional em | igb \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/e1000"
 dev/et/if_et.c			optional et
 dev/en/if_en_pci.c		optional en pci
 dev/en/midway.c			optional en
@@ -1397,8 +1397,8 @@ dev/firewire/sbp.c		optional sbp
 dev/firewire/sbp_targ.c		optional sbp_targ
 dev/flash/at45d.c		optional at45d
 dev/flash/mx25l.c		optional mx25l
-dev/fxp/if_fxp.c		optional fxp
-dev/fxp/inphy.c			optional fxp
+dev/net/intel/fxp/if_fxp.c		optional fxp
+dev/net/intel/fxp/inphy.c			optional fxp
 dev/gem/if_gem.c		optional gem
 dev/gem/if_gem_pci.c		optional gem pci
 dev/gem/if_gem_sbus.c		optional gem sbus
@@ -1773,32 +1773,32 @@ iwn6050.fw			optional iwn6050fw | iwnfw		\
 dev/ixgb/if_ixgb.c		optional ixgb
 dev/ixgb/ixgb_ee.c		optional ixgb
 dev/ixgb/ixgb_hw.c		optional ixgb
-dev/ixgbe/ixgbe.c		optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe -DSMP -DIXGBE_FDIR"
-dev/ixgbe/ixv.c			optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_phy.c		optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_api.c		optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_common.c	optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_mbx.c		optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_vf.c		optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_82598.c		optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_82599.c		optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_x540.c		optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_dcb.c		optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_dcb_82598.c	optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_dcb_82599.c	optional ixgbe inet \
-	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
+dev/net/intel/ixgbe/ixgbe.c		optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe -DSMP -DIXGBE_FDIR"
+dev/net/intel/ixgbe/ixv.c			optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_phy.c		optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_api.c		optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_common.c	optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_mbx.c		optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_vf.c		optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_82598.c		optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_82599.c		optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_x540.c		optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_dcb.c		optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_dcb_82598.c	optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
+dev/net/intel/ixgbe/ixgbe_dcb_82599.c	optional ixgbe inet \
+	compile-with "${NORMAL_C} -I$S/dev/net/intel/ixgbe"
 dev/jme/if_jme.c		optional jme pci
 dev/joy/joy.c			optional joy
 dev/joy/joy_isa.c		optional joy isa
@@ -1810,7 +1810,7 @@ dev/le/am79900.c		optional le
 dev/le/if_le_pci.c		optional le pci
 dev/le/lance.c			optional le
 dev/led/led.c			standard
-dev/lge/if_lge.c		optional lge
+dev/net/level1/lge/if_lge.c		optional lge
 dev/lmc/if_lmc.c		optional lmc
 dev/malo/if_malo.c		optional malo
 dev/malo/if_malohal.c		optional malo
@@ -1971,7 +1971,7 @@ dev/netmap/netmap_offloadings.c	optional netmap
 dev/netmap/netmap_pipe.c	optional netmap
 dev/netmap/netmap_vale.c	optional netmap
 # compile-with "${NORMAL_C} -Wconversion -Wextra"
-dev/nge/if_nge.c		optional nge
+dev/net/natsemi/nge/if_nge.c		optional nge
 dev/nxge/if_nxge.c		optional nxge \
 	compile-with "${NORMAL_C} ${NO_WSELF_ASSIGN}"
 dev/nxge/xgehal/xgehal-device.c	optional nxge \
@@ -2145,7 +2145,7 @@ dev/random/yarrow.c		optional random
 dev/random/hash.c		optional random
 dev/random/rwfile.c		optional random
 dev/rc/rc.c			optional rc
-dev/re/if_re.c			optional re
+dev/net/realtek/re/if_re.c			optional re
 dev/rndtest/rndtest.c		optional rndtest
 dev/rp/rp.c			optional rp
 dev/rp/rp_isa.c			optional rp isa
@@ -2165,7 +2165,7 @@ dev/sdhci/sdhci.c		optional sdhci
 dev/sdhci/sdhci_if.m		optional sdhci
 dev/sdhci/sdhci_pci.c		optional sdhci pci
 dev/sf/if_sf.c			optional sf pci
-dev/sge/if_sge.c		optional sge pci
+dev/net/sis/sge/if_sge.c		optional sge pci
 dev/si/si.c			optional si
 dev/si/si2_z280.c		optional si
 dev/si/si3_t225.c		optional si
@@ -2279,7 +2279,7 @@ dev/stg/tmc18c30_isa.c		optional stg isa
 dev/stg/tmc18c30_pccard.c	optional stg pccard
 dev/stg/tmc18c30_pci.c		optional stg pci
 dev/stg/tmc18c30_subr.c		optional stg
-dev/stge/if_stge.c		optional stge
+dev/net/sundance/stge/if_stge.c		optional stge
 dev/streams/streams.c		optional streams
 dev/sym/sym_hipd.c		optional sym				\
 	dependency	"$S/dev/sym/sym_{conf,defs}.h"

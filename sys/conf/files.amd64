@@ -156,14 +156,14 @@ dev/atkbdc/atkbdc.c		optional	atkbdc
 dev/atkbdc/atkbdc_isa.c		optional	atkbdc isa
 dev/atkbdc/atkbdc_subr.c	optional	atkbdc
 dev/atkbdc/psm.c		optional	psm atkbdc
-dev/bxe/bxe.c                   optional	bxe pci
-dev/bxe/bxe_stats.c             optional	bxe pci
-dev/bxe/bxe_debug.c             optional	bxe pci
-dev/bxe/ecore_sp.c              optional	bxe pci
-dev/bxe/bxe_elink.c             optional	bxe pci
-dev/bxe/57710_init_values.c     optional	bxe pci
-dev/bxe/57711_init_values.c     optional	bxe pci
-dev/bxe/57712_init_values.c     optional	bxe pci
+dev/net/qlogic/bxe/bxe.c                   optional	bxe pci
+dev/net/qlogic/bxe/bxe_stats.c             optional	bxe pci
+dev/net/qlogic/bxe/bxe_debug.c             optional	bxe pci
+dev/net/qlogic/bxe/ecore_sp.c              optional	bxe pci
+dev/net/qlogic/bxe/bxe_elink.c             optional	bxe pci
+dev/net/qlogic/bxe/57710_init_values.c     optional	bxe pci
+dev/net/qlogic/bxe/57711_init_values.c     optional	bxe pci
+dev/net/qlogic/bxe/57712_init_values.c     optional	bxe pci
 dev/coretemp/coretemp.c		optional	coretemp
 dev/cpuctl/cpuctl.c		optional	cpuctl
 dev/dpms/dpms.c			optional	dpms
@@ -232,7 +232,7 @@ dev/hyperv/vmbus/hv_hv.c				optional	hyperv
 dev/hyperv/vmbus/hv_ring_buffer.c			optional	hyperv
 dev/hyperv/vmbus/hv_vmbus_drv_freebsd.c			optional	hyperv
 dev/kbd/kbd.c			optional	atkbd | sc | ukbd | vt
-dev/nfe/if_nfe.c		optional	nfe pci
+dev/net/nvidia/nfe/if_nfe.c		optional	nfe pci
 dev/ntb/if_ntb/if_ntb.c		optional	if_ntb
 dev/ntb/ntb_hw/ntb_hw.c		optional	if_ntb ntb_hw
 dev/nvd/nvd.c			optional	nvd nvme
