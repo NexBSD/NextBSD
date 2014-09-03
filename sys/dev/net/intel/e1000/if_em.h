@@ -278,7 +278,7 @@ struct tx_ring {
 	u32                     me;
 	u32                     msix;
 	u32			ims;
-	struct em_dma_alloc	txdma;
+	bus_addr_t tx_paddr;
 	struct e1000_tx_desc	*tx_base;
 	u32			tx_tso;		/* last tx was tso */
 	u16			last_hw_offload;
@@ -290,6 +290,7 @@ struct tx_ring {
 	void                    *tag;
 	struct resource         *res;
 	unsigned long		tx_irq;
+	struct adapter *adapter;
 };
 
 /*
@@ -303,7 +304,7 @@ struct rx_ring {
 	
 	u32                     payload;
 	struct e1000_rx_desc   *rx_base;
-	struct em_dma_alloc	    rxdma;
+	bus_addr_t rx_paddr;
 	u32			            next_to_refresh;
 	u32			            next_to_check;
 	struct mbuf		       *fmp;
@@ -329,11 +330,11 @@ struct adapter {
 	 * Shared context must be at the very start
 	 * of the structure
 	 */
-	struct iflib_shared_context shared;
-#define ctx shared.isc_ctx
+	struct if_shared_ctx shared;
+#define hictx shared.isc_ctx
 #define media shared.isc_media
-#define dev shared.isc_dev
-#define ifp shared.isc_ifp
+#define hwdev shared.isc_dev
+#define hwifp shared.isc_ifp
 	
 	struct e1000_hw	hw;
 	/* FreeBSD operating-system-specific structures. */
