@@ -69,8 +69,8 @@ __FBSDID("$FreeBSD$");
 #include <machine/bus.h>
 #include <machine/in_cksum.h>
 
-#include <dev/age/if_agereg.h>
-#include <dev/age/if_agevar.h>
+#include "if_agereg.h"
+#include "if_agevar.h"
 
 /* "device miibus" required.  See GENERIC if you get errors here. */
 #include "miibus_if.h"

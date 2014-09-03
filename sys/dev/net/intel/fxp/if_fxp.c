@@ -78,9 +78,9 @@ __FBSDID("$FreeBSD$");
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
 
-#include <dev/fxp/if_fxpreg.h>
-#include <dev/fxp/if_fxpvar.h>
-#include <dev/fxp/rcvbundl.h>
+#include "if_fxpreg.h"
+#include "if_fxpvar.h"
+#include "rcvbundl.h"
 
 MODULE_DEPEND(fxp, pci, 1, 1, 1);
 MODULE_DEPEND(fxp, ether, 1, 1, 1);

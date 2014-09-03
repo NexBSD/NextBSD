@@ -126,7 +126,7 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 
-#include <dev/nge/if_ngereg.h>
+#include "if_ngereg.h"
 
 /* "device miibus" required.  See GENERIC if you get errors here. */
 #include "miibus_if.h"

@@ -54,7 +54,7 @@ __FBSDID("$FreeBSD$");
 #include "miibus_if.h"
 
 #include <machine/bus.h>
-#include <dev/stge/if_stgereg.h>
+#include <dev/net/sundance/stge/if_stgereg.h>
 
 static int ip1000phy_probe(device_t);
 static int ip1000phy_attach(device_t);

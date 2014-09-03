@@ -57,8 +57,8 @@ __FBSDID("$FreeBSD$");
 #include <dev/mii/brgphyreg.h>
 #include <net/if_arp.h>
 #include <machine/bus.h>
-#include <dev/bge/if_bgereg.h>
-#include <dev/bce/if_bcereg.h>
+#include <dev/net/broadcom/bge/if_bgereg.h>
+#include <dev/net/qlogic/bce/if_bcereg.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>

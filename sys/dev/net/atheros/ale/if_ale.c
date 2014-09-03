@@ -70,8 +70,8 @@ __FBSDID("$FreeBSD$");
 #include <machine/bus.h>
 #include <machine/in_cksum.h>
 
-#include <dev/ale/if_alereg.h>
-#include <dev/ale/if_alevar.h>
+#include "if_alereg.h"
+#include "if_alevar.h"
 
 /* "device miibus" required.  See GENERIC if you get errors here. */
 #include "miibus_if.h"

@@ -50,7 +50,7 @@ __FBSDID("$FreeBSD$");
 #include <dev/mii/miivar.h>
 #include "miidevs.h"
 
-#include <dev/fxp/inphyreg.h>
+#include "inphyreg.h"
 
 #include "miibus_if.h"
 

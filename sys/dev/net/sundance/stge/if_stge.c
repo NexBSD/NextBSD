@@ -74,7 +74,7 @@ __FBSDID("$FreeBSD$");
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
 
-#include <dev/stge/if_stgereg.h>
+#include "if_stgereg.h"
 
 #define	STGE_CSUM_FEATURES	(CSUM_IP | CSUM_TCP | CSUM_UDP)
 

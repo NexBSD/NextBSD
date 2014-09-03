@@ -103,7 +103,7 @@ __FBSDID("$FreeBSD$");
 
 #define LGE_USEIOSPACE
 
-#include <dev/lge/if_lgereg.h>
+#include "if_lgereg.h"
 
 /* "device miibus" required.  See GENERIC if you get errors here. */
 #include "miibus_if.h"

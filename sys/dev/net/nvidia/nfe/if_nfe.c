@@ -62,8 +62,8 @@ __FBSDID("$FreeBSD$");
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
 
-#include <dev/nfe/if_nfereg.h>
-#include <dev/nfe/if_nfevar.h>
+#include "if_nfereg.h"
+#include "if_nfevar.h"
 
 MODULE_DEPEND(nfe, pci, 1, 1, 1);
 MODULE_DEPEND(nfe, ether, 1, 1, 1);

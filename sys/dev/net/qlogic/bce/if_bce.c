@@ -97,8 +97,8 @@ __FBSDID("$FreeBSD$");
 
 #include "miibus_if.h"
 
-#include <dev/bce/if_bcereg.h>
-#include <dev/bce/if_bcefw.h>
+#include "if_bcereg.h"
+#include "if_bcefw.h"
 
 /****************************************************************************/
 /* BCE Debug Options                                                        */
