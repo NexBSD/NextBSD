@@ -65,13 +65,14 @@ typedef struct if_rxd_info {
 
 typedef struct if_pkt_info {
 	bus_dma_segment_t *ipi_segs;
-	uint16_t ipi_vtag;
+	caddr_t	ipi_pkt_hdr;
 	uint16_t ipi_nsegs;
-	uint32_t ipi_flags;
-	uint64_t ipi_csum_flags;
-	uint64_t ipi_csum_data;
-	uint32_t ipi_first;
-	uint32_t ipi_last;
+	uint16_t ipi_vtag;
+	uint32_t ipi_pidx;
+	uint32_t ipi_csum_flags;
+	uint16_t ipi_flags;
+	uint16_t ipi_ndesc;
+	/* currently 4 bytes of padding */
 } if_pkt_info_t;
 
 struct if_common_stats {

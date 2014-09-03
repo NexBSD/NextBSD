@@ -111,6 +111,9 @@ typedef struct iflib_sw_desc {
 	int             ifsd_flags;
 } *iflib_sd_t;
 
+/* magic number that should be high enough for any hardware */
+#define IFLIB_MAX_TX_SEGS 128
+
 typedef struct iflib_txq {
 	iflib_ctx_t	ift_ctx;
 	uint64_t	ift_flags;
@@ -124,6 +127,7 @@ typedef struct iflib_txq {
 	uint32_t	ift_db_pending;
 	uint32_t	ift_tqid;
 	bus_dma_tag_t		    ift_desc_tag;
+	bus_dma_segment_t	ift_segs[IFLIB_MAX_TX_SEGS];
 
 	struct mtx              ift_mtx;
 	char                    ift_mtx_name[16];
@@ -136,7 +140,6 @@ typedef struct iflib_txq {
 	int			            ift_qstatus;
 	int                     ift_active;
 	int                     ift_watchdog_time;
-	bus_dma_segment_t      *ift_segs;
 	struct task             ift_task;
 } *iflib_txq_t;
 
@@ -1063,210 +1066,100 @@ unlock:
 	CTX_UNLOCK(ctx);
 }
 
+#define M_CSUM_FLAGS(m) ((m)->m_pkthdr.csum_flags)
+#define M_HAS_VLANTAG(m) (m->m_flags & M_VLANTAG)
+
+static __inline int
+iflib_tx_ctx_setup(iflib_txq_t txq, struct mbuf *m, if_pkt_info_t pi)
+{
+	bool offload = TRUE;
+
+
+
+	return (0);
+}
+
 /*
  * XXX rework to be properly device independent
  */
 static int
 iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 {
-	struct adapter		*adapter = txr->adapter;
-	bus_dma_segment_t	*segs /* [EM_MAX_SCATTER]*/;
-	bus_dmamap_t		map;
-	iflib_sd_t	txsd, tx_buffer_mapped;
-	struct mbuf		*m_head;
-	struct ether_header	*eh;
-	struct ip		*ip = NULL;
-	struct tcphdr		*tp = NULL;
-	int			ip_off, poff;
-	int			nsegs, i, j, first, last = 0;
-	int			err, do_tso, tso_desc = 0, remap = 1;
-
-	segs = txq->ift_segs;
-	m_head = *m_headp;
-	txd_upper = txd_lower = txd_used = txd_saved = 0;
-	do_tso = ((m_head->m_pkthdr.csum_flags & CSUM_TSO) != 0);
-	ip_off = poff = 0;
-
-	/*
-	 * Intel recommends entire IP/TCP header length reside in a single
-	 * buffer. If multiple descriptors are used to describe the IP and
-	 * TCP header, each descriptor should describe one or more
-	 * complete headers; descriptors referencing only parts of headers
-	 * are not supported. If all layer headers are not coalesced into
-	 * a single buffer, each buffer should not cross a 4KB boundary,
-	 * or be larger than the maximum read request size.
-	 * Controller also requires modifing IP/TCP header to make TSO work
-	 * so we firstly get a writable mbuf chain then coalesce ethernet/
-	 * IP/TCP header into a single buffer to meet the requirement of
-	 * controller. This also simplifies IP/TCP/UDP checksum offloading
-	 * which also has similiar restrictions.
-	 */
-	if (do_tso || m_head->m_pkthdr.csum_flags & CSUM_OFFLOAD) {
-		if (do_tso || (m_head->m_next != NULL && 
-		    m_head->m_pkthdr.csum_flags & CSUM_OFFLOAD)) {
-			if (M_WRITABLE(*m_headp) == 0) {
-				m_head = m_dup(*m_headp, M_NOWAIT);
-				m_freem(*m_headp);
-				if (m_head == NULL) {
-					*m_headp = NULL;
-					return (ENOBUFS);
-				}
-				*m_headp = m_head;
-			}
-		}
-		/*
-		 * XXX
-		 * Assume IPv4, we don't have TSO/checksum offload support
-		 * for IPv6 yet.
-		 */
-		ip_off = sizeof(struct ether_header);
-		m_head = m_pullup(m_head, ip_off);
-		if (m_head == NULL) {
-			*m_headp = NULL;
-			return (ENOBUFS);
-		}
-		eh = mtod(m_head, struct ether_header *);
-		if (eh->ether_type == htons(ETHERTYPE_VLAN)) {
-			ip_off = sizeof(struct ether_vlan_header);
-			m_head = m_pullup(m_head, ip_off);
-			if (m_head == NULL) {
-				*m_headp = NULL;
-				return (ENOBUFS);
-			}
-		}
-		m_head = m_pullup(m_head, ip_off + sizeof(struct ip));
-		if (m_head == NULL) {
-			*m_headp = NULL;
-			return (ENOBUFS);
-		}
-		ip = (struct ip *)(mtod(m_head, char *) + ip_off);
-		poff = ip_off + (ip->ip_hl << 2);
-		if (do_tso) {
-			m_head = m_pullup(m_head, poff + sizeof(struct tcphdr));
-			if (m_head == NULL) {
-				*m_headp = NULL;
-				return (ENOBUFS);
-			}
-			tp = (struct tcphdr *)(mtod(m_head, char *) + poff);
-			/*
-			 * TSO workaround:
-			 *   pull 4 more bytes of data into it.
-			 */
-			m_head = m_pullup(m_head, poff + (tp->th_off << 2) + 4);
-			if (m_head == NULL) {
-				*m_headp = NULL;
-				return (ENOBUFS);
-			}
-			ip = (struct ip *)(mtod(m_head, char *) + ip_off);
-			ip->ip_len = 0;
-			ip->ip_sum = 0;
-			/*
-			 * The pseudo TCP checksum does not include TCP payload
-			 * length so driver should recompute the checksum here
-			 * what hardware expect to see. This is adherence of
-			 * Microsoft's Large Send specification.
-			 */
-			tp = (struct tcphdr *)(mtod(m_head, char *) + poff);
-			tp->th_sum = in_pseudo(ip->ip_src.s_addr,
-			    ip->ip_dst.s_addr, htons(IPPROTO_TCP));
-		} else if (m_head->m_pkthdr.csum_flags & CSUM_TCP) {
-			m_head = m_pullup(m_head, poff + sizeof(struct tcphdr));
-			if (m_head == NULL) {
-				*m_headp = NULL;
-				return (ENOBUFS);
-			}
-			tp = (struct tcphdr *)(mtod(m_head, char *) + poff);
-			m_head = m_pullup(m_head, poff + (tp->th_off << 2));
-			if (m_head == NULL) {
-				*m_headp = NULL;
-				return (ENOBUFS);
-			}
-			ip = (struct ip *)(mtod(m_head, char *) + ip_off);
-			tp = (struct tcphdr *)(mtod(m_head, char *) + poff);
-		} else if (m_head->m_pkthdr.csum_flags & CSUM_UDP) {
-			m_head = m_pullup(m_head, poff + sizeof(struct udphdr));
-			if (m_head == NULL) {
-				*m_headp = NULL;
-				return (ENOBUFS);
-			}
-			ip = (struct ip *)(mtod(m_head, char *) + ip_off);
-		}
-		*m_headp = m_head;
-	}
-
-	/*
-	 * Map the packet for DMA
-	 *
-	 * Capture the first descriptor index,
-	 * this descriptor will have the index
-	 * of the EOP which is the only one that
-	 * now gets a DONE bit writeback.
-	 */
-	first = txr->next_avail_desc;
-	tx_buffer = &txr->tx_buffers[first];
-	tx_buffer_mapped = tx_buffer;
-	map = tx_buffer->ifsd_map;
+	iflib_ctx_t ctx = txq->ift_ctx;
+	bus_dma_segment_t	*segs = txq->ift_segs;
+	struct mbuf		*m_head = *m_headp;
+	int pidx = txq->ift_pidx;
+	iflib_sd_t txsd = &txq->ift_sds[pidx];
+	bus_dmamap_t		map = txsd->ifsd_map;
+	bool remap = TRUE;
+	int i, j, error;
 
 retry:
-	err = bus_dmamap_load_mbuf_sg(txr->txtag, map,
+
+	error = bus_dmamap_load_mbuf_sg(txq->ift_desc_tag, map,
 	    *m_headp, segs, &nsegs, BUS_DMA_NOWAIT);
 
-	/*
-	 * There are two types of errors we can (try) to handle:
-	 * - EFBIG means the mbuf chain was too long and bus_dma ran
-	 *   out of segments.  Defragment the mbuf chain and try again.
-	 * - ENOMEM means bus_dma could not obtain enough bounce buffers
-	 *   at this point in time.  Defer sending and try again later.
-	 * All other errors, in particular EINVAL, are fatal and prevent the
-	 * mbuf chain from ever going through.  Drop it and report error.
-	 */
-	if (err == EFBIG && remap) {
+	if (__predict_false(error)) {
 		struct mbuf *m;
 
-		m = m_defrag(*m_headp, M_NOWAIT);
-		if (m == NULL) {
-			adapter->mbuf_alloc_failed++;
+		switch (error) {
+		case EFBIG:
+			/* try defrag once */
+			if (remap == TRUE) {
+				remap = FALSE;
+				m = m_defrag(*m_headp, M_NOWAIT);
+				if (m == NULL) {
+					ctx->ift_mbuf_defrag_failed++;
+					m_freem(*m_headp);
+					*m_headp = NULL;
+					error = ENOBUFS;
+				} else {
+					*m_headp = m;
+					goto retry;
+				}
+			}
+			break;
+		case ENOMEM:
+			txq->ift_no_tx_dma_setup++;
+			break;
+		default:
+			txq->ift_no_tx_dma_setup++;
 			m_freem(*m_headp);
 			*m_headp = NULL;
-			return (ENOBUFS);
+			break;
 		}
-		*m_headp = m;
-
-		/* Try it again, but only once */
-		remap = 0;
-		goto retry;
-	} else if (err == ENOMEM) {
-		adapter->no_tx_dma_setup++;
-		return (err);
-	} else if (err != 0) {
-		adapter->no_tx_dma_setup++;
-		m_freem(*m_headp);
-		*m_headp = NULL;
-		return (err);
+		return (error);
 	}
 
-	if (nsegs > (txr->tx_avail - 2)) {
-		txr->no_desc_avail++;
+	/*
+	 * XXX assumes a 1 to 1 relationship between segments and
+	 *        descriptors - this does not hold true on all drivers, e.g.
+	 *        cxgb
+	 */
+	if (nsegs > TXQ_AVAIL(txq)) {
+		txq->ift_no_desc_avail++;
 		bus_dmamap_unload(txq->ift_desc_tag, map);
 		return (ENOBUFS);
 	}
 	m_head = *m_headp;
+	pi->ipi_pkt_hdr = mtod(m_head);
+	pi->ipi_segs = segs;
+	pi->ipi_nsegs = nsegs;
+	pi->ipi_pidx = pidx;
+	pi->ipi_csum_flags = M_CSUM_FLAGS(m_head);
 
-	pi->pi_segs = segs;
-	pi->pi_nsegs = nsegs;
+	if (M_HAS_VLANTAG(m_head)) {
+		pi->ipi_vtag = m->m_pkthdr.ether_vtag;
+		pi->ipi_flags |= M_VLANTAG;
+	}
+
 	if ((err = sctx->isc_txd_encap(sctx, txq->ift_id, pi)) == 0) {
-		/*
-		* XXX track the eop in the driver itself
-		*     need to add a per txq array of integers
-		*     to track the linked list of eops for credit
-		*     updates
-		*/
-		tx_buffer->next_eop = pi->pi_last;
-
 		bus_dmamap_sync(txq->ift_dma_info.idi_tag, txq->ift_dma_info.idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-		IFC_TX_FLUSH(ctx->ifc_sctx, txq->ift_id, pi->ipi_last);
-		txq->ift_in_use += nsegs;
+		txq->ift_in_use += pi->ipi_ndesc;
+		/* XXX need CTASSERT that ntxd is power of 2 */
+		txq->ift_pidx = (pidx + pi->ipi_ndesc) & (sctx->isc_ntxd-1);
+		iflib_txd_db_check(ctx, txq, 0);
 	}
 	return (err);
 }
@@ -1359,7 +1252,7 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 }
 
 static __inline void
-iflib_tx_db_check(iflib_ctx_t ctx, iflib_txq_t txq, int ring)
+iflib_txd_db_check(iflib_ctx_t ctx, iflib_txq_t txq, int ring)
 {
 	if_shared_ctx_t sctx;
 
@@ -1417,7 +1310,7 @@ iflib_start(iflib_txq_t txq)
 		txq->ift_watchdog_time = ticks;
 	}
 	if (txq->ift_db_pending)
-		iflib_tx_db_check(ctx, txq, 1);
+		iflib_txd_db_check(ctx, txq, 1);
 	if (!iflib_txq_softq_empty(ifp, txq) && LINK_ACTIVE(ctx))
 		callout_reset_on(&txq->ift_timer, 1, iflib_tx_timeout, txq,
 						 txq->ift_timer.c_cpu);
