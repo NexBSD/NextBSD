@@ -28,7 +28,7 @@
 #include <sys/systm.h>
 #include <sys/bus.h>
 
-INTERFACE ifc;
+INTERFACE ifdi;
 
 CODE {
 
@@ -175,7 +175,7 @@ METHOD void rxq_setup {
 	int _txqid;
 } DEFAULT null_q_setup;
 
-METHOD int timer {
+METHOD void timer {
 	if_shared_ctx_t _ctx;
 } DEFAULT null_op;
 
@@ -190,12 +190,12 @@ METHOD void led_func {
 
 METHOD void vlan_register {
 	if_shared_ctx_t _ctx;
-	u16 _vtag;
+	uint16_t _vtag;
 } DEFAULT null_vlan_register_op;
 
 METHOD void vlan_unregister {
 	if_shared_ctx_t _ctx;
-	u16 _vtag;
+	uint16_t _vtag;
 } DEFAULT null_vlan_register_op;
 
 

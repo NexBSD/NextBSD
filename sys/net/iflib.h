@@ -29,7 +29,9 @@
 
 struct iflib_ctx;
 typedef struct iflib_ctx *iflib_ctx_t;
-#include "iflib_if.h"
+struct if_shared_ctx;
+typedef struct if_shared_ctx *if_shared_ctx_t;
+#include "ifdi_if.h"
 
 /*
  * File organization:
@@ -66,7 +68,7 @@ typedef struct if_pkt_info {
 	uint16_t ipi_flags;
 	uint16_t ipi_ndesc;
 	/* currently 4 bytes of padding */
-} if_pkt_info_t;
+} *if_pkt_info_t;
 
 struct if_common_stats {
 	uint64_t ics_colls;
@@ -85,7 +87,7 @@ typedef struct if_irq {
  * Is treated as a superclass of the driver's softc, so
  * must be the first element
  */
-typedef struct if_shared_ctx {
+struct if_shared_ctx {
 	/*
 	 * KOBJ requires that the following be the first field
 	 * Do not move
@@ -119,7 +121,13 @@ typedef struct if_shared_ctx {
 
 	struct ifmedia	isc_media;
 	struct if_common_stats isc_common_stats;
-} if_shared_ctx_t;
+};
+
+typedef enum {
+	IFLIB_INTR_TX,
+	IFLIB_INTR_RX,
+	IFLIB_INTR_LINK,
+} intr_type_t;
 
 #define UPCAST(sc) ((if_shared_ctx_t)(sc))
 #ifndef ETH_ADDR_LEN
@@ -134,9 +142,9 @@ int iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN]);
 
 int iflib_queues_alloc(if_shared_ctx_t ctx, int txq_size, int rxq_size);
 
-void iflib_tx_structures_setup(if_shared_ctx_t);
+int iflib_tx_structures_setup(if_shared_ctx_t);
 void iflib_tx_structures_free(if_shared_ctx_t);
-void iflib_rx_structures_setup(if_shared_ctx_t);
+int iflib_rx_structures_setup(if_shared_ctx_t);
 void iflib_rx_structures_free(if_shared_ctx_t);
 
 void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
