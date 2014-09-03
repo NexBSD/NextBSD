@@ -3678,13 +3678,13 @@ if_sethwassistbits(if_t ifp, int toset, int toclear)
 }
 
 int
-if_sethwassist(if_t ifp, int hwassist_bit)
+if_sethwassist(if_t ifp, uint64_t hwassist_bit)
 {
 	((struct ifnet *)ifp)->if_hwassist = hwassist_bit;
 	return (0);
 }
 
-int
+uint64_t
 if_gethwassist(if_t ifp)
 {
 	return ((struct ifnet *)ifp)->if_hwassist;
@@ -3772,13 +3772,15 @@ if_setoerrors(if_t ifp, int oerrors)
 	return (0);
 }
 
-int if_incoerrors(if_t ifp, int oerrors)
+int
+if_incoerrors(if_t ifp, int oerrors)
 {
 	((struct ifnet *)ifp)->if_oerrors += oerrors;
 	return (0);
 }
 
-int if_inciqdrops(if_t ifp, int val)
+int
+if_inciqdrops(if_t ifp, int val)
 {
 	((struct ifnet *)ifp)->if_iqdrops += val;
 	return (0);
@@ -3799,14 +3801,14 @@ if_inccollisions(if_t ifp, int collisions)
 }
  
 int
-if_setipackets(if_t ifp, int pkts)
+if_setipackets(if_t ifp, uint64_t pkts)
 {
 	((struct ifnet *)ifp)->if_ipackets = pkts;
 	return (0);
 }
 
 int
-if_setopackets(if_t ifp, int pkts)
+if_setopackets(if_t ifp, uint64_t pkts)
 {
 	((struct ifnet *)ifp)->if_opackets = pkts;
 	return (0);
@@ -3820,14 +3822,14 @@ if_incobytes(if_t ifp, int bytes)
 }
 
 int
-if_setibytes(if_t ifp, int bytes)
+if_setibytes(if_t ifp, uint64_t bytes)
 {
 	((struct ifnet *)ifp)->if_ibytes = bytes;
 	return (0);
 }
 
 int
-if_setobytes(if_t ifp, int bytes)
+if_setobytes(if_t ifp, uint64_t bytes)
 {
 	((struct ifnet *)ifp)->if_obytes = bytes;
 	return (0);
@@ -3840,7 +3842,8 @@ if_sendq_empty(if_t ifp)
 	return IFQ_DRV_IS_EMPTY(&((struct ifnet *)ifp)->if_snd);
 }
 
-int if_getiqdrops(if_t ifp)
+int
+if_getiqdrops(if_t ifp)
 {
 	return ((struct ifnet *)ifp)->if_iqdrops;
 }
