@@ -237,7 +237,8 @@ static void	em_if_promisc_config(if_shared_ctx_t, int);
 static void	em_if_promisc_disable(if_shared_ctx_t, int);
 static void	em_if_vlan_register(if_shared_ctx_t, u16);
 static void	em_if_vlan_unregister(if_shared_ctx_t, u16);
-static void em_if_txq_setup(if_shared_ctx_t, int);
+static void	em_if_txq_setup(if_shared_ctx_t, int);
+static int		em_if_sysctl_int_delay(if_shared_ctx_t, if_int_delay_info_t);
 
 static int	em_isc_txd_encap(if_shared_ctx_t, int, if_pkt_info_t);
 static void em_isc_txd_flush(if_shared_ctx_t, int, int);
@@ -262,7 +263,7 @@ static void	em_initialize_transmit_unit(struct adapter *);
 static void	em_initialize_receive_unit(struct adapter *);
 static void	em_update_stats_counters(struct adapter *);
 static void	em_add_hw_stats(struct adapter *adapter);
-static void	em_receive_checksum(struct e1000_rx_desc *, int *, int *);
+static void	em_receive_checksum(struct e1000_rx_desc *, uint32_t *, uint32_t *);
 static void	em_transmit_checksum_setup(struct tx_ring *, int, int,
 		    struct ip *, u32 *, u32 *);
 static void	em_tso_setup(struct tx_ring *, if_pkt_info_t, u32 *, u32 *);
@@ -272,9 +273,6 @@ static void	em_print_nvm_info(struct adapter *);
 static int	em_sysctl_debug_info(SYSCTL_HANDLER_ARGS);
 static void	em_print_debug_info(struct adapter *);
 static int 	em_is_valid_ether_addr(u8 *);
-static int	em_sysctl_int_delay(SYSCTL_HANDLER_ARGS);
-static void	em_add_int_delay_sysctl(struct adapter *, const char *,
-		    const char *, struct em_int_delay_info *, int, int);
 /* Management and WOL Support */
 static void	em_init_manageability(struct adapter *);
 static void	em_release_manageability(struct adapter *);
@@ -345,6 +343,7 @@ static device_method_t em_if_methods[] = {
 	DEVMETHOD(ifdi_vlan_register, em_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, em_if_vlan_unregister),
 	DEVMETHOD(ifdi_txq_setup, em_if_txq_setup),
+	DEVMETHOD(ifdi_sysctl_int_delay, em_if_sysctl_int_delay),
 	DEVMETHOD_END
 };
 
@@ -573,23 +572,23 @@ em_attach(device_t dev)
 	e1000_get_bus_info(hw);
 
 	/* Set up some sysctls for the tunable interrupt delays */
-	em_add_int_delay_sysctl(adapter, "rx_int_delay",
+	iflib_add_int_delay_sysctl(sctx, "rx_int_delay",
 	    "receive interrupt delay in usecs", &adapter->rx_int_delay,
 	    E1000_REGISTER(hw, E1000_RDTR), em_rx_int_delay_dflt);
-	em_add_int_delay_sysctl(adapter, "tx_int_delay",
+	iflib_add_int_delay_sysctl(sctx, "tx_int_delay",
 	    "transmit interrupt delay in usecs", &adapter->tx_int_delay,
 	    E1000_REGISTER(hw, E1000_TIDV), em_tx_int_delay_dflt);
-	em_add_int_delay_sysctl(adapter, "rx_abs_int_delay",
+	iflib_add_int_delay_sysctl(sctx, "rx_abs_int_delay",
 	    "receive interrupt delay limit in usecs",
 	    &adapter->rx_abs_int_delay,
 	    E1000_REGISTER(hw, E1000_RADV),
 	    em_rx_abs_int_delay_dflt);
-	em_add_int_delay_sysctl(adapter, "tx_abs_int_delay",
+	iflib_add_int_delay_sysctl(sctx, "tx_abs_int_delay",
 	    "transmit interrupt delay limit in usecs",
 	    &adapter->tx_abs_int_delay,
 	    E1000_REGISTER(hw, E1000_TADV),
 	    em_tx_abs_int_delay_dflt);
-	em_add_int_delay_sysctl(adapter, "itr",
+	iflib_add_int_delay_sysctl(sctx, "itr",
 	    "interrupt delay limit in usecs/4",
 	    &adapter->tx_itr,
 	    E1000_REGISTER(hw, E1000_ITR),
@@ -787,9 +786,9 @@ err_pci:
  *********************************************************************/
 
 static int
-em_detach(device_t dev)
+em_if_detach(if_shared_ctx_t sctx)
 {
-	struct adapter	*adapter = device_get_softc(dev);
+	struct adapter	*adapter = DOWNCAST(sctx);
 
 	INIT_DEBUGOUT("em_if_detach: begin");
 
@@ -1231,7 +1230,7 @@ em_if_media_change(if_shared_ctx_t sctx)
  *
  *  return 0 on success, positive on failure
  **********************************************************************/
-
+#if 0
 static int
 em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
 {
@@ -1363,6 +1362,7 @@ em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
 
 	return (0);
 }
+#endif
 
 static void
 em_isc_txd_flush(if_shared_ctx_t sctx, int txqid, int pidx)
@@ -1513,10 +1513,6 @@ em_if_watchdog_reset(if_shared_ctx_t sctx)
 	    "Queue(%d) tdh = %d, hw tdt = %d\n", txr->me,
 	    E1000_READ_REG(&adapter->hw, E1000_TDH(txr->me)),
 	    E1000_READ_REG(&adapter->hw, E1000_TDT(txr->me)));
-	device_printf(dev,
-				  "TX(%d) desc avail = %d,"
-	    "Next TX to Clean = %d\n",
-	    txr->me, txr->tx_avail, txr->next_to_clean);
 }
 
 static void
@@ -1524,7 +1520,6 @@ em_if_update_link_status(if_shared_ctx_t sctx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct e1000_hw *hw = &adapter->hw;
-	struct tx_ring *txr = adapter->tx_rings;
 	u32 link_check = 0;
 
 	/* Get the cached link value or read phy for real */
@@ -1691,7 +1686,7 @@ em_allocate_legacy(struct adapter *adapter)
 	 * Allocate a fast interrupt and the associated
 	 * deferred processing contexts.
 	 */
-	return (iflib_legacy_setup(sctx, em_irq_fast, &rid));
+	return (iflib_legacy_setup(UPCAST(adapter), em_irq_fast, &rid));
 }
 
 /*********************************************************************
@@ -1719,7 +1714,7 @@ em_allocate_msix(struct adapter *adapter)
 		/* RX ring */
 		rid = vector + 1;
 		snprintf(buf, sizeof(buf), "rx %d", i);
-		err = iflib_irq_alloc(UPCAST(adapter), &rxr->irq, rid,
+		err = iflib_irq_alloc_generic(UPCAST(adapter), &rxr->rx_irq, rid,
 								IFLIB_INTR_RX, rxr->me, buf);
 
 		rxr->msix = vector++; /* NOTE increment vector for TX */
@@ -1735,8 +1730,8 @@ em_allocate_msix(struct adapter *adapter)
 		/* TX ring */
 		rid = vector + 1;
 		snprintf(buf, sizeof(buf), "tx %d", i);
-		err = iflib_irq_alloc(UPCAST(adapter), &txr->irq, rid,
-								IFLIB_INTR_TX, txr->hi_txr, buf);
+		err = iflib_irq_alloc_generic(UPCAST(adapter), &txr->tx_irq, rid,
+								IFLIB_INTR_TX, txr->me, buf);
 
 		txr->msix = vector++; /* Increment vector for next pass */
 		/*
@@ -1751,11 +1746,11 @@ em_allocate_msix(struct adapter *adapter)
 
 	/* Link interrupt */
 	++rid;
-	err = iflib_irq_alloc(UPCAST(adapter), &rxr->irq, rid,
-							IFLIB_INTR_LINK, adapter->hictx, buf);
+	err = iflib_irq_alloc_generic(UPCAST(adapter), &rxr->rx_irq, rid,
+								  IFLIB_INTR_LINK, 0 /* unused */, buf);
 	adapter->linkvec = vector;
 	adapter->ivars |=  (8 | vector) << 16;
-	adapter->ivars |= 0x80000000;
+	adapter->ivars |= 0x801000000;
 
 	return (0);
 }
@@ -2265,11 +2260,11 @@ em_initialize_transmit_unit(struct adapter *adapter)
 	}
 
 	E1000_WRITE_REG(&adapter->hw, E1000_TIPG, tipg);
-	E1000_WRITE_REG(&adapter->hw, E1000_TIDV, adapter->tx_int_delay.value);
+	E1000_WRITE_REG(&adapter->hw, E1000_TIDV, adapter->tx_int_delay.iidi_value);
 
 	if(adapter->hw.mac.type >= e1000_82540)
 		E1000_WRITE_REG(&adapter->hw, E1000_TADV,
-		    adapter->tx_abs_int_delay.value);
+		    adapter->tx_abs_int_delay.iidi_value);
 
 	if ((adapter->hw.mac.type == e1000_82571) ||
 	    (adapter->hw.mac.type == e1000_82572)) {
@@ -2286,7 +2281,7 @@ em_initialize_transmit_unit(struct adapter *adapter)
 	}
 
 	adapter->txd_cmd = E1000_TXD_CMD_IFCS;
-	if (adapter->tx_int_delay.value > 0)
+	if (adapter->tx_int_delay.iidi_value > 0)
 		adapter->txd_cmd |= E1000_TXD_CMD_IDE;
 
 	/* Program the Transmit Control Register */
@@ -2319,6 +2314,7 @@ em_initialize_transmit_unit(struct adapter *adapter)
  *  in turn greatly slow down performance to send small sized
  *  frames. 
  **********************************************************************/
+#if 0
 static void
 em_transmit_checksum_setup(struct tx_ring *txr, int csum_flags,	int ip_off,
     struct ip *ip, u32 *txd_upper, u32 *txd_lower)
@@ -2623,6 +2619,7 @@ em_if_txeof(if_shared_ctx_t sctx, int txqid)
 		txr->queue_status = EM_QUEUE_IDLE;
 	} 
 }
+#endif
 
 /*********************************************************************
  *
@@ -2651,7 +2648,7 @@ em_initialize_receive_unit(struct adapter *adapter)
 		E1000_WRITE_REG(hw, E1000_RCTL, rctl & ~E1000_RCTL_EN);
 
 	E1000_WRITE_REG(&adapter->hw, E1000_RADV,
-	    adapter->rx_abs_int_delay.value);
+	    adapter->rx_abs_int_delay.iidi_value);
 	/*
 	 * Set the interrupt throttling rate. Value is calculated
 	 * as DEFAULT_ITR = 1/(MAX_INTS_PER_SEC * 256ns)
@@ -2759,10 +2756,10 @@ em_initialize_receive_unit(struct adapter *adapter)
 }
 
 static void
-em_isc_rxd_refill(if_shared_cxt_t ctx, uint32_t rxqid, int pidx, uint64_t paddr)
+em_isc_rxd_refill(if_shared_ctx_t sctx, int rxqid, int pidx, uint64_t paddr)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
-	struct rx_ring *rxr = adapter->rx_rings[rxqid];
+	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
 
 	rxr->rx_base[pidx].buffer_addr = htole64(paddr);
 }
@@ -2772,8 +2769,7 @@ em_isc_rxd_flush(if_shared_ctx_t sctx, int rxqid, int pidx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 
-	E1000_WRITE_REG(&adapter->hw,
-		    E1000_RDT(rxqid), pidx);
+	E1000_WRITE_REG(&adapter->hw, E1000_RDT(rxqid), pidx);
 }
 
 static int
@@ -2798,24 +2794,22 @@ em_isc_rxd_is_new(if_shared_ctx_t sctx, int rxqid, int idx)
  *  For polling we also now return the number of cleaned packets
  *********************************************************************/
 static int
-em_isc_rxd_pkt_get(if_shared_ctx_t sctx, int rxqid, int i, rx_info_t ri)
+em_isc_rxd_pkt_get(if_shared_ctx_t sctx, int rxqid, int i, if_rxd_info_t ri)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
 	u8			status;
 	u16 			len;
-	int			err;
 	bool			eop;
 	struct e1000_rx_desc	*cur;
 	
 	cur = &rxr->rx_base[i];
 	status = cur->status;
-	mp = sendmp = NULL;
 
 	len = le16toh(cur->length);
 	eop = (status & E1000_RXD_STAT_EOP) != 0;
 
-	if ((cur->errs & E1000_RXD_ERR_FRAME_ERR_MASK) ||
+	if ((cur->errors & E1000_RXD_ERR_FRAME_ERR_MASK) ||
 		(rxr->discard == TRUE)) {
 		adapter->dropped_pkts++;
 		++rxr->rx_discarded;
@@ -2824,29 +2818,30 @@ em_isc_rxd_pkt_get(if_shared_ctx_t sctx, int rxqid, int i, rx_info_t ri)
 			rxr->discard = TRUE;
 		else
 			rxr->discard = FALSE;
-#endif
 		/* XXX recycle buffer if there was an err */
 		em_rx_discard(rxr, i);
+#endif
+
 		cur->status = 0;
 		return (EBADMSG);
 	}
 	
 	/* Assign correct length to the current fragment */
-	ri->ri_flags = RXD_SOP_EOP;
-	ri->ri_qidx = rxr->me;
-	ri->ri_cidx = i;
-	ri->ri_len = len;
+	ri->iri_flags = IF_RXD_SOP_EOP;
+	ri->iri_qidx = rxr->me;
+	ri->iri_cidx = i;
+	ri->iri_len = len;
 
 	if (eop) {
-		em_receive_checksum(cur, &ri->ri_csum_flags,
-							&ri->csum_data);
+		em_receive_checksum(cur, &ri->iri_csum_flags,
+							&ri->iri_csum_data);
 		if (status & E1000_RXD_STAT_VP) {
-			ri->ri_flags |= RXD_VLAN;
-			ri->ri_vtag = le16toh(cur->special);
+			ri->iri_flags |= IF_RXD_VLAN;
+			ri->iri_vtag = le16toh(cur->special);
 		}
 	}
 	cur->status = 0;
-	return (err);
+	return (0);
 }
 
 /*
@@ -2864,7 +2859,7 @@ em_isc_rxd_pkt_get(if_shared_ctx_t sctx, int rxqid, int i, rx_info_t ri)
  *
  *********************************************************************/
 static void
-em_receive_checksum(struct e1000_rx_desc *rx_desc, int *csum_flags, int *csum_data)
+em_receive_checksum(struct e1000_rx_desc *rx_desc, uint32_t *csum_flags, uint32_t *m_csum_data)
 {
 	*csum_flags = 0;
 
@@ -2872,7 +2867,7 @@ em_receive_checksum(struct e1000_rx_desc *rx_desc, int *csum_flags, int *csum_da
 	if (rx_desc->status & E1000_RXD_STAT_IXSM)
 		return;
 
-	if (rx_desc->errs & (E1000_RXD_ERR_TCPE | E1000_RXD_ERR_IPE))
+	if (rx_desc->errors & (E1000_RXD_ERR_TCPE | E1000_RXD_ERR_IPE))
 		return;
 
 	/* IP Checksum Good? */
@@ -2882,7 +2877,7 @@ em_receive_checksum(struct e1000_rx_desc *rx_desc, int *csum_flags, int *csum_da
 	/* TCP or UDP checksum */
 	if (rx_desc->status & (E1000_RXD_STAT_TCPCS | E1000_RXD_STAT_UDPCS)) {
 		*csum_flags |= (CSUM_DATA_VALID | CSUM_PSEUDO_HDR);
-		*csum_data = htons(0xffff);
+		*m_csum_data = htons(0xffff);
 	}
 }
 
@@ -3355,7 +3350,6 @@ em_disable_aspm(struct adapter *adapter)
 static void
 em_update_stats_counters(struct adapter *adapter)
 {
-	if_t ifp;
 
 	if(adapter->hw.phy.media_type == e1000_media_type_copper ||
 	   (E1000_READ_REG(&adapter->hw, E1000_STATUS) & E1000_STATUS_LU)) {
@@ -3455,7 +3449,7 @@ em_update_stats_counters(struct adapter *adapter)
 	adapter->common_stats.ics_oerrs = adapter->stats.ecol +
 		adapter->stats.latecol + adapter->watchdog_events;
 
-	iflib_stats_update(adapter->hictx);
+	iflib_stats_update(UPCAST(adapter));
 }
 
 /* Export a single 32-bit register via a read-only sysctl. */
@@ -3547,12 +3541,13 @@ em_add_hw_stats(struct adapter *adapter)
 				em_sysctl_reg_handler, "IU",
  				"Transmit Descriptor Tail");
 		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "tx_irq",
-				CTLFLAG_RD, &txr->tx_irq,
+				CTLFLAG_RD, &txr->tx_irq.ii_rid,
 				"Queue MSI-X Transmit Interrupts");
+#if 0
 		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "no_desc_avail", 
 				CTLFLAG_RD, &txr->no_desc_avail,
 				"Queue No Descriptor Available");
-		
+#endif		
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "rxd_head", 
 				CTLTYPE_UINT | CTLFLAG_RD, adapter,
 				E1000_RDH(rxr->me),
@@ -3564,7 +3559,7 @@ em_add_hw_stats(struct adapter *adapter)
 				em_sysctl_reg_handler, "IU",
 				"Receive Descriptor Tail");
 		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "rx_irq",
-				CTLFLAG_RD, &rxr->rx_irq,
+				CTLFLAG_RD, &rxr->rx_irq.ii_rid,
 				"Queue MSI-X Receive Interrupts");
 	}
 
@@ -3814,32 +3809,32 @@ em_print_nvm_info(struct adapter *adapter)
 }
 
 static int
-em_sysctl_int_delay(SYSCTL_HANDLER_ARGS)
+em_if_sysctl_int_delay(if_shared_ctx_t sctx, if_int_delay_info_t iidi)
 {
-	struct em_int_delay_info *info;
 	struct adapter *adapter;
 	u32 regval;
 	int err, usecs, ticks;
+	int offset = iidi->iidi_offset;
+	struct sysctl_req *req = iidi->iidi_req;
+	struct sysctl_oid *oidp = iidi->iidi_oidp;
 
-	info = (struct em_int_delay_info *)arg1;
-	usecs = info->value;
+	usecs = iidi->iidi_value;
 	err = sysctl_handle_int(oidp, &usecs, 0, req);
 	if (err != 0 || req->newptr == NULL)
 		return (err);
 	if (usecs < 0 || usecs > EM_TICKS_TO_USECS(65535))
 		return (EINVAL);
-	info->value = usecs;
+	iidi->iidi_value = usecs;
 	ticks = EM_USECS_TO_TICKS(usecs);
-	if (info->offset == E1000_ITR)	/* units are 256ns here */
+	if (iidi->iidi_offset == E1000_ITR)	/* units are 256ns here */
 		ticks *= 4;
 
-	adapter = info->adapter;
+	adapter = DOWNCAST(sctx);
 	
-	EM_CORE_LOCK(adapter);
-	regval = E1000_READ_OFFSET(&adapter->hw, info->offset);
+	regval = E1000_READ_OFFSET(&adapter->hw, offset);
 	regval = (regval & ~0xffff) | (ticks & 0xffff);
 	/* Handle a few special cases. */
-	switch (info->offset) {
+	switch (offset) {
 	case E1000_RDTR:
 		break;
 	case E1000_TIDV:
@@ -3851,23 +3846,8 @@ em_sysctl_int_delay(SYSCTL_HANDLER_ARGS)
 			adapter->txd_cmd |= E1000_TXD_CMD_IDE;
 		break;
 	}
-	E1000_WRITE_OFFSET(&adapter->hw, info->offset, regval);
-	EM_CORE_UNLOCK(adapter);
+	E1000_WRITE_OFFSET(&adapter->hw, offset, regval);
 	return (0);
-}
-
-static void
-em_add_int_delay_sysctl(struct adapter *adapter, const char *name,
-	const char *description, struct em_int_delay_info *info,
-	int offset, int value)
-{
-	info->adapter = adapter;
-	info->offset = offset;
-	info->value = value;
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(adapter->hwdev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(adapter->hwdev)),
-	    OID_AUTO, name, CTLTYPE_INT|CTLFLAG_RW,
-	    info, 0, em_sysctl_int_delay, "I", description);
 }
 
 static void
@@ -3938,7 +3918,7 @@ em_sysctl_eee(SYSCTL_HANDLER_ARGS)
        if (err || req->newptr == NULL)
                return (err);
        adapter->hw.dev_spec.ich8lan.eee_disable = (value != 0);
-	   iflib_init(adapter->hictx);
+	   iflib_init(UPCAST(adapter));
 
        return (0);
 }
@@ -3971,8 +3951,10 @@ static void
 em_print_debug_info(struct adapter *adapter)
 {
 	device_t dev = adapter->hwdev;
-	struct tx_ring *txr = adapter->tx_rings;
 	struct rx_ring *rxr = adapter->rx_rings;
+#if 0	
+	struct tx_ring *txr = adapter->tx_rings;
+#endif
 
 	if ((if_getdrvflags(adapter->hwifp) & IFF_DRV_RUNNING) != 0)
 		printf("Interface is RUNNING ");
@@ -3985,11 +3967,13 @@ em_print_debug_info(struct adapter *adapter)
 	device_printf(dev, "hw rdh = %d, hw rdt = %d\n",
 	    E1000_READ_REG(&adapter->hw, E1000_RDH(0)),
 	    E1000_READ_REG(&adapter->hw, E1000_RDT(0)));
+#if 0
 	device_printf(dev, "Tx Queue Status = %d\n", txr->queue_status);
 	device_printf(dev, "TX descriptors avail = %d\n",
 	    txr->tx_avail);
 	device_printf(dev, "Tx Descriptors avail failure = %ld\n",
-	    txr->no_desc_avail);
+				  txr->no_desc_avail);
+#endif
 	device_printf(dev, "RX discarded packets = %ld\n",
 	    rxr->rx_discarded);
 	device_printf(dev, "RX Next to Check = %d\n", rxr->next_to_check);

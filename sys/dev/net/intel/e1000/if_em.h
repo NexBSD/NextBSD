@@ -265,11 +265,6 @@ struct em_dma_alloc {
 
 struct adapter;
 
-struct em_int_delay_info {
-	struct adapter *adapter;	/* Back-pointer to the adapter struct */
-	int offset;			/* Register offset to read/write */
-	int value;			/* Current value in usecs */
-};
 
 /*
  * The transmit ring, one per tx queue
@@ -289,7 +284,7 @@ struct tx_ring {
 	/* Interrupt resources */
 	void                    *tag;
 	struct resource         *res;
-	unsigned long		tx_irq;
+	struct if_irq				tx_irq;
 	struct adapter *adapter;
 };
 
@@ -317,10 +312,10 @@ struct rx_ring {
 	bool			        discard;
 
         /* Soft stats */
-        unsigned long		rx_irq;
         unsigned long		rx_discarded;
         unsigned long		rx_packets;
         unsigned long		rx_bytes;
+	struct if_irq				rx_irq;
 };
 
 
@@ -335,6 +330,8 @@ struct adapter {
 #define media shared.isc_media
 #define hwdev shared.isc_dev
 #define hwifp shared.isc_ifp
+#define pause_frames shared.isc_pause_frames
+#define common_stats shared.isc_common_stats
 	
 	struct e1000_hw	hw;
 	/* FreeBSD operating-system-specific structures. */
@@ -403,11 +400,11 @@ struct adapter {
 	u16		link_duplex;
 	u32		smartspeed;
 
-	struct em_int_delay_info tx_int_delay;
-	struct em_int_delay_info tx_abs_int_delay;
-	struct em_int_delay_info rx_int_delay;
-	struct em_int_delay_info rx_abs_int_delay;
-	struct em_int_delay_info tx_itr;
+	struct if_int_delay_info tx_int_delay;
+	struct if_int_delay_info tx_abs_int_delay;
+	struct if_int_delay_info rx_int_delay;
+	struct if_int_delay_info rx_abs_int_delay;
+	struct if_int_delay_info tx_itr;
 
 	/* Misc stats maintained by the driver */
 	unsigned long	dropped_pkts;
@@ -459,6 +456,7 @@ e1000_rx_unrefreshed(struct rx_ring *rxr)
 		    rxr->next_to_refresh - 1); 
 }
 
+#if 0
 #define	EM_CORE_LOCK_INIT(_sc, _name) \
 	mtx_init(&(_sc)->core_mtx, _name, "EM Core Lock", MTX_DEF)
 #define	EM_TX_LOCK_INIT(_sc, _name) \
@@ -478,5 +476,6 @@ e1000_rx_unrefreshed(struct rx_ring *rxr)
 #define	EM_CORE_LOCK_ASSERT(_sc)	mtx_assert(&(_sc)->core_mtx, MA_OWNED)
 #define	EM_TX_LOCK_ASSERT(_sc)		mtx_assert(&(_sc)->tx_mtx, MA_OWNED)
 #define	EM_RX_LOCK_ASSERT(_sc)		mtx_assert(&(_sc)->rx_mtx, MA_OWNED)
+#endif
 
 #endif /* _EM_H_DEFINED_ */
