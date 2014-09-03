@@ -551,8 +551,8 @@ int if_getdrvflags(if_t ifp);
 int if_setdrvflags(if_t ifp, int flags);
 int if_clearhwassist(if_t ifp);
 int if_sethwassistbits(if_t ifp, int toset, int toclear);
-int if_sethwassist(if_t ifp, int hwassist_bit);
-int if_gethwassist(if_t ifp);
+int if_sethwassist(if_t ifp, uint64_t hwassist_bit);
+uint64_t if_gethwassist(if_t ifp);
 int if_setsoftc(if_t ifp, void *softc);
 void *if_getsoftc(if_t ifp);
 int if_setflags(if_t ifp, int flags);
@@ -599,10 +599,10 @@ int if_incobytes(if_t ifp, int bytes);
 int if_getiqdrops(if_t ifp);
 int if_incimcasts(if_t ifp, int imcasts);
 int if_incomcasts(if_t ifp, int imcasts);
-int if_setipackets(if_t ifp, int pkts);
-int if_setopackets(if_t ifp, int pkts);
-int if_setibytes(if_t ifp, int bytes);
-int if_setobytes(if_t ifp, int bytes);
+int if_setipackets(if_t ifp, uint64_t pkts);
+int if_setopackets(if_t ifp, uint64_t pkts);
+int if_setibytes(if_t ifp, uint64_t bytes);
+int if_setobytes(if_t ifp, uint64_t bytes);
 int if_setimcasts(if_t ifp, int pkts);
 
 /* Functions */
