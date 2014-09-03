@@ -179,7 +179,6 @@ typedef struct iflib_rxq {
 	uma_zone_t              ifr_zone;
 } *iflib_rxq_t;
 
-
 /* Our boot-time initialization hook */
 static int	iflib_module_event_handler(module_t, int, void *);
 
@@ -1063,6 +1062,9 @@ iflib_timer(void *arg)
 	
 hung:
 	if_setdrvflagbits(sctx->isc_ifp, 0, IFF_DRV_RUNNING);
+	device_printf(dev,  "TX(%d) desc avail = %d, pidx = %d\n",
+				  txq->ift_id, TXQ_AVAIL(ift), txq->ift_pidx);
+
 	IFC_WATCHDOG_RESET(sctx);
 	sctx->isc_watchdog_events++;
 	sctx->isc_pause_frames = 0;
@@ -1364,6 +1366,23 @@ iflib_intr_link(void *arg)
 
 	++ctx->ifc_link_irq;
 	_task_fn_link(arg, 0);
+}
+
+static int
+iflib_sysctl_int_delay(SYSCTL_HANDLER_ARGS)
+{
+	int err;
+	if_int_delay_info_t info;
+	if_shared_ctx_t sctx;
+
+	info = (if_int_delay_info_t)arg1;
+	sctx = info->iidi_sctx;
+	info->iidi_req = req;
+	info->iidi_oid = oidp;
+	SCTX_LOCK(sctx);
+	err = IFDI_SYSCTL_INT_DELAY(sctx, info);
+	SCTX_UNLOCK(sctx);
+	return (err);
 }
 
 /*********************************************************************
@@ -2160,4 +2179,18 @@ iflib_stats_update(if_shared_ctx_t ctx)
 	if_setcollisions(ifp, stats->ics_colls);
 	if_setierrors(ifp, stats->ics_ierrs);
 	if_setoerrors(ifp, stats->ics_oerrs);
+}
+
+void
+iflib_add_int_delay_sysctl(if_shared_ctx_t sctx, const char *name,
+	const char *description, if_int_delay_info_t info,
+	int offset, int value)
+{
+	info->iidi_sctx = sctx;
+	info->iidi_offset = offset;
+	info->iidi_value = value;
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(sctx->isc_dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(sctx->isc_dev)),
+	    OID_AUTO, name, CTLTYPE_INT|CTLFLAG_RW,
+	    info, 0, iflib_sysctl_int_delay, "I", description);
 }

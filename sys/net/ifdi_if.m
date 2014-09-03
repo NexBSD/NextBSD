@@ -51,6 +51,12 @@ CODE {
 	null_q_setup(if_shared_ctx_t _ctx __unused, int _qid __unused)
 	{
 	}
+
+	int
+	null_sysctl_int_delay(if_shared_ctx_t _sctx __unused, if_int_delay_info_t _iidi __unused)
+	{
+		return (0);
+	}
 };
 
 #
@@ -198,4 +204,7 @@ METHOD void vlan_unregister {
 	uint16_t _vtag;
 } DEFAULT null_vlan_register_op;
 
-
+METHOD int sysctl_int_delay {
+	if_shared_ctx_t _sctx;
+	if_int_delay_info_t _iidi;
+} DEFAULT null_sysctl_int_delay;

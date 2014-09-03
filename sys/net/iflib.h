@@ -31,6 +31,8 @@ struct iflib_ctx;
 typedef struct iflib_ctx *iflib_ctx_t;
 struct if_shared_ctx;
 typedef struct if_shared_ctx *if_shared_ctx_t;
+struct if_int_delay_info;
+typedef struct if_int_delay_info  *if_int_delay_info_t;
 #include "ifdi_if.h"
 
 /*
@@ -54,8 +56,8 @@ typedef struct if_rxd_info {
 	int      iri_cidx;
 	uint32_t iri_len;
 	struct mbuf *iri_m;
-	uint64_t iri_csum_flags;
-	uint64_t iri_csum_data;
+	uint32_t iri_csum_flags;
+	uint32_t iri_csum_data;
 } *if_rxd_info_t;
 
 typedef struct if_pkt_info {
@@ -82,6 +84,14 @@ typedef struct if_irq {
 	void             *ii_tag;
 } *if_irq_t;
 
+struct if_int_delay_info {
+	if_shared_ctx_t iidi_sctx;	/* Back-pointer to the shared ctx (softc) */
+	int iidi_offset;			/* Register offset to read/write */
+	int iidi_value;			/* Current value in usecs */
+	struct sysctl_oid *iidi_oidp;
+	struct sysctl_req *iidi_req;
+};
+
 /*
  * Context shared between the driver and the iflib layer
  * Is treated as a superclass of the driver's softc, so
@@ -94,12 +104,12 @@ struct if_shared_ctx {
 	 */
 	KOBJ_FIELDS;
 	int (*isc_txd_encap) (if_shared_ctx_t, int, if_pkt_info_t);
-	int (*isc_txd_flush) (if_shared_ctx_t, int, int);
+	void (*isc_txd_flush) (if_shared_ctx_t, int, int);
 
 	int (*isc_rxd_is_new) (if_shared_ctx_t, int, int);
 	int (*isc_rxd_pkt_get) (if_shared_ctx_t, int, int, if_rxd_info_t);
-	int (*isc_rxd_refill) (if_shared_ctx_t, int, int, uint64_t);
-	int (*isc_rxd_flush) (if_shared_ctx_t, int, int);
+	void (*isc_rxd_refill) (if_shared_ctx_t, int, int, uint64_t);
+	void (*isc_rxd_flush) (if_shared_ctx_t, int, int);
 
 	iflib_ctx_t isc_ctx;
 	device_t isc_dev;
@@ -164,5 +174,7 @@ void iflib_link_intr_deferred(if_shared_ctx_t);
 void iflib_linkstate_change(if_shared_ctx_t, uint64_t, int);
 
 void iflib_stats_update(if_shared_ctx_t);
+void iflib_add_int_delay_sysctl(if_shared_ctx_t, const char *, const char *,
+								if_int_delay_info_t, int, int);
 
 #endif /*  __IFLIB_H_ */
