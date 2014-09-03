@@ -1,29 +1,28 @@
-/*-
- * Copyright (c) 2014, Matthew Macy (kmacy@freebsd.org)
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  1. Redistributions of source code must retain the above copyright notice,
- *     this list of conditions and the following disclaimer.
- *
- *  2. Neither the name of Matthew Macy nor the names of its
- *     contributors may be used to endorse or promote products derived from
- *     this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
+#
+# Copyright (c) 2014, Matthew Macy (kmacy@freebsd.org)
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#  1. Redistributions of source code must retain the above copyright notice,
+#     this list of conditions and the following disclaimer.
+#
+#  2. Neither the name of Matthew Macy nor the names of its
+#     contributors may be used to endorse or promote products derived from
+#     this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
 
 #include <sys/types.h>
 #include <sys/systm.h>
@@ -54,9 +53,9 @@ CODE {
 	}
 };
 
-/*
- * bus interfaces
- */
+#
+# bus interfaces
+#
 
 METHOD int detach {
 	if_shared_ctx_t _ctx;
@@ -70,18 +69,18 @@ METHOD int resume {
 	if_shared_ctx_t _ctx;
 };
 
-/*
- * downcall to driver to allocate its
- * own queue state and tie it to the parent
- */
+#
+# downcall to driver to allocate its
+# own queue state and tie it to the parent
+#
 
 METHOD int queues_alloc {
 	if_shared_ctx_t _ctx;
 };
 
-/*
- * interface reset / stop
- */
+#
+# interface reset / stop
+#
 
 METHOD void init {
 	if_shared_ctx_t _ctx;
@@ -91,9 +90,9 @@ METHOD void stop {
 	if_shared_ctx_t _ctx;
 };
 
-/*
- * interrupt manipulation
- */
+#
+# interrupt manipulation
+#
 
 METHOD void intr_enable {
 	if_shared_ctx_t _ctx;
@@ -117,9 +116,9 @@ METHOD void link_intr_enable {
 	if_shared_ctx_t _ctx;
 } DEFAULT null_op;
 
-/*
- * interface configuration
- */
+#
+# interface configuration
+#
 
 METHOD void multi_set {
 	if_shared_ctx_t _ctx;
@@ -144,9 +143,9 @@ METHOD void promisc_disable {
 	int _flags;
 };
 
-/*
- * Device status
- */
+#
+# Device status
+#
 
 METHOD void update_link_status {
 	if_shared_ctx_t _ctx;
@@ -162,9 +161,9 @@ METHOD int media_change {
 };
 
 
-/*
- * optional methods
- */
+#
+# optional methods
+#
 
 METHOD void txq_setup {
 	if_shared_ctx_t _ctx;
