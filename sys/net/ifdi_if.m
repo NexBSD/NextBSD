@@ -26,33 +26,42 @@
 
 #include <sys/types.h>
 #include <sys/systm.h>
+#include <sys/socket.h>
+
+#include <machine/bus.h>
 #include <sys/bus.h>
+
+#include <net/ethernet.h>
+#include <net/if.h>
+#include <net/if_var.h>
+#include <net/if_media.h>
+#include <net/iflib.h>
 
 INTERFACE ifdi;
 
 CODE {
 
-	void
+	static void
 	null_op(if_shared_ctx_t _ctx __unused)
 	{
 	}
 
-	void
+	static void
 	null_led_func(if_shared_ctx_t _ctx __unused, int _onoff __unused)
 	{
 	}
 
-	void
+	static void
 	null_vlan_register_op(if_shared_ctx_t _ctx __unused, uint16_t vtag __unused)
 	{
 	}
 
-	void
+	static void
 	null_q_setup(if_shared_ctx_t _ctx __unused, int _qid __unused)
 	{
 	}
 
-	int
+	static int
 	null_sysctl_int_delay(if_shared_ctx_t _sctx __unused, if_int_delay_info_t _iidi __unused)
 	{
 		return (0);
