@@ -33,7 +33,6 @@ struct if_shared_ctx;
 typedef struct if_shared_ctx *if_shared_ctx_t;
 struct if_int_delay_info;
 typedef struct if_int_delay_info  *if_int_delay_info_t;
-#include "ifdi_if.h"
 
 /*
  * File organization:
@@ -125,6 +124,7 @@ struct if_shared_ctx {
 	bus_size_t isc_rx_maxsize;
 	bus_size_t isc_rx_maxsegsize;
 	int isc_rx_nsegments;
+	int isc_rx_process_limit;
 	int isc_pause_frames;
 	int isc_watchdog_events;
 	int isc_tx_reclaim_thresh;
@@ -160,7 +160,7 @@ void iflib_rx_structures_free(if_shared_ctx_t);
 void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 
-int iflib_irq_alloc(if_shared_ctx_t, if_irq_t, int, driver_intr_t, void *arg, char *name);
+int iflib_irq_alloc(if_shared_ctx_t, if_irq_t, int, driver_filter_t, driver_intr_t, void *arg, char *name);
 int iflib_irq_alloc_generic(if_shared_ctx_t ctx, if_irq_t irq, int rid,
 							intr_type_t type, int qid, char *name);
 
