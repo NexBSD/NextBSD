@@ -1093,7 +1093,7 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	bus_dmamap_t		map = txsd->ifsd_map;
 	struct if_pkt_info pi;
 	bool remap = TRUE;
-	int err, nsegs;
+	int err, nsegs, ndesc;
 
 retry:
 
@@ -1155,9 +1155,14 @@ retry:
 	if ((err = sctx->isc_txd_encap(sctx, txq->ift_id, &pi)) == 0) {
 		bus_dmamap_sync(txq->ift_dma_info.idi_tag, txq->ift_dma_info.idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-		txq->ift_in_use += pi.ipi_ndesc;
-		/* XXX need CTASSERT that ntxd is power of 2 */
-		txq->ift_pidx = (pidx + pi.ipi_ndesc) & (sctx->isc_ntxd-1);
+
+		if (pi.ipi_new_pidx >= pi.ipi_pidx)
+			ndesc = pi.ipi_new_pidx - pi.ipi_pidx;
+		else
+			ndesc = pi.ipi_new_pidx - pi.ipi_pidx + sctx->isc_ntxd;
+
+		txq->ift_in_use += ndesc;
+		txq->ift_pidx = pi.ipi_new_pidx;
 		iflib_txd_db_check(ctx, txq, 0);
 	}
 	return (err);

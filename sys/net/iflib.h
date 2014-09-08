@@ -67,8 +67,9 @@ typedef struct if_pkt_info {
 	uint32_t ipi_pidx;
 	uint32_t ipi_csum_flags;
 	uint16_t ipi_flags;
-	uint16_t ipi_ndesc;
-	/* currently 4 bytes of padding */
+	uint16_t ipi_tso_segsz;
+	uint32_t ipi_new_pidx;
+	uint16_t ipi_pktlen;
 } *if_pkt_info_t;
 
 struct if_common_stats {
