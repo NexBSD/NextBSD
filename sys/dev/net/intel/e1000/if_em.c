@@ -234,7 +234,8 @@ static int  em_if_media_change(if_shared_ctx_t);
 static void em_if_timer(if_shared_ctx_t);
 static void	em_if_led_func(if_shared_ctx_t, int);
 static void em_if_watchdog_reset(if_shared_ctx_t);
-static void	em_if_txeof(if_shared_ctx_t, int); /* XXX */
+static int		em_msix_tx(void *);
+
 
 static void	em_if_promisc_config(if_shared_ctx_t, int);
 static void	em_if_promisc_disable(if_shared_ctx_t, int);
@@ -1094,7 +1095,7 @@ em_if_rx_intr_enable(if_shared_ctx_t sctx, int rxqid)
  *  MSIX Link Fast Interrupt Service routine
  *
  **********************************************************************/
-static void
+static int
 em_msix_link(void *arg)
 {
 	struct adapter	*adapter = arg;
@@ -1109,6 +1110,8 @@ em_msix_link(void *arg)
 	} else
 		E1000_WRITE_REG(&adapter->hw, E1000_IMS,
 		    EM_MSIX_LINK | E1000_IMS_LSC);
+
+	return (FILTER_HANDLED);
 }
 
 static void
@@ -1584,7 +1587,7 @@ em_if_update_link_status(if_shared_ctx_t sctx)
 			    "Full Duplex" : "Half Duplex"));
 		adapter->link_active = 1;
 		adapter->smartspeed = 0;
-		iflib_linkstate_change(sctx, adapter->link_speed * 1000000,
+		iflib_link_state_change(sctx, adapter->link_speed * 1000000,
 							   LINK_STATE_UP);
 	} else if (!link_check && (adapter->link_active == 1)) {
 		adapter->link_speed = 0;
@@ -1592,7 +1595,7 @@ em_if_update_link_status(if_shared_ctx_t sctx)
 		if (bootverbose)
 			device_printf(sctx->isc_dev, "Link is Down\n");
 		adapter->link_active = 0;
-		iflib_linkstate_change(sctx, 0, LINK_STATE_DOWN);
+		iflib_link_state_change(sctx, 0, LINK_STATE_DOWN);
 	}
 }
 
@@ -1731,7 +1734,7 @@ em_allocate_msix(struct adapter *adapter)
 		rid = vector + 1;
 		snprintf(buf, sizeof(buf), "rx %d", i);
 		err = iflib_irq_alloc_generic(UPCAST(adapter), &rxr->rx_irq, rid,
-								IFLIB_INTR_RX, rxr->me, buf);
+									  IFLIB_INTR_RX, NULL, rxr->me, buf);
 
 		rxr->msix = vector++; /* NOTE increment vector for TX */
 		/*
@@ -1747,7 +1750,7 @@ em_allocate_msix(struct adapter *adapter)
 		rid = vector + 1;
 		snprintf(buf, sizeof(buf), "tx %d", i);
 		err = iflib_irq_alloc_generic(UPCAST(adapter), &txr->tx_irq, rid,
-								IFLIB_INTR_TX, txr->me, buf);
+									  IFLIB_INTR_TX, em_msix_tx, txr->me, buf);
 
 		txr->msix = vector++; /* Increment vector for next pass */
 		/*
@@ -1763,7 +1766,7 @@ em_allocate_msix(struct adapter *adapter)
 	/* Link interrupt */
 	++rid;
 	err = iflib_irq_alloc_generic(UPCAST(adapter), &rxr->rx_irq, rid,
-								  IFLIB_INTR_LINK, 0 /* unused */, buf);
+								  IFLIB_INTR_LINK, em_msix_link, 0 /* unused */, buf);
 	adapter->linkvec = vector;
 	adapter->ivars |=  (8 | vector) << 16;
 	adapter->ivars |= 0x801000000;
@@ -2553,87 +2556,47 @@ em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off, struct ip *ip,
  *  XXX REWRITE 
  *
  **********************************************************************/
-#if 0
-static void
-em_if_txeof(if_shared_ctx_t sctx, int txqid)
+static int
+em_msix_tx(void *arg)
 {
-	struct adapter	*adapter = DOWNCAST(sctx);
-	struct tx_ring *txr = &adapter->tx_rings[txqid];
+	struct tx_ring *txr = arg;
+	struct adapter *adapter = txr->adapter;
 	struct em_buffer *tx_buffer;
 	int first, last, done, processed;
 	struct e1000_tx_desc   *tx_desc, *eop_desc;
-	
+
 	processed = 0;
-	first = txr->next_to_clean;
+	first = iflib_tx_cidx_get(UPCAST(adapter), txr->me);
+	tx_desc = &txr->tx_base[first];
 	tx_buffer = &txr->tx_buffers[first];
 	last = tx_buffer->next_eop;
-	
-	tx_desc = &txr->tx_base[first];
 	eop_desc = &txr->tx_base[last];
 
-	/*
-	 * What this does is get the index of the
-	 * first descriptor AFTER the EOP of the 
-	 * first packet, that way we can do the
-	 * simple comparison on the inner while loop.
-	 */
 	if (++last == adapter->num_tx_desc)
  		last = 0;
 	done = last;
-	
-	bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
-					BUS_DMASYNC_POSTREAD);
-	
+
 	while (eop_desc->upper.fields.status & E1000_TXD_STAT_DD) {
-		/* We clean the range of the packet */
 		while (first != done) {
-			tx_desc->upper.data = 0;
-			tx_desc->lower.data = 0;
-			tx_desc->buffer_addr = 0;
-			++txr->tx_avail;
-			++processed;
-			
-			if (tx_buffer->m_head)
-				iflib_tx_free(sctx, txr, &tx_buffer);
+			processed++;
 			tx_buffer->next_eop = -1;
-			txr->watchdog_time = ticks;
-			
 			if (++first == adapter->num_tx_desc)
 				first = 0;
-			
 			tx_buffer = &txr->tx_buffers[first];
 			tx_desc = &txr->tx_base[first];
 		}
-		/* See if we can continue to the next packet */
 		last = tx_buffer->next_eop;
-		if (last != -1) {
-			eop_desc = &txr->tx_base[last];
-			/* Get new done point */
-			if (++last == adapter->num_tx_desc) last = 0;
-			done = last;
-		} else
+		if (last == -1)
 			break;
+		eop_desc = &txr->tx_base[last];
+		/* Get new done point */
+		if (++last == adapter->num_tx_desc)
+			last = 0;
+		done = last;
 	}
-	bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
-					BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-	
-	txr->next_to_clean = first;	
-	/*
-	** Watchdog calculation, we know there's
-	** work outstanding or the first return
-	** would have been taken, so none processed
-	** for too long indicates a hang. local timer
-	** will examine this and do a reset if needed.
-	*/
-	if ((!processed) && ((ticks - txr->watchdog_time) > EM_WATCHDOG))
-		txr->queue_status = EM_QUEUE_HUNG;
-
-	/* Disable watchdog if all clean */
-	if (txr->tx_avail == adapter->num_tx_desc) {
-		txr->queue_status = EM_QUEUE_IDLE;
-	} 
+	iflib_tx_credits_update(UPCAST(adapter), txr->me, processed);
+	return (processed ? FILTER_SCHEDULE_THREAD : FILTER_HANDLED);
 }
-#endif
 
 /*********************************************************************
  *

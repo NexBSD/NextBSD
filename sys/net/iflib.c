@@ -94,12 +94,17 @@ struct iflib_rxq;
 typedef struct iflib_rxq *iflib_rxq_t;
 
 
+typedef struct iflib_filter_info {
+	driver_filter_t *ifi_filter;
+	void *ifi_filter_arg;
+	struct grouptask *ifi_task;
+} *iflib_filter_info_t;
 
 struct iflib_ctx {
 
 	/*
-	 * Pointer to hardware driver's softc
-	 */
+   * Pointer to hardware driver's softc
+   */
 	if_shared_ctx_t ifc_sctx;
 	struct mtx ifc_mtx;
 	char ifc_mtx_name[16];
@@ -120,6 +125,7 @@ struct iflib_ctx {
 	struct if_irq ifc_legacy_irq;
 	struct grouptask ifc_legacy_task;
 	struct grouptask ifc_link_task;
+	struct iflib_filter_info ifc_filter_info;
 };
 #define LINK_ACTIVE(ctx) ((ctx)->ifc_link_state == LINK_STATE_UP)
 
@@ -189,8 +195,10 @@ struct iflib_txq {
 	int			            ift_qstatus;
 	int                     ift_active;
 	int                     ift_watchdog_time;
+	struct iflib_filter_info ift_filter_info;
 };
 
+/* XXX check this */
 #define TXQ_AVAIL(txq) ((txq)->ift_size - (txq)->ift_pidx + (txq)->ift_cidx)
 
 typedef struct iflib_global_context {
@@ -223,7 +231,9 @@ struct iflib_rxq {
 	struct grouptask        ifr_task;
 	iflib_sd_t              ifr_sds;
 	bus_dma_tag_t           ifr_desc_tag;
+	struct iflib_filter_info ifr_filter_info;
 };
+
 
 #define CTX_ACTIVE(ctx) ((if_getdrvflags((ctx)->ifc_sctx->isc_ifp) & IFF_DRV_RUNNING))
 #define CTX_LOCK_INIT(_sc, _name)  mtx_init(&(_sc)->ifc_mtx, _name, "iflib ctx lock", MTX_DEF)
@@ -363,7 +373,12 @@ iflib_dma_free(iflib_dma_info_t dma)
 static int
 iflib_fast_intr(void *arg)
 {
-	struct grouptask *gtask = arg;
+	iflib_filter_info_t info = arg;
+	struct grouptask *gtask = info->ifi_task;
+
+
+	if (info->ifi_filter != NULL && info->ifi_filter(info->ifi_filter_arg) == FILTER_HANDLED)
+		return (FILTER_HANDLED);
 
 	GROUPTASK_ENQUEUE(gtask);
 	return (FILTER_HANDLED);
@@ -2149,31 +2164,38 @@ iflib_irq_alloc(if_shared_ctx_t sctx, if_irq_t irq, int rid,
 
 int
 iflib_irq_alloc_generic(if_shared_ctx_t sctx, if_irq_t irq, int rid,
-						intr_type_t type, int qid, char *name)
+						intr_type_t type, driver_filter_t *filter, int qid, char *name)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	struct grouptask *gtask;
+	iflib_filter_info_t info;
 	void *q;
 	int err;
 
 	switch (type) {
 	case IFLIB_INTR_TX:
 		q = &ctx->ifc_txqs[qid];
+		info = &ctx->ifc_txqs[qid].ift_filter_info;
 		gtask = &ctx->ifc_txqs[qid].ift_task;
 		break;
 	case IFLIB_INTR_RX:
 		q = &ctx->ifc_rxqs[qid];
+		info = &ctx->ifc_rxqs[qid].ifr_filter_info;
 		gtask = &ctx->ifc_rxqs[qid].ifr_task;
 		break;
 	case IFLIB_INTR_LINK:
 		q = ctx;
+		info = &ctx->ifc_filter_info;
 		gtask = &ctx->ifc_link_task;
 		break;
 	default:
 		panic("unknown net intr type");
 	}
+	info->ifi_filter = filter;
+	info->ifi_filter_arg = q;
+	info->ifi_task = gtask;
 
-	err = _iflib_irq_alloc(ctx, irq, rid, iflib_fast_intr, q, gtask, name);
+	err = _iflib_irq_alloc(ctx, irq, rid, iflib_fast_intr, NULL, info,  name);
 	if (err != 0)
 		return (err);
 	taskqgroup_attach(gctx->igc_tx_tqg, gtask, q, irq->ii_rid, name);
@@ -2238,7 +2260,7 @@ iflib_link_intr_deferred(if_shared_ctx_t sctx)
 }
 
 void
-iflib_linkstate_change(if_shared_ctx_t sctx, uint64_t baudrate, int link_state)
+iflib_link_state_change(if_shared_ctx_t sctx, uint64_t baudrate, int link_state)
 {
 	if_t ifp = sctx->isc_ifp;
 	iflib_ctx_t ctx = sctx->isc_ctx;
@@ -2251,10 +2273,21 @@ iflib_linkstate_change(if_shared_ctx_t sctx, uint64_t baudrate, int link_state)
 			txq->ift_qstatus = IFLIB_QUEUE_IDLE;
 	}
 	ctx->ifc_link_state = link_state;
-#if 0
-	/* XXX BAH so much for using unbaked APIs*/
-	if_linkstate_change(ifp, link_state);
-#endif
+	if_link_state_change(ifp, link_state);
+}
+
+int
+iflib_tx_cidx_get(if_shared_ctx_t sctx, int txqid)
+{
+
+	return (sctx->isc_ctx->ifc_txqs[txqid].ift_cidx);
+}
+
+void
+iflib_tx_credits_update(if_shared_ctx_t sctx, int txqid, int credits)
+{
+
+	sctx->isc_ctx->ifc_txqs[txqid].ift_processed += credits;
 }
 
 void

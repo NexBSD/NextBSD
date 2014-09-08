@@ -163,7 +163,7 @@ void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 
 int iflib_irq_alloc(if_shared_ctx_t, if_irq_t, int, driver_filter_t, driver_intr_t, void *arg, char *name);
 int iflib_irq_alloc_generic(if_shared_ctx_t ctx, if_irq_t irq, int rid,
-							intr_type_t type, int qid, char *name);
+							intr_type_t type, driver_filter_t *filter, int qid, char *name);
 
 int iflib_legacy_setup(if_shared_ctx_t, driver_filter_t, int *);
 void iflib_led_create(if_shared_ctx_t);
@@ -172,7 +172,11 @@ void iflib_init(if_shared_ctx_t);
 
 void iflib_legacy_intr_deferred(if_shared_ctx_t);
 void iflib_link_intr_deferred(if_shared_ctx_t);
-void iflib_linkstate_change(if_shared_ctx_t, uint64_t, int);
+void iflib_link_state_change(if_shared_ctx_t, uint64_t, int);
+
+int iflib_tx_cidx_get(if_shared_ctx_t, int);
+void iflib_tx_credits_update(if_shared_ctx_t, int, int);
+
 
 void iflib_stats_update(if_shared_ctx_t);
 void iflib_add_int_delay_sysctl(if_shared_ctx_t, const char *, const char *,
