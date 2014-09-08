@@ -45,6 +45,7 @@
 #include <sys/endian.h>
 #include <sys/eventhandler.h>
 #include <sys/kernel.h>
+#include <sys/kobj.h>
 #include <sys/kthread.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
@@ -80,6 +81,8 @@
 #include <dev/pci/pcireg.h>
 
 #include <net/iflib.h>
+#include "ifdi_if.h"
+
 
 #include "e1000_api.h"
 #include "e1000_82571.h"
@@ -237,7 +240,7 @@ static void	em_if_promisc_config(if_shared_ctx_t, int);
 static void	em_if_promisc_disable(if_shared_ctx_t, int);
 static void	em_if_vlan_register(if_shared_ctx_t, u16);
 static void	em_if_vlan_unregister(if_shared_ctx_t, u16);
-static void	em_if_txq_setup(if_shared_ctx_t, int);
+static int	em_if_txq_setup(if_shared_ctx_t, int);
 static int		em_if_sysctl_int_delay(if_shared_ctx_t, if_int_delay_info_t);
 
 static int	em_isc_txd_encap(if_shared_ctx_t, int, if_pkt_info_t);
@@ -264,9 +267,9 @@ static void	em_initialize_receive_unit(struct adapter *);
 static void	em_update_stats_counters(struct adapter *);
 static void	em_add_hw_stats(struct adapter *adapter);
 static void	em_receive_checksum(struct e1000_rx_desc *, uint32_t *, uint32_t *);
-static void	em_transmit_checksum_setup(struct tx_ring *, int, int,
+static void	em_transmit_checksum_setup(struct tx_ring *, if_pkt_info_t, int,
 		    struct ip *, u32 *, u32 *);
-static void	em_tso_setup(struct tx_ring *, if_pkt_info_t, u32 *, u32 *);
+static void	em_tso_setup(struct tx_ring *, if_pkt_info_t, int, struct ip *, struct tcphdr *, u32 *, u32 *);
 static void	em_setup_vlan_hw_support(struct adapter *);
 static int	em_sysctl_nvm_info(SYSCTL_HANDLER_ARGS);
 static void	em_print_nvm_info(struct adapter *);
@@ -829,7 +832,6 @@ em_if_resume(if_shared_ctx_t sctx)
 
 	if (adapter->hw.mac.type == e1000_pch2lan)
 		e1000_resume_workarounds_pchlan(&adapter->hw);
-	em_if_init(UPCAST(adapter));
 	em_init_manageability(adapter);
 	return (0);
 }
@@ -879,7 +881,6 @@ em_if_mtu_set(if_shared_ctx_t sctx, uint32_t mtu)
 		}
 		adapter->hw.mac.max_frame_size =
 		    mtu + ETHER_HDR_LEN + ETHER_CRC_LEN;
-		iflib_init(sctx);
 		return (0);
 }
 
@@ -979,7 +980,6 @@ em_if_init(if_shared_ctx_t sctx)
 	}
 	em_initialize_receive_unit(adapter);
 
-#ifdef notyet	
 	/* Use real VLAN Filter support? */
 	if (if_getcapenable(ifp) & IFCAP_VLAN_HWTAGGING) {
 		if (if_getcapenable(ifp) & IFCAP_VLAN_HWFILTER)
@@ -992,7 +992,7 @@ em_if_init(if_shared_ctx_t sctx)
 			E1000_WRITE_REG(&adapter->hw, E1000_CTRL, ctrl);
 		}
 	}
-#endif
+
 	/* Don't lose promiscuous settings */
 	em_if_promisc_config(sctx, if_getflags(sctx->isc_ifp));
 
@@ -1219,18 +1219,9 @@ em_if_media_change(if_shared_ctx_t sctx)
 	default:
 		device_printf(sctx->isc_dev, "Unsupported media type\n");
 	}
-
-	iflib_init(sctx);
 	return (0);
 }
 
-/*********************************************************************
- *
- *  This routine maps the mbufs to tx descriptors.
- *
- *  return 0 on success, positive on failure
- **********************************************************************/
-#if 0
 static int
 em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
 {
@@ -1239,25 +1230,60 @@ em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
 	struct e1000_tx_desc	*ctxd = NULL;
 	u32 txd_upper, txd_lower, txd_used, txd_saved;
 	bus_dma_segment_t *segs = pi->ipi_segs;
-	int i, j, nsegs = pi->ipi_nsegs;
-	int tso_desc = 0;
+	struct em_buffer	*tx_buffer, *tx_buffer_mapped;
+	struct ether_header	*eh;
+	struct ip		*ip = NULL;
+	struct tcphdr		*tp = NULL;
+	int i, j, do_tso, tso_desc, nsegs, first, last;
+	int			ip_off, poff;
 
+	tso_desc = last = 0;
 	txd_upper = txd_lower = txd_used = txd_saved = 0;
-	/* Do hardware assists */
-	if (pi->ipi_csum_flags & CSUM_TSO) {
-		em_tso_setup(txr, pi, &txd_upper, &txd_lower);
-		/* we need to make a final sentinel transmit desc */
-		txr->tx_tso = tso_desc = TRUE;
-	} else if (pi->ipi_csum_flags & CSUM_OFFLOAD)
-		em_transmit_checksum_setup(txr, pi->ipi_csum_flags,
-		    ip_off, ip, &txd_upper, &txd_lower);
+	do_tso = ((pi->ipi_csum_flags & CSUM_TSO) != 0);
+	ip_off = poff = 0;
+	nsegs = pi->ipi_nsegs;
+	/*
+	 * Intel recommends entire IP/TCP header length reside in a single
+	 * buffer. If multiple descriptors are used to describe the IP and
+	 * TCP header, each descriptor should describe one or more
+	 * complete headers; descriptors referencing only parts of headers
+	 * are not supported. If all layer headers are not coalesced into
+	 * a single buffer, each buffer should not cross a 4KB boundary,
+	 * or be larger than the maximum read request size.
+	 * Controller also requires modifing IP/TCP header to make TSO work
+	 * so we firstly get a writable mbuf chain then coalesce ethernet/
+	 * IP/TCP header into a single buffer to meet the requirement of
+	 * controller. This also simplifies IP/TCP/UDP checksum offloading
+	 * which also has similiar restrictions.
+	 */
 
-	if (pi->ipi_flags & M_VLANTAG) {
-		/* Set the vlan id. */
-		txd_upper |= htole16(pi->ipi_vtag) << 16;
-		/* Tell hardware to add tag */
-		txd_lower |= htole32(E1000_TXD_CMD_VLE);
-	}
+	eh = (struct ether_header *)pi->ipi_pkt_hdr;
+	if (eh->ether_type == htons(ETHERTYPE_VLAN))
+		ip_off = sizeof(struct ether_vlan_header);
+	else
+		ip_off = sizeof (struct ether_header);
+
+	ip = (struct ip *)(pi->ipi_pkt_hdr + ip_off);
+	poff = ip_off + (ip->ip_hl << 2);
+	if (do_tso) {
+		ip->ip_len = 0;
+		ip->ip_sum = 0;
+		tp = (struct tcphdr *)(pi->ipi_pkt_hdr + poff);
+		tp->th_sum = in_pseudo(ip->ip_src.s_addr,
+			    ip->ip_dst.s_addr, htons(IPPROTO_TCP));
+	} else if (pi->ipi_csum_flags & CSUM_TCP)
+		tp = (struct tcphdr *)(pi->ipi_pkt_hdr + poff);
+
+	/*
+	 *
+	 * Capture the first descriptor index,
+	 * this descriptor will have the index
+	 * of the EOP which is the only one that
+	 * now gets a DONE bit writeback.
+	 */
+	first = pi->ipi_pidx;
+	tx_buffer = &txr->tx_buffers[first];
+	tx_buffer_mapped = tx_buffer;
 
 	/*
 	 * TSO Hardware workaround, if this packet is not
@@ -1265,18 +1291,35 @@ em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
 	 * it follows a TSO burst, then we need to add a
 	 * sentinel descriptor to prevent premature writeback.
 	 */
-	if ((tso_desc == FALSE) && (txr->tx_tso == TRUE)) {
+	if ((do_tso == 0) && (txr->tx_tso == TRUE)) {
 		if (nsegs == 1)
 			tso_desc = TRUE;
 		txr->tx_tso = FALSE;
 	}
-	i = first;
+
+	/* Do hardware assists */
+	if (pi->ipi_csum_flags & CSUM_TSO) {
+		em_tso_setup(txr, pi, ip_off, ip, tp, &txd_upper, &txd_lower);
+		/* we need to make a final sentinel transmit desc */
+		tso_desc = TRUE;
+	} else if (pi->ipi_csum_flags & CSUM_OFFLOAD)
+		em_transmit_checksum_setup(txr, pi, ip_off, ip, &txd_upper, &txd_lower);
+
+	if (pi->ipi_flags & M_VLANTAG) {
+		/* Set the vlan id. */
+		txd_upper |= htole16(pi->ipi_vtag) << 16;
+                /* Tell hardware to add tag */
+                txd_lower |= htole32(E1000_TXD_CMD_VLE);
+        }
+
+	i = pi->ipi_pidx;
 
 	/* Set up our transmit descriptors */
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seg_len;
 		bus_addr_t seg_addr;
 
+		tx_buffer = &txr->tx_buffers[i];
 		ctxd = &txr->tx_base[i];
 		seg_addr = segs[j].ds_addr;
 		seg_len  = segs[j].ds_len;
@@ -1297,6 +1340,7 @@ em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
 			/* Now make the sentinel */	
 			++txd_used; /* using an extra txd */
 			ctxd = &txr->tx_base[i];
+			tx_buffer = &txr->tx_buffers[i];
 			ctxd->buffer_addr =
 			    htole64(seg_addr + seg_len);
 			ctxd->lower.data = htole32(
@@ -1316,53 +1360,25 @@ em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
 			if (++i == adapter->num_tx_desc)
 				i = 0;
 		}
-#if 0
-		tx_buffer->m_head = NULL;
 		tx_buffer->next_eop = -1;
-#endif
 	}
 
-	if (tso_desc) /* TSO used an extra for sentinel */
-		txr->tx_avail -= txd_used;
-
-			/*
-		* XXX track the eop in the driver itself
-		*     need to add a per txq array of integers
-		*     to track the linked list of eops for credit
-		*     updates
-		*/
-		tx_buffer->next_eop = pi->pi_last;
-
-
-#if 0	
-	/*
-	** Here we swap the map so the last descriptor,
-	** which gets the completion interrupt has the
-	** real map, and the first descriptor gets the
-	** unused map from this descriptor.
-	*/
-	tx_buffer = &txr->tx_buffers[first];
-	tx_buffer_mapped->map = tx_buffer->map;
-	tx_buffer->map = map;
-	bus_dmamap_sync(txr->txtag, map, BUS_DMASYNC_PREWRITE);
-#endif
+	pi->ipi_new_pidx = i;
 	/*
 	 * Last Descriptor of Packet
 	 * needs End Of Packet (EOP)
 	 * and Report Status (RS)
 	 */
-	ctxd->lower.data |=
+        ctxd->lower.data |=
 	    htole32(E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS);
 	/*
 	 * Keep track in the first buffer which
 	 * descriptor will be written back
 	 */
 	tx_buffer = &txr->tx_buffers[first];
-	pi->ipi_ndesc = last - first;
-
+	tx_buffer->next_eop = last;
 	return (0);
 }
-#endif
 
 static void
 em_isc_txd_flush(if_shared_ctx_t sctx, int txqid, int pidx)
@@ -2196,10 +2212,20 @@ fail:
  *  Initialize a transmit ring.
  *
  **********************************************************************/
-static void
+static int
 em_if_txq_setup(if_shared_ctx_t sctx, int txqid)
 {
 	struct tx_ring *txr = &DOWNCAST(sctx)->tx_rings[txqid];
+	struct adapter *adapter = DOWNCAST(sctx);
+	int err = 0;
+
+	if (!(txr->tx_buffers =
+	    (struct em_buffer *) malloc(sizeof(struct em_buffer) *
+	    adapter->num_tx_desc, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+		device_printf(sctx->isc_dev, "Unable to allocate tx_buffer memory\n");
+		err = ENOMEM;
+		goto fail;
+	}
 
 	/* Clear checksum offload context. */
 	txr->last_hw_offload = 0;
@@ -2207,6 +2233,8 @@ em_if_txq_setup(if_shared_ctx_t sctx, int txqid)
 	txr->last_hw_ipcso = 0;
 	txr->last_hw_tucss = 0;
 	txr->last_hw_tucso = 0;
+fail:
+	return (err);
 }
 
 /*********************************************************************
@@ -2314,9 +2342,9 @@ em_initialize_transmit_unit(struct adapter *adapter)
  *  in turn greatly slow down performance to send small sized
  *  frames. 
  **********************************************************************/
-#if 0
+
 static void
-em_transmit_checksum_setup(struct tx_ring *txr, int csum_flags,	int ip_off,
+em_transmit_checksum_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off,
     struct ip *ip, u32 *txd_upper, u32 *txd_lower)
 {
 	struct adapter			*adapter = txr->adapter;
@@ -2329,11 +2357,9 @@ em_transmit_checksum_setup(struct tx_ring *txr, int csum_flags,	int ip_off,
 
 	ipcss = ipcso = tucss = tucso = 0;
 	hdr_len = ip_off + (ip->ip_hl << 2);
-#if 0
-	cur = txr->next_avail_desc;
-#endif
+	cur = pi->ipi_pidx;
 	/* Setup of IP header checksum. */
-	if (csum_flags & CSUM_IP) {
+	if (pi->ipi_csum_flags & CSUM_IP) {
 		*txd_upper |= E1000_TXD_POPTS_IXSM << 8;
 		offload |= CSUM_IP;
 		ipcss = ip_off;
@@ -2350,7 +2376,7 @@ em_transmit_checksum_setup(struct tx_ring *txr, int csum_flags,	int ip_off,
 		cmd |= E1000_TXD_CMD_IP;
 	}
 
-	if (csum_flags & CSUM_TCP) {
+	if (pi->ipi_csum_flags & CSUM_TCP) {
  		*txd_lower = E1000_TXD_CMD_DEXT | E1000_TXD_DTYP_D;
  		*txd_upper |= E1000_TXD_POPTS_TXSM << 8;
  		offload |= CSUM_TCP;
@@ -2389,7 +2415,7 @@ em_transmit_checksum_setup(struct tx_ring *txr, int csum_flags,	int ip_off,
  		TXD->upper_setup.tcp_fields.tucse = htole16(0);
  		TXD->upper_setup.tcp_fields.tucso = tucso;
  		cmd |= E1000_TXD_CMD_TCP;
- 	} else if (csum_flags & CSUM_UDP) {
+	} else if (pi->ipi_csum_flags & CSUM_UDP) {
  		*txd_lower = E1000_TXD_CMD_DEXT | E1000_TXD_DTYP_D;
  		*txd_upper |= E1000_TXD_POPTS_TXSM << 8;
  		tucss = hdr_len;
@@ -2437,14 +2463,12 @@ em_transmit_checksum_setup(struct tx_ring *txr, int csum_flags,	int ip_off,
 	TXD->cmd_and_length =
 	    htole32(adapter->txd_cmd | E1000_TXD_CMD_DEXT | cmd);
 	tx_buffer = &txr->tx_buffers[cur];
-	tx_buffer->m_head = NULL;
 	tx_buffer->next_eop = -1;
 
 	if (++cur == adapter->num_tx_desc)
 		cur = 0;
 
-	txr->tx_avail--;
-	txr->next_avail_desc = cur;
+	pi->ipi_new_pidx = cur;
 }
 
 
@@ -2454,14 +2478,12 @@ em_transmit_checksum_setup(struct tx_ring *txr, int csum_flags,	int ip_off,
  *
  **********************************************************************/
 static void
-em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_lower)
+em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off, struct ip *ip,
+			 struct tcphdr *tp, u32 *txd_upper, u32 *txd_lower)
 {
 	struct adapter			*adapter = txr->adapter;
 	struct e1000_context_desc	*TXD;
 	struct em_buffer		*tx_buffer;
-	int ip_off = pi->ip_off;
-	struct ip *ip = pi->ip;
-	struct tcphdr *tp = pi->tp;
 	int cur, hdr_len;
 
 	/*
@@ -2479,7 +2501,7 @@ em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_low
 	/* IP and/or TCP header checksum calculation and insertion. */
 	*txd_upper = (E1000_TXD_POPTS_IXSM | E1000_TXD_POPTS_TXSM) << 8;
 
-	cur = txr->next_avail_desc;
+	cur = pi->ipi_pidx;
 	tx_buffer = &txr->tx_buffers[cur];
 	TXD = (struct e1000_context_desc *) &txr->tx_base[cur];
 
@@ -2505,7 +2527,7 @@ em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_low
 	 * Payload size per packet w/o any headers.
 	 * Length of all headers up to payload.
 	 */
-	TXD->tcp_seg_setup.fields.mss = htole16(pi->tso_segsz);
+	TXD->tcp_seg_setup.fields.mss = htole16(pi->ipi_tso_segsz);
 	TXD->tcp_seg_setup.fields.hdr_len = hdr_len;
 
 	TXD->cmd_and_length = htole32(adapter->txd_cmd |
@@ -2513,16 +2535,12 @@ em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_low
 				E1000_TXD_CMD_TSE |	/* TSE context */
 				E1000_TXD_CMD_IP |	/* Do IP csum */
 				E1000_TXD_CMD_TCP |	/* Do TCP checksum */
-				(pi->pktlen - (hdr_len))); /* Total len */
-
-	tx_buffer->m_head = NULL;
-	tx_buffer->next_eop = -1;
+				(pi->ipi_pktlen - (hdr_len))); /* Total len */
 
 	if (++cur == adapter->num_tx_desc)
 		cur = 0;
 
-	txr->tx_avail--;
-	txr->next_avail_desc = cur;
+	pi->ipi_new_pidx = cur;
 	txr->tx_tso = TRUE;
 }
 
@@ -2535,20 +2553,16 @@ em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_low
  *  XXX REWRITE 
  *
  **********************************************************************/
+#if 0
 static void
 em_if_txeof(if_shared_ctx_t sctx, int txqid)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
-	struct tx_ring *txr = adapter->tx_rings[txqid];
+	struct tx_ring *txr = &adapter->tx_rings[txqid];
+	struct em_buffer *tx_buffer;
 	int first, last, done, processed;
 	struct e1000_tx_desc   *tx_desc, *eop_desc;
 	
-	/* No work, make sure watchdog is off */
-	if (txr->tx_avail == adapter->num_tx_desc) {
-		txr->queue_status = EM_QUEUE_IDLE;
-                return;
-	}
-
 	processed = 0;
 	first = txr->next_to_clean;
 	tx_buffer = &txr->tx_buffers[first];
@@ -3939,6 +3953,9 @@ em_sysctl_debug_info(SYSCTL_HANDLER_ARGS)
 	if (result == 1) {
 		adapter = (struct adapter *)arg1;
 		em_print_debug_info(adapter);
+#if 0
+		iflib_print_debug_info(UPCAST(adapter));
+#endif
 	}
 	return (err);
 }

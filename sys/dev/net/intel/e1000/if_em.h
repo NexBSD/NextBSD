@@ -275,6 +275,7 @@ struct tx_ring {
 	u32			ims;
 	bus_addr_t tx_paddr;
 	struct e1000_tx_desc	*tx_base;
+	struct em_buffer *tx_buffers;
 	u32			tx_tso;		/* last tx was tso */
 	u16			last_hw_offload;
 	u8			last_hw_ipcso;
@@ -436,8 +437,6 @@ typedef struct _em_vendor_info_t {
 
 struct em_buffer {
 	int		next_eop;  /* Index of the desc to watch */
-        struct mbuf    *m_head;
-        bus_dmamap_t    map;         /* bus_dma map for packet */
 };
 
 
