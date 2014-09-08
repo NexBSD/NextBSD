@@ -56,9 +56,10 @@ CODE {
 	{
 	}
 
-	static void
+	static int
 	null_q_setup(if_shared_ctx_t _ctx __unused, int _qid __unused)
 	{
+		return (0);
 	}
 
 	static int
@@ -180,12 +181,12 @@ METHOD int media_change {
 # optional methods
 #
 
-METHOD void txq_setup {
+METHOD int txq_setup {
 	if_shared_ctx_t _ctx;
 	int _txqid;
 } DEFAULT null_q_setup;
 
-METHOD void rxq_setup {
+METHOD int rxq_setup {
 	if_shared_ctx_t _ctx;
 	int _txqid;
 } DEFAULT null_q_setup;
