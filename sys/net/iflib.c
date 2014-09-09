@@ -270,6 +270,7 @@ static moduledata_t iflib_moduledata = {
 };
 
 DECLARE_MODULE(iflib, iflib_moduledata, SI_SUB_SMP, SI_ORDER_ANY);
+MODULE_VERSION(iflib, 1);
 
 TASKQGROUP_DEFINE(if_rx_tqg, mp_ncpus, 1);
 TASKQGROUP_DEFINE(if_tx_tqg, mp_ncpus, 1);
