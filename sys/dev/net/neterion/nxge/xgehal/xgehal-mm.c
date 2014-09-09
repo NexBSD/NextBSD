@@ -26,9 +26,9 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/include/xge-os-pal.h>
-#include <dev/nxge/include/xgehal-mm.h>
-#include <dev/nxge/include/xge-debug.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xgehal-mm.h>
+#include <dev/net/neterion/nxge/include/xge-debug.h>
 
 /*
  * __hal_mempool_grow

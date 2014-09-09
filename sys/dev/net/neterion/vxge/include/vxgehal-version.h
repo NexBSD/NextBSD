@@ -33,7 +33,7 @@
 #ifndef	VXGE_HAL_VERSION_H
 #define	VXGE_HAL_VERSION_H
 
-#include <dev/vxge/include/build-version.h>
+#include <dev/net/neterion/vxge/include/build-version.h>
 
 
 /*
@@ -68,6 +68,6 @@
 #define	VXGE_HAL_DESC	VXGE_DRIVER_NAME" v."VXGE_HAL_VERSION
 
 /* Link Layer versioning */
-#include <dev/vxge/vxgell-version.h>
+#include <dev/net/neterion/vxge/vxgell-version.h>
 
 #endif	/* VXGE_HAL_VERSION_H */

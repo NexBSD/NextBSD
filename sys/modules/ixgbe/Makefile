@@ -1,6 +1,6 @@
 #$FreeBSD$
 
-.PATH:  ${.CURDIR}/../../dev/ixgbe
+.PATH:  ${.CURDIR}/../../dev/net/intel/ixgbe
 
 KMOD    = if_ixgbe
 SRCS    = device_if.h bus_if.h pci_if.h

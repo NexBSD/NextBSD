@@ -27,7 +27,7 @@
  */
 
 #ifdef XGE_DEBUG_FP
-#include <dev/nxge/include/xgehal-ring.h>
+#include <dev/net/neterion/nxge/include/xgehal-ring.h>
 #endif
 
 __HAL_STATIC_RING __HAL_INLINE_RING xge_hal_ring_rxd_priv_t*

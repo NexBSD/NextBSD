@@ -26,9 +26,9 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/include/xgehal-mgmt.h>
-#include <dev/nxge/include/xgehal-driver.h>
-#include <dev/nxge/include/xgehal-device.h>
+#include <dev/net/neterion/nxge/include/xgehal-mgmt.h>
+#include <dev/net/neterion/nxge/include/xgehal-driver.h>
+#include <dev/net/neterion/nxge/include/xgehal-device.h>
 
 /**
  * xge_hal_mgmt_about - Retrieve about info.

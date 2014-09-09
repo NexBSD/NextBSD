@@ -1,7 +1,7 @@
 # $FreeBSD$
 
-.PATH: ${.CURDIR}/../../dev/vxge
-VPATH =	${.CURDIR}/../../dev/vxge/vxgehal
+.PATH: ${.CURDIR}/../../dev/net/neterion/vxge
+VPATH =	${.CURDIR}/../../dev/net/neterion/vxge/vxgehal
 
 CFLAGS_VXGE = 
 

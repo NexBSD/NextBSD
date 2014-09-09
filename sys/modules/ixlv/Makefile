@@ -1,6 +1,6 @@
 #$FreeBSD$
 
-.PATH:  ${.CURDIR}/../../dev/ixl
+.PATH:  ${.CURDIR}/../../dev/net/intel/ixl
 
 KMOD    = if_ixlv
 SRCS    = device_if.h bus_if.h pci_if.h opt_bdg.h

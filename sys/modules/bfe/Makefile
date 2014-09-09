@@ -1,6 +1,6 @@
 # $FreeBSD$
 
-.PATH: ${.CURDIR}/../../dev/bfe
+.PATH: ${.CURDIR}/../../dev/net/broadcom/bfe
 
 KMOD=	if_bfe
 SRCS=	if_bfe.c miibus_if.h miidevs.h device_if.h bus_if.h pci_if.h

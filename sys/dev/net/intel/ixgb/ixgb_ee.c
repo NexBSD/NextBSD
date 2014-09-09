@@ -33,8 +33,8 @@
 
 /*$FreeBSD$*/
 
-#include <dev/ixgb/ixgb_hw.h> 
-#include <dev/ixgb/ixgb_ee.h> 
+#include <dev/net/intel/ixgb/ixgb_hw.h> 
+#include <dev/net/intel/ixgb/ixgb_ee.h> 
 
 /* Local prototypes */
 static uint16_t ixgb_shift_in_bits(struct ixgb_hw *hw);

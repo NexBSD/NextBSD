@@ -29,7 +29,7 @@
 #ifndef XGE_HAL_MGMTAUX_H
 #define XGE_HAL_MGMTAUX_H
 
-#include <dev/nxge/include/xgehal-mgmt.h>
+#include <dev/net/neterion/nxge/include/xgehal-mgmt.h>
 
 __EXTERN_BEGIN_DECLS
 

@@ -1,6 +1,6 @@
 #$FreeBSD$
 
-.PATH:  ${.CURDIR}/../../dev/e1000
+.PATH:  ${.CURDIR}/../../dev/net/intel/e1000
 KMOD    = if_igb
 SRCS    = device_if.h bus_if.h pci_if.h opt_inet.h opt_inet6.h opt_rss.h
 SRCS    += if_igb.c $(SHARED_SRCS)

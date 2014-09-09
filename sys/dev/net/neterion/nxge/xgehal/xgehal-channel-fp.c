@@ -27,7 +27,7 @@
  */
 
 #ifdef XGE_DEBUG_FP
-#include <dev/nxge/include/xgehal-channel.h>
+#include <dev/net/neterion/nxge/include/xgehal-channel.h>
 #endif
 
 __HAL_STATIC_CHANNEL __HAL_INLINE_CHANNEL xge_hal_status_e

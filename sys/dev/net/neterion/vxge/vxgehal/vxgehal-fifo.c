@@ -30,7 +30,7 @@
  */
 /*$FreeBSD$*/
 
-#include <dev/vxge/vxgehal/vxgehal.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal.h>
 
 /*
  * __hal_fifo_mempool_item_alloc - Allocate List blocks for TxD list callback

@@ -79,9 +79,9 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <sys/sysctl.h>
 #include <sys/endian.h>
 
-#include <dev/ixgb/ixgb_hw.h>
-#include <dev/ixgb/ixgb_ee.h>
-#include <dev/ixgb/ixgb_ids.h>
+#include <dev/net/intel/ixgb/ixgb_hw.h>
+#include <dev/net/intel/ixgb/ixgb_ee.h>
+#include <dev/net/intel/ixgb/ixgb_ids.h>
 
 /* Tunables */
 

@@ -1,7 +1,7 @@
 # $FreeBSD$
 
-.PATH: ${.CURDIR}/../../dev/nxge
-.PATH: ${.CURDIR}/../../dev/nxge/xgehal
+.PATH: ${.CURDIR}/../../dev/net/neterion/nxge
+.PATH: ${.CURDIR}/../../dev/net/neterion/nxge/xgehal
 
 CFLAGS_NXGE = 
 

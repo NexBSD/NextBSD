@@ -2,7 +2,7 @@
 # $FreeBSD$
 #
 
-.PATH:	${.CURDIR}/../../dev/oce
+.PATH:	${.CURDIR}/../../dev/net/emulex/oce
 KMOD	= oce
 SRCS    = oce_if.c oce_hw.c oce_mbox.c oce_util.c oce_queue.c oce_sysctl.c
 SRCS    += bus_if.h device_if.h pci_if.h opt_inet.h opt_inet6.h

@@ -27,7 +27,7 @@
  */
 
 #ifdef XGE_DEBUG_FP
-#include <dev/nxge/include/xgehal-fifo.h>
+#include <dev/net/neterion/nxge/include/xgehal-fifo.h>
 #endif
 
 __HAL_STATIC_FIFO __HAL_INLINE_FIFO xge_hal_fifo_txdl_priv_t*

@@ -30,7 +30,7 @@
  */
 /*$FreeBSD$*/
 
-#include <dev/vxge/vxge.h>
+#include "vxge.h"
 
 static int vxge_pci_bd_no = -1;
 static u32 vxge_drv_copyright = 0;

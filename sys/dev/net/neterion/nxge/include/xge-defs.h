@@ -42,7 +42,7 @@
 #define XGE_CHIP_FAMILY             "Xframe"
 #define XGE_SUPPORTED_MEDIA_0       "Fiber"
 
-#include <dev/nxge/include/version.h>
+#include <dev/net/neterion/nxge/include/version.h>
 
 #if defined(__cplusplus)
 #define __EXTERN_BEGIN_DECLS    extern "C" {

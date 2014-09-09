@@ -29,14 +29,14 @@
 #ifndef XGE_OS_PAL_H
 #define XGE_OS_PAL_H
 
-#include <dev/nxge/include/xge-defs.h>
+#include <dev/net/neterion/nxge/include/xge-defs.h>
 
 __EXTERN_BEGIN_DECLS
 
 /*--------------------------- platform switch ------------------------------*/
 
 /* platform specific header */
-#include <dev/nxge/xge-osdep.h>
+#include <dev/net/neterion/nxge/xge-osdep.h>
 
 #if !defined(XGE_OS_PLATFORM_64BIT) && !defined(XGE_OS_PLATFORM_32BIT)
 #error "either 32bit or 64bit switch must be defined!"

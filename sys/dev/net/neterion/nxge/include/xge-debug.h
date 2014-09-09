@@ -29,7 +29,7 @@
 #ifndef XGE_DEBUG_H
 #define XGE_DEBUG_H
 
-#include <dev/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
 
 __EXTERN_BEGIN_DECLS
 

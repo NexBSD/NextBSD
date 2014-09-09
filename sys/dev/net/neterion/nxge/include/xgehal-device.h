@@ -29,14 +29,14 @@
 #ifndef XGE_HAL_DEVICE_H
 #define XGE_HAL_DEVICE_H
 
-#include <dev/nxge/include/xge-os-pal.h>
-#include <dev/nxge/include/xge-queue.h>
-#include <dev/nxge/include/xgehal-event.h>
-#include <dev/nxge/include/xgehal-config.h>
-#include <dev/nxge/include/xgehal-regs.h>
-#include <dev/nxge/include/xgehal-channel.h>
-#include <dev/nxge/include/xgehal-stats.h>
-#include <dev/nxge/include/xgehal-ring.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xge-queue.h>
+#include <dev/net/neterion/nxge/include/xgehal-event.h>
+#include <dev/net/neterion/nxge/include/xgehal-config.h>
+#include <dev/net/neterion/nxge/include/xgehal-regs.h>
+#include <dev/net/neterion/nxge/include/xgehal-channel.h>
+#include <dev/net/neterion/nxge/include/xgehal-stats.h>
+#include <dev/net/neterion/nxge/include/xgehal-ring.h>
 
 __EXTERN_BEGIN_DECLS
 
@@ -1001,7 +1001,7 @@ __hal_lro_get_free_slot (xge_hal_lro_desc_t *ring_lro);
 #else /* XGE_FASTPATH_EXTERN */
 #define __HAL_STATIC_DEVICE static
 #define __HAL_INLINE_DEVICE inline
-#include <dev/nxge/xgehal/xgehal-device-fp.c>
+#include <dev/net/neterion/nxge/xgehal/xgehal-device-fp.c>
 #endif /* XGE_FASTPATH_INLINE */
 
 

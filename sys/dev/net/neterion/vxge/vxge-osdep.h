@@ -92,7 +92,7 @@
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pci_private.h>
 
-#include <dev/vxge/include/vxge-defs.h>
+#include <dev/net/neterion/vxge/include/vxge-defs.h>
 
 /*
  * ------------------------- includes and defines -------------------------

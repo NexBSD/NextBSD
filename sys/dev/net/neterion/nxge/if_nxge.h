@@ -29,8 +29,8 @@
 #ifndef _IF_XGE_H
 #define _IF_XGE_H
 
-#include <dev/nxge/include/xgehal.h>
-#include <dev/nxge/xge-osdep.h>
+#include <dev/net/neterion/nxge/include/xgehal.h>
+#include <dev/net/neterion/nxge/xge-osdep.h>
 
 /* Printing description, Copyright */
 #define XGE_DRIVER_VERSION                                                     \

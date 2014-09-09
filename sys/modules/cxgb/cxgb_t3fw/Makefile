@@ -1,6 +1,6 @@
 # $FreeBSD$
 
-CXGB = ${.CURDIR}/../../../dev/cxgb
+CXGB = ${.CURDIR}/../../../dev/net/chelsio/cxgb
 .PATH: ${CXGB} 
 
 KMOD= cxgb_t3fw

@@ -27,11 +27,11 @@
  */
 
 #ifdef XGE_DEBUG_FP
-#include <dev/nxge/include/xgehal-device.h>
+#include <dev/net/neterion/nxge/include/xgehal-device.h>
 #endif
 
-#include <dev/nxge/include/xgehal-ring.h>
-#include <dev/nxge/include/xgehal-fifo.h>
+#include <dev/net/neterion/nxge/include/xgehal-ring.h>
+#include <dev/net/neterion/nxge/include/xgehal-fifo.h>
 
 /**
  * xge_hal_device_bar0 - Get BAR0 mapped address.

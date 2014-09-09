@@ -30,7 +30,7 @@
  */
 /*$FreeBSD$*/
 
-#include <dev/vxge/vxgehal/vxgehal.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal.h>
 
 /*
  * _hal_legacy_swapper_set - Set the swapper bits for the legacy secion.

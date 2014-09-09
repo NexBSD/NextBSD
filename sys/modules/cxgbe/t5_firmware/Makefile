@@ -2,7 +2,7 @@
 # $FreeBSD$
 #
 
-T5FW=	${.CURDIR}/../../../dev/cxgbe/firmware
+T5FW=	${.CURDIR}/../../../dev/net/chelsio/cxgbe/firmware
 .PATH: ${T5FW}
 
 KMOD=	t5fw_cfg

@@ -29,7 +29,7 @@
 #ifndef XGE_LIST_H
 #define XGE_LIST_H
 
-#include <dev/nxge/include/xge-debug.h>
+#include <dev/net/neterion/nxge/include/xge-debug.h>
 
 __EXTERN_BEGIN_DECLS
 

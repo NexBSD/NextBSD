@@ -38,7 +38,7 @@ __EXTERN_BEGIN_DECLS
 /* --------------------------- platform switch ------------------------------ */
 
 /* platform specific header */
-#include <dev/vxge/vxge-osdep.h>
+#include <dev/net/neterion/vxge/vxge-osdep.h>
 #define	IN
 #define	OUT
 

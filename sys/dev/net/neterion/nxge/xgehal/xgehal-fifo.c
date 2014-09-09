@@ -26,8 +26,8 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/include/xgehal-fifo.h>
-#include <dev/nxge/include/xgehal-device.h>
+#include <dev/net/neterion/nxge/include/xgehal-fifo.h>
+#include <dev/net/neterion/nxge/include/xgehal-device.h>
 
 static xge_hal_status_e
 __hal_fifo_mempool_item_alloc(xge_hal_mempool_h mempoolh,

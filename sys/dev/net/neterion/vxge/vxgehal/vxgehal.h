@@ -33,34 +33,35 @@
 #ifndef	VXGE_HAL_H
 #define	VXGE_HAL_H
 
-#include <dev/vxge/include/vxgehal-ll.h>
-#include <dev/vxge/vxgehal/vxgehal-debug.h>
-#include <dev/vxge/vxgehal/vxgehal-regdefs.h>
-#include <dev/vxge/vxgehal/vxgehal-legacy-reg.h>
-#include <dev/vxge/vxgehal/vxgehal-toc-reg.h>
-#include <dev/vxge/vxgehal/vxgehal-common-reg.h>
-#include <dev/vxge/vxgehal/vxgehal-memrepair-reg.h>
-#include <dev/vxge/vxgehal/vxgehal-pcicfgmgmt-reg.h>
-#include <dev/vxge/vxgehal/vxgehal-mrpcim-reg.h>
-#include <dev/vxge/vxgehal/vxgehal-srpcim-reg.h>
-#include <dev/vxge/vxgehal/vxgehal-vpmgmt-reg.h>
-#include <dev/vxge/vxgehal/vxgehal-vpath-reg.h>
-#include <dev/vxge/vxgehal/vxgehal-regs.h>
-#include <dev/vxge/vxgehal/vxgehal-config-priv.h>
-#include <dev/vxge/vxgehal/vxgehal-swapper.h>
-#include <dev/vxge/vxgehal/vxgehal-mm.h>
 
-#include <dev/vxge/vxgehal/vxgehal-blockpool.h>
-#include <dev/vxge/vxgehal/vxgehal-doorbells.h>
-#include <dev/vxge/vxgehal/vxgehal-virtualpath.h>
-#include <dev/vxge/vxgehal/vxgehal-device.h>
-#include <dev/vxge/vxgehal/vxgehal-channel.h>
-#include <dev/vxge/vxgehal/vxgehal-srpcim.h>
-#include <dev/vxge/vxgehal/vxgehal-mrpcim.h>
-#include <dev/vxge/vxgehal/vxgehal-driver.h>
-#include <dev/vxge/vxgehal/vxgehal-ring.h>
-#include <dev/vxge/vxgehal/vxgehal-fifo.h>
-#include <dev/vxge/vxgehal/vxgehal-ifmsg.h>
+#include <dev/net/neterion/vxge/include/vxgehal-ll.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-debug.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-regdefs.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-legacy-reg.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-toc-reg.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-common-reg.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-memrepair-reg.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-pcicfgmgmt-reg.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-mrpcim-reg.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-srpcim-reg.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-vpmgmt-reg.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-vpath-reg.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-regs.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-config-priv.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-swapper.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-mm.h>
+
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-blockpool.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-doorbells.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-virtualpath.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-device.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-channel.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-srpcim.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-mrpcim.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-driver.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-ring.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-fifo.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal-ifmsg.h>
 
 
 

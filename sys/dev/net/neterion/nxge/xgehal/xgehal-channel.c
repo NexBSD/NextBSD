@@ -26,11 +26,11 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/include/xgehal-channel.h>
-#include <dev/nxge/include/xgehal-fifo.h>
-#include <dev/nxge/include/xgehal-ring.h>
-#include <dev/nxge/include/xgehal-device.h>
-#include <dev/nxge/include/xgehal-regs.h>
+#include <dev/net/neterion/nxge/include/xgehal-channel.h>
+#include <dev/net/neterion/nxge/include/xgehal-fifo.h>
+#include <dev/net/neterion/nxge/include/xgehal-ring.h>
+#include <dev/net/neterion/nxge/include/xgehal-device.h>
+#include <dev/net/neterion/nxge/include/xgehal-regs.h>
 
 /*
  * __hal_channel_dtr_next_reservelist

@@ -30,7 +30,7 @@
  */
 /*$FreeBSD$*/
 
-#include <dev/vxge/vxgehal/vxgehal.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal.h>
 
 static __hal_driver_t g_driver;
 __hal_driver_t *g_vxge_hal_driver;

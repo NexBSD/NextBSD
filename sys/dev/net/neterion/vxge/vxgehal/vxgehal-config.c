@@ -30,7 +30,7 @@
  */
 /*$FreeBSD$*/
 
-#include <dev/vxge/vxgehal/vxgehal.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal.h>
 
 /*
  * vxge_hal_driver_config_check - Check driver configuration.

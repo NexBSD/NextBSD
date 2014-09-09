@@ -29,9 +29,9 @@
 #ifndef XGE_HAL_CONFIG_H
 #define XGE_HAL_CONFIG_H
 
-#include <dev/nxge/include/xge-os-pal.h>
-#include <dev/nxge/include/xgehal-types.h>
-#include <dev/nxge/include/xge-queue.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xgehal-types.h>
+#include <dev/net/neterion/nxge/include/xge-queue.h>
 
 __EXTERN_BEGIN_DECLS
 

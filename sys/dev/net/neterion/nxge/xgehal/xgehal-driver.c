@@ -26,8 +26,8 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/include/xgehal-driver.h>
-#include <dev/nxge/include/xgehal-device.h>
+#include <dev/net/neterion/nxge/include/xgehal-driver.h>
+#include <dev/net/neterion/nxge/include/xgehal-device.h>
 
 static xge_hal_driver_t g_driver;
 xge_hal_driver_t *g_xge_hal_driver = NULL;

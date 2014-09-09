@@ -29,10 +29,10 @@
 #ifndef XGE_HAL_STATS_H
 #define XGE_HAL_STATS_H
 
-#include <dev/nxge/include/xge-os-pal.h>
-#include <dev/nxge/include/xge-debug.h>
-#include <dev/nxge/include/xgehal-types.h>
-#include <dev/nxge/include/xgehal-config.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xge-debug.h>
+#include <dev/net/neterion/nxge/include/xgehal-types.h>
+#include <dev/net/neterion/nxge/include/xgehal-config.h>
 
 __EXTERN_BEGIN_DECLS
 

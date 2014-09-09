@@ -29,7 +29,7 @@
 #ifndef VERSION_H
 #define VERSION_H
 
-#include <dev/nxge/include/build-version.h>
+#include <dev/net/neterion/nxge/include/build-version.h>
 
 #define XGE_HAL_VERSION_MAJOR   "2"
 #define XGE_HAL_VERSION_MINOR   "0"
@@ -40,6 +40,6 @@
 #define XGE_HAL_DESC    XGE_DRIVER_NAME" v."XGE_HAL_VERSION
 
 /* Link Layer versioning */
-#include <dev/nxge/xgell-version.h>
+#include <dev/net/neterion/nxge/xgell-version.h>
 
 #endif /* VERSION_H */

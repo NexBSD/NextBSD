@@ -1,6 +1,6 @@
 # $FreeBSD$
 
-.PATH: ${.CURDIR}/../../../dev/mxge
+.PATH: ${.CURDIR}/../../../dev/net/myricom/mxge
 KMOD=	mxge_eth_z8e
 SRCS=	mxge_eth_z8e.c
 

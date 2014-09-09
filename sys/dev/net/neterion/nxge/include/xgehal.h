@@ -29,16 +29,16 @@
 #ifndef XGE_HAL_H
 #define XGE_HAL_H
 
-#include <dev/nxge/include/xge-defs.h>
-#include <dev/nxge/include/xge-os-pal.h>
-#include <dev/nxge/include/xge-debug.h>
-#include <dev/nxge/include/xgehal-types.h>
-#include <dev/nxge/include/xgehal-driver.h>
-#include <dev/nxge/include/xgehal-config.h>
-#include <dev/nxge/include/xgehal-device.h>
-#include <dev/nxge/include/xgehal-channel.h>
-#include <dev/nxge/include/xgehal-fifo.h>
-#include <dev/nxge/include/xgehal-ring.h>
-#include <dev/nxge/include/xgehal-mgmt.h>
+#include <dev/net/neterion/nxge/include/xge-defs.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xge-debug.h>
+#include <dev/net/neterion/nxge/include/xgehal-types.h>
+#include <dev/net/neterion/nxge/include/xgehal-driver.h>
+#include <dev/net/neterion/nxge/include/xgehal-config.h>
+#include <dev/net/neterion/nxge/include/xgehal-device.h>
+#include <dev/net/neterion/nxge/include/xgehal-channel.h>
+#include <dev/net/neterion/nxge/include/xgehal-fifo.h>
+#include <dev/net/neterion/nxge/include/xgehal-ring.h>
+#include <dev/net/neterion/nxge/include/xgehal-mgmt.h>
 
 #endif /* XGE_HAL_H */

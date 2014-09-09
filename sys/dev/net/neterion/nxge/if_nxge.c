@@ -26,8 +26,8 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/if_nxge.h>
-#include <dev/nxge/xge-osdep.h>
+#include "if_nxge.h"
+#include "xge-osdep.h"
 #include <net/if_arp.h>
 #include <sys/types.h>
 #include <net/if.h>

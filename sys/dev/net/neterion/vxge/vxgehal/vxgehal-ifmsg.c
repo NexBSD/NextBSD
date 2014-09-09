@@ -29,7 +29,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 /*$FreeBSD$*/
-#include <dev/vxge/vxgehal/vxgehal.h>
+#include "vxgehal.h"
 
 /*
  * __hal_ifmsg_wmsg_process - Process the srpcim to vpath wmsg

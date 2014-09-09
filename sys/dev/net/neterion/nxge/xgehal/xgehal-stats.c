@@ -26,8 +26,8 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/include/xgehal-stats.h>
-#include <dev/nxge/include/xgehal-device.h>
+#include <dev/net/neterion/nxge/include/xgehal-stats.h>
+#include <dev/net/neterion/nxge/include/xgehal-device.h>
 
 /*
  * __hal_stats_initialize

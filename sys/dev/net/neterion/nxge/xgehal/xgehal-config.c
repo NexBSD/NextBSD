@@ -26,8 +26,8 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/include/xgehal-config.h>
-#include <dev/nxge/include/xge-debug.h>
+#include <dev/net/neterion/nxge/include/xgehal-config.h>
+#include <dev/net/neterion/nxge/include/xge-debug.h>
 
 /*
  * __hal_tti_config_check - Check tti configuration

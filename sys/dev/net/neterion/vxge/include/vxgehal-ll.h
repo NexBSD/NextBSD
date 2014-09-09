@@ -33,18 +33,18 @@
 #ifndef	VXGE_HAL_LL_H
 #define	VXGE_HAL_LL_H
 
-#include <dev/vxge/include/vxgehal-version.h>
-#include <dev/vxge/include/vxge-defs.h>
-#include <dev/vxge/include/vxge-os-pal.h>
+#include <dev/net/neterion/vxge/include/vxgehal-version.h>
+#include <dev/net/neterion/vxge/include/vxge-defs.h>
+#include <dev/net/neterion/vxge/include/vxge-os-pal.h>
 #include "vxgehal-status.h"
-#include <dev/vxge/include/vxgehal-types.h>
-#include <dev/vxge/include/vxge-debug.h>
-#include <dev/vxge/include/vxge-list.h>
-#include <dev/vxge/include/vxge-queue.h>
-#include <dev/vxge/include/vxgehal-config.h>
-#include <dev/vxge/include/vxgehal-stats.h>
-#include <dev/vxge/include/vxgehal-mgmt.h>
-#include <dev/vxge/include/vxgehal-mgmtaux.h>
+#include <dev/net/neterion/vxge/include/vxgehal-types.h>
+#include <dev/net/neterion/vxge/include/vxge-debug.h>
+#include <dev/net/neterion/vxge/include/vxge-list.h>
+#include <dev/net/neterion/vxge/include/vxge-queue.h>
+#include <dev/net/neterion/vxge/include/vxgehal-config.h>
+#include <dev/net/neterion/vxge/include/vxgehal-stats.h>
+#include <dev/net/neterion/vxge/include/vxgehal-mgmt.h>
+#include <dev/net/neterion/vxge/include/vxgehal-mgmtaux.h>
 
 __EXTERN_BEGIN_DECLS
 
@@ -6116,6 +6116,6 @@ vxge_hw_vpath_wait_receive_idle(vxge_hal_device_h devh, u32 vp_id,
 
 __EXTERN_END_DECLS
 
-#include <dev/vxge/include/vxge-os-debug.h>
+#include <dev/net/neterion/vxge/include/vxge-os-debug.h>
 
 #endif	/* VXGE_HAL_LL_H */

@@ -37,8 +37,8 @@
  * Shared functions for accessing and configuring the adapter
  */
 
-#include <dev/ixgb/ixgb_hw.h> 
-#include <dev/ixgb/ixgb_ids.h> 
+#include <dev/net/intel/ixgb/ixgb_hw.h> 
+#include <dev/net/intel/ixgb/ixgb_ids.h> 
 
 /*  Local function prototypes */
 

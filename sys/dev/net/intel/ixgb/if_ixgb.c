@@ -37,7 +37,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include "opt_device_polling.h"
 #endif
 
-#include <dev/ixgb/if_ixgb.h>
+#include "if_ixgb.h"
 
 /*********************************************************************
  *  Set this to one to display debug statistics

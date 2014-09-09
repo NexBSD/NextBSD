@@ -2,7 +2,7 @@
 
 SYSDIR	?= ${.CURDIR}/../..
 
-BXE	= ${SYSDIR}/dev/bxe
+BXE	= ${SYSDIR}/dev/net/qlogic/bxe
 .PATH:	${BXE}
 
 KMOD	= if_bxe

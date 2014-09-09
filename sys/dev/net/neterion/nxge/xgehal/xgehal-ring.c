@@ -26,8 +26,8 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/include/xgehal-ring.h>
-#include <dev/nxge/include/xgehal-device.h>
+#include <dev/net/neterion/nxge/include/xgehal-ring.h>
+#include <dev/net/neterion/nxge/include/xgehal-device.h>
 
 #if defined(XGE_OS_DMA_REQUIRES_SYNC) && defined(XGE_HAL_DMA_DTR_STREAMING)
 static ptrdiff_t

@@ -33,8 +33,8 @@
 #ifndef	_VXGE_H_
 #define	_VXGE_H_
 
-#include <dev/vxge/vxgehal/vxgehal.h>
-#include <dev/vxge/vxge-osdep.h>
+#include <dev/net/neterion/vxge/vxgehal/vxgehal.h>
+#include <dev/net/neterion/vxge/vxge-osdep.h>
 #include "vxge-firmware.h"
 
 #define	VXGE_GET_PARAM(str_kenv, to, param, hardcode) {	\

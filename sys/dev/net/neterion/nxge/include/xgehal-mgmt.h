@@ -29,13 +29,13 @@
 #ifndef XGE_HAL_MGMT_H
 #define XGE_HAL_MGMT_H
 
-#include <dev/nxge/include/xge-os-pal.h>
-#include <dev/nxge/include/xge-debug.h>
-#include <dev/nxge/include/xgehal-types.h>
-#include <dev/nxge/include/xgehal-config.h>
-#include <dev/nxge/include/xgehal-stats.h>
-#include <dev/nxge/include/xgehal-regs.h>
-#include <dev/nxge/include/xgehal-device.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xge-debug.h>
+#include <dev/net/neterion/nxge/include/xgehal-types.h>
+#include <dev/net/neterion/nxge/include/xgehal-config.h>
+#include <dev/net/neterion/nxge/include/xgehal-stats.h>
+#include <dev/net/neterion/nxge/include/xgehal-regs.h>
+#include <dev/net/neterion/nxge/include/xgehal-device.h>
 
 __EXTERN_BEGIN_DECLS
 
@@ -212,7 +212,7 @@ xge_hal_flick_link_led(xge_hal_device_h devh);
 #define CHECKBIT(value, nbit) (value & (1 << nbit))
 
 #ifdef XGE_HAL_USE_MGMT_AUX
-#include <dev/nxge/include/xgehal-mgmtaux.h>
+#include <dev/net/neterion/nxge/include/xgehal-mgmtaux.h>
 #endif
 
 __EXTERN_END_DECLS

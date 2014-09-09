@@ -35,7 +35,7 @@
 #ifndef _IXGB_HW_H_
 #define _IXGB_HW_H_
 
-#include <dev/ixgb/if_ixgb_osdep.h>
+#include <dev/net/intel/ixgb/if_ixgb_osdep.h>
 
 /* Enums */
 typedef enum {

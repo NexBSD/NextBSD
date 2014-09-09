@@ -29,10 +29,10 @@
 #ifndef XGE_HAL_CHANNEL_H
 #define XGE_HAL_CHANNEL_H
 
-#include <dev/nxge/include/xge-os-pal.h>
-#include <dev/nxge/include/xge-list.h>
-#include <dev/nxge/include/xgehal-types.h>
-#include <dev/nxge/include/xgehal-stats.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xge-list.h>
+#include <dev/net/neterion/nxge/include/xgehal-types.h>
+#include <dev/net/neterion/nxge/include/xgehal-stats.h>
 
 __EXTERN_BEGIN_DECLS
 
@@ -471,7 +471,7 @@ xge_hal_check_alignment(dma_addr_t dma_pointer, int size, int alignment,
 #else /* XGE_FASTPATH_EXTERN */
 #define __HAL_STATIC_CHANNEL static
 #define __HAL_INLINE_CHANNEL inline
-#include <dev/nxge/xgehal/xgehal-channel-fp.c>
+#include <dev/net/neterion/nxge/xgehal/xgehal-channel-fp.c>
 #endif /* XGE_FASTPATH_INLINE */
 
 xge_hal_status_e

@@ -2,7 +2,7 @@
 # $FreeBSD$
 #
 
-CXGBE=	${.CURDIR}/../../../dev/cxgbe
+CXGBE=	${.CURDIR}/../../../dev/net/chelsio/cxgbe
 .PATH: ${CXGBE} ${CXGBE}/common
 
 KMOD=	if_cxgbe

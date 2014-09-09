@@ -29,12 +29,12 @@
 #ifndef XGE_HAL_DRIVER_H
 #define XGE_HAL_DRIVER_H
 
-#include <dev/nxge/include/xge-os-pal.h>
-#include <dev/nxge/include/xge-list.h>
-#include <dev/nxge/include/xge-queue.h>
-#include <dev/nxge/include/xgehal-types.h>
-#include <dev/nxge/include/xgehal-config.h>
-#include <dev/nxge/include/xgehal-event.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xge-list.h>
+#include <dev/net/neterion/nxge/include/xge-queue.h>
+#include <dev/net/neterion/nxge/include/xgehal-types.h>
+#include <dev/net/neterion/nxge/include/xgehal-config.h>
+#include <dev/net/neterion/nxge/include/xgehal-event.h>
 
 __EXTERN_BEGIN_DECLS
 

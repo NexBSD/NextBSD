@@ -29,10 +29,10 @@
 #ifndef XGE_QUEUE_H
 #define XGE_QUEUE_H
 
-#include <dev/nxge/include/xge-os-pal.h>
-#include <dev/nxge/include/xge-defs.h>
-#include <dev/nxge/include/xge-list.h>
-#include <dev/nxge/include/xgehal-event.h>
+#include <dev/net/neterion/nxge/include/xge-os-pal.h>
+#include <dev/net/neterion/nxge/include/xge-defs.h>
+#include <dev/net/neterion/nxge/include/xge-list.h>
+#include <dev/net/neterion/nxge/include/xgehal-event.h>
 
 __EXTERN_BEGIN_DECLS
 

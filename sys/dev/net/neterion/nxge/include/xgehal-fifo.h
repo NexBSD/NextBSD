@@ -29,9 +29,9 @@
 #ifndef XGE_HAL_FIFO_H
 #define XGE_HAL_FIFO_H
 
-#include <dev/nxge/include/xgehal-channel.h>
-#include <dev/nxge/include/xgehal-config.h>
-#include <dev/nxge/include/xgehal-mm.h>
+#include <dev/net/neterion/nxge/include/xgehal-channel.h>
+#include <dev/net/neterion/nxge/include/xgehal-config.h>
+#include <dev/net/neterion/nxge/include/xgehal-mm.h>
 
 __EXTERN_BEGIN_DECLS
 
@@ -351,7 +351,7 @@ xge_hal_fifo_is_next_dtr_completed(xge_hal_channel_h channelh);
 #else /* XGE_FASTPATH_EXTERN */
 #define __HAL_STATIC_FIFO static
 #define __HAL_INLINE_FIFO inline
-#include <dev/nxge/xgehal/xgehal-fifo-fp.c>
+#include <dev/net/neterion/nxge/xgehal/xgehal-fifo-fp.c>
 #endif /* XGE_FASTPATH_INLINE */
 
 __EXTERN_END_DECLS

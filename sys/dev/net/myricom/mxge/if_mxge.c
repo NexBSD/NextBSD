@@ -86,10 +86,11 @@ __FBSDID("$FreeBSD$");
 #include <machine/specialreg.h>
 #endif
 
-#include <dev/mxge/mxge_mcp.h>
-#include <dev/mxge/mcp_gen_header.h>
+
+#include <dev/net/myricom/mxge/mxge_mcp.h>
+#include <dev/net/myricom/mxge/mcp_gen_header.h>
 /*#define MXGE_FAKE_IFP*/
-#include <dev/mxge/if_mxge_var.h>
+#include <dev/net/myricom/mxge/if_mxge_var.h>
 #ifdef IFNET_BUF_RING
 #include <sys/buf_ring.h>
 #endif

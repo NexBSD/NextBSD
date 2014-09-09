@@ -26,7 +26,7 @@
  * $FreeBSD$
  */
 
-#include <dev/nxge/include/xge-queue.h>
+#include <dev/net/neterion/nxge/include/xge-queue.h>
 
 /**
  * xge_queue_item_data - Get item's data.

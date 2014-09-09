@@ -2,7 +2,7 @@
 # $FreeBSD$
 #
 
-CXGBE=	${.CURDIR}/../../../dev/cxgbe
+CXGBE=	${.CURDIR}/../../../dev/net/chelsio/cxgbe
 .PATH: ${CXGBE}/tom
 
 KMOD=	t4_tom
