@@ -43,7 +43,6 @@
 #include <sys/systm.h>
 #include <sys/bus.h>
 #include <sys/endian.h>
-#include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/kobj.h>
 #include <sys/kthread.h>
@@ -53,13 +52,14 @@
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <sys/sysctl.h>
+#include <sys/eventhandler.h>
 #include <machine/bus.h>
 #include <machine/resource.h>
 
+#include <net/ethernet.h>
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/bpf.h>
-#include <net/ethernet.h>
 #include <net/if_arp.h>
 #include <net/if_dl.h>
 #include <net/if_media.h>
@@ -82,7 +82,6 @@
 
 #include <net/iflib.h>
 #include "ifdi_if.h"
-
 
 #include "e1000_api.h"
 #include "e1000_82571.h"
@@ -495,11 +494,11 @@ em_probe(device_t dev)
 static int
 em_attach(device_t dev)
 {
-	struct adapter	*adapter = device_get_softc(dev);
-	if_shared_ctx_t sctx = UPCAST(adapter);
+	struct adapter	*adapter;
 	struct e1000_hw	*hw;
+	int		error = 0;
+	if_shared_ctx_t sctx;
 	uint64_t tsize, rsize;
-	int		err = 0;
 	
 	INIT_DEBUGOUT("em_if_attach: begin");
 
@@ -507,6 +506,8 @@ em_attach(device_t dev)
 		device_printf(dev, "Disabled by device hint\n");
 		return (ENXIO);
 	}
+	adapter = device_get_softc(dev);
+	sctx = UPCAST(adapter);
 	hw = &adapter->hw;
 	
 	/* SYSCTL stuff */
@@ -528,13 +529,13 @@ em_attach(device_t dev)
 	/* Determine hardware and mac info */
 	em_identify_hardware(adapter);
 
-	if ((err = iflib_register(dev, &em_if_driver, hw->mac.addr)) != 0)
-		return (err);
+	if ((error = iflib_register(dev, &em_if_driver, hw->mac.addr)) != 0)
+		return (error);
 
 	/* Setup PCI resources */
 	if (em_allocate_pci_resources(adapter)) {
 		device_printf(dev, "Allocation of PCI resources failed\n");
-		err = ENXIO;
+		error = ENXIO;
 		goto err_pci;
 	}
 
@@ -555,7 +556,7 @@ em_attach(device_t dev)
 		    SYS_RES_MEMORY, &rid, RF_ACTIVE);
 		if (adapter->flash == NULL) {
 			device_printf(dev, "Mapping of Flash failed\n");
-			err = ENXIO;
+			error = ENXIO;
 			goto err_pci;
 		}
 		/* This is used in the shared code */
@@ -569,7 +570,7 @@ em_attach(device_t dev)
 	/* Do Shared Code initialization */
 	if (e1000_setup_init_funcs(hw, TRUE)) {
 		device_printf(dev, "Setup of Shared code failed\n");
-		err = ENXIO;
+		error = ENXIO;
 		goto err_pci;
 	}
 
@@ -656,7 +657,7 @@ em_attach(device_t dev)
 	rsize = roundup2(adapter->num_rx_desc *
 	    sizeof(struct e1000_rx_desc), EM_DBA_ALIGN);
 	if (iflib_queues_alloc(sctx, tsize, rsize)) {
-		err = ENOMEM;
+		error = ENOMEM;
 		goto err_pci;
 	}
 
@@ -665,7 +666,7 @@ em_attach(device_t dev)
 	    MAX_NUM_MULTICAST_ADDRESSES, M_DEVBUF, M_NOWAIT);
 	if (adapter->mta == NULL) {
 		device_printf(dev, "Can not allocate multicast setup array\n");
-		err = ENOMEM;
+		error = ENOMEM;
 		goto err_late;
 	}
 
@@ -699,22 +700,22 @@ em_attach(device_t dev)
 		if (e1000_validate_nvm_checksum(hw) < 0) {
 			device_printf(dev,
 			    "The EEPROM Checksum Is Not Valid\n");
-			err = EIO;
+			error = EIO;
 			goto err_late;
 		}
 	}
 
 	/* Copy the permanent MAC address out of the EEPROM */
 	if (e1000_read_mac_addr(hw) < 0) {
-		device_printf(dev, "EEPROM read err while reading MAC"
+		device_printf(dev, "EEPROM read error while reading MAC"
 		    " address\n");
-		err = EIO;
+		error = EIO;
 		goto err_late;
 	}
 
 	if (!em_is_valid_ether_addr(hw->mac.addr)) {
 		device_printf(dev, "Invalid MAC address\n");
-		err = EIO;
+		error = EIO;
 		goto err_late;
 	}
 
@@ -725,10 +726,10 @@ em_attach(device_t dev)
 	**  Do interrupt configuration
 	*/
 	if (adapter->msix > 1) /* Do MSIX */
-		err = em_allocate_msix(adapter);
+		error = em_allocate_msix(adapter);
 	else  /* MSI or Legacy */
-		err = em_allocate_legacy(adapter);
-	if (err)
+		error = em_allocate_legacy(adapter);
+	if (error)
 		goto err_late;
 
 	/*
@@ -776,7 +777,7 @@ err_pci:
 	em_free_pci_resources(adapter);
 	free(adapter->mta, M_DEVBUF);
 
-	return (err);
+	return (error);
 }
 
 /*********************************************************************
@@ -806,12 +807,6 @@ em_if_detach(if_shared_ctx_t sctx)
 	return (0);
 }
 
-/*********************************************************************
- *
- *  Shutdown entry point
- *
- **********************************************************************/
-
 /*
  * Suspend/resume device methods.
  */
@@ -837,22 +832,13 @@ em_if_resume(if_shared_ctx_t sctx)
 	return (0);
 }
 
-/*********************************************************************
- *  Ioctl entry point
- *
- *  em_ioctl is called when the user wants to configure the
- *  interface.
- *
- *  return 0 on success, positive on failure
- **********************************************************************/
-
 static int
 em_if_mtu_set(if_shared_ctx_t sctx, uint32_t mtu)
 {
 		int max_frame_size;
 		struct adapter *adapter = DOWNCAST(sctx);
 		
-		IOCTL_DEBUGOUT("ioctl rcv'd: SIOCSIFMTU (Set Interface MTU)");
+		IOCTL_DEBUGOUT("ioctl SIOCSIFMTU (Set Interface MTU)");
 
 		switch (adapter->hw.mac.type) {
 		case e1000_82571:
@@ -1132,6 +1118,7 @@ em_if_link_intr_enable(if_shared_ctx_t sctx)
  *  the interface using ifconfig.
  *
  **********************************************************************/
+
 static void
 em_if_media_status(if_shared_ctx_t sctx, struct ifmediareq *ifmr)
 {
@@ -1224,6 +1211,13 @@ em_if_media_change(if_shared_ctx_t sctx)
 	}
 	return (0);
 }
+
+/*********************************************************************
+ *
+ *  This routine maps physical segments to tx descriptors.
+ *
+ *  return 0 on success, positive on failure
+ **********************************************************************/
 
 static int
 em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
@@ -1767,9 +1761,10 @@ em_allocate_msix(struct adapter *adapter)
 	++rid;
 	err = iflib_irq_alloc_generic(UPCAST(adapter), &rxr->rx_irq, rid,
 								  IFLIB_INTR_LINK, em_msix_link, 0 /* unused */, buf);
+
 	adapter->linkvec = vector;
 	adapter->ivars |=  (8 | vector) << 16;
-	adapter->ivars |= 0x801000000;
+	adapter->ivars |= 0x800000000;
 
 	return (0);
 }
@@ -2099,8 +2094,9 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	 * support full VLAN capability
 	 */
 	if_setifheaderlen(ifp, sizeof(struct ether_vlan_header));
-	if_setcapabilitiesbit(ifp, IFCAP_VLAN_HWTAGGING |
-						  IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU, 0);
+	if_setcapabilitiesbit(ifp, IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWTSO |
+						  IFCAP_VLAN_MTU, 0);
+	if_setcapenable(ifp, if_getcapabilities(ifp));
 
 	/*
 	** Don't turn this on by default, if vlans are
@@ -2117,16 +2113,17 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 #endif
 
 	/* Enable only WOL MAGIC by default */
-	if (adapter->wol)
+	if (adapter->wol) {
 		if_setcapabilitiesbit(ifp, IFCAP_WOL, 0);
-
+		if_setcapenablebit(ifp, IFCAP_WOL_MAGIC, 0);
+	}
 	if_setcapenable(ifp, if_getcapabilities(ifp));
 	
 	/*
 	 * Specify the media types supported by this adapter and register
 	 * callbacks to update media and link information
-	 * XXX call from iflib 
 	 */
+
 	if ((adapter->hw.phy.media_type == e1000_media_type_fiber) ||
 	    (adapter->hw.phy.media_type == e1000_media_type_internal_serdes)) {
 		u_char fiber_type = IFM_1000_SX;	/* default type */
@@ -2167,14 +2164,14 @@ em_if_queues_alloc(if_shared_ctx_t sctx)
 	struct tx_ring		*txr = NULL;
 	struct rx_ring		*rxr = NULL;
 	device_t				dev = sctx->isc_dev;
-	int i, err = E1000_SUCCESS;
+	int i, error = E1000_SUCCESS;
 
 	/* Allocate the TX ring struct memory */
 	if (!(adapter->tx_rings =
 	    (struct tx_ring *) malloc(sizeof(struct tx_ring) *
 	    adapter->num_queues, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 		device_printf(dev, "Unable to allocate TX ring memory\n");
-		err = ENOMEM;
+		error = ENOMEM;
 		goto fail;
 	}
 	
@@ -2183,7 +2180,7 @@ em_if_queues_alloc(if_shared_ctx_t sctx)
 	    (struct rx_ring *) malloc(sizeof(struct rx_ring) *
 	    adapter->num_queues, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 		device_printf(dev, "Unable to allocate RX ring memory\n");
-		err = ENOMEM;
+		error = ENOMEM;
 		goto rx_fail;
 	}
 	for (i = 0, txr = adapter->tx_rings, rxr = adapter->rx_rings;
@@ -2206,7 +2203,7 @@ em_if_queues_alloc(if_shared_ctx_t sctx)
 rx_fail:
 	free(adapter->tx_rings, M_DEVBUF);
 fail:
-	return (err);
+	return (error);
 }
 
 
@@ -2220,13 +2217,13 @@ em_if_txq_setup(if_shared_ctx_t sctx, int txqid)
 {
 	struct tx_ring *txr = &DOWNCAST(sctx)->tx_rings[txqid];
 	struct adapter *adapter = DOWNCAST(sctx);
-	int err = 0;
+	int error = 0;
 
 	if (!(txr->tx_buffers =
 	    (struct em_buffer *) malloc(sizeof(struct em_buffer) *
 	    adapter->num_tx_desc, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 		device_printf(sctx->isc_dev, "Unable to allocate tx_buffer memory\n");
-		err = ENOMEM;
+		error = ENOMEM;
 		goto fail;
 	}
 
@@ -2237,7 +2234,7 @@ em_if_txq_setup(if_shared_ctx_t sctx, int txqid)
 	txr->last_hw_tucss = 0;
 	txr->last_hw_tucso = 0;
 fail:
-	return (err);
+	return (error);
 }
 
 /*********************************************************************
@@ -2474,7 +2471,6 @@ em_transmit_checksum_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off,
 	pi->ipi_new_pidx = cur;
 }
 
-
 /**********************************************************************
  *
  *  Setup work for hardware segmentation offload (TSO)
@@ -2547,7 +2543,6 @@ em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off, struct ip *ip,
 	txr->tx_tso = TRUE;
 }
 
-
 /**********************************************************************
  *
  *  Examine each tx_buffer in the used queue. If the hardware is done
@@ -2598,6 +2593,7 @@ em_msix_tx(void *arg)
 	return (processed ? FILTER_SCHEDULE_THREAD : FILTER_HANDLED);
 }
 
+
 /*********************************************************************
  *
  *  Enable receive unit.
@@ -2608,8 +2604,8 @@ static void
 em_initialize_receive_unit(struct adapter *adapter)
 {
 	struct rx_ring	*rxr = adapter->rx_rings;
-	struct e1000_hw	*hw = &adapter->hw;
 	if_t ifp = adapter->hwifp;
+	struct e1000_hw	*hw = &adapter->hw;
 	u64	bus_addr;
 	u32	rctl, rxcsum;
 
@@ -3131,6 +3127,7 @@ em_get_wakeup(struct adapter *adapter)
 	}
 }
 
+
 /*
  * Enable PCI Wake On Lan capability
  */
@@ -3561,12 +3558,12 @@ em_add_hw_stats(struct adapter *adapter)
 	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "collision_count",
 			CTLFLAG_RD, &stats->colc,
 			"Collision Count");
-	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "symbol_errs",
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "symbol_errors",
 			CTLFLAG_RD, &adapter->stats.symerrs,
-			"Symbol Errs");
-	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "sequence_errs",
+			"Symbol Errors");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "sequence_errors",
 			CTLFLAG_RD, &adapter->stats.sec,
-			"Sequence Errs");
+			"Sequence Errors");
 	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "defer_count",
 			CTLFLAG_RD, &adapter->stats.dc,
 			"Defer Count");
@@ -3590,17 +3587,17 @@ em_add_hw_stats(struct adapter *adapter)
 			"Recevied Jabber");
 	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "recv_errs",
 			CTLFLAG_RD, &adapter->stats.rxerrc,
-			"Receive Errs");
+			"Receive Errors");
 	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "crc_errs",
 			CTLFLAG_RD, &adapter->stats.crcerrs,
-			"CRC errs");
+			"CRC errors");
 	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "alignment_errs",
 			CTLFLAG_RD, &adapter->stats.algnerrc,
-			"Alignment Errs");
+			"Alignment Errors");
 	/* On 82575 these are collision counts */
 	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "coll_ext_errs",
 			CTLFLAG_RD, &adapter->stats.cexterr,
-			"Collision/Carrier extension errs");
+			"Collision/Carrier extension errors");
 	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "xon_recvd",
 			CTLFLAG_RD, &adapter->stats.xonrxc,
 			"XON Received");
@@ -3745,14 +3742,14 @@ static int
 em_sysctl_nvm_info(SYSCTL_HANDLER_ARGS)
 {
 	struct adapter *adapter = (struct adapter *)arg1;
-	int err;
+	int error;
 	int result;
 
 	result = -1;
-	err = sysctl_handle_int(oidp, &result, 0, req);
+	error = sysctl_handle_int(oidp, &result, 0, req);
 
-	if (err || !req->newptr)
-		return (err);
+	if (error || !req->newptr)
+		return (error);
 
 	/*
 	 * This value will cause a hex dump of the
@@ -3762,7 +3759,7 @@ em_sysctl_nvm_info(SYSCTL_HANDLER_ARGS)
 	if (result == 1)
 		em_print_nvm_info(adapter);
 
-	return (err);
+	return (error);
 }
 
 static void
@@ -3849,34 +3846,34 @@ em_set_sysctl_value(struct adapter *adapter, const char *name,
 static int
 em_set_flowcntl(SYSCTL_HANDLER_ARGS)
 {       
-        int		err;
+	int		error;
 	static int	input = 3; /* default is full */
-        struct adapter	*adapter = (struct adapter *) arg1;
+	struct adapter	*adapter = (struct adapter *) arg1;
                     
-        err = sysctl_handle_int(oidp, &input, 0, req);
+	error = sysctl_handle_int(oidp, &input, 0, req);
     
-        if ((err) || (req->newptr == NULL))
-                return (err);
+	if ((error) || (req->newptr == NULL))
+		return (error);
                 
 	if (input == adapter->fc) /* no change? */
-		return (err);
+		return (error);
 
-        switch (input) {
-                case e1000_fc_rx_pause:
-                case e1000_fc_tx_pause:
-                case e1000_fc_full:
-                case e1000_fc_none:
-                        adapter->hw.fc.requested_mode = input;
-			adapter->fc = input;
-                        break;
-                default:
-			/* Do nothing */
-			return (err);
-        }
+	switch (input) {
+	case e1000_fc_rx_pause:
+	case e1000_fc_tx_pause:
+	case e1000_fc_full:
+	case e1000_fc_none:
+		adapter->hw.fc.requested_mode = input;
+		adapter->fc = input;
+		break;
+	default:
+		/* Do nothing */
+		return (error);
+	}
 
-        adapter->hw.fc.current_mode = adapter->hw.fc.requested_mode;
-        e1000_force_mac_fc(&adapter->hw);
-        return (err);
+	adapter->hw.fc.current_mode = adapter->hw.fc.requested_mode;
+	e1000_force_mac_fc(&adapter->hw);
+	return (error);
 }
 
 /*
@@ -3888,12 +3885,12 @@ static int
 em_sysctl_eee(SYSCTL_HANDLER_ARGS)
 {
        struct adapter *adapter = (struct adapter *) arg1;
-       int             err, value;
+       int             error, value;
 
        value = adapter->hw.dev_spec.ich8lan.eee_disable;
-       err = sysctl_handle_int(oidp, &value, 0, req);
-       if (err || req->newptr == NULL)
-               return (err);
+       error = sysctl_handle_int(oidp, &value, 0, req);
+       if (error || req->newptr == NULL)
+               return (error);
        adapter->hw.dev_spec.ich8lan.eee_disable = (value != 0);
 	   iflib_init(UPCAST(adapter));
 
@@ -3904,14 +3901,14 @@ static int
 em_sysctl_debug_info(SYSCTL_HANDLER_ARGS)
 {
 	struct adapter *adapter;
-	int err;
+	int error;
 	int result;
 
 	result = -1;
-	err = sysctl_handle_int(oidp, &result, 0, req);
+	error = sysctl_handle_int(oidp, &result, 0, req);
 
-	if (err || !req->newptr)
-		return (err);
+	if (error || !req->newptr)
+		return (error);
 
 	if (result == 1) {
 		adapter = (struct adapter *)arg1;
@@ -3920,7 +3917,7 @@ em_sysctl_debug_info(SYSCTL_HANDLER_ARGS)
 		iflib_print_debug_info(UPCAST(adapter));
 #endif
 	}
-	return (err);
+	return (error);
 }
 
 /*
