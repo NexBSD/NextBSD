@@ -122,9 +122,6 @@ VT_SYSCTL_INT(enable_altgr, 1, "Enable AltGr key (Do not assume R.Alt as Alt)");
 VT_SYSCTL_INT(debug, 0, "vt(9) debug level");
 VT_SYSCTL_INT(deadtimer, 15, "Time to wait busy process in VT_PROCESS mode");
 VT_SYSCTL_INT(suspendswitch, 1, "Switch to VT0 before suspend");
-VT_SYSCTL_INT(spclkeys, (VT_DEBUG_KEY_ENABLED|VT_REBOOT_KEY_ENABLED|
-    VT_HALT_KEY_ENABLED|VT_POWEROFF_KEY_ENABLED), "Enabled special keys "
-    "handled by vt(4)");
 
 static struct vt_device	vt_consdev;
 static unsigned int vt_unit = 0;
@@ -430,10 +427,16 @@ vt_compute_drawable_area(struct vt_window *vw)
 	struct vt_device *vd;
 	struct vt_font *vf;
 
-	if (vw->vw_font == NULL)
-		return;
-
 	vd = vw->vw_device;
+
+	if (vw->vw_font == NULL) {
+		vw->vw_draw_area.tr_begin.tp_col = 0;
+		vw->vw_draw_area.tr_begin.tp_row = 0;
+		vw->vw_draw_area.tr_end.tp_col = vd->vd_width;
+		vw->vw_draw_area.tr_end.tp_row = vd->vd_height;
+		return;
+	}
+
 	vf = vw->vw_font;
 
 	/*
@@ -482,21 +485,17 @@ vt_machine_kbdevent(int c)
 
 	switch (c) {
 	case SPCLKEY | DBG:
-		if (vt_spclkeys & VT_DEBUG_KEY_ENABLED)
-			kdb_enter(KDB_WHY_BREAK, "manual escape to debugger");
+		kdb_enter(KDB_WHY_BREAK, "manual escape to debugger");
 		return (1);
 	case SPCLKEY | RBT:
-		if (vt_spclkeys & VT_REBOOT_KEY_ENABLED)
-			/* XXX: Make this configurable! */
-			shutdown_nice(0);
+		/* XXX: Make this configurable! */
+		shutdown_nice(0);
 		return (1);
 	case SPCLKEY | HALT:
-		if (vt_spclkeys & VT_HALT_KEY_ENABLED)
-			shutdown_nice(RB_HALT);
+		shutdown_nice(RB_HALT);
 		return (1);
 	case SPCLKEY | PDWN:
-		if (vt_spclkeys & VT_POWEROFF_KEY_ENABLED)
-			shutdown_nice(RB_HALT|RB_POWEROFF);
+		shutdown_nice(RB_HALT|RB_POWEROFF);
 		return (1);
 	};
 
@@ -1300,30 +1299,40 @@ vtterm_opened(struct terminal *tm, int opened)
 }
 
 static int
-vt_set_border(struct vt_window *vw, struct vt_font *vf, term_color_t c)
+vt_set_border(struct vt_window *vw, term_color_t c)
 {
 	struct vt_device *vd = vw->vw_device;
-	int x, y, off_x, off_y;
 
 	if (vd->vd_driver->vd_drawrect == NULL)
 		return (ENOTSUP);
 
-	x = vd->vd_width - 1;
-	y = vd->vd_height - 1;
-	off_x = vw->vw_draw_area.tr_begin.tp_col;
-	off_y = vw->vw_draw_area.tr_begin.tp_row;
-
 	/* Top bar. */
-	if (off_y > 0)
-		vd->vd_driver->vd_drawrect(vd, 0, 0, x, off_y - 1, 1, c);
-	/* Left bar. */
-	if (off_x > 0)
-		vd->vd_driver->vd_drawrect(vd, 0, off_y, off_x - 1, y - off_y,
+	if (vw->vw_draw_area.tr_begin.tp_row > 0)
+		vd->vd_driver->vd_drawrect(vd,
+		    0, 0,
+		    vd->vd_width - 1, vw->vw_draw_area.tr_begin.tp_row - 1,
 		    1, c);
-	/* Right bar.  May be 1 pixel wider than necessary due to rounding. */
-	vd->vd_driver->vd_drawrect(vd, x - off_x, off_y, x, y - off_y, 1, c);
-	/* Bottom bar.  May be 1 mixel taller than necessary due to rounding. */
-	vd->vd_driver->vd_drawrect(vd, 0, y - off_y, x, y, 1, c);
+
+	/* Left bar. */
+	if (vw->vw_draw_area.tr_begin.tp_col > 0)
+		vd->vd_driver->vd_drawrect(vd,
+		    0, 0,
+		    vw->vw_draw_area.tr_begin.tp_col - 1, vd->vd_height - 1,
+		    1, c);
+
+	/* Right bar. */
+	if (vw->vw_draw_area.tr_end.tp_col < vd->vd_width)
+		vd->vd_driver->vd_drawrect(vd,
+		    vw->vw_draw_area.tr_end.tp_col - 1, 0,
+		    vd->vd_width - 1, vd->vd_height - 1,
+		    1, c);
+
+	/* Bottom bar. */
+	if (vw->vw_draw_area.tr_end.tp_row < vd->vd_height)
+		vd->vd_driver->vd_drawrect(vd,
+		    0, vw->vw_draw_area.tr_end.tp_row - 1,
+		    vd->vd_width - 1, vd->vd_height - 1,
+		    1, c);
 
 	return (0);
 }
@@ -1355,11 +1364,6 @@ vt_change_font(struct vt_window *vw, struct vt_font *vf)
 		VT_UNLOCK(vd);
 		return (EBUSY);
 	}
-	if (vd->vd_flags & VDF_TEXTMODE) {
-		/* Our device doesn't need fonts. */
-		VT_UNLOCK(vd);
-		return (ENOTTY);
-	}
 	vw->vw_flags |= VWF_BUSY;
 	VT_UNLOCK(vd);
 
@@ -1374,7 +1378,7 @@ vt_change_font(struct vt_window *vw, struct vt_font *vf)
 
 	/* Actually apply the font to the current window. */
 	VT_LOCK(vd);
-	if (vw->vw_font != vf) {
+	if (vw->vw_font != vf && vw->vw_font != NULL && vf != NULL) {
 		/*
 		 * In case vt_change_font called to update size we don't need
 		 * to update font link.
@@ -1397,7 +1401,7 @@ vt_change_font(struct vt_window *vw, struct vt_font *vf)
 
 	/* Force a full redraw the next timer tick. */
 	if (vd->vd_curwindow == vw) {
-		vt_set_border(vw, vf, TC_BLACK);
+		vt_set_border(vw, TC_BLACK);
 		vd->vd_flags |= VDF_INVALID;
 		vt_resume_flush_timer(vw->vw_device, 0);
 	}
