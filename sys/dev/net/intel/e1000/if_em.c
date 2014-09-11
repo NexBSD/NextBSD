@@ -1032,7 +1032,21 @@ em_irq_fast(void *arg)
 		return FILTER_STRAY;
 
 	em_if_intr_disable(UPCAST(adapter));
-	iflib_legacy_intr_deferred(UPCAST(adapter));
+
+	/*
+	 * Return tx credits to iflib
+	 */
+	em_msix_tx(adapter->tx_rings);
+
+	/*
+	 * Process newly arrived packets
+	 */
+	iflib_rx_intr_deferred(UPCAST(adapter), 0);
+
+	/*
+	 * Free completed packets and send enqueued ones
+	 */
+	iflib_tx_intr_deferred(UPCAST(adapter), 0);
 
 	/* Link status change */
 	if (reg_icr & (E1000_ICR_RXSEQ | E1000_ICR_LSC)) {

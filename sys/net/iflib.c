@@ -112,6 +112,7 @@ struct iflib_ctx {
 	iflib_rxq_t ifc_rxqs;
 	uint32_t ifc_txq_size;
 	uint32_t ifc_rxq_size;
+	uint32_t ifc_if_flags;
 	uint32_t ifc_flags;
 	struct callout ifc_timer;
 	int			ifc_in_detach;
@@ -123,7 +124,6 @@ struct iflib_ctx {
 	struct cdev *ifc_led_dev;
 
 	struct if_irq ifc_legacy_irq;
-	struct grouptask ifc_legacy_task;
 	struct grouptask ifc_link_task;
 	struct iflib_filter_info ifc_filter_info;
 };
@@ -159,6 +159,8 @@ typedef struct iflib_sw_desc {
 #define IFLIB_QUEUE_IDLE			0
 #define IFLIB_QUEUE_HUNG		1
 #define IFLIB_QUEUE_WORKING	2
+
+#define IFLIB_LEGACY 1
 
 struct iflib_txq {
 	iflib_ctx_t	ift_ctx;
@@ -204,7 +206,7 @@ struct iflib_txq {
 typedef struct iflib_global_context {
 	struct taskqgroup	*igc_rx_tqg;		/* per-cpu taskqueues for rx */
 	struct taskqgroup	*igc_tx_tqg;		/* per-cpu taskqueues for tx */
-	struct taskqueue	 *igc_config_tq;	/* taskqueue for config operations */
+	struct taskqgroup	*igc_config_tqg;	/* taskqueue for config operations */
 } iflib_global_context_t;
 
 struct iflib_global_context global_ctx, *gctx;
@@ -274,6 +276,7 @@ MODULE_VERSION(iflib, 1);
 
 TASKQGROUP_DEFINE(if_rx_tqg, mp_ncpus, 1);
 TASKQGROUP_DEFINE(if_tx_tqg, mp_ncpus, 1);
+TASKQGROUP_DEFINE(if_config_tqg, 1, 1);
 
 #if defined(__i386__) || defined(__amd64__)
 static __inline void
@@ -1279,7 +1282,7 @@ iflib_tx_timeout(void *arg)
 	/* XXX */
 }
 
-static void
+static int
 iflib_txq_start(iflib_txq_t txq)
 {
 	iflib_ctx_t ctx = txq->ift_ctx;
@@ -1329,6 +1332,11 @@ iflib_txq_start(iflib_txq_t txq)
 	if (!iflib_txq_softq_empty(ifp, txq) && LINK_ACTIVE(ctx))
 		callout_reset_on(&txq->ift_timer, 1, iflib_tx_timeout, txq,
 						 txq->ift_timer.c_cpu);
+	/*
+	 * XXX we should allot ourselves a budget and return non-zero
+	 * if it is exceeded
+	 */
+	return (0);
 }
 
 static int
@@ -1362,48 +1370,23 @@ iflib_txq_transmit(if_t ifp, iflib_txq_t txq, struct mbuf *m)
 }
 
 static void
-_task_fn_legacy_intr(void *context, int pending)
-{
-	if_shared_ctx_t sctx = context;
-	iflib_ctx_t ctx = sctx->isc_ctx;
-	if_t ifp = sctx->isc_ifp;
-	iflib_txq_t	txq = ctx->ifc_txqs;
-	iflib_rxq_t	rxq = ctx->ifc_rxqs;
-	bool more;
-
-	/* legacy do it all crap function */
-	if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING)  == 0)
-		goto enable;
-
-	more = iflib_rxeof(rxq, sctx->isc_rx_process_limit);
-
-	if(TXQ_TRYLOCK(txq)) {
-		iflib_txq_start(txq);
-		TXQ_UNLOCK(txq);
-	}
-
-	if (more) {
-		iflib_legacy_intr_deferred(sctx);
-		return;
-	}
-
-enable:
-	IFDI_INTR_ENABLE(sctx);
-}
-
-static void
 _task_fn_tx(void *context, int pending)
 {
 	iflib_txq_t txq = context;
 	if_shared_ctx_t sctx = txq->ift_ctx->ifc_sctx;
+	int more = 0;
 
-	TXQ_LOCK(txq);
-	iflib_txq_start(txq);
-	IFDI_TX_INTR_ENABLE(sctx, txq->ift_id);
-	TXQ_UNLOCK(txq);
+	if (!(if_getdrvflags(sctx->isc_ifp) & IFF_DRV_RUNNING))
+		return;
+
+	if (TXQ_TRYLOCK(txq)) {
+		more = iflib_txq_start(txq);
+		TXQ_UNLOCK(txq);
+	}
+	if (more)
+		GROUPTASK_ENQUEUE(&txq->ift_task);
 }
 
-#ifdef notyet
 static void
 _task_fn_rx(void *context, int pending)
 {
@@ -1416,14 +1399,17 @@ _task_fn_rx(void *context, int pending)
 		return;
 
 	if (RXQ_TRYLOCK(rxq)) {
-		if ((more = iflib_rxeof(rxq, 8 /* XXX */)) == 0)
-			IFDI_RX_INTR_ENABLE(sctx, rxq->ifr_id);
+		if ((more = iflib_rxeof(rxq, 8 /* XXX */)) == 0) {
+			if (ctx->ifc_flags & IFLIB_LEGACY)
+				IFDI_INTR_ENABLE(sctx);
+			else
+				IFDI_RX_INTR_ENABLE(sctx, rxq->ifr_id);
+		}
 		RXQ_UNLOCK(rxq);
 	}
 	if (more)
 		GROUPTASK_ENQUEUE(&rxq->ifr_task);
 }
-#endif
 
 static void
 _task_fn_link(void *context, int pending)
@@ -1609,7 +1595,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		CTX_LOCK(ctx);
 		if (if_getflags(ifp) & IFF_UP) {
 			if (if_getdrvflags(ifp) & IFF_DRV_RUNNING) {
-				if ((if_getflags(ifp) ^ ctx->ifc_flags) &
+				if ((if_getflags(ifp) ^ ctx->ifc_if_flags) &
 				    (IFF_PROMISC | IFF_ALLMULTI)) {
 					IFDI_PROMISC_CONFIG(sctx, if_getflags(ifp));
 				}
@@ -1618,7 +1604,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		} else
 			if (if_getdrvflags(ifp) & IFF_DRV_RUNNING)
 				IFDI_STOP(sctx);
-		ctx->ifc_flags = if_getflags(ifp);
+		ctx->ifc_if_flags = if_getflags(ifp);
 		CTX_UNLOCK(ctx);
 		break;
 
@@ -1863,14 +1849,7 @@ iflib_module_init(void)
 	gctx = &global_ctx;
 	gctx->igc_tx_tqg = qgroup_if_tx_tqg;
 	gctx->igc_rx_tqg = qgroup_if_rx_tqg;
-
-	/*
-	 * XXX handle memory allocation failure
-	 */
-	gctx->igc_config_tq =
-		taskqueue_create("if config tq", M_WAITOK, taskqueue_thread_enqueue,
-						 &gctx->igc_config_tq);
-	taskqueue_start_threads(&gctx->igc_config_tq, 1, PSOCK, "if config tq");
+	gctx->igc_config_tqg = qgroup_if_config_tqg;
 
 	return (0);
 }
@@ -2169,6 +2148,7 @@ iflib_irq_alloc_generic(if_shared_ctx_t sctx, if_irq_t irq, int rid,
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	struct grouptask *gtask;
+	struct taskqgroup *tqg;
 	iflib_filter_info_t info;
 	void *q;
 	int err;
@@ -2178,16 +2158,19 @@ iflib_irq_alloc_generic(if_shared_ctx_t sctx, if_irq_t irq, int rid,
 		q = &ctx->ifc_txqs[qid];
 		info = &ctx->ifc_txqs[qid].ift_filter_info;
 		gtask = &ctx->ifc_txqs[qid].ift_task;
+		tqg = gctx->igc_tx_tqg;
 		break;
 	case IFLIB_INTR_RX:
 		q = &ctx->ifc_rxqs[qid];
 		info = &ctx->ifc_rxqs[qid].ifr_filter_info;
 		gtask = &ctx->ifc_rxqs[qid].ifr_task;
+		tqg = gctx->igc_rx_tqg;
 		break;
 	case IFLIB_INTR_LINK:
 		q = ctx;
 		info = &ctx->ifc_filter_info;
 		gtask = &ctx->ifc_link_task;
+		tqg = gctx->igc_config_tqg;
 		break;
 	default:
 		panic("unknown net intr type");
@@ -2199,7 +2182,7 @@ iflib_irq_alloc_generic(if_shared_ctx_t sctx, if_irq_t irq, int rid,
 	err = _iflib_irq_alloc(ctx, irq, rid, iflib_fast_intr, NULL, info,  name);
 	if (err != 0)
 		return (err);
-	taskqgroup_attach(gctx->igc_tx_tqg, gtask, q, irq->ii_rid, name);
+	taskqgroup_attach(tqg, gtask, q, irq->ii_rid, name);
 	return (0);
 }
 
@@ -2208,9 +2191,11 @@ iflib_legacy_setup(if_shared_ctx_t sctx, driver_filter_t filter, int *rid)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	iflib_txq_t txq = ctx->ifc_txqs;
+	iflib_rxq_t rxq = ctx->ifc_rxqs;
 	if_irq_t irq = &ctx->ifc_legacy_irq;
 	int err;
 
+	ctx->ifc_flags |= IFLIB_LEGACY;
 	/* We allocate a single interrupt resource */
 	if ((err = iflib_irq_alloc(sctx, irq, *rid, filter, NULL, sctx, NULL)) != 0)
 		return (err);
@@ -2219,11 +2204,14 @@ iflib_legacy_setup(if_shared_ctx_t sctx, driver_filter_t filter, int *rid)
 	 * Allocate a fast interrupt and the associated
 	 * deferred processing contexts.
 	 *
-	 * XXX call taskqgroup_attach
 	 */
-	GROUPTASK_INIT(&ctx->ifc_legacy_task, 0, _task_fn_legacy_intr, ctx);
 	GROUPTASK_INIT(&txq->ift_task, 0, _task_fn_tx, txq);
+	taskqgroup_attach(gctx->igc_tx_tqg, &txq->ift_task, txq, irq->ii_rid, "tx");
+	GROUPTASK_INIT(&rxq->ifr_task, 0, _task_fn_rx, rxq);
+	taskqgroup_attach(gctx->igc_rx_tqg, &rxq->ifr_task, rxq, irq->ii_rid, "rx");
 	GROUPTASK_INIT(&ctx->ifc_link_task, 0, _task_fn_link, ctx);
+	taskqgroup_attach(gctx->igc_tx_tqg, &ctx->ifc_link_task, ctx, irq->ii_rid, "link");
+
 	return (0);
 }
 
@@ -2245,12 +2233,17 @@ iflib_init(if_shared_ctx_t sctx)
 }
 
 void
-iflib_legacy_intr_deferred(if_shared_ctx_t sctx)
+iflib_tx_intr_deferred(if_shared_ctx_t sctx, int txqid)
 {
-	/*
-	 * XXX how does legacy fit in
-	 */
-	GROUPTASK_ENQUEUE(&sctx->isc_ctx->ifc_legacy_task);
+
+	GROUPTASK_ENQUEUE(&sctx->isc_ctx->ifc_txqs[txqid].ift_task);
+}
+
+void
+iflib_rx_intr_deferred(if_shared_ctx_t sctx, int rxqid)
+{
+
+	GROUPTASK_ENQUEUE(&sctx->isc_ctx->ifc_rxqs[rxqid].ifr_task);
 }
 
 void
@@ -2287,8 +2280,10 @@ iflib_tx_cidx_get(if_shared_ctx_t sctx, int txqid)
 void
 iflib_tx_credits_update(if_shared_ctx_t sctx, int txqid, int credits)
 {
-
-	sctx->isc_ctx->ifc_txqs[txqid].ift_processed += credits;
+	iflib_ctx_t ctx = sctx->isc_ctx;
+	ctx->ifc_txqs[txqid].ift_processed += credits;
+	if ((ctx->ifc_flags & IFLIB_LEGACY) == 0)
+		IFDI_TX_INTR_ENABLE(sctx, txqid);
 }
 
 void
