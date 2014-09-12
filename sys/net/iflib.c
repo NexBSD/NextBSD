@@ -883,6 +883,7 @@ iflib_init_locked(iflib_ctx_t ctx)
 	callout_stop(&ctx->ifc_timer);
 	IFDI_INIT(sctx);
 	if_setdrvflagbits(sctx->isc_ifp, IFF_DRV_RUNNING, 0);
+	IFDI_INTR_ENABLE(sctx);
 	callout_reset(&ctx->ifc_timer, hz, iflib_timer, ctx);
 }
 
@@ -905,6 +906,7 @@ iflib_media_status(if_t ifp, struct ifmediareq *ifmr)
 	iflib_ctx_t ctx = if_getsoftc(ifp);
 
 	CTX_LOCK(ctx);
+	IFDI_UPDATE_LINK_STATUS(ctx->ifc_sctx);
 	IFDI_MEDIA_STATUS(ctx->ifc_sctx, ifmr);
 	CTX_UNLOCK(ctx);
 }
@@ -1627,6 +1629,27 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	case SIOCGIFMEDIA:
 		err = ifmedia_ioctl(ifp, ifr, &sctx->isc_media, command);
 		break;
+	case SIOCGI2C:
+	{
+		struct ifi2creq i2c;
+		int i;
+		IOCTL_DEBUGOUT("ioctl: SIOCGI2C (Get I2C Data)");
+		err = copyin(ifr->ifr_data, &i2c, sizeof(i2c));
+		if (err != 0)
+			break;
+		if (i2c.dev_addr != 0xA0 && i2c.dev_addr != 0xA2) {
+			err = EINVAL;
+			break;
+		}
+		if (i2c.len > sizeof(i2c.data)) {
+			err = EINVAL;
+			break;
+		}
+
+		if ((err = IFDI_I2C_REQ(sctx, &i2c)) == 0)
+			err = copyout(&i2c, ifr->ifr_data, sizeof(i2c));
+		break;
+	}
 	case SIOCSIFCAP:
 	    {
 		int mask, reinit;

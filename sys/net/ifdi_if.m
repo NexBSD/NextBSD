@@ -42,8 +42,20 @@ INTERFACE ifdi;
 CODE {
 
 	static void
-	null_op(if_shared_ctx_t _ctx __unused)
+	null_void_op(if_shared_ctx_t _ctx __unused)
 	{
+	}
+
+	static void
+	null_int_op(if_shared_ctx_t _ctx __unused)
+	{
+		return (0);
+	}
+
+	static void
+	null_queue_intr_enable(if_shared_ctx_t _ctx __unused, int _qid __unused)
+	{
+		return (0);
 	}
 
 	static void
@@ -63,6 +75,12 @@ CODE {
 	}
 
 	static int
+	null_i2c_req(if_shared_ctx_t _sctx __unused, struct ifi2creq *_i2c __unused)
+	{
+		return (ENOTSUPP);
+	}
+
+	static int
 	null_sysctl_int_delay(if_shared_ctx_t _sctx __unused, if_int_delay_info_t _iidi __unused)
 	{
 		return (0);
@@ -79,11 +97,11 @@ METHOD int detach {
 
 METHOD int suspend {
 	if_shared_ctx_t _ctx;
-};
+} DEFAULT null_int_op;
 
 METHOD int resume {
 	if_shared_ctx_t _ctx;
-};
+} DEFAULT null_int_op;
 
 #
 # downcall to driver to allocate its
@@ -121,16 +139,16 @@ METHOD void intr_disable {
 METHOD void tx_intr_enable {
 	if_shared_ctx_t _ctx;
 	int _txqid;
-};
+} DEFAULT null_queue_intr_enable;
 
 METHOD void rx_intr_enable {
 	if_shared_ctx_t _ctx;
 	int _rxqid;
-};
+} DEFAULT null_queue_intr_enable;
 
 METHOD void link_intr_enable {
 	if_shared_ctx_t _ctx;
-} DEFAULT null_op;
+} DEFAULT null_void_op;
 
 #
 # interface configuration
@@ -147,14 +165,9 @@ METHOD int mtu_set {
 
 METHOD void media_set{
 	if_shared_ctx_t _ctx;
-};
+} DEFAULT null_void_op;
 
 METHOD void promisc_config {
-	if_shared_ctx_t _ctx;
-	int _flags;
-};
-
-METHOD void promisc_disable {
 	if_shared_ctx_t _ctx;
 	int _flags;
 };
@@ -181,6 +194,11 @@ METHOD int media_change {
 # optional methods
 #
 
+METHOD int i2c_req {
+	if_shared_ctx_t _ctx;
+	struct ifi2creq *_req;
+} DEFAULT null_i2c_req;
+
 METHOD int txq_setup {
 	if_shared_ctx_t _ctx;
 	int _txqid;
@@ -193,11 +211,11 @@ METHOD int rxq_setup {
 
 METHOD void timer {
 	if_shared_ctx_t _ctx;
-} DEFAULT null_op;
+} DEFAULT null_void_op;
 
 METHOD void watchdog_reset {
 	if_shared_ctx_t _ctx;
-} DEFAULT null_op;
+} DEFAULT null_void_op;
 
 METHOD void led_func {
 	if_shared_ctx_t _ctx;
