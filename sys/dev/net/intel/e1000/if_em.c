@@ -237,7 +237,7 @@ static int		em_msix_tx(void *);
 
 
 static void	em_if_promisc_config(if_shared_ctx_t, int);
-static void	em_if_promisc_disable(if_shared_ctx_t, int);
+static void	em_promisc_disable(if_shared_ctx_t, int);
 static void	em_if_vlan_register(if_shared_ctx_t, u16);
 static void	em_if_vlan_unregister(if_shared_ctx_t, u16);
 static int	em_if_txq_setup(if_shared_ctx_t, int);
@@ -342,7 +342,6 @@ static device_method_t em_if_methods[] = {
 	DEVMETHOD(ifdi_led_func, em_if_led_func),
 	DEVMETHOD(ifdi_watchdog_reset, em_if_watchdog_reset),
 	DEVMETHOD(ifdi_promisc_config, em_if_promisc_config),
-	DEVMETHOD(ifdi_promisc_disable, em_if_promisc_disable),
 	DEVMETHOD(ifdi_vlan_register, em_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, em_if_vlan_unregister),
 	DEVMETHOD(ifdi_txq_setup, em_if_txq_setup),
@@ -995,8 +994,6 @@ em_if_init(if_shared_ctx_t sctx)
 		E1000_WRITE_REG(&adapter->hw, E1000_IVAR, adapter->ivars);
 	}
 
-	em_if_intr_enable(sctx);
-
 	/* AMT based hardware can now take control from firmware */
 	if (adapter->has_manage && adapter->has_amt)
 		em_get_hw_control(adapter);
@@ -1411,6 +1408,7 @@ em_if_promisc_config(if_shared_ctx_t sctx, int flags)
 
 	reg_rctl = E1000_READ_REG(&adapter->hw, E1000_RCTL);
 
+	em_promisc_disable(sctx, flags);
 	if (flags & IFF_PROMISC) {
 		reg_rctl |= (E1000_RCTL_UPE | E1000_RCTL_MPE);
 		/* Turn this on if you want to see bad packets */
@@ -1425,15 +1423,14 @@ em_if_promisc_config(if_shared_ctx_t sctx, int flags)
 }
 
 static void
-em_if_promisc_disable(if_shared_ctx_t sctx, int flags)
+em_promisc_disable(if_shared_ctx_t sctx, int flags)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	u32		reg_rctl;
-	int		mcnt = 0;
+	int		mcnt = MAX_NUM_MULTICAST_ADDRESSES;
 
 	reg_rctl = E1000_READ_REG(&adapter->hw, E1000_RCTL);
 	reg_rctl &=  (~E1000_RCTL_UPE);
-	mcnt = MAX_NUM_MULTICAST_ADDRESSES;
 
 	if ((flags & IFF_ALLMULTI) == 0)
 		mcnt = if_multiaddr_count(sctx->isc_ifp, MAX_NUM_MULTICAST_ADDRESSES);
@@ -1619,7 +1616,7 @@ em_if_update_link_status(if_shared_ctx_t sctx)
 static void
 em_if_stop(if_shared_ctx_t sctx)
 {
-	struct adapter	*adapter = DOWNCAST(sctx);;
+	struct adapter	*adapter = DOWNCAST(sctx);
 
 	INIT_DEBUGOUT("em_if_stop: begin");
 
