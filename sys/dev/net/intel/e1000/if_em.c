@@ -240,15 +240,18 @@ static void	em_if_promisc_config(if_shared_ctx_t, int);
 static void	em_promisc_disable(if_shared_ctx_t, int);
 static void	em_if_vlan_register(if_shared_ctx_t, u16);
 static void	em_if_vlan_unregister(if_shared_ctx_t, u16);
-static int	em_if_txq_setup(if_shared_ctx_t, int);
+static int	em_if_txq_setup(if_shared_ctx_t, uint32_t);
+static void em_if_tx_structures_free(if_shared_ctx_t);
+static void em_if_rx_structures_free(if_shared_ctx_t);
+
 static int		em_if_sysctl_int_delay(if_shared_ctx_t, if_int_delay_info_t);
 
-static int	em_isc_txd_encap(if_shared_ctx_t, int, if_pkt_info_t);
-static void em_isc_txd_flush(if_shared_ctx_t, int, int);
-static int  em_isc_rxd_pkt_get(if_shared_ctx_t, int, int, if_rxd_info_t);
-static void em_isc_rxd_refill(if_shared_ctx_t, int, int, uint64_t);
-static void em_isc_rxd_flush(if_shared_ctx_t, int, int);
-static int em_isc_rxd_is_new(if_shared_ctx_t, int, int);
+static int	em_isc_txd_encap(if_shared_ctx_t, uint32_t, if_pkt_info_t);
+static void em_isc_txd_flush(if_shared_ctx_t, uint32_t, uint32_t);
+static int  em_isc_rxd_pkt_get(if_shared_ctx_t, uint32_t, uint32_t, if_rxd_info_t);
+static void em_isc_rxd_refill(if_shared_ctx_t, uint32_t, uint32_t, uint64_t);
+static void em_isc_rxd_flush(if_shared_ctx_t, uint32_t, uint32_t);
+static int em_isc_rxd_is_new(if_shared_ctx_t, uint32_t, uint32_t);
 
 
 
@@ -345,6 +348,8 @@ static device_method_t em_if_methods[] = {
 	DEVMETHOD(ifdi_vlan_register, em_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, em_if_vlan_unregister),
 	DEVMETHOD(ifdi_txq_setup, em_if_txq_setup),
+	DEVMETHOD(ifdi_tx_structures_free, em_if_tx_structures_free),
+	DEVMETHOD(ifdi_rx_structures_free, em_if_rx_structures_free),
 	DEVMETHOD(ifdi_sysctl_int_delay, em_if_sysctl_int_delay),
 	DEVMETHOD_END
 };
@@ -766,8 +771,7 @@ em_attach(device_t dev)
 	return (0);
 
 err_late:
-	iflib_tx_structures_free(sctx);
-	iflib_rx_structures_free(sctx);
+	iflib_txrx_structures_free(sctx);
 	em_release_hw_control(adapter);
 	if (adapter->hwifp != (void *)NULL)
 		if_free(adapter->hwifp);
@@ -875,7 +879,6 @@ em_if_media_set(if_shared_ctx_t sctx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 
-
 	/* Check SOL/IDER usage */
 	if (e1000_check_reset_block(&adapter->hw)) {
 		device_printf(sctx->isc_dev, "Media change is"
@@ -940,30 +943,18 @@ em_if_init(if_shared_ctx_t sctx)
 	/* Configure for OS presence */
 	em_init_manageability(adapter);
 
-	/* Prepare transmit descriptors and buffers */
-	iflib_tx_structures_setup(sctx);
+	/* Prepare transmit/receive descriptors and buffers */
+	if (iflib_txrx_structures_setup(sctx)) {
+		device_printf(dev, "Could not setup receive structures\n");
+		em_if_stop(sctx);
+		return;
+	}
+
 	em_initialize_transmit_unit(adapter);
 
 	/* Setup Multicast table */
 	em_if_multi_set(sctx);
 
-	/*
-	** Figure out the desired mbuf
-	** pool for doing jumbos
-	*/
-	if (adapter->hw.mac.max_frame_size <= 2048)
-		adapter->rx_mbuf_sz = MCLBYTES;
-	else if (adapter->hw.mac.max_frame_size <= 4096)
-		adapter->rx_mbuf_sz = MJUMPAGESIZE;
-	else
-		adapter->rx_mbuf_sz = MJUM9BYTES;
-
-	/* Prepare receive descriptors and buffers */
-	if (iflib_rx_structures_setup(sctx)) {
-		device_printf(dev, "Could not setup receive structures\n");
-		em_if_stop(sctx);
-		return;
-	}
 	em_initialize_receive_unit(adapter);
 
 	/* Use real VLAN Filter support? */
@@ -1231,7 +1222,7 @@ em_if_media_change(if_shared_ctx_t sctx)
  **********************************************************************/
 
 static int
-em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
+em_isc_txd_encap(if_shared_ctx_t sctx, uint32_t txqid, if_pkt_info_t pi)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct tx_ring *txr = &adapter->tx_rings[txqid];
@@ -1389,7 +1380,7 @@ em_isc_txd_encap(if_shared_ctx_t sctx, int txqid, if_pkt_info_t pi)
 }
 
 static void
-em_isc_txd_flush(if_shared_ctx_t sctx, int txqid, int pidx)
+em_isc_txd_flush(if_shared_ctx_t sctx, uint32_t txqid, uint32_t pidx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	/*
@@ -2217,6 +2208,28 @@ fail:
 	return (error);
 }
 
+static void
+em_if_tx_structures_free(if_shared_ctx_t sctx)
+{
+	struct adapter *adapter = DOWNCAST(sctx);
+	struct tx_ring *txr = adapter->tx_rings;
+	int i;
+
+	for (i = 0; i < sctx->isc_nqsets; i++, txr++)
+		if (txr->tx_buffers != NULL)
+			free(txr->tx_buffers, M_DEVBUF);
+	free(adapter->tx_rings, M_DEVBUF);
+	adapter->tx_rings = NULL;
+}
+
+static void
+em_if_rx_structures_free(if_shared_ctx_t sctx)
+{
+	struct adapter *adapter = DOWNCAST(sctx);
+
+	free(adapter->rx_rings, M_DEVBUF);
+}
+
 
 /*********************************************************************
  *
@@ -2224,7 +2237,7 @@ fail:
  *
  **********************************************************************/
 static int
-em_if_txq_setup(if_shared_ctx_t sctx, int txqid)
+em_if_txq_setup(if_shared_ctx_t sctx, uint32_t txqid)
 {
 	struct tx_ring *txr = &DOWNCAST(sctx)->tx_rings[txqid];
 	struct adapter *adapter = DOWNCAST(sctx);
@@ -2740,7 +2753,7 @@ em_initialize_receive_unit(struct adapter *adapter)
 }
 
 static void
-em_isc_rxd_refill(if_shared_ctx_t sctx, int rxqid, int pidx, uint64_t paddr)
+em_isc_rxd_refill(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx, uint64_t paddr)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
@@ -2749,7 +2762,7 @@ em_isc_rxd_refill(if_shared_ctx_t sctx, int rxqid, int pidx, uint64_t paddr)
 }
 
 static void
-em_isc_rxd_flush(if_shared_ctx_t sctx, int rxqid, int pidx)
+em_isc_rxd_flush(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 
@@ -2757,7 +2770,7 @@ em_isc_rxd_flush(if_shared_ctx_t sctx, int rxqid, int pidx)
 }
 
 static int
-em_isc_rxd_is_new(if_shared_ctx_t sctx, int rxqid, int idx)
+em_isc_rxd_is_new(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t idx)
 {
 	struct rx_ring *rxr = &DOWNCAST(sctx)->rx_rings[rxqid];
 	struct e1000_rx_desc	*cur;
@@ -2778,7 +2791,7 @@ em_isc_rxd_is_new(if_shared_ctx_t sctx, int rxqid, int idx)
  *  For polling we also now return the number of cleaned packets
  *********************************************************************/
 static int
-em_isc_rxd_pkt_get(if_shared_ctx_t sctx, int rxqid, int i, if_rxd_info_t ri)
+em_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_info_t ri)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
