@@ -53,7 +53,7 @@ CODE {
 	}
 
 	static void
-	null_queue_intr_enable(if_shared_ctx_t _ctx __unused, int _qid __unused)
+	null_queue_intr_enable(if_shared_ctx_t _ctx __unused, uint32_t _qid __unused)
 	{
 	}
 
@@ -145,12 +145,12 @@ METHOD void intr_disable {
 
 METHOD void tx_intr_enable {
 	if_shared_ctx_t _ctx;
-	int _txqid;
+	uint32_t _txqid;
 } DEFAULT null_queue_intr_enable;
 
 METHOD void rx_intr_enable {
 	if_shared_ctx_t _ctx;
-	int _rxqid;
+	uint32_t _rxqid;
 } DEFAULT null_queue_intr_enable;
 
 METHOD void link_intr_enable {
@@ -174,7 +174,7 @@ METHOD void media_set{
 	if_shared_ctx_t _ctx;
 } DEFAULT null_void_op;
 
-METHOD void promisc_config {
+METHOD void promisc_set {
 	if_shared_ctx_t _ctx;
 	int _flags;
 };
