@@ -47,6 +47,9 @@
 #include <net/if_media.h>
 #include <net/ethernet.h>
 
+#include <netinet/in.h>
+#include <netinet/tcp_lro.h>
+
 #include <machine/bus.h>
 
 #include <vm/vm.h>
@@ -227,8 +230,10 @@ struct iflib_rxq {
 	int			ifr_id;
 	int			ifr_cltype;
 	uma_zone_t	ifr_zone;
+	int ifr_lro_enabled;
+	struct lro_ctrl			ifr_lc;
 	struct iflib_dma_info	ifr_dma_info;
-	struct mtx					ifr_mtx;
+	struct mtx				ifr_mtx;
 	char                    ifr_mtx_name[16];
 	struct grouptask        ifr_task;
 	iflib_sd_t              ifr_sds;
@@ -277,6 +282,11 @@ MODULE_VERSION(iflib, 1);
 TASKQGROUP_DEFINE(if_rx_tqg, mp_ncpus, 1);
 TASKQGROUP_DEFINE(if_tx_tqg, mp_ncpus, 1);
 TASKQGROUP_DEFINE(if_config_tqg, 1, 1);
+
+static void iflib_tx_structures_free(if_shared_ctx_t sctx);
+static void iflib_rx_structures_free(if_shared_ctx_t sctx);
+
+
 
 #if defined(__i386__) || defined(__amd64__)
 static __inline void
@@ -749,6 +759,8 @@ iflib_rx_bufs_free(iflib_rxq_t rxq)
 {
 	uint32_t cidx = rxq->ifr_cidx;
 
+	tcp_lro_free(&rxq->ifr_lc);
+
 	while (rxq->ifr_credits--) {
 		iflib_sd_t d = &rxq->ifr_sds[cidx];
 
@@ -790,6 +802,17 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 	slot = netmap_reset(na, NR_RX, rxq->ifr_id, 0);
 #endif
 
+	if (sctx->isc_max_frame_size <= 2048)
+		rxq->ifr_buf_size = MCLBYTES;
+	else if (sctx->isc_max_frame_size <= 4096)
+		rxq->ifr_buf_size = MJUMPAGESIZE;
+	else if (sctx->isc_max_frame_size <= 9216)
+		rxq->ifr_buf_size = MJUM9BYTES;
+	else
+		rxq->ifr_buf_size = MJUM16BYTES;
+	rxq->ifr_cltype = m_gettype(rxq->ifr_buf_size);
+	rxq->ifr_zone = m_getzone(rxq->ifr_buf_size);
+
 	/*
 	** Free current RX buffer structs and their mbufs
 	*/
@@ -802,9 +825,17 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 	 * handle failure
 	 */
 	IFDI_RXQ_SETUP(sctx, rxq->ifr_id);
+	if (sctx->isc_ifp->if_capenable & IFCAP_LRO) {
+		if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
+			device_printf(sctx->isc_dev, "LRO Initialization failed!\n");
+			goto fail;
+		}
+		rxq->ifr_lro_enabled = TRUE;
+		rxq->ifr_lc.ifp = sctx->isc_ifp;
+	}
 	bus_dmamap_sync(rxq->ifr_dma_info.idi_tag, rxq->ifr_dma_info.idi_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-
+fail:
 	RXQ_UNLOCK(rxq);
 	return (err);
 }
@@ -1163,6 +1194,7 @@ retry:
 	}
 	m_head = *m_headp;
 	pi.ipi_pkt_hdr = mtod(m_head, caddr_t);
+	pi.ipi_m = m_head;
 	pi.ipi_segs = segs;
 	pi.ipi_nsegs = nsegs;
 	pi.ipi_pidx = pidx;
@@ -1632,8 +1664,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	case SIOCGI2C:
 	{
 		struct ifi2creq i2c;
-		int i;
-		IOCTL_DEBUGOUT("ioctl: SIOCGI2C (Get I2C Data)");
+
 		err = copyin(ifr->ifr_data, &i2c, sizeof(i2c));
 		if (err != 0)
 			break;
@@ -2066,18 +2097,20 @@ fail:
 	return (err);
 }
 
-int
+static int
 iflib_tx_structures_setup(if_shared_ctx_t sctx)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	iflib_txq_t txq = ctx->ifc_txqs;
+	int i;
 
-	for (int i = 0; i < sctx->isc_nqsets; i++, txq++)
+	for (i = 0; i < sctx->isc_nqsets; i++, txq++)
 		iflib_txq_setup(txq);
+
 	return (0);
 }
 
-void
+static void
 iflib_tx_structures_free(if_shared_ctx_t sctx)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
@@ -2088,6 +2121,7 @@ iflib_tx_structures_free(if_shared_ctx_t sctx)
 		iflib_dma_free(&txq->ift_dma_info);
 	}
 	free(ctx->ifc_txqs, M_DEVBUF);
+	IFDI_TX_STRUCTURES_FREE(sctx);
 }
 
 /*********************************************************************
@@ -2095,7 +2129,7 @@ iflib_tx_structures_free(if_shared_ctx_t sctx)
  *  Initialize all receive rings.
  *
  **********************************************************************/
-int
+static int
 iflib_rx_structures_setup(if_shared_ctx_t sctx)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
@@ -2127,7 +2161,7 @@ fail:
  *  Free all receive rings.
  *
  **********************************************************************/
-void
+static void
 iflib_rx_structures_free(if_shared_ctx_t sctx)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
@@ -2137,6 +2171,30 @@ iflib_rx_structures_free(if_shared_ctx_t sctx)
 		iflib_rx_sds_free(rxq);
 		iflib_dma_free(&rxq->ifr_dma_info);
 	}
+	IFDI_RX_STRUCTURES_FREE(sctx);
+}
+
+int
+iflib_txrx_structures_setup(if_shared_ctx_t sctx)
+{
+	int err;
+
+	if ((err = iflib_tx_structures_setup(sctx)) != 0)
+		return (err);
+
+	if ((err = iflib_rx_structures_setup(sctx)) != 0) {
+		iflib_tx_structures_free(sctx);
+		iflib_rx_structures_free(sctx);
+	}
+	return (err);
+}
+
+void
+iflib_txrx_structures_free(if_shared_ctx_t sctx)
+{
+
+	iflib_tx_structures_free(sctx);
+	iflib_rx_structures_free(sctx);
 }
 
 void

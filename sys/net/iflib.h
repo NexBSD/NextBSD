@@ -27,6 +27,11 @@
 #ifndef __IFLIB_H_
 #define __IFLIB_H_
 
+#include <sys/kobj.h>
+#include <sys/bus.h>
+#include <machine/bus.h>
+#include <sys/bus_dma.h>
+
 struct iflib_ctx;
 typedef struct iflib_ctx *iflib_ctx_t;
 struct if_shared_ctx;
@@ -60,8 +65,9 @@ typedef struct if_rxd_info {
 } *if_rxd_info_t;
 
 typedef struct if_pkt_info {
-	bus_dma_segment_t *ipi_segs;
 	caddr_t	ipi_pkt_hdr;
+	struct mbuf *ipi_m; /* experimental */
+	bus_dma_segment_t *ipi_segs;
 	uint16_t ipi_nsegs;
 	uint16_t ipi_vtag;
 	uint32_t ipi_pidx;
@@ -103,13 +109,13 @@ struct if_shared_ctx {
 	 * Do not move
 	 */
 	KOBJ_FIELDS;
-	int (*isc_txd_encap) (if_shared_ctx_t, int, if_pkt_info_t);
-	void (*isc_txd_flush) (if_shared_ctx_t, int, int);
+	int (*isc_txd_encap) (if_shared_ctx_t, uint32_t, if_pkt_info_t);
+	void (*isc_txd_flush) (if_shared_ctx_t, uint32_t, uint32_t);
 
-	int (*isc_rxd_is_new) (if_shared_ctx_t, int, int);
-	int (*isc_rxd_pkt_get) (if_shared_ctx_t, int, int, if_rxd_info_t);
-	void (*isc_rxd_refill) (if_shared_ctx_t, int, int, uint64_t);
-	void (*isc_rxd_flush) (if_shared_ctx_t, int, int);
+	int (*isc_rxd_is_new) (if_shared_ctx_t, uint32_t, uint32_t);
+	int (*isc_rxd_pkt_get) (if_shared_ctx_t, uint32_t, uint32_t, if_rxd_info_t);
+	void (*isc_rxd_refill) (if_shared_ctx_t, uint32_t, uint32_t, uint64_t);
+	void (*isc_rxd_flush) (if_shared_ctx_t, uint32_t, uint32_t);
 
 	iflib_ctx_t isc_ctx;
 	device_t isc_dev;
@@ -126,6 +132,8 @@ struct if_shared_ctx {
 	bus_size_t isc_rx_maxsegsize;
 	int isc_rx_nsegments;
 	int isc_rx_process_limit;
+	uint16_t isc_max_frame_size;
+
 	int isc_pause_frames;
 	int isc_watchdog_events;
 	int isc_tx_reclaim_thresh;
@@ -153,10 +161,8 @@ int iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN]);
 
 int iflib_queues_alloc(if_shared_ctx_t ctx, int txq_size, int rxq_size);
 
-int iflib_tx_structures_setup(if_shared_ctx_t);
-void iflib_tx_structures_free(if_shared_ctx_t);
-int iflib_rx_structures_setup(if_shared_ctx_t);
-void iflib_rx_structures_free(if_shared_ctx_t);
+int iflib_txrx_structures_setup(if_shared_ctx_t);
+void iflib_txrx_structures_free(if_shared_ctx_t);
 
 void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
