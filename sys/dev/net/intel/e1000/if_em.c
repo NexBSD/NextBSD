@@ -216,8 +216,8 @@ static void	em_if_stop(if_shared_ctx_t);
 
 static void	em_if_intr_enable(if_shared_ctx_t);
 static void	em_if_intr_disable(if_shared_ctx_t);
-static void em_if_tx_intr_enable(if_shared_ctx_t, int);
-static void em_if_rx_intr_enable(if_shared_ctx_t, int);
+static void em_if_tx_intr_enable(if_shared_ctx_t, uint32_t);
+static void em_if_rx_intr_enable(if_shared_ctx_t, uint32_t);
 static void em_if_link_intr_enable(if_shared_ctx_t);
 
 static void	em_if_multi_set(if_shared_ctx_t);
@@ -236,7 +236,7 @@ static void em_if_watchdog_reset(if_shared_ctx_t);
 static int		em_msix_tx(void *);
 
 
-static void	em_if_promisc_config(if_shared_ctx_t, int);
+static void	em_if_promisc_set(if_shared_ctx_t, int);
 static void	em_promisc_disable(if_shared_ctx_t, int);
 static void	em_if_vlan_register(if_shared_ctx_t, u16);
 static void	em_if_vlan_unregister(if_shared_ctx_t, u16);
@@ -344,7 +344,7 @@ static device_method_t em_if_methods[] = {
 	DEVMETHOD(ifdi_timer, em_if_timer),
 	DEVMETHOD(ifdi_led_func, em_if_led_func),
 	DEVMETHOD(ifdi_watchdog_reset, em_if_watchdog_reset),
-	DEVMETHOD(ifdi_promisc_config, em_if_promisc_config),
+	DEVMETHOD(ifdi_promisc_set, em_if_promisc_set),
 	DEVMETHOD(ifdi_vlan_register, em_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, em_if_vlan_unregister),
 	DEVMETHOD(ifdi_txq_setup, em_if_txq_setup),
@@ -971,7 +971,7 @@ em_if_init(if_shared_ctx_t sctx)
 	}
 
 	/* Don't lose promiscuous settings */
-	em_if_promisc_config(sctx, if_getflags(sctx->isc_ifp));
+	em_if_promisc_set(sctx, if_getflags(sctx->isc_ifp));
 
 	e1000_clear_hw_cntrs_base_generic(&adapter->hw);
 
@@ -1053,7 +1053,7 @@ em_irq_fast(void *arg)
  *
  **********************************************************************/
 static void
-em_if_tx_intr_enable(if_shared_ctx_t sctx, int txqid)
+em_if_tx_intr_enable(if_shared_ctx_t sctx, uint32_t txqid)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct tx_ring *txr = &adapter->tx_rings[txqid];
@@ -1069,7 +1069,7 @@ em_if_tx_intr_enable(if_shared_ctx_t sctx, int txqid)
  **********************************************************************/
 
 static void
-em_if_rx_intr_enable(if_shared_ctx_t sctx, int rxqid)
+em_if_rx_intr_enable(if_shared_ctx_t sctx, uint32_t rxqid)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
@@ -1392,7 +1392,7 @@ em_isc_txd_flush(if_shared_ctx_t sctx, uint32_t txqid, uint32_t pidx)
 }
 
 static void
-em_if_promisc_config(if_shared_ctx_t sctx, int flags)
+em_if_promisc_set(if_shared_ctx_t sctx, int flags)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	u32		reg_rctl;
