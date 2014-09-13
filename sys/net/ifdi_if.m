@@ -46,7 +46,7 @@ CODE {
 	{
 	}
 
-	static void
+	static int
 	null_int_op(if_shared_ctx_t _ctx __unused)
 	{
 		return (0);
@@ -55,7 +55,6 @@ CODE {
 	static void
 	null_queue_intr_enable(if_shared_ctx_t _ctx __unused, int _qid __unused)
 	{
-		return (0);
 	}
 
 	static void
@@ -69,7 +68,7 @@ CODE {
 	}
 
 	static int
-	null_q_setup(if_shared_ctx_t _ctx __unused, int _qid __unused)
+	null_q_setup(if_shared_ctx_t _ctx __unused, uint32_t _qid __unused)
 	{
 		return (0);
 	}
@@ -77,7 +76,7 @@ CODE {
 	static int
 	null_i2c_req(if_shared_ctx_t _sctx __unused, struct ifi2creq *_i2c __unused)
 	{
-		return (ENOTSUPP);
+		return (ENOTSUP);
 	}
 
 	static int
@@ -109,6 +108,14 @@ METHOD int resume {
 #
 
 METHOD int queues_alloc {
+	if_shared_ctx_t _ctx;
+};
+
+METHOD void tx_structures_free {
+	if_shared_ctx_t _ctx;
+};
+
+METHOD void rx_structures_free {
 	if_shared_ctx_t _ctx;
 };
 
@@ -201,12 +208,12 @@ METHOD int i2c_req {
 
 METHOD int txq_setup {
 	if_shared_ctx_t _ctx;
-	int _txqid;
+	uint32_t _txqid;
 } DEFAULT null_q_setup;
 
 METHOD int rxq_setup {
 	if_shared_ctx_t _ctx;
-	int _txqid;
+	uint32_t _txqid;
 } DEFAULT null_q_setup;
 
 METHOD void timer {
