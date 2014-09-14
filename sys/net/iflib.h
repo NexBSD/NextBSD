@@ -59,7 +59,6 @@ typedef struct if_rxd_info {
 	int      iri_flags;
 	int      iri_cidx;
 	uint32_t iri_len;
-	struct mbuf *iri_m;
 	uint32_t iri_csum_flags;
 	uint32_t iri_csum_data;
 } *if_rxd_info_t;
