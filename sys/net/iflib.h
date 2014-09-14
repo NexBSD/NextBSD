@@ -47,10 +47,6 @@ typedef struct if_int_delay_info  *if_int_delay_info_t;
  *  - iflib core functions
  */
 
-#define	IF_RXD_SOP				(1 << 0)
-#define	IF_RXD_SOP_EOP		(1 << 1)
-#define	IF_RXD_EOP				(1 << 2)
-#define	IF_RXD_NSOP_NEOP	(1 << 3)
 #define	IF_RXD_VLAN				(1 << 4)
 
 typedef struct if_rxd_info {
@@ -61,6 +57,7 @@ typedef struct if_rxd_info {
 	uint32_t iri_len;
 	uint32_t iri_csum_flags;
 	uint32_t iri_csum_data;
+	uint16_t iri_next_offset; /* 0 for eop */
 } *if_rxd_info_t;
 
 typedef struct if_pkt_info {
@@ -110,6 +107,7 @@ struct if_shared_ctx {
 	KOBJ_FIELDS;
 	int (*isc_txd_encap) (if_shared_ctx_t, uint32_t, if_pkt_info_t);
 	void (*isc_txd_flush) (if_shared_ctx_t, uint32_t, uint32_t);
+	int (*isc_txd_credits_update) (if_shared_ctx_t, uint32_t, uint32_t);
 
 	int (*isc_rxd_is_new) (if_shared_ctx_t, uint32_t, uint32_t);
 	int (*isc_rxd_pkt_get) (if_shared_ctx_t, uint32_t, uint32_t, if_rxd_info_t);

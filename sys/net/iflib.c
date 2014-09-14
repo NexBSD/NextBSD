@@ -154,6 +154,9 @@ typedef struct iflib_sw_desc {
 									   */
 	caddr_t         ifsd_cl;          /* direct cluster pointer for rx */
 	int             ifsd_flags;
+
+	struct mbuf		*ifsd_mh;
+	struct mbuf		*ifsd_mt;
 } *iflib_sd_t;
 
 /* magic number that should be high enough for any hardware */
@@ -1007,17 +1010,11 @@ static struct mbuf *
 iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 {
 	iflib_rxq_t rxq = &ctx->ifc_rxqs[ri->iri_qidx];
-	iflib_sd_t sd = &rxq->ifr_sds[ri->iri_cidx];
+	iflib_sd_t sd_next, sd = &rxq->ifr_sds[ri->iri_cidx];
 	uint32_t flags = M_EXT;
 	caddr_t cl;
 	struct mbuf *m;
-	int len = ri->iri_len;
-	/* 
-	 * most drivers only support 1 segment on receive
-	 * so ignore chaining to start
-	 */
-	if (ri->iri_flags != IF_RXD_SOP_EOP)
-		panic("chaining unsupported");
+	int cidx_next, len = ri->iri_len;
 
 	if (iflib_recycle_enable && ri->iri_len <= IFLIB_RX_COPY_THRESH) {
 		if ((m = m_gethdr(M_NOWAIT, MT_DATA)) == NULL)
@@ -1044,8 +1041,44 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 		m->m_flags |= M_VLANTAG;
 	}
 
-	rxq->ifr_rx_packets++;
-	rxq->ifr_rx_bytes += m->m_pkthdr.len;
+	if (sd->ifsd_mh != NULL && 	ri->iri_next_offset != 0) {
+		/* We're in the middle of a packet and thus
+		 * need to pass this packet's data on to the
+		 * next descriptor
+		 */
+		cidx_next = ri->iri_cidx + ri->iri_next_offset;
+		if (cidx_next >= rxq->ifr_size)
+			cidx_next -= rxq->ifr_size;
+		sd_next = &rxq->ifr_sds[cidx_next];
+		sd_next->ifsd_mh = sd->ifsd_mh;
+		sd_next->ifsd_mt = sd->ifsd_mt;
+		sd->ifsd_mh = sd->ifsd_mt = NULL;
+		sd_next->ifsd_mt->m_next = m;
+		sd_next->ifsd_mt = m;
+		m = NULL;
+	} else if (sd->ifsd_mh == NULL && ri->iri_next_offset != 0) {
+		/*
+		 * We're at the start of a multi-fragment packet
+		 */
+		cidx_next = ri->iri_cidx + ri->iri_next_offset;
+		if (cidx_next >= rxq->ifr_size)
+			cidx_next -= rxq->ifr_size;
+		sd_next = &rxq->ifr_sds[cidx_next];
+		sd_next->ifsd_mh = sd_next->ifsd_mt = m;
+		m = NULL;
+	} else if (sd->ifsd_mh != NULL && ri->iri_next_offset == 0) {
+		/*
+		 * We're at the end of a multi-fragment packet
+		 */
+		sd->ifsd_mt->m_next = m;
+		sd->ifsd_mt = m;
+		m = sd->ifsd_mh;
+		sd->ifsd_mh = sd->ifsd_mt = NULL;
+	}
+	if (m != NULL) {
+		rxq->ifr_rx_packets++;
+		rxq->ifr_rx_bytes += m->m_pkthdr.len;
+	}
 	return (m);
 }
 
@@ -1057,13 +1090,21 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	int cidx = rxq->ifr_cidx;
 	struct if_rxd_info ri;
 	iflib_dma_info_t di;
-	int err, budget_left = budget;
+	int qid, err, budget_left = budget;
+	iflib_txq_t txq;
 
 	/*
 	 * XXX early demux data packets so that if_input processing only handles
 	 * acks in interrupt context
 	 */
 	struct mbuf *m, *mh, *mt;
+
+	if (sctx->isc_txd_credits_update != NULL) {
+		qid = rxq->ifr_id;
+		txq = &ctx->ifc_txqs[qid];
+		if (sctx->isc_txd_credits_update(sctx, qid, txq->ift_cidx))
+			GROUPTASK_ENQUEUE(&txq->ift_task);
+	}
 
 	if (!RXQ_TRYLOCK(rxq))
 		return (false);
@@ -1096,14 +1137,16 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		}
 
 		m = iflib_rxd_pkt_get(ctx, &ri);
+		__iflib_rxq_refill_lt(ctx, rxq, /* XXX em value */ 8);
 
+		if (m == NULL)
+			continue;
 		if (mh == NULL)
 			mh = mt = m;
 		else {
 			mt->m_nextpkt = m;
 			mt = m;
 		}
-		__iflib_rxq_refill_lt(ctx, rxq, /* XXX em value */ 8);
 	}
 	rxq->ifr_cidx = cidx;
 	RXQ_UNLOCK(rxq);
@@ -1291,11 +1334,16 @@ iflib_tx_desc_free(iflib_txq_t txq, int n)
 static __inline int
 iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 {
-	int reclaim = DESC_RECLAIMABLE(txq);
+	int reclaim;
+	if_shared_ctx_t sctx = txq->ift_ctx->ifc_sctx;
 
 	KASSERT(thresh >= 0, ("invalid threshold to reclaim"));
 	TXQ_LOCK_ASSERT(txq);
 
+	if (sctx->isc_txd_credits_update != NULL)
+		sctx->isc_txd_credits_update(sctx, txq->ift_id, txq->ift_cidx);
+
+	reclaim = DESC_RECLAIMABLE(txq);
 	if (reclaim <= thresh)
 		return (0);
 
@@ -2363,8 +2411,6 @@ iflib_tx_credits_update(if_shared_ctx_t sctx, int txqid, int credits)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	ctx->ifc_txqs[txqid].ift_processed += credits;
-	if ((ctx->ifc_flags & IFLIB_LEGACY) == 0)
-		IFDI_TX_INTR_ENABLE(sctx, txqid);
 }
 
 void

@@ -143,11 +143,6 @@ METHOD void intr_disable {
 	if_shared_ctx_t _ctx;
 };
 
-METHOD void tx_intr_enable {
-	if_shared_ctx_t _ctx;
-	uint32_t _txqid;
-} DEFAULT null_queue_intr_enable;
-
 METHOD void rx_intr_enable {
 	if_shared_ctx_t _ctx;
 	uint32_t _rxqid;

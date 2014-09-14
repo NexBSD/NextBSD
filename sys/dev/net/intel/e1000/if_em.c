@@ -331,7 +331,6 @@ static device_method_t em_if_methods[] = {
 	DEVMETHOD(ifdi_stop, em_if_stop),
 	DEVMETHOD(ifdi_intr_disable, em_if_intr_disable),
 	DEVMETHOD(ifdi_intr_enable, em_if_intr_enable),
-	DEVMETHOD(ifdi_tx_intr_enable, em_if_tx_intr_enable),
 	DEVMETHOD(ifdi_rx_intr_enable, em_if_rx_intr_enable),
 	DEVMETHOD(ifdi_link_intr_enable, em_if_link_intr_enable),
 	DEVMETHOD(ifdi_multi_set, em_if_multi_set),
@@ -2614,6 +2613,7 @@ em_msix_tx(void *arg)
 		done = last;
 	}
 	iflib_tx_credits_update(UPCAST(adapter), txr->me, processed);
+	em_if_tx_intr_enable(UPCAST(adapter), txr->me); 
 	return (processed ? FILTER_SCHEDULE_THREAD : FILTER_HANDLED);
 }
 
@@ -2824,7 +2824,6 @@ em_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_info
 	}
 	
 	/* Assign correct length to the current fragment */
-	ri->iri_flags = IF_RXD_SOP_EOP;
 	ri->iri_qidx = rxr->me;
 	ri->iri_cidx = i;
 	ri->iri_len = len;
@@ -2836,7 +2835,9 @@ em_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_info
 			ri->iri_flags |= IF_RXD_VLAN;
 			ri->iri_vtag = le16toh(cur->special);
 		}
-	}
+		ri->iri_next_offset = 0;
+	} else
+		ri->iri_next_offset = 1;
 	cur->status = 0;
 	return (0);
 }
