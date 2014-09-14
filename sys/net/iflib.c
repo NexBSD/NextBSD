@@ -1631,7 +1631,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 			if (if_getdrvflags(ifp) & IFF_DRV_RUNNING) {
 				if ((if_getflags(ifp) ^ ctx->ifc_if_flags) &
 				    (IFF_PROMISC | IFF_ALLMULTI)) {
-					IFDI_PROMISC_CONFIG(sctx, if_getflags(ifp));
+					IFDI_PROMISC_SET(sctx, if_getflags(ifp));
 				}
 			} else
 				IFDI_INIT(sctx);
