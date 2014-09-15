@@ -210,8 +210,7 @@ struct iflib_txq {
 #define TXQ_AVAIL(txq) ((txq)->ift_size - (txq)->ift_pidx + (txq)->ift_cidx)
 
 typedef struct iflib_global_context {
-	struct taskqgroup	*igc_rx_tqg;		/* per-cpu taskqueues for rx */
-	struct taskqgroup	*igc_tx_tqg;		/* per-cpu taskqueues for tx */
+	struct taskqgroup	*igc_io_tqg;		/* per-cpu taskqueues for io */
 	struct taskqgroup	*igc_config_tqg;	/* taskqueue for config operations */
 } iflib_global_context_t;
 
@@ -282,8 +281,7 @@ static moduledata_t iflib_moduledata = {
 DECLARE_MODULE(iflib, iflib_moduledata, SI_SUB_SMP, SI_ORDER_ANY);
 MODULE_VERSION(iflib, 1);
 
-TASKQGROUP_DEFINE(if_rx_tqg, mp_ncpus, 1);
-TASKQGROUP_DEFINE(if_tx_tqg, mp_ncpus, 1);
+TASKQGROUP_DEFINE(if_io_tqg, mp_ncpus, 1);
 TASKQGROUP_DEFINE(if_config_tqg, 1, 1);
 
 static void iflib_tx_structures_free(if_shared_ctx_t sctx);
@@ -1017,6 +1015,7 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 	int cidx_next, len = ri->iri_len;
 
 	if (iflib_recycle_enable && ri->iri_len <= IFLIB_RX_COPY_THRESH) {
+		panic(" not all cases handled");
 		if ((m = m_gethdr(M_NOWAIT, MT_DATA)) == NULL)
 			goto skip_recycle;
 		cl = mtod(m, void *);
@@ -1029,16 +1028,16 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 		bus_dmamap_unload(rxq->ifr_desc_tag, sd->ifsd_map);
 		cl = sd->ifsd_cl;
 		m = sd->ifsd_m;
-		flags |= M_PKTHDR;
+
+		if (sd->ifsd_mh == NULL)
+			flags |= M_PKTHDR;
 		m_init(m, rxq->ifr_zone, rxq->ifr_buf_size, M_NOWAIT, MT_DATA, flags);
-		m_cljset(m, cl, rxq->ifr_cltype);
 		m->m_len = len;
-		m->m_pkthdr.len = len;
-	}
-	m->m_pkthdr.rcvif = (struct ifnet *)ctx->ifc_sctx->isc_ifp;
-	if (ri->iri_flags & IF_RXD_VLAN) {
-		if_setvtag(m, ri->iri_vtag);
-		m->m_flags |= M_VLANTAG;
+		if (sd->ifsd_mh == NULL)
+			m->m_pkthdr.len = len;
+		else
+			sd->ifsd_mh->m_pkthdr.len += len;
+		m_cljset(m, cl, rxq->ifr_cltype);
 	}
 
 	if (sd->ifsd_mh != NULL && 	ri->iri_next_offset != 0) {
@@ -1075,10 +1074,20 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 		m = sd->ifsd_mh;
 		sd->ifsd_mh = sd->ifsd_mt = NULL;
 	}
-	if (m != NULL) {
-		rxq->ifr_rx_packets++;
-		rxq->ifr_rx_bytes += m->m_pkthdr.len;
+	if (m == NULL)
+		return (NULL);
+
+	m->m_pkthdr.rcvif = (struct ifnet *)ctx->ifc_sctx->isc_ifp;
+	if (ri->iri_flags & IF_RXD_VLAN) {
+		if_setvtag(m, ri->iri_vtag);
+		m->m_flags |= M_VLANTAG;
 	}
+	m->m_pkthdr.flowid = ri->iri_flowid;
+	M_HASHTYPE_SET(m, ri->iri_hash_type);
+	m->m_pkthdr.csum_flags = ri->iri_csum_flags;
+	m->m_pkthdr.csum_data = ri->iri_csum_data;
+	rxq->ifr_rx_packets++;
+	rxq->ifr_rx_bytes += m->m_pkthdr.len;
 	return (m);
 }
 
@@ -1092,6 +1101,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	iflib_dma_info_t di;
 	int qid, err, budget_left = budget;
 	iflib_txq_t txq;
+	struct lro_entry *queued;
 
 	/*
 	 * XXX early demux data packets so that if_input processing only handles
@@ -1132,6 +1142,10 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		if (++cidx == sctx->isc_nrxd)
 			cidx = 0;
 		if (err) {
+			/*
+			 * XXX Note currently we don't free the initial pieces
+			 * of a multi-fragment packet
+			 */
 			iflib_recycle_rx_buf(rxq, ri.iri_cidx);
 			continue;
 		}
@@ -1155,7 +1169,17 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		m = mh;
 		mh = mh->m_nextpkt;
 		m->m_nextpkt = NULL;
+		if (rxq->ifr_lc.lro_cnt != 0 &&
+			tcp_lro_rx(&rxq->ifr_lc, m, 0) == 0)
+			continue;
 		if_input(sctx->isc_ifp, m);
+	}
+	/*
+	 * Flush any outstanding LRO work
+	 */
+	while ((queued = SLIST_FIRST(&rxq->ifr_lc.lro_active)) != NULL) {
+		SLIST_REMOVE_HEAD(&rxq->ifr_lc.lro_active, next);
+		tcp_lro_flush(&rxq->ifr_lc, queued);
 	}
 
 	return sctx->isc_rxd_is_new(sctx, rxq->ifr_id, rxq->ifr_cidx);
@@ -1340,7 +1364,13 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 	KASSERT(thresh >= 0, ("invalid threshold to reclaim"));
 	TXQ_LOCK_ASSERT(txq);
 
-	if (sctx->isc_txd_credits_update != NULL)
+	reclaim = DESC_RECLAIMABLE(txq);
+	/*
+	 * Add some rate-limiting check so that that
+	 * this isn't called every time
+	 */
+	if (sctx->isc_txd_credits_update != NULL &&
+		reclaim <= thresh)
 		sctx->isc_txd_credits_update(sctx, txq->ift_id, txq->ift_cidx);
 
 	reclaim = DESC_RECLAIMABLE(txq);
@@ -1889,6 +1919,7 @@ iflib_device_detach(device_t dev)
 	ether_ifdetach(sctx->isc_ifp);
 	if (ctx->ifc_led_dev != NULL)
 		led_destroy(ctx->ifc_led_dev);
+	/* XXX drain any dependent tasks */
 	IFDI_DETACH(sctx);
 	callout_drain(&ctx->ifc_timer);
 
@@ -1949,8 +1980,7 @@ iflib_module_init(void)
 {
 
 	gctx = &global_ctx;
-	gctx->igc_tx_tqg = qgroup_if_tx_tqg;
-	gctx->igc_rx_tqg = qgroup_if_rx_tqg;
+	gctx->igc_io_tqg = qgroup_if_io_tqg;
 	gctx->igc_config_tqg = qgroup_if_config_tqg;
 
 	return (0);
@@ -2273,12 +2303,14 @@ iflib_irq_alloc(if_shared_ctx_t sctx, if_irq_t irq, int rid,
 
 int
 iflib_irq_alloc_generic(if_shared_ctx_t sctx, if_irq_t irq, int rid,
-						intr_type_t type, driver_filter_t *filter, int qid, char *name)
+						intr_type_t type, driver_filter_t *filter,
+						void *filter_arg, int qid, char *name)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	struct grouptask *gtask;
 	struct taskqgroup *tqg;
 	iflib_filter_info_t info;
+	int tqrid;
 	void *q;
 	int err;
 
@@ -2287,31 +2319,34 @@ iflib_irq_alloc_generic(if_shared_ctx_t sctx, if_irq_t irq, int rid,
 		q = &ctx->ifc_txqs[qid];
 		info = &ctx->ifc_txqs[qid].ift_filter_info;
 		gtask = &ctx->ifc_txqs[qid].ift_task;
-		tqg = gctx->igc_tx_tqg;
+		tqg = gctx->igc_io_tqg;
+		tqrid = irq->ii_rid;
 		break;
 	case IFLIB_INTR_RX:
 		q = &ctx->ifc_rxqs[qid];
 		info = &ctx->ifc_rxqs[qid].ifr_filter_info;
 		gtask = &ctx->ifc_rxqs[qid].ifr_task;
-		tqg = gctx->igc_rx_tqg;
+		tqg = gctx->igc_io_tqg;
+		tqrid = irq->ii_rid;
 		break;
 	case IFLIB_INTR_LINK:
 		q = ctx;
 		info = &ctx->ifc_filter_info;
 		gtask = &ctx->ifc_link_task;
 		tqg = gctx->igc_config_tqg;
+		tqrid = -1;
 		break;
 	default:
 		panic("unknown net intr type");
 	}
 	info->ifi_filter = filter;
-	info->ifi_filter_arg = q;
+	info->ifi_filter_arg = filter_arg;
 	info->ifi_task = gtask;
 
 	err = _iflib_irq_alloc(ctx, irq, rid, iflib_fast_intr, NULL, info,  name);
 	if (err != 0)
 		return (err);
-	taskqgroup_attach(tqg, gtask, q, irq->ii_rid, name);
+	taskqgroup_attach(tqg, gtask, q, tqrid, name);
 	return (0);
 }
 
@@ -2335,11 +2370,11 @@ iflib_legacy_setup(if_shared_ctx_t sctx, driver_filter_t filter, int *rid)
 	 *
 	 */
 	GROUPTASK_INIT(&txq->ift_task, 0, _task_fn_tx, txq);
-	taskqgroup_attach(gctx->igc_tx_tqg, &txq->ift_task, txq, irq->ii_rid, "tx");
+	taskqgroup_attach(gctx->igc_io_tqg, &txq->ift_task, txq, irq->ii_rid, "tx");
 	GROUPTASK_INIT(&rxq->ifr_task, 0, _task_fn_rx, rxq);
-	taskqgroup_attach(gctx->igc_rx_tqg, &rxq->ifr_task, rxq, irq->ii_rid, "rx");
+	taskqgroup_attach(gctx->igc_io_tqg, &rxq->ifr_task, rxq, irq->ii_rid, "rx");
 	GROUPTASK_INIT(&ctx->ifc_link_task, 0, _task_fn_link, ctx);
-	taskqgroup_attach(gctx->igc_tx_tqg, &ctx->ifc_link_task, ctx, irq->ii_rid, "link");
+	taskqgroup_attach(gctx->igc_config_tqg, &ctx->ifc_link_task, ctx, -1, "link");
 
 	return (0);
 }
@@ -2451,4 +2486,11 @@ iflib_add_int_delay_sysctl(if_shared_ctx_t sctx, const char *name,
 	    SYSCTL_CHILDREN(device_get_sysctl_tree(sctx->isc_dev)),
 	    OID_AUTO, name, CTLTYPE_INT|CTLFLAG_RW,
 	    info, 0, iflib_sysctl_int_delay, "I", description);
+}
+
+void
+iflib_taskqgroup_attach(struct grouptask *gtask, void *uniq, char *name)
+{
+
+	taskqgroup_attach(gctx->igc_config_tqg, gtask, uniq, -1, name);
 }

@@ -1729,7 +1729,7 @@ em_allocate_msix(struct adapter *adapter)
 		rid = vector + 1;
 		snprintf(buf, sizeof(buf), "rx %d", i);
 		err = iflib_irq_alloc_generic(UPCAST(adapter), &rxr->rx_irq, rid,
-									  IFLIB_INTR_RX, NULL, rxr->me, buf);
+									  IFLIB_INTR_RX, NULL, NULL, rxr->me, buf);
 
 		rxr->msix = vector++; /* NOTE increment vector for TX */
 		/*
@@ -1745,7 +1745,7 @@ em_allocate_msix(struct adapter *adapter)
 		rid = vector + 1;
 		snprintf(buf, sizeof(buf), "tx %d", i);
 		err = iflib_irq_alloc_generic(UPCAST(adapter), &txr->tx_irq, rid,
-									  IFLIB_INTR_TX, em_msix_tx, txr->me, buf);
+									  IFLIB_INTR_TX, em_msix_tx, txr, txr->me, buf);
 
 		txr->msix = vector++; /* Increment vector for next pass */
 		/*
@@ -1761,7 +1761,7 @@ em_allocate_msix(struct adapter *adapter)
 	/* Link interrupt */
 	++rid;
 	err = iflib_irq_alloc_generic(UPCAST(adapter), &rxr->rx_irq, rid,
-								  IFLIB_INTR_LINK, em_msix_link, 0 /* unused */, buf);
+								  IFLIB_INTR_LINK, em_msix_link, adapter, 0 /* unused */, buf);
 
 	adapter->linkvec = vector;
 	adapter->ivars |=  (8 | vector) << 16;

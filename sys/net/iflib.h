@@ -48,6 +48,7 @@ typedef struct if_int_delay_info  *if_int_delay_info_t;
  */
 
 #define	IF_RXD_VLAN				(1 << 4)
+#define	IF_RXD_FLOWID			(1 << 5)
 
 typedef struct if_rxd_info {
 	uint16_t iri_qidx;
@@ -55,9 +56,11 @@ typedef struct if_rxd_info {
 	int      iri_flags;
 	int      iri_cidx;
 	uint32_t iri_len;
+	uint32_t iri_flowid;
 	uint32_t iri_csum_flags;
 	uint32_t iri_csum_data;
 	uint16_t iri_next_offset; /* 0 for eop */
+	uint8_t	 iri_hash_type;
 } *if_rxd_info_t;
 
 typedef struct if_pkt_info {
@@ -166,7 +169,8 @@ void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
 
 int iflib_irq_alloc(if_shared_ctx_t, if_irq_t, int, driver_filter_t, driver_intr_t, void *arg, char *name);
 int iflib_irq_alloc_generic(if_shared_ctx_t ctx, if_irq_t irq, int rid,
-							intr_type_t type, driver_filter_t *filter, int qid, char *name);
+							intr_type_t type, driver_filter_t *filter,
+							void *filter_arg, int qid, char *name);
 
 int iflib_legacy_setup(if_shared_ctx_t sctx, driver_filter_t filter, int *rid);
 void iflib_led_create(if_shared_ctx_t sctx);
@@ -186,5 +190,5 @@ void iflib_tx_credits_update(if_shared_ctx_t sctx, int txqid, int credits);
 void iflib_stats_update(if_shared_ctx_t);
 void iflib_add_int_delay_sysctl(if_shared_ctx_t, const char *, const char *,
 								if_int_delay_info_t, int, int);
-
+void iflib_taskqgroup_attach(struct grouptask *gtask, void *uniq, char *name);
 #endif /*  __IFLIB_H_ */
