@@ -733,7 +733,7 @@ _iflib_rxq_refill(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
 		rxsd->ifsd_flags |= RX_SW_DESC_INUSE;
 		rxsd->ifsd_cl = cl;
 		rxsd->ifsd_m = m;
-		sctx->isc_rxd_refill(sctx, rxq->ifr_id, rxq->ifr_pidx, phys_addr);
+		sctx->isc_rxd_refill(sctx, rxq->ifr_id, rxq->ifr_pidx, &phys_addr, 1);
 
 		if (++rxq->ifr_pidx == sctx->isc_nrxd) {
 			rxq->ifr_pidx = 0;
@@ -1134,7 +1134,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		di = &rxq->ifr_dma_info;
 		bus_dmamap_sync(di->idi_tag, di->idi_map,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-		if (__predict_false(!sctx->isc_rxd_is_new(sctx, rxq->ifr_id, cidx)))
+		if (__predict_false(!sctx->isc_rxd_available(sctx, rxq->ifr_id, cidx)))
 			return (false);
 		err = sctx->isc_rxd_pkt_get(sctx, rxq->ifr_id, cidx, &ri);
 		bus_dmamap_unload(rxq->ifr_desc_tag, rxq->ifr_sds[cidx].ifsd_map);
@@ -1182,7 +1182,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		tcp_lro_flush(&rxq->ifr_lc, queued);
 	}
 
-	return sctx->isc_rxd_is_new(sctx, rxq->ifr_id, rxq->ifr_cidx);
+	return sctx->isc_rxd_available(sctx, rxq->ifr_id, rxq->ifr_cidx);
 }
 
 #define M_CSUM_FLAGS(m) ((m)->m_pkthdr.csum_flags)

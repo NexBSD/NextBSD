@@ -150,9 +150,9 @@ static int		ixgbe_if_i2c_req(if_shared_ctx_t, struct ifi2creq *);
 static void     ixgbe_if_update_link_status(if_shared_ctx_t);
 static int      ixgbe_isc_txd_encap(if_shared_ctx_t, uint32_t, if_pkt_info_t);
 static void ixgbe_isc_txd_flush(if_shared_ctx_t, uint32_t, uint32_t);
-static void ixgbe_isc_rxd_refill(if_shared_ctx_t, uint32_t, uint32_t, uint64_t);
+static void ixgbe_isc_rxd_refill(if_shared_ctx_t, uint32_t, uint32_t, uint64_t*, uint32_t);
 static void ixgbe_isc_rxd_flush(if_shared_ctx_t, uint32_t, uint32_t);
-static int ixgbe_isc_rxd_is_new(if_shared_ctx_t, uint32_t, uint32_t);
+static int ixgbe_isc_rxd_available(if_shared_ctx_t, uint32_t, uint32_t);
 
 
 static int	ixgbe_set_flowcntl(SYSCTL_HANDLER_ARGS);
@@ -1968,7 +1968,7 @@ ixgbe_setup_interface(device_t dev, struct adapter *adapter)
 	sctx->isc_txd_flush = ixgbe_isc_txd_flush;
 	sctx->isc_txd_credits_update = ixgbe_isc_txd_credits_update;
 
-	sctx->isc_rxd_is_new = ixgbe_isc_rxd_is_new;
+	sctx->isc_rxd_available = ixgbe_isc_rxd_available;
 	sctx->isc_rxd_pkt_get = ixgbe_isc_rxd_pkt_get;
 	sctx->isc_rxd_refill = ixgbe_isc_rxd_refill;
 	sctx->isc_rxd_flush = ixgbe_isc_rxd_flush;
@@ -2689,12 +2689,18 @@ ixgbe_isc_txd_credits_update(if_shared_ctx_t sctx, uint32_t qid, uint32_t cidx)
 }
 
 static void
-ixgbe_isc_rxd_refill(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx, uint64_t paddr)
+ixgbe_isc_rxd_refill(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx, uint64_t *paddrs, uint32_t count)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
+	int i;
+	uint32_t next_pidx;
 
-	rxr->rx_base[pidx].read.pkt_addr = htole64(paddr);
+	for (i = 0, next_pidx = pidx; i < count; i++) {
+		rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
+		if (++next_pidx == sctx->isc_nrxd)
+			next_pidx = 0;
+	}
 }
 
 static void
@@ -2706,16 +2712,26 @@ ixgbe_isc_rxd_flush(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx)
 }
 
 static int
-ixgbe_isc_rxd_is_new(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t idx)
+ixgbe_isc_rxd_available(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t idx)
 {
 	struct rx_ring *rxr = &DOWNCAST(sctx)->rx_rings[rxqid];
 	union ixgbe_adv_rx_desc	*cur;
 	uint32_t staterr;
+	int cnt, i;
 
-	cur = &rxr->rx_base[idx];
-	staterr = le32toh(cur->wb.upper.status_error);
+	cnt = 0;
+	i = idx;
+	do {
+		cur = &rxr->rx_base[i];
+		staterr = le32toh(cur->wb.upper.status_error);
+		if ((staterr & IXGBE_RXD_STAT_DD) == 0)
+			break;
+		cnt++;
+		if (++i == sctx->isc_nrxd)
+			i = 0;
+	} while (1);
 
-	return ((staterr & IXGBE_RXD_STAT_DD) != 0);
+	return (cnt);
 }
 
 /*

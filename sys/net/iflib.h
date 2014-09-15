@@ -112,9 +112,9 @@ struct if_shared_ctx {
 	void (*isc_txd_flush) (if_shared_ctx_t, uint32_t, uint32_t);
 	int (*isc_txd_credits_update) (if_shared_ctx_t, uint32_t, uint32_t);
 
-	int (*isc_rxd_is_new) (if_shared_ctx_t, uint32_t, uint32_t);
+	int (*isc_rxd_available) (if_shared_ctx_t, uint32_t, uint32_t);
 	int (*isc_rxd_pkt_get) (if_shared_ctx_t, uint32_t, uint32_t, if_rxd_info_t);
-	void (*isc_rxd_refill) (if_shared_ctx_t, uint32_t, uint32_t, uint64_t);
+	void (*isc_rxd_refill) (if_shared_ctx_t, uint32_t, uint32_t, uint64_t *, uint32_t);
 	void (*isc_rxd_flush) (if_shared_ctx_t, uint32_t, uint32_t);
 
 	iflib_ctx_t isc_ctx;

@@ -249,9 +249,9 @@ static int		em_if_sysctl_int_delay(if_shared_ctx_t, if_int_delay_info_t);
 static int	em_isc_txd_encap(if_shared_ctx_t, uint32_t, if_pkt_info_t);
 static void em_isc_txd_flush(if_shared_ctx_t, uint32_t, uint32_t);
 static int  em_isc_rxd_pkt_get(if_shared_ctx_t, uint32_t, uint32_t, if_rxd_info_t);
-static void em_isc_rxd_refill(if_shared_ctx_t, uint32_t, uint32_t, uint64_t);
+static void em_isc_rxd_refill(if_shared_ctx_t, uint32_t, uint32_t, uint64_t*, uint32_t);
 static void em_isc_rxd_flush(if_shared_ctx_t, uint32_t, uint32_t);
-static int em_isc_rxd_is_new(if_shared_ctx_t, uint32_t, uint32_t);
+static int em_isc_rxd_available(if_shared_ctx_t, uint32_t, uint32_t);
 
 
 
@@ -2084,7 +2084,7 @@ em_setup_interface(device_t dev, struct adapter *adapter)
 	sctx->isc_txd_encap = em_isc_txd_encap;
 	sctx->isc_txd_flush = em_isc_txd_flush;
 
-	sctx->isc_rxd_is_new = em_isc_rxd_is_new;
+	sctx->isc_rxd_available = em_isc_rxd_available;
 	sctx->isc_rxd_pkt_get = em_isc_rxd_pkt_get;
 	sctx->isc_rxd_refill = em_isc_rxd_refill;
 	sctx->isc_rxd_flush = em_isc_rxd_flush;
@@ -2753,12 +2753,18 @@ em_initialize_receive_unit(struct adapter *adapter)
 }
 
 static void
-em_isc_rxd_refill(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx, uint64_t paddr)
+em_isc_rxd_refill(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx, uint64_t *paddrs, uint32_t count)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
+	int i;
+	uint32_t next_pidx;
 
-	rxr->rx_base[pidx].buffer_addr = htole64(paddr);
+	for (i = 0, next_pidx = pidx; i < count; i++) {
+		rxr->rx_base[next_pidx].buffer_addr = htole64(paddrs[i]);
+		if (++next_pidx == sctx->isc_nrxd)
+			next_pidx = 0;
+	}
 }
 
 static void
@@ -2770,13 +2776,24 @@ em_isc_rxd_flush(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx)
 }
 
 static int
-em_isc_rxd_is_new(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t idx)
+em_isc_rxd_available(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t idx)
 {
 	struct rx_ring *rxr = &DOWNCAST(sctx)->rx_rings[rxqid];
 	struct e1000_rx_desc	*cur;
+	int cnt, i;
 
-	cur = &rxr->rx_base[idx];
-	return ((cur->status & E1000_RXD_STAT_DD) != 0);
+	cnt = 0;
+	i = idx;
+	do {
+		cur = &rxr->rx_base[i];
+		if ((cur->status & E1000_RXD_STAT_DD) == 0)
+			break;
+		cnt++;
+		if (++i == sctx->isc_nrxd)
+			i = 0;
+	} while (1);
+
+	return (cnt);
 }
 	
 /*********************************************************************
