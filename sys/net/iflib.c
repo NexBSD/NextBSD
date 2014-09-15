@@ -1639,7 +1639,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		err = iflib_txq_transmit(ifp, txq, m);
 		TXQ_UNLOCK(txq);
 	} else if (m != NULL) {
-		err = drbr_enqueue(ifp, txq->ift_br[0], m);
+		err = iflib_enqueue_pkt(ifp, txq, m);
 		/* Minimize a small race between another thread dropping the
 		 * lock and us enqueuing the buffer on the buf_ring
 		 */
@@ -2113,6 +2113,7 @@ iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)
 		txq = &ctx->ifc_txqs[i];
 		txq->ift_ctx = ctx;
 		txq->ift_id = i;
+		txq->ift_nbr = 1; /* XXX calculate dynamically */
 
 		if (iflib_txsd_alloc(txq)) {
 			device_printf(dev,
