@@ -62,6 +62,7 @@
 #include <net/bpf.h>
 #include <net/if_types.h>
 #include <net/if_vlan_var.h>
+#include <net/iflib.h>
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -91,7 +92,9 @@
 #include <sys/smp.h>
 #include <machine/smp.h>
 
+
 #include "ixgbe_api.h"
+#include "ifdi_if.h"
 
 /* Tunables */
 
@@ -232,30 +235,6 @@ typedef struct _ixgbe_vendor_info_t {
 
 struct ixgbe_tx_buf {
 	union ixgbe_adv_tx_desc	*eop;
-	struct mbuf	*m_head;
-	bus_dmamap_t	map;
-};
-
-struct ixgbe_rx_buf {
-	struct mbuf	*buf;
-	struct mbuf	*fmp;
-	bus_dmamap_t	pmap;
-	u_int		flags;
-#define IXGBE_RX_COPY	0x01
-	uint64_t	addr;
-};
-
-/*
- * Bus dma allocation structure used by ixgbe_dma_malloc and ixgbe_dma_free.
- */
-struct ixgbe_dma_alloc {
-	bus_addr_t		dma_paddr;
-	caddr_t			dma_vaddr;
-	bus_dma_tag_t		dma_tag;
-	bus_dmamap_t		dma_map;
-	bus_dma_segment_t	dma_seg;
-	bus_size_t		dma_size;
-	int			dma_nseg;
 };
 
 /*
@@ -272,7 +251,6 @@ struct ix_queue {
 	struct tx_ring		*txr;
 	struct rx_ring		*rxr;
 	struct task		que_task;
-	struct taskqueue	*tq;
 	u64			irqs;
 };
 
@@ -281,12 +259,11 @@ struct ix_queue {
  */
 struct tx_ring {
         struct adapter		*adapter;
-	struct mtx		tx_mtx;
 	u32			me;
 	int			watchdog_time;
 	union ixgbe_adv_tx_desc	*tx_base;
 	struct ixgbe_tx_buf	*tx_buffers;
-	struct ixgbe_dma_alloc	txdma;
+	uint64_t tx_paddr;
 	volatile u16		tx_avail;
 	u16			next_avail_desc;
 	u16			next_to_clean;
@@ -324,12 +301,9 @@ struct tx_ring {
  */
 struct rx_ring {
         struct adapter		*adapter;
-	struct mtx		rx_mtx;
 	u32			me;
 	union ixgbe_adv_rx_desc	*rx_base;
-	struct ixgbe_dma_alloc	rxdma;
-	struct lro_ctrl		lro;
-	bool			lro_enabled;
+	uint64_t		rx_paddr;
 	bool			hw_rsc;
 	bool			discard;
 	bool			vtag_strip;
@@ -338,15 +312,12 @@ struct rx_ring {
 	u16			num_desc;
 	u16			mbuf_sz;
 	u16			process_limit;
-	char			mtx_name[16];
-	struct ixgbe_rx_buf	*rx_buffers;
 	bus_dma_tag_t		ptag;
 
 	u32			bytes; /* Used for AIM calc */
 	u32			packets;
 
 	/* Soft stats */
-	u64			rx_irq;
 	u64			rx_copies;
 	u64			rx_packets;
 	u64 			rx_bytes;
@@ -355,15 +326,21 @@ struct rx_ring {
 #ifdef IXGBE_FDIR
 	u64			flm;
 #endif
+	struct if_irq				rx_irq;
 };
 
 /* Our adapter structure */
 struct adapter {
-	struct ifnet		*ifp;
+	struct if_shared_ctx shared;
+#define media shared.isc_media
+#define hwdev shared.isc_dev
+#define hwifp shared.isc_ifp
+#define pause_frames shared.isc_pause_frames
+#define common_stats shared.isc_common_stats
+#define max_frame_size shared.isc_max_frame_size
 	struct ixgbe_hw		hw;
 
 	struct ixgbe_osdep	osdep;
-	struct device		*dev;
 
 	struct resource		*pci_mem;
 	struct resource		*msix_mem;
@@ -376,15 +353,10 @@ struct adapter {
 	void			*tag;
 	struct resource 	*res;
 
-	struct ifmedia		media;
 	struct callout		timer;
 	int			msix;
 	int			if_flags;
 
-	struct mtx		core_mtx;
-
-	eventhandler_tag 	vlan_attach;
-	eventhandler_tag 	vlan_detach;
 
 	u16			num_vlans;
 	u16			num_queues;
@@ -402,7 +374,6 @@ struct adapter {
 	u32			fc; /* local flow ctrl setting */
 	int			advertise;  /* link speeds */
 	bool			link_active;
-	u16			max_frame_size;
 	u16			num_segs;
 	u32			link_speed;
 	bool			link_up;
@@ -413,14 +384,13 @@ struct adapter {
 
 	/* Support for pluggable optics */
 	bool			sfp_probe;
-	struct task     	link_task;  /* Link tasklet */
-	struct task     	mod_task;   /* SFP tasklet */
-	struct task     	msf_task;   /* Multispeed Fiber */
+	struct grouptask     	link_task;  /* Link tasklet */
+	struct grouptask     	mod_task;   /* SFP tasklet */
+	struct grouptask     	msf_task;   /* Multispeed Fiber */
 #ifdef IXGBE_FDIR
 	int			fdir_reinit;
-	struct task     	fdir_task;
+	struct grouptask     	fdir_task;
 #endif
-	struct taskqueue	*tq;
 
 	/*
 	** Queues: 
@@ -467,21 +437,6 @@ struct adapter {
 #define TSYNC_UDP_PORT          319 /* UDP port for the protocol */
 #define IXGBE_ADVTXD_TSTAMP	0x00080000
 
-
-#define IXGBE_CORE_LOCK_INIT(_sc, _name) \
-        mtx_init(&(_sc)->core_mtx, _name, "IXGBE Core Lock", MTX_DEF)
-#define IXGBE_CORE_LOCK_DESTROY(_sc)      mtx_destroy(&(_sc)->core_mtx)
-#define IXGBE_TX_LOCK_DESTROY(_sc)        mtx_destroy(&(_sc)->tx_mtx)
-#define IXGBE_RX_LOCK_DESTROY(_sc)        mtx_destroy(&(_sc)->rx_mtx)
-#define IXGBE_CORE_LOCK(_sc)              mtx_lock(&(_sc)->core_mtx)
-#define IXGBE_TX_LOCK(_sc)                mtx_lock(&(_sc)->tx_mtx)
-#define IXGBE_TX_TRYLOCK(_sc)             mtx_trylock(&(_sc)->tx_mtx)
-#define IXGBE_RX_LOCK(_sc)                mtx_lock(&(_sc)->rx_mtx)
-#define IXGBE_CORE_UNLOCK(_sc)            mtx_unlock(&(_sc)->core_mtx)
-#define IXGBE_TX_UNLOCK(_sc)              mtx_unlock(&(_sc)->tx_mtx)
-#define IXGBE_RX_UNLOCK(_sc)              mtx_unlock(&(_sc)->rx_mtx)
-#define IXGBE_CORE_LOCK_ASSERT(_sc)       mtx_assert(&(_sc)->core_mtx, MA_OWNED)
-#define IXGBE_TX_LOCK_ASSERT(_sc)         mtx_assert(&(_sc)->tx_mtx, MA_OWNED)
 
 /* For backward compatibility */
 #if !defined(PCIER_LINK_STA)
