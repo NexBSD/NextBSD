@@ -244,7 +244,11 @@ struct iflib_rxq {
 };
 
 
+#define mtx_held(m)	(((m)->mtx_lock & ~MTX_FLAGMASK) != (uintptr_t)0)
+
+
 #define CTX_ACTIVE(ctx) ((if_getdrvflags((ctx)->ifc_sctx->isc_ifp) & IFF_DRV_RUNNING))
+
 #define CTX_LOCK_INIT(_sc, _name)  mtx_init(&(_sc)->ifc_mtx, _name, "iflib ctx lock", MTX_DEF)
 
 #define CTX_LOCK(ctx) (mtx_lock(&(ctx)->ifc_mtx))
@@ -256,6 +260,7 @@ struct iflib_rxq {
 
 
 #define TXQ_LOCK(txq) (mtx_lock(&(txq)->ift_mtx))
+#define TXQ_LOCK_HELD(txq) (mtx_held(&(txq)->ift_mtx))
 #define TXQ_LOCK_ASSERT(txq) (mtx_assert(&(txq)->ift_mtx, MA_OWNED))
 #define TXQ_TRYLOCK(txq) (mtx_trylock(&(txq)->ift_mtx))
 #define TXQ_UNLOCK(txq) (mtx_unlock(&(txq)->ift_mtx))
@@ -1630,12 +1635,19 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	 */
 	txq = &ctx->ifc_txqs[qidx];
 
-	if (TXQ_TRYLOCK(txq)) {
+	if (!TXQ_LOCK_HELD(txq) && TXQ_TRYLOCK(txq)) {
 		err = iflib_txq_transmit(ifp, txq, m);
 		TXQ_UNLOCK(txq);
-	} else if (m != NULL)
+	} else if (m != NULL) {
 		err = drbr_enqueue(ifp, txq->ift_br[0], m);
-
+		/* Minimize a small race between another thread dropping the
+		 * lock and us enqueuing the buffer on the buf_ring
+		 */
+		if (err == 0 && !TXQ_LOCK_HELD(txq) && TXQ_TRYLOCK(txq)) {
+			iflib_txq_start(txq);
+			TXQ_UNLOCK(txq);
+		}
+	}
 	return (err);
 }
 
