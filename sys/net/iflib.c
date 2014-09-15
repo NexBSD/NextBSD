@@ -1265,17 +1265,10 @@ retry:
 		return (ENOBUFS);
 	}
 	m_head = *m_headp;
-	pi.ipi_pkt_hdr = mtod(m_head, caddr_t);
 	pi.ipi_m = m_head;
 	pi.ipi_segs = segs;
 	pi.ipi_nsegs = nsegs;
 	pi.ipi_pidx = pidx;
-	pi.ipi_csum_flags = M_CSUM_FLAGS(m_head);
-
-	if (M_HAS_VLANTAG(m_head)) {
-		pi.ipi_vtag = m->m_pkthdr.ether_vtag;
-		pi.ipi_flags |= M_VLANTAG;
-	}
 
 	if ((err = sctx->isc_txd_encap(sctx, txq->ift_id, &pi)) == 0) {
 		bus_dmamap_sync(txq->ift_dma_info.idi_tag, txq->ift_dma_info.idi_map,

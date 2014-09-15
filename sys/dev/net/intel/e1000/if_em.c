@@ -1237,7 +1237,7 @@ em_isc_txd_encap(if_shared_ctx_t sctx, uint32_t txqid, if_pkt_info_t pi)
 
 	tso_desc = last = 0;
 	txd_upper = txd_lower = txd_used = txd_saved = 0;
-	do_tso = ((pi->ipi_csum_flags & CSUM_TSO) != 0);
+	do_tso = ((pi->ipi_m->m_pkthdr.csum_flags & CSUM_TSO) != 0);
 	ip_off = poff = 0;
 	nsegs = pi->ipi_nsegs;
 	/*
@@ -1255,22 +1255,22 @@ em_isc_txd_encap(if_shared_ctx_t sctx, uint32_t txqid, if_pkt_info_t pi)
 	 * which also has similiar restrictions.
 	 */
 
-	eh = (struct ether_header *)pi->ipi_pkt_hdr;
+	eh = mtod(pi->ipi_m, struct ether_header *);
 	if (eh->ether_type == htons(ETHERTYPE_VLAN))
 		ip_off = sizeof(struct ether_vlan_header);
 	else
 		ip_off = sizeof (struct ether_header);
 
-	ip = (struct ip *)(pi->ipi_pkt_hdr + ip_off);
+	ip = (struct ip *)(mtod(pi->ipi_m, caddr_t) + ip_off);
 	poff = ip_off + (ip->ip_hl << 2);
 	if (do_tso) {
 		ip->ip_len = 0;
 		ip->ip_sum = 0;
-		tp = (struct tcphdr *)(pi->ipi_pkt_hdr + poff);
+		tp = (struct tcphdr *)(mtod(pi->ipi_m, caddr_t) + poff);
 		tp->th_sum = in_pseudo(ip->ip_src.s_addr,
 			    ip->ip_dst.s_addr, htons(IPPROTO_TCP));
-	} else if (pi->ipi_csum_flags & CSUM_TCP)
-		tp = (struct tcphdr *)(pi->ipi_pkt_hdr + poff);
+	} else if (pi->ipi_m->m_pkthdr.csum_flags & CSUM_TCP)
+		tp = (struct tcphdr *)(mtod(pi->ipi_m, caddr_t) + poff);
 
 	/*
 	 *
@@ -1296,16 +1296,16 @@ em_isc_txd_encap(if_shared_ctx_t sctx, uint32_t txqid, if_pkt_info_t pi)
 	}
 
 	/* Do hardware assists */
-	if (pi->ipi_csum_flags & CSUM_TSO) {
+	if (pi->ipi_m->m_pkthdr.csum_flags & CSUM_TSO) {
 		em_tso_setup(txr, pi, ip_off, ip, tp, &txd_upper, &txd_lower);
 		/* we need to make a final sentinel transmit desc */
 		tso_desc = TRUE;
-	} else if (pi->ipi_csum_flags & CSUM_OFFLOAD)
+	} else if (pi->ipi_m->m_pkthdr.csum_flags & CSUM_OFFLOAD)
 		em_transmit_checksum_setup(txr, pi, ip_off, ip, &txd_upper, &txd_lower);
 
-	if (pi->ipi_flags & M_VLANTAG) {
+	if (pi->ipi_m->m_flags & M_VLANTAG) {
 		/* Set the vlan id. */
-		txd_upper |= htole16(pi->ipi_vtag) << 16;
+		txd_upper |= htole16(pi->ipi_m->m_pkthdr.ether_vtag) << 16;
                 /* Tell hardware to add tag */
                 txd_lower |= htole32(E1000_TXD_CMD_VLE);
         }
@@ -2382,7 +2382,7 @@ em_transmit_checksum_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off,
 	hdr_len = ip_off + (ip->ip_hl << 2);
 	cur = pi->ipi_pidx;
 	/* Setup of IP header checksum. */
-	if (pi->ipi_csum_flags & CSUM_IP) {
+	if (pi->ipi_m->m_pkthdr.csum_flags & CSUM_IP) {
 		*txd_upper |= E1000_TXD_POPTS_IXSM << 8;
 		offload |= CSUM_IP;
 		ipcss = ip_off;
@@ -2399,7 +2399,7 @@ em_transmit_checksum_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off,
 		cmd |= E1000_TXD_CMD_IP;
 	}
 
-	if (pi->ipi_csum_flags & CSUM_TCP) {
+	if (pi->ipi_m->m_pkthdr.csum_flags & CSUM_TCP) {
  		*txd_lower = E1000_TXD_CMD_DEXT | E1000_TXD_DTYP_D;
  		*txd_upper |= E1000_TXD_POPTS_TXSM << 8;
  		offload |= CSUM_TCP;
@@ -2438,7 +2438,7 @@ em_transmit_checksum_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off,
  		TXD->upper_setup.tcp_fields.tucse = htole16(0);
  		TXD->upper_setup.tcp_fields.tucso = tucso;
  		cmd |= E1000_TXD_CMD_TCP;
-	} else if (pi->ipi_csum_flags & CSUM_UDP) {
+	} else if (pi->ipi_m->m_pkthdr.csum_flags & CSUM_UDP) {
  		*txd_lower = E1000_TXD_CMD_DEXT | E1000_TXD_DTYP_D;
  		*txd_upper |= E1000_TXD_POPTS_TXSM << 8;
  		tucss = hdr_len;
@@ -2549,7 +2549,7 @@ em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off, struct ip *ip,
 	 * Payload size per packet w/o any headers.
 	 * Length of all headers up to payload.
 	 */
-	TXD->tcp_seg_setup.fields.mss = htole16(pi->ipi_tso_segsz);
+	TXD->tcp_seg_setup.fields.mss = htole16(pi->ipi_m->m_pkthdr.tso_segsz);
 	TXD->tcp_seg_setup.fields.hdr_len = hdr_len;
 
 	TXD->cmd_and_length = htole32(adapter->txd_cmd |
@@ -2557,7 +2557,7 @@ em_tso_setup(struct tx_ring *txr, if_pkt_info_t pi, int ip_off, struct ip *ip,
 				E1000_TXD_CMD_TSE |	/* TSE context */
 				E1000_TXD_CMD_IP |	/* Do IP csum */
 				E1000_TXD_CMD_TCP |	/* Do TCP checksum */
-				(pi->ipi_pktlen - (hdr_len))); /* Total len */
+				(pi->ipi_m->m_pkthdr.len - (hdr_len))); /* Total len */
 
 	if (++cur == adapter->num_tx_desc)
 		cur = 0;

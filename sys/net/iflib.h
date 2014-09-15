@@ -64,17 +64,11 @@ typedef struct if_rxd_info {
 } *if_rxd_info_t;
 
 typedef struct if_pkt_info {
-	caddr_t	ipi_pkt_hdr;
 	struct mbuf *ipi_m; /* experimental */
 	bus_dma_segment_t *ipi_segs;
 	uint16_t ipi_nsegs;
-	uint16_t ipi_vtag;
 	uint32_t ipi_pidx;
-	uint32_t ipi_csum_flags;
-	uint16_t ipi_flags;
-	uint16_t ipi_tso_segsz;
 	uint32_t ipi_new_pidx;
-	uint16_t ipi_pktlen;
 } *if_pkt_info_t;
 
 struct if_common_stats {

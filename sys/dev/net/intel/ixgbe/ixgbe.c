@@ -1336,7 +1336,7 @@ ixgbe_isc_txd_encap(if_shared_ctx_t sctx, uint32_t txqid, if_pkt_info_t pi)
 		if (++i == txr->num_desc)
 			i = 0;
 	}
-	txr->bytes += pi->ipi_pktlen;
+	txr->bytes += pi->ipi_m->m_pkthdr.len;
 	txr->packets++;
 	txd->read.cmd_type_len |=
 	    htole32(IXGBE_TXD_CMD_EOP | IXGBE_TXD_CMD_RS);
