@@ -462,6 +462,7 @@ ixgbe_attach(device_t dev)
 	int             tsize, rsize, error = 0;
 	u16		csum;
 	u32		ctrl_ext;
+	uint32_t qsizes[2];
 
 	INIT_DEBUGOUT("ixgbe_attach: begin");
 
@@ -545,7 +546,9 @@ ixgbe_attach(device_t dev)
 					 sizeof(union ixgbe_adv_tx_desc), DBA_ALIGN);
 	rsize = roundup2(adapter->num_rx_desc *
 					 sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
-	if (iflib_queues_alloc(sctx, tsize, rsize)) {
+	qsizes[0] = tsize;
+	qsizes[1] = rsize;
+	if (iflib_queues_alloc(sctx, qsizes, 2)) {
 		error = ENOMEM;
 		goto err_out;
 	}
@@ -2064,7 +2067,7 @@ ixgbe_if_queues_alloc(if_shared_ctx_t sctx)
 	struct ix_queue	*que;
 	struct tx_ring	*txr;
 	struct rx_ring	*rxr;
-	uint64_t addrs[2];
+	uint64_t vaddrs[2], paddrs[2];
 	int error = IXGBE_SUCCESS;
 	int txconf = 0, rxconf = 0;
 
@@ -2108,9 +2111,9 @@ ixgbe_if_queues_alloc(if_shared_ctx_t sctx)
 		txr->me = i;
 		txr->num_desc = adapter->num_tx_desc;
 
-		iflib_txq_addr_get(sctx, i, addrs);
-		txr->tx_base = (union ixgbe_adv_tx_desc *)addrs[0];
-		txr->tx_paddr = addrs[1];
+		iflib_qset_addr_get(sctx, i, vaddrs, paddrs, 2);
+		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[0];
+		txr->tx_paddr = paddrs[0];
 		/* Now allocate transmit buffers for the ring */
 		if (ixgbe_allocate_transmit_buffers(txr)) {
 			device_printf(dev,"Failure setting up transmit buffers\n");
@@ -2126,9 +2129,9 @@ ixgbe_if_queues_alloc(if_shared_ctx_t sctx)
 		rxr->me = i;
 		rxr->num_desc = adapter->num_rx_desc;
 
-		iflib_rxq_addr_get(sctx, i, addrs);
-		rxr->rx_base = (union ixgbe_adv_rx_desc *)addrs[0];
-		rxr->rx_paddr = addrs[1];
+		iflib_qset_addr_get(sctx, i, vaddrs, paddrs, 2);
+		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[1];
+		rxr->rx_paddr = paddrs[1];
 	}
 
 	/*

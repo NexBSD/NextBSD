@@ -153,13 +153,17 @@ int iflib_device_resume(device_t);
 
 int iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN]);
 
-int iflib_queues_alloc(if_shared_ctx_t ctx, int txq_size, int rxq_size);
+/*
+ * By convention queue 0 is the tx completion queue,
+ * queue 1 is the rx completion queue, and the following
+ * queues are synced by the driver as it sees fit.
+ */
+int iflib_queues_alloc(if_shared_ctx_t ctx, uint32_t *qsizes, uint32_t nqs);
 
 int iflib_txrx_structures_setup(if_shared_ctx_t);
 void iflib_txrx_structures_free(if_shared_ctx_t);
 
-void iflib_txq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
-void iflib_rxq_addr_get(if_shared_ctx_t, int idx, uint64_t addrs[2]);
+int iflib_qset_addr_get(if_shared_ctx_t, int qidx, uint64_t *vaddrs, uint64_t *paddrs, int nqs);
 
 int iflib_irq_alloc(if_shared_ctx_t, if_irq_t, int, driver_filter_t, driver_intr_t, void *arg, char *name);
 int iflib_irq_alloc_generic(if_shared_ctx_t ctx, if_irq_t irq, int rid,

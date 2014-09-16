@@ -501,7 +501,8 @@ em_attach(device_t dev)
 	struct e1000_hw	*hw;
 	int		error = 0;
 	if_shared_ctx_t sctx;
-	uint64_t tsize, rsize;
+	uint32_t tsize, rsize;
+	uint32_t qsizes[2];
 	
 	INIT_DEBUGOUT("em_if_attach: begin");
 
@@ -658,8 +659,10 @@ em_attach(device_t dev)
 	tsize = roundup2(adapter->num_tx_desc *
 		sizeof(struct e1000_tx_desc), EM_DBA_ALIGN);
 	rsize = roundup2(adapter->num_rx_desc *
-	    sizeof(struct e1000_rx_desc), EM_DBA_ALIGN);
-	if (iflib_queues_alloc(sctx, tsize, rsize)) {
+					 sizeof(struct e1000_rx_desc), EM_DBA_ALIGN);
+	qsizes[0] = tsize;
+	qsizes[1] = rsize;
+	if (iflib_queues_alloc(sctx, qsizes, 2)) {
 		error = ENOMEM;
 		goto err_pci;
 	}
@@ -2186,17 +2189,16 @@ em_if_queues_alloc(if_shared_ctx_t sctx)
 	}
 	for (i = 0, txr = adapter->tx_rings, rxr = adapter->rx_rings;
 		 i < adapter->num_queues; i++, rxr++, txr++) {
-		uint64_t addrs[2];
+		uint64_t paddrs[2], vaddrs[2];
 		txr->adapter = rxr->adapter = adapter;
 		rxr->me = txr->me = i;
 
 		/* get the virtual and physical address of the hardware queues */
-		iflib_txq_addr_get(sctx, i, addrs);
-		txr->tx_base = (struct e1000_tx_desc *)addrs[0];
-		txr->tx_paddr = addrs[1];
-		iflib_rxq_addr_get(sctx, i, addrs);
-		rxr->rx_base = (struct e1000_rx_desc *)addrs[0];
-		rxr->rx_paddr = addrs[1];
+		iflib_qset_addr_get(sctx, i, vaddrs, paddrs, 2);
+		txr->tx_base = (struct e1000_tx_desc *)vaddrs[0];
+		txr->tx_paddr = paddrs[0];
+		rxr->rx_base = (struct e1000_rx_desc *)vaddrs[1];
+		rxr->rx_paddr = paddrs[1];
 	}
 
 	return (0);

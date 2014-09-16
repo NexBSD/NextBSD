@@ -95,7 +95,8 @@ struct iflib_txq;
 typedef struct iflib_txq *iflib_txq_t;
 struct iflib_rxq;
 typedef struct iflib_rxq *iflib_rxq_t;
-
+struct iflib_qset;
+typedef struct iflib_qset *iflib_qset_t;
 
 typedef struct iflib_filter_info {
 	driver_filter_t *ifi_filter;
@@ -113,8 +114,7 @@ struct iflib_ctx {
 	char ifc_mtx_name[16];
 	iflib_txq_t ifc_txqs;
 	iflib_rxq_t ifc_rxqs;
-	uint32_t ifc_txq_size;
-	uint32_t ifc_rxq_size;
+	iflib_qset_t ifc_qsets;
 	uint32_t ifc_if_flags;
 	uint32_t ifc_flags;
 	struct callout ifc_timer;
@@ -133,14 +133,19 @@ struct iflib_ctx {
 #define LINK_ACTIVE(ctx) ((ctx)->ifc_link_state == LINK_STATE_UP)
 
 typedef struct iflib_dma_info {
-	bus_addr_t				idi_paddr;
-	caddr_t					idi_vaddr;
+	bus_addr_t			idi_paddr;
+	caddr_t				idi_vaddr;
 	bus_dma_tag_t		idi_tag;
 	bus_dmamap_t		idi_map;
 	bus_dma_segment_t	idi_seg;
-	int							idi_nseg;
+	int					idi_nseg;
+	uint32_t			idi_size;
 } *iflib_dma_info_t;
 
+struct iflib_qset {
+	iflib_dma_info_t ifq_ifdi;
+	uint16_t ifq_nhwqs;
+};
 
 #define RX_SW_DESC_MAP_CREATED	(1 << 0)
 #define TX_SW_DESC_MAP_CREATED	(1 << 1)
@@ -194,7 +199,6 @@ struct iflib_txq {
 
 	struct mtx              ift_mtx;
 	char                    ift_mtx_name[16];
-	struct iflib_dma_info       ift_dma_info;
 	int                     ift_id;
 	iflib_sd_t              ift_sds;
 	int                     ift_nbr;
@@ -204,6 +208,7 @@ struct iflib_txq {
 	int                     ift_active;
 	int                     ift_watchdog_time;
 	struct iflib_filter_info ift_filter_info;
+	iflib_dma_info_t		ift_ifdi;
 };
 
 /* XXX check this */
@@ -234,13 +239,13 @@ struct iflib_rxq {
 	uma_zone_t	ifr_zone;
 	int ifr_lro_enabled;
 	struct lro_ctrl			ifr_lc;
-	struct iflib_dma_info	ifr_dma_info;
 	struct mtx				ifr_mtx;
 	char                    ifr_mtx_name[16];
 	struct grouptask        ifr_task;
 	iflib_sd_t              ifr_sds;
 	bus_dma_tag_t           ifr_desc_tag;
 	struct iflib_filter_info ifr_filter_info;
+	iflib_dma_info_t		ifr_ifdi;
 };
 
 
@@ -358,6 +363,7 @@ iflib_dma_alloc(iflib_ctx_t ctx, bus_size_t size, iflib_dma_info_t dma,
 		goto fail_3;
 	}
 
+	dma->idi_size = size;
 	return (0);
 
 fail_3:
@@ -569,7 +575,10 @@ iflib_txq_setup(iflib_txq_t txq)
 {
 	iflib_ctx_t ctx = txq->ift_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
+	iflib_qset_t qset = &ctx->ifc_qsets[txq->ift_id];
 	iflib_sd_t txsd;
+	iflib_dma_info_t di;
+	int i;
 #ifdef DEV_NETMAP
 	struct netmap_slot *slot;
 	struct netmap_adapter *na = netmap_getna(sctx->isc_ifp);
@@ -608,11 +617,13 @@ iflib_txq_setup(iflib_txq_t txq)
 #endif /* DEV_NETMAP */
 
 	}
+	for (i = 0, di = qset->ifq_ifdi; i < qset->ifq_nhwqs; i++, di++)
+		bzero((void *)di->idi_vaddr, di->idi_size);
 
-	bzero((void *)txq->ift_dma_info.idi_vaddr, ctx->ifc_txq_size);
 	IFDI_TXQ_SETUP(sctx, txq->ift_id);
-	bus_dmamap_sync(txq->ift_dma_info.idi_tag, txq->ift_dma_info.idi_map,
-					BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	for (i = 0, di = qset->ifq_ifdi; i < qset->ifq_nhwqs; i++, di++)
+		bus_dmamap_sync(di->idi_tag, di->idi_map,
+						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	TXQ_UNLOCK(txq);
 	return (0);
 }
@@ -707,7 +718,7 @@ _iflib_rxq_refill(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
 			break;
 		}
 		if ((rxsd->ifsd_flags & RX_SW_DESC_MAP_CREATED) == 0) {
-			if ((err = bus_dmamap_create(rxq->ifr_dma_info.idi_tag, 0, &rxsd->ifsd_map))) {
+			if ((err = bus_dmamap_create(rxq->ifr_ifdi->idi_tag, 0, &rxsd->ifsd_map))) {
 				log(LOG_WARNING, "bus_dmamap_create failed %d\n", err);
 				uma_zfree(rxq->ifr_zone, cl);
 				goto done;
@@ -803,7 +814,6 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 
 	/* Clear the ring contents */
 	RXQ_LOCK(rxq);
-	bzero((void *)rxq->ifr_dma_info.idi_vaddr, ctx->ifc_rxq_size);
 #ifdef DEV_NETMAP
 	slot = netmap_reset(na, NR_RX, rxq->ifr_id, 0);
 #endif
@@ -839,7 +849,7 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 		rxq->ifr_lro_enabled = TRUE;
 		rxq->ifr_lc.ifp = sctx->isc_ifp;
 	}
-	bus_dmamap_sync(rxq->ifr_dma_info.idi_tag, rxq->ifr_dma_info.idi_map,
+	bus_dmamap_sync(rxq->ifr_ifdi->idi_tag, rxq->ifr_ifdi->idi_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 fail:
 	RXQ_UNLOCK(rxq);
@@ -1136,7 +1146,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	while (__predict_true(budget_left--)) {
 		if (__predict_false(!CTX_ACTIVE(ctx)))
 			break;
-		di = &rxq->ifr_dma_info;
+		di = rxq->ifr_ifdi;
 		bus_dmamap_sync(di->idi_tag, di->idi_map,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 		if (__predict_false(!sctx->isc_rxd_available(sctx, rxq->ifr_id, cidx)))
@@ -1271,7 +1281,7 @@ retry:
 	pi.ipi_pidx = pidx;
 
 	if ((err = sctx->isc_txd_encap(sctx, txq->ift_id, &pi)) == 0) {
-		bus_dmamap_sync(txq->ift_dma_info.idi_tag, txq->ift_dma_info.idi_map,
+		bus_dmamap_sync(txq->ift_ifdi->idi_tag, txq->ift_ifdi->idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 		if (pi.ipi_new_pidx >= pi.ipi_pidx)
@@ -2071,19 +2081,46 @@ iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN])
 }
 
 int
-iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)
+iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint32_t nqs)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	device_t dev = sctx->isc_dev;
-	int nqueues = sctx->isc_nqsets;
+	int nqsets = sctx->isc_nqsets;
 	iflib_txq_t txq = NULL;
 	iflib_rxq_t rxq = NULL;
-	int i, err, txconf, rxconf;
+	iflib_qset_t qset = NULL;
+	int i, j, err, txconf, rxconf;
+	iflib_dma_info_t ifdip;
 
-	/* Allocate the TX ring struct memory */
+	if ((ifdip = malloc(sizeof(struct iflib_dma_info) * nqs * nqsets, M_DEVBUF, M_WAITOK)) == NULL)
+		return (ENOMEM);
+
+	if (!(qset =
+	    (iflib_qset_t) malloc(sizeof(struct iflib_qset) *
+	    nqsets, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+		device_printf(dev, "Unable to allocate TX ring memory\n");
+		err = ENOMEM;
+		goto fail;
+	}
+
+	ctx->ifc_qsets = qset;
+	for (i = 0; i < nqsets; i++, qset++) {
+		qset->ifq_ifdi = ifdip;
+		qset->ifq_nhwqs = nqs;
+		for (j = 0; j < nqs; j++, ifdip++) {
+			if (iflib_dma_alloc(ctx, qsizes[j], ifdip, BUS_DMA_NOWAIT)) {
+				device_printf(dev, "Unable to allocate Descriptor memory\n");
+				err = ENOMEM;
+				goto err_tx_desc;
+			}
+			bzero((void *)ifdip->idi_vaddr, qsizes[j]);
+		}
+	}
+
+/* Allocate the TX ring struct memory */
 	if (!(txq =
 	    (iflib_txq_t) malloc(sizeof(struct iflib_txq) *
-	    nqueues, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+	    nqsets, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 		device_printf(dev, "Unable to allocate TX ring memory\n");
 		err = ENOMEM;
 		goto fail;
@@ -2092,7 +2129,7 @@ iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)
 	/* Now allocate the RX */
 	if (!(rxq =
 	    (iflib_rxq_t) malloc(sizeof(struct iflib_rxq) *
-	    nqueues, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+	    nqsets, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 		device_printf(dev, "Unable to allocate RX ring memory\n");
 		err = ENOMEM;
 		goto rx_fail;
@@ -2101,12 +2138,14 @@ iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)
 	/*
 	 * XXX handle allocation failure
 	 */
-	for (rxconf = txconf = i = 0; i < nqueues; i++, txconf++, rxconf++) {
+	for (qset = ctx->ifc_qsets, rxconf = txconf = i = 0; i < nqsets;
+		 i++, txconf++, rxconf++, qset++) {
 		/* Set up some basics */
 		txq = &ctx->ifc_txqs[i];
 		txq->ift_ctx = ctx;
 		txq->ift_id = i;
 		txq->ift_nbr = 1; /* XXX calculate dynamically */
+		txq->ift_ifdi = &qset->ifq_ifdi[0];
 
 		if (iflib_txsd_alloc(txq)) {
 			device_printf(dev,
@@ -2120,14 +2159,6 @@ iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)
 		    device_get_nameunit(dev), txq->ift_id);
 		mtx_init(&txq->ift_mtx, txq->ift_mtx_name, NULL, MTX_DEF);
 
-		if (iflib_dma_alloc(ctx, txq_size,
-			&txq->ift_dma_info, BUS_DMA_NOWAIT)) {
-			device_printf(dev,
-			    "Unable to allocate TX Descriptor memory\n");
-			err = ENOMEM;
-			goto err_tx_desc;
-		}
-		bzero((void *)txq->ift_dma_info.idi_vaddr, txq_size);
 		/* Allocate a buf ring */
 		txq->ift_br[0] = buf_ring_alloc(4096, M_DEVBUF,
 		    M_WAITOK, &txq->ift_mtx);
@@ -2137,6 +2168,7 @@ iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)
 		rxq = &ctx->ifc_rxqs[i];
 		rxq->ifr_ctx = ctx;
 		rxq->ifr_id = i;
+		rxq->ifr_ifdi = &qset->ifq_ifdi[1];
 
         /* Allocate receive buffers for the ring*/
 		if (iflib_rxsd_alloc(rxq)) {
@@ -2150,30 +2182,15 @@ iflib_queues_alloc(if_shared_ctx_t sctx, int txq_size, int rxq_size)
 		snprintf(rxq->ifr_mtx_name, sizeof(rxq->ifr_mtx_name), "%s:rx(%d)",
 		    device_get_nameunit(dev), rxq->ifr_id);
 		mtx_init(&rxq->ifr_mtx, rxq->ifr_mtx_name, NULL, MTX_DEF);
-
-		if (iflib_dma_alloc(ctx, rxq_size,
-			&rxq->ifr_dma_info, BUS_DMA_NOWAIT)) {
-			device_printf(dev,
-			    "Unable to allocate TX Descriptor memory\n");
-			err = ENOMEM;
-			goto err_tx_desc;
-		}
-		bzero((void *)rxq->ifr_dma_info.idi_vaddr, rxq_size);
 	}
 	ctx->ifc_txqs = txq;
 	ctx->ifc_rxqs = rxq;
-	ctx->ifc_txq_size = txq_size;
-	ctx->ifc_rxq_size = rxq_size;
 	if ((err = IFDI_QUEUES_ALLOC(sctx)) != 0)
 		iflib_tx_structures_free(sctx);
 
 	return (0);
 err_rx_desc:
-	for (rxq = ctx->ifc_rxqs; rxconf > 0; rxq++, rxconf--)
-		iflib_dma_free(&rxq->ifr_dma_info);
 err_tx_desc:
-	for (txq = ctx->ifc_txqs; txconf > 0; txq++, txconf--)
-		iflib_dma_free(&txq->ift_dma_info);
 	free(ctx->ifc_rxqs, M_DEVBUF);
 rx_fail:
 	free(ctx->ifc_txqs, M_DEVBUF);
@@ -2199,12 +2216,16 @@ iflib_tx_structures_free(if_shared_ctx_t sctx)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	iflib_txq_t txq = ctx->ifc_txqs;
+	iflib_qset_t qset = ctx->ifc_qsets;
+	int i, j;
 
-	for (int i = 0; i < sctx->isc_nqsets; i++, txq++) {
+	for (i = 0; i < sctx->isc_nqsets; i++, txq++, qset++) {
 		iflib_txq_destroy(txq);
-		iflib_dma_free(&txq->ift_dma_info);
+		for (j = 0; j < qset->ifq_nhwqs; j++)
+			iflib_dma_free(&qset->ifq_ifdi[j]);
 	}
 	free(ctx->ifc_txqs, M_DEVBUF);
+	free(ctx->ifc_qsets, M_DEVBUF);
 	IFDI_TX_STRUCTURES_FREE(sctx);
 }
 
@@ -2253,7 +2274,6 @@ iflib_rx_structures_free(if_shared_ctx_t sctx)
 
 	for (int i = 0; i < sctx->isc_nrxq; i++, rxq++) {
 		iflib_rx_sds_free(rxq);
-		iflib_dma_free(&rxq->ifr_dma_info);
 	}
 	IFDI_RX_STRUCTURES_FREE(sctx);
 }
@@ -2281,22 +2301,19 @@ iflib_txrx_structures_free(if_shared_ctx_t sctx)
 	iflib_rx_structures_free(sctx);
 }
 
-void
-iflib_txq_addr_get(if_shared_ctx_t sctx, int qidx, uint64_t addrs[2])
+int
+iflib_qset_addr_get(if_shared_ctx_t sctx, int qidx, uint64_t *vaddrs, uint64_t *paddrs, int nqs)
 {
-	iflib_dma_info_t di = &sctx->isc_ctx->ifc_txqs[qidx].ift_dma_info;
+	iflib_dma_info_t di = sctx->isc_ctx->ifc_qsets[qidx].ifq_ifdi;
+	int i, nhwqs = sctx->isc_ctx->ifc_qsets[qidx].ifq_nhwqs;
 
-	addrs[0] = (uint64_t)di->idi_vaddr;
-	addrs[1] = di->idi_paddr;
-}
-
-void
-iflib_rxq_addr_get(if_shared_ctx_t sctx, int qidx, uint64_t addrs[2])
-{
-	iflib_dma_info_t di = &sctx->isc_ctx->ifc_rxqs[qidx].ifr_dma_info;
-
-	addrs[0] = (uint64_t)di->idi_vaddr;
-	addrs[1] = di->idi_paddr;
+	if (nqs != nhwqs)
+		return (EINVAL);
+	for (i = 0; i < nhwqs; i++, di++) {
+		vaddrs[i] = (uint64_t)di->idi_vaddr;
+		paddrs[i] = di->idi_paddr;
+	}
+	return (0);
 }
 
 int
