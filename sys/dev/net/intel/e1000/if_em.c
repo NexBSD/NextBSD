@@ -246,12 +246,12 @@ static void em_if_rx_structures_free(if_shared_ctx_t);
 
 static int		em_if_sysctl_int_delay(if_shared_ctx_t, if_int_delay_info_t);
 
-static int	em_isc_txd_encap(if_shared_ctx_t, uint32_t, if_pkt_info_t);
-static void em_isc_txd_flush(if_shared_ctx_t, uint32_t, uint32_t);
-static int  em_isc_rxd_pkt_get(if_shared_ctx_t, uint32_t, uint32_t, if_rxd_info_t);
-static void em_isc_rxd_refill(if_shared_ctx_t, uint32_t, uint32_t, uint64_t*, uint32_t);
-static void em_isc_rxd_flush(if_shared_ctx_t, uint32_t, uint32_t);
-static int em_isc_rxd_available(if_shared_ctx_t, uint32_t, uint32_t);
+static int	em_isc_txd_encap(if_shared_ctx_t, uint16_t, if_pkt_info_t);
+static void em_isc_txd_flush(if_shared_ctx_t, uint16_t, uint32_t);
+static int  em_isc_rxd_pkt_get(if_shared_ctx_t, if_rxd_info_t);
+static void em_isc_rxd_refill(if_shared_ctx_t, uint16_t, uint8_t, uint32_t, uint64_t*, uint8_t);
+static void em_isc_rxd_flush(if_shared_ctx_t, uint16_t, uint8_t, uint32_t);
+static int em_isc_rxd_available(if_shared_ctx_t, uint16_t, uint32_t);
 
 
 
@@ -1224,7 +1224,7 @@ em_if_media_change(if_shared_ctx_t sctx)
  **********************************************************************/
 
 static int
-em_isc_txd_encap(if_shared_ctx_t sctx, uint32_t txqid, if_pkt_info_t pi)
+em_isc_txd_encap(if_shared_ctx_t sctx, uint16_t txqid, if_pkt_info_t pi)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct tx_ring *txr = &adapter->tx_rings[txqid];
@@ -1382,7 +1382,7 @@ em_isc_txd_encap(if_shared_ctx_t sctx, uint32_t txqid, if_pkt_info_t pi)
 }
 
 static void
-em_isc_txd_flush(if_shared_ctx_t sctx, uint32_t txqid, uint32_t pidx)
+em_isc_txd_flush(if_shared_ctx_t sctx, uint16_t txqid, uint32_t pidx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	/*
@@ -2755,7 +2755,7 @@ em_initialize_receive_unit(struct adapter *adapter)
 }
 
 static void
-em_isc_rxd_refill(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx, uint64_t *paddrs, uint32_t count)
+em_isc_rxd_refill(if_shared_ctx_t sctx, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx, uint64_t *paddrs, uint8_t count)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
@@ -2770,7 +2770,7 @@ em_isc_rxd_refill(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx, uint64_t 
 }
 
 static void
-em_isc_rxd_flush(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx)
+em_isc_rxd_flush(if_shared_ctx_t sctx, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 
@@ -2778,7 +2778,7 @@ em_isc_rxd_flush(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx)
 }
 
 static int
-em_isc_rxd_available(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t idx)
+em_isc_rxd_available(if_shared_ctx_t sctx, uint16_t rxqid, uint32_t idx)
 {
 	struct rx_ring *rxr = &DOWNCAST(sctx)->rx_rings[rxqid];
 	struct e1000_rx_desc	*cur;
@@ -2810,16 +2810,16 @@ em_isc_rxd_available(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t idx)
  *  For polling we also now return the number of cleaned packets
  *********************************************************************/
 static int
-em_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_info_t ri)
+em_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
-	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
+	struct rx_ring *rxr = &adapter->rx_rings[ri->iri_qsidx];
 	u8			status;
 	u16 			len;
 	bool			eop;
 	struct e1000_rx_desc	*cur;
 	
-	cur = &rxr->rx_base[i];
+	cur = &rxr->rx_base[ri->iri_cidx];
 	status = cur->status;
 
 	len = le16toh(cur->length);
@@ -2843,10 +2843,12 @@ em_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_info
 	}
 	
 	/* Assign correct length to the current fragment */
-	ri->iri_qidx = rxr->me;
-	ri->iri_cidx = i;
 	ri->iri_len = len;
-
+	/*  we only have one rx ring per qset and signalling is in-band
+	 *  so this is always 0
+	 *  -1 implies a non-data message from the cq
+	 */
+	ri->iri_qidx = 1;
 	if (eop) {
 		em_receive_checksum(cur, &ri->iri_csum_flags,
 							&ri->iri_csum_data);

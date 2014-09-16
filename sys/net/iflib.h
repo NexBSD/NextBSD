@@ -51,16 +51,17 @@ typedef struct if_int_delay_info  *if_int_delay_info_t;
 #define	IF_RXD_FLOWID			(1 << 5)
 
 typedef struct if_rxd_info {
-	uint16_t iri_qidx;
+	uint16_t iri_qsidx;
 	uint16_t iri_vtag;
 	int      iri_flags;
-	int      iri_cidx;
+	uint32_t iri_cidx; /* consumer index of cq when passed in */
 	uint32_t iri_len;
 	uint32_t iri_flowid;
 	uint32_t iri_csum_flags;
 	uint32_t iri_csum_data;
 	uint16_t iri_next_offset; /* 0 for eop */
 	uint8_t	 iri_hash_type;
+	int8_t	 iri_qidx;
 } *if_rxd_info_t;
 
 typedef struct if_pkt_info {
@@ -102,14 +103,14 @@ struct if_shared_ctx {
 	 * Do not move
 	 */
 	KOBJ_FIELDS;
-	int (*isc_txd_encap) (if_shared_ctx_t, uint32_t, if_pkt_info_t);
-	void (*isc_txd_flush) (if_shared_ctx_t, uint32_t, uint32_t);
-	int (*isc_txd_credits_update) (if_shared_ctx_t, uint32_t, uint32_t);
+	int (*isc_txd_encap) (if_shared_ctx_t, uint16_t, if_pkt_info_t);
+	void (*isc_txd_flush) (if_shared_ctx_t, uint16_t, uint32_t);
+	int (*isc_txd_credits_update) (if_shared_ctx_t, uint16_t, uint32_t);
 
-	int (*isc_rxd_available) (if_shared_ctx_t, uint32_t, uint32_t);
-	int (*isc_rxd_pkt_get) (if_shared_ctx_t, uint32_t, uint32_t, if_rxd_info_t);
-	void (*isc_rxd_refill) (if_shared_ctx_t, uint32_t, uint32_t, uint64_t *, uint32_t);
-	void (*isc_rxd_flush) (if_shared_ctx_t, uint32_t, uint32_t);
+	int (*isc_rxd_available) (if_shared_ctx_t, uint16_t qsidx, uint32_t pidx);
+	int (*isc_rxd_pkt_get) (if_shared_ctx_t sctx, if_rxd_info_t ri);
+	void (*isc_rxd_refill) (if_shared_ctx_t, uint16_t qsidx, uint8_t flidx, uint32_t pidx, uint64_t *paddrs, uint8_t count);
+	void (*isc_rxd_flush) (if_shared_ctx_t, uint16_t qsidx, uint8_t flidx, uint32_t pidx);
 
 	iflib_ctx_t isc_ctx;
 	device_t isc_dev;
@@ -158,7 +159,7 @@ int iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN]);
  * queue 1 is the rx completion queue, and the following
  * queues are synced by the driver as it sees fit.
  */
-int iflib_queues_alloc(if_shared_ctx_t ctx, uint32_t *qsizes, uint32_t nqs);
+int iflib_queues_alloc(if_shared_ctx_t ctx, uint32_t *qsizes, uint8_t nqs);
 
 int iflib_txrx_structures_setup(if_shared_ctx_t);
 void iflib_txrx_structures_free(if_shared_ctx_t);

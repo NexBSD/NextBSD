@@ -140,19 +140,19 @@ static void     ixgbe_if_rx_intr_enable(if_shared_ctx_t, uint32_t);
 static void     ixgbe_if_intr_enable(if_shared_ctx_t);
 static void     ixgbe_if_intr_disable(if_shared_ctx_t);
 static void     ixgbe_update_stats_counters(struct adapter *);
-static int	ixgbe_isc_txd_credits_update(if_shared_ctx_t, uint32_t, uint32_t);
-static int	ixgbe_isc_rxd_pkt_get(if_shared_ctx_t, uint32_t, uint32_t, if_rxd_info_t);
+static int	ixgbe_isc_txd_credits_update(if_shared_ctx_t, uint16_t, uint32_t);
+static int	ixgbe_isc_rxd_pkt_get(if_shared_ctx_t, if_rxd_info_t);
 static void	ixgbe_rx_checksum(u32, if_rxd_info_t, u32);
 static void     ixgbe_if_promisc_set(if_shared_ctx_t, int);
 static int      ixgbe_if_mtu_set(if_shared_ctx_t, uint32_t);
 static void     ixgbe_if_multi_set(if_shared_ctx_t);
 static int		ixgbe_if_i2c_req(if_shared_ctx_t, struct ifi2creq *);
 static void     ixgbe_if_update_link_status(if_shared_ctx_t);
-static int      ixgbe_isc_txd_encap(if_shared_ctx_t, uint32_t, if_pkt_info_t);
-static void ixgbe_isc_txd_flush(if_shared_ctx_t, uint32_t, uint32_t);
-static void ixgbe_isc_rxd_refill(if_shared_ctx_t, uint32_t, uint32_t, uint64_t*, uint32_t);
-static void ixgbe_isc_rxd_flush(if_shared_ctx_t, uint32_t, uint32_t);
-static int ixgbe_isc_rxd_available(if_shared_ctx_t, uint32_t, uint32_t);
+static int      ixgbe_isc_txd_encap(if_shared_ctx_t, uint16_t, if_pkt_info_t);
+static void ixgbe_isc_txd_flush(if_shared_ctx_t, uint16_t, uint32_t);
+static void ixgbe_isc_rxd_refill(if_shared_ctx_t, uint16_t, uint8_t, uint32_t, uint64_t*, uint8_t);
+static void ixgbe_isc_rxd_flush(if_shared_ctx_t, uint16_t, uint8_t, uint32_t);
+static int ixgbe_isc_rxd_available(if_shared_ctx_t, uint16_t, uint32_t);
 
 
 static int	ixgbe_set_flowcntl(SYSCTL_HANDLER_ARGS);
@@ -1276,7 +1276,7 @@ ixgbe_if_media_change(if_shared_ctx_t sctx)
  **********************************************************************/
 
 static int
-ixgbe_isc_txd_encap(if_shared_ctx_t sctx, uint32_t txqid, if_pkt_info_t pi)
+ixgbe_isc_txd_encap(if_shared_ctx_t sctx, uint16_t txqid, if_pkt_info_t pi)
 {
 	struct adapter  *adapter = DOWNCAST(sctx);
 	struct tx_ring *txr = &adapter->tx_rings[txqid];
@@ -1354,7 +1354,7 @@ ixgbe_isc_txd_encap(if_shared_ctx_t sctx, uint32_t txqid, if_pkt_info_t pi)
 }
 
 static void
-ixgbe_isc_txd_flush(if_shared_ctx_t sctx, uint32_t txqid, uint32_t pidx)
+ixgbe_isc_txd_flush(if_shared_ctx_t sctx, uint16_t txqid, uint32_t pidx)
 {
 	/*
 	 * Advance the Transmit Descriptor Tail (Tdt), this tells the
@@ -2629,7 +2629,7 @@ ixgbe_atr(struct tx_ring *txr, struct mbuf *mp)
  *
  **********************************************************************/
 static int
-ixgbe_isc_txd_credits_update(if_shared_ctx_t sctx, uint32_t qid, uint32_t cidx)
+ixgbe_isc_txd_credits_update(if_shared_ctx_t sctx, uint16_t qid, uint32_t cidx)
 {
 	u32	work, processed = 0;
 	struct adapter *adapter = DOWNCAST(sctx);
@@ -2692,7 +2692,7 @@ ixgbe_isc_txd_credits_update(if_shared_ctx_t sctx, uint32_t qid, uint32_t cidx)
 }
 
 static void
-ixgbe_isc_rxd_refill(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx, uint64_t *paddrs, uint32_t count)
+ixgbe_isc_rxd_refill(if_shared_ctx_t sctx, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx, uint64_t *paddrs, uint8_t count)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
@@ -2707,7 +2707,7 @@ ixgbe_isc_rxd_refill(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx, uint64
 }
 
 static void
-ixgbe_isc_rxd_flush(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx)
+ixgbe_isc_rxd_flush(if_shared_ctx_t sctx, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 
@@ -2715,7 +2715,7 @@ ixgbe_isc_rxd_flush(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t pidx)
 }
 
 static int
-ixgbe_isc_rxd_available(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t idx)
+ixgbe_isc_rxd_available(if_shared_ctx_t sctx, uint16_t rxqid, uint32_t idx)
 {
 	struct rx_ring *rxr = &DOWNCAST(sctx)->rx_rings[rxqid];
 	union ixgbe_adv_rx_desc	*cur;
@@ -3074,10 +3074,10 @@ ixgbe_if_rx_structures_free(if_shared_ctx_t sctx)
  *  Return TRUE for more work, FALSE for all clean.
  *********************************************************************/
 static int
-ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_info_t ri)
+ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 {
 	struct adapter		*adapter = DOWNCAST(sctx);
-	struct rx_ring		*rxr = &adapter->rx_rings[rxqid];
+	struct rx_ring		*rxr = &adapter->rx_rings[ri->iri_qsidx];
 	union ixgbe_adv_rx_desc	*cur;
 	u16			pkt_info;
 
@@ -3086,7 +3086,7 @@ ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_i
 	u16		vtag = 0;
 	bool		eop;
  
-	cur = &rxr->rx_base[i];
+	cur = &rxr->rx_base[ri->iri_cidx];
 	staterr = le32toh(cur->wb.upper.status_error);
 	pkt_info = le16toh(cur->wb.lower.lo_dword.hs_rss.pkt_info);
 
@@ -3099,7 +3099,9 @@ ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_i
 		IXGBE_RXDADV_PKTTYPE_MASK;
 	eop = ((staterr & IXGBE_RXD_STAT_EOP) != 0);
 
-	/* Make sure bad packets are discarded */
+	/* Make sure bad packets are discarded
+   * Do addresses get overwritten?
+   **/
 	if (((staterr & IXGBE_RXDADV_ERR_FRAME_ERR_MASK) != 0) ||
 		(rxr->discard)) {
 		rxr->rx_discarded++;
@@ -3109,7 +3111,7 @@ ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_i
 			rxr->discard = TRUE;
 		return (EBADMSG);
 	}
-
+	ri->iri_qidx = 0;
 	/*
 	 ** On 82599 which supports a hardware
 	 ** LRO (called HW RSC), packets need
@@ -3130,10 +3132,10 @@ ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_i
 			nextp = ((staterr &
 					  IXGBE_RXDADV_NEXTP_MASK) >>
 					 IXGBE_RXDADV_NEXTP_SHIFT);
-			if (nextp < i)
-				nextp = (adapter->num_rx_desc - i) + nextp;
+			if (nextp < ri->iri_cidx)
+				nextp = (adapter->num_rx_desc - ri->iri_cidx) + nextp;
 			else
-				nextp = nextp - i;
+				nextp = nextp - ri->iri_cidx;
 		} else
 			nextp = 1;
 	} else {
@@ -3198,12 +3200,13 @@ ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, uint32_t rxqid, uint32_t i, if_rxd_i
 			hash_type = M_HASHTYPE_NONE;
 		}
 #else /* RSS */
-		ri->iri_flowid = adapter->queues[rxqid].msix;
+		ri->iri_flowid = adapter->queues[ri->iri_qsidx].msix;
 		ri->iri_flags |= IF_RXD_FLOWID;
 #endif /* RSS */
 #endif /* FreeBSD_version */
 		rxr->packets++;
 	}
+	ri->iri_qidx = 0;
 	ri->iri_next_offset = nextp;
 
 	return (0);

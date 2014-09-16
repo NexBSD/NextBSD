@@ -78,16 +78,9 @@
  *  - validate queue teardown
  *  - validate that all structure fields are initialized
 
- *  - validate the TSO path
- *  - validate SOP_EOP packet receipt
  *  - add rx_buf recycling
- *  - add multiple buf_ring support - i.e. fan in to single hardware queue
  *  - add SW RSS to demux received data packets to buf_rings for deferred processing
  *    look at handling tx ack processing
- *  - batch per-interface statistics updates
- *
- *  - document the kobj interface in iflib_if.m and export that to the wiki
- *  - port ixgbe to iflib
  *
  */
 
@@ -97,6 +90,8 @@ struct iflib_rxq;
 typedef struct iflib_rxq *iflib_rxq_t;
 struct iflib_qset;
 typedef struct iflib_qset *iflib_qset_t;
+struct iflib_fl;
+typedef struct iflib_fl *iflib_fl_t;
 
 typedef struct iflib_filter_info {
 	driver_filter_t *ifi_filter;
@@ -211,6 +206,21 @@ struct iflib_txq {
 	iflib_dma_info_t		ift_ifdi;
 };
 
+struct iflib_fl {
+	uint32_t	ifl_cidx;
+	uint32_t	ifl_pidx;
+	uint32_t	ifl_size;
+	uint32_t	ifl_credits;
+	uint32_t	ifl_buf_size;
+	int			ifl_cltype;
+	uma_zone_t	ifl_zone;
+
+	iflib_sd_t	ifl_sds;
+	iflib_rxq_t	ifl_rxq;
+	uint8_t		ifl_id;
+	iflib_dma_info_t	ifl_ifdi;
+};
+
 /* XXX check this */
 #define TXQ_AVAIL(txq) ((txq)->ift_size - (txq)->ift_pidx + (txq)->ift_cidx)
 
@@ -223,29 +233,23 @@ struct iflib_global_context global_ctx, *gctx;
 
 struct iflib_rxq {
 	iflib_ctx_t	ifr_ctx;
-	uint32_t	ifr_buf_size;
-	uint32_t	ifr_type;
-	uint32_t	ifr_credits;
 	uint32_t	ifr_size;
 	uint32_t	ifr_cidx;
 	uint32_t	ifr_pidx;
-	uint32_t	ifr_db_pending;
-	uint32_t	ifr_tqid;
 	uint64_t	ifr_rx_bytes;
 	uint64_t	ifr_rx_packets;
 	uint64_t	ifr_rx_irq;
-	int			ifr_id;
-	int			ifr_cltype;
-	uma_zone_t	ifr_zone;
-	int ifr_lro_enabled;
+	uint16_t	ifr_id;
+	int			ifr_lro_enabled;
+	iflib_fl_t	ifr_fl;
+	uint8_t		ifr_nfl;
 	struct lro_ctrl			ifr_lc;
 	struct mtx				ifr_mtx;
 	char                    ifr_mtx_name[16];
 	struct grouptask        ifr_task;
-	iflib_sd_t              ifr_sds;
 	bus_dma_tag_t           ifr_desc_tag;
-	struct iflib_filter_info ifr_filter_info;
 	iflib_dma_info_t		ifr_ifdi;
+	struct iflib_filter_info ifr_filter_info;
 };
 
 
@@ -642,16 +646,24 @@ iflib_rxsd_alloc(iflib_rxq_t rxq)
 	iflib_ctx_t ctx = rxq->ifr_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	device_t dev = sctx->isc_dev;
+	iflib_fl_t fl;
 	iflib_sd_t	rxsd;
 	int			err;
 
-	rxq->ifr_sds = malloc(sizeof(struct iflib_sw_desc) *
-	    sctx->isc_nrxd, M_DEVBUF, M_NOWAIT | M_ZERO);
-	if (rxq->ifr_sds == NULL) {
-		device_printf(dev, "Unable to allocate rx_buffer memory\n");
+	fl = malloc(sizeof(struct iflib_fl) *
+	    1, M_DEVBUF, M_NOWAIT | M_ZERO);
+	if (fl == NULL) {
+		device_printf(dev, "Unable to allocate free list memory\n");
 		return (ENOMEM);
 	}
-
+	fl->ifl_sds = malloc(sizeof(struct iflib_sw_desc) *
+	    sctx->isc_nrxd, M_DEVBUF, M_NOWAIT | M_ZERO);
+	if (fl->ifl_sds == NULL) {
+		device_printf(dev, "Unable to allocate rx sw desc memory\n");
+		return (ENOMEM);
+	}
+	fl->ifl_rxq = rxq;
+	fl->ifl_size = sctx->isc_nrxd; /* this isn't necessarily the same */
 	err = bus_dma_tag_create(bus_get_dma_tag(dev), /* parent */
 				1, 0,			/* alignment, bounds */
 				BUS_SPACE_MAXADDR,	/* lowaddr */
@@ -670,7 +682,7 @@ iflib_rxsd_alloc(iflib_rxq_t rxq)
 		goto fail;
 	}
 
-	rxsd = rxq->ifr_sds;
+	rxsd = fl->ifl_sds;
 	for (int i = 0; i < sctx->isc_nrxd; i++, rxsd++) {
 		err = bus_dmamap_create(rxq->ifr_desc_tag, 0, &rxsd->ifsd_map);
 		if (err) {
@@ -697,10 +709,10 @@ fail:
  *	The caller must assure that @n does not exceed the queue's capacity.
  */
 static void
-_iflib_rxq_refill(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
+_iflib_fl_refill(iflib_ctx_t ctx, iflib_fl_t fl, int n)
 {
 	struct mbuf *m;
-	iflib_sd_t rxsd = &rxq->ifr_sds[rxq->ifr_pidx];
+	iflib_sd_t rxsd = &fl->ifl_sds[fl->ifl_pidx];
 	caddr_t cl;
 	int err;
 	uint64_t phys_addr;
@@ -711,16 +723,16 @@ _iflib_rxq_refill(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
 		 * We allocate an uninitialized mbuf + cluster, mbuf is
 		 * initialized after rx.
 		 */
-		if ((cl = m_cljget(NULL, M_NOWAIT, rxq->ifr_buf_size)) == NULL)
+		if ((cl = m_cljget(NULL, M_NOWAIT, fl->ifl_buf_size)) == NULL)
 			break;
 		if ((m = m_gethdr(M_NOWAIT, MT_NOINIT)) == NULL) {
-			uma_zfree(rxq->ifr_zone, cl);
+			uma_zfree(fl->ifl_zone, cl);
 			break;
 		}
 		if ((rxsd->ifsd_flags & RX_SW_DESC_MAP_CREATED) == 0) {
-			if ((err = bus_dmamap_create(rxq->ifr_ifdi->idi_tag, 0, &rxsd->ifsd_map))) {
+			if ((err = bus_dmamap_create(fl->ifl_ifdi->idi_tag, 0, &rxsd->ifsd_map))) {
 				log(LOG_WARNING, "bus_dmamap_create failed %d\n", err);
-				uma_zfree(rxq->ifr_zone, cl);
+				uma_zfree(fl->ifl_zone, cl);
 				goto done;
 			}
 			rxsd->ifsd_flags |= RX_SW_DESC_MAP_CREATED;
@@ -749,49 +761,47 @@ _iflib_rxq_refill(iflib_ctx_t ctx, iflib_rxq_t rxq, int n)
 		rxsd->ifsd_flags |= RX_SW_DESC_INUSE;
 		rxsd->ifsd_cl = cl;
 		rxsd->ifsd_m = m;
-		sctx->isc_rxd_refill(sctx, rxq->ifr_id, rxq->ifr_pidx, &phys_addr, 1);
+		sctx->isc_rxd_refill(sctx, fl->ifl_rxq->ifr_id, 0, fl->ifl_pidx, &phys_addr, 1);
 
-		if (++rxq->ifr_pidx == sctx->isc_nrxd) {
-			rxq->ifr_pidx = 0;
-			rxsd = rxq->ifr_sds;
+		if (++fl->ifl_pidx == fl->ifl_size) {
+			fl->ifl_pidx = 0;
+			rxsd = fl->ifl_sds;
 		}
-		rxq->ifr_credits++;
+		fl->ifl_credits++;
 	}
 
 done:
-	sctx->isc_rxd_flush(sctx, rxq->ifr_id, rxq->ifr_pidx);
+	sctx->isc_rxd_flush(sctx, fl->ifl_rxq->ifr_id, fl->ifl_id, fl->ifl_pidx);
 }
 
 static __inline void
-__iflib_rxq_refill_lt(iflib_ctx_t ctx, iflib_rxq_t rxq, int max)
+__iflib_fl_refill_lt(iflib_ctx_t ctx, iflib_fl_t fl, int max)
 {
-	uint32_t reclaimable = ctx->ifc_sctx->isc_nrxd - rxq->ifr_credits;
+	uint32_t reclaimable = fl->ifl_size - fl->ifl_credits;
 
 	if (reclaimable > 0)
-		_iflib_rxq_refill(ctx, rxq, min(max, reclaimable));
+		_iflib_fl_refill(ctx, fl, min(max, reclaimable));
 }
 
 static void
-iflib_rx_bufs_free(iflib_rxq_t rxq)
+iflib_fl_bufs_free(iflib_fl_t fl)
 {
-	uint32_t cidx = rxq->ifr_cidx;
+	uint32_t cidx = fl->ifl_cidx;
 
-	tcp_lro_free(&rxq->ifr_lc);
-
-	while (rxq->ifr_credits--) {
-		iflib_sd_t d = &rxq->ifr_sds[cidx];
+	while (fl->ifl_credits--) {
+		iflib_sd_t d = &fl->ifl_sds[cidx];
 
 		if (d->ifsd_flags & RX_SW_DESC_INUSE) {
-			bus_dmamap_unload(rxq->ifr_desc_tag, d->ifsd_map);
-			bus_dmamap_destroy(rxq->ifr_desc_tag, d->ifsd_map);
+			bus_dmamap_unload(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
+			bus_dmamap_destroy(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
 			m_init(d->ifsd_m, zone_mbuf, MLEN,
 				   M_NOWAIT, MT_DATA, 0);
 			uma_zfree(zone_mbuf, d->ifsd_m);
-			uma_zfree(rxq->ifr_zone, d->ifsd_cl);
+			uma_zfree(fl->ifl_zone, d->ifsd_cl);
 		}				
 		d->ifsd_cl = NULL;
 		d->ifsd_m = NULL;
-		if (++cidx == rxq->ifr_size)
+		if (++cidx == fl->ifl_size)
 			cidx = 0;
 	}
 }
@@ -802,8 +812,9 @@ iflib_rx_bufs_free(iflib_rxq_t rxq)
  *
  **********************************************************************/
 static int
-iflib_rxq_setup(iflib_rxq_t rxq)
+iflib_fl_setup(iflib_fl_t fl)
 {
+	iflib_rxq_t rxq = fl->ifl_rxq;
 	iflib_ctx_t ctx = rxq->ifr_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	int			err = 0;
@@ -813,46 +824,38 @@ iflib_rxq_setup(iflib_rxq_t rxq)
 #endif
 
 	/* Clear the ring contents */
-	RXQ_LOCK(rxq);
 #ifdef DEV_NETMAP
 	slot = netmap_reset(na, NR_RX, rxq->ifr_id, 0);
 #endif
 
+	/*
+	 * XXX don't set the max_frame_size to larger
+	 * than the hardware can handle
+	 */
 	if (sctx->isc_max_frame_size <= 2048)
-		rxq->ifr_buf_size = MCLBYTES;
+		fl->ifl_buf_size = MCLBYTES;
 	else if (sctx->isc_max_frame_size <= 4096)
-		rxq->ifr_buf_size = MJUMPAGESIZE;
+		fl->ifl_buf_size = MJUMPAGESIZE;
 	else if (sctx->isc_max_frame_size <= 9216)
-		rxq->ifr_buf_size = MJUM9BYTES;
+		fl->ifl_buf_size = MJUM9BYTES;
 	else
-		rxq->ifr_buf_size = MJUM16BYTES;
-	rxq->ifr_cltype = m_gettype(rxq->ifr_buf_size);
-	rxq->ifr_zone = m_getzone(rxq->ifr_buf_size);
+		fl->ifl_buf_size = MJUM16BYTES;
+	fl->ifl_cltype = m_gettype(fl->ifl_buf_size);
+	fl->ifl_zone = m_getzone(fl->ifl_buf_size);
 
 	/*
 	** Free current RX buffer structs and their mbufs
 	*/
-	iflib_rx_bufs_free(rxq);
+	iflib_fl_bufs_free(fl);
 
 	/* Now replenish the mbufs */
-	_iflib_rxq_refill(ctx, rxq, sctx->isc_nrxd);
+	_iflib_fl_refill(ctx, fl, fl->ifl_size);
 
 	/*
 	 * handle failure
 	 */
-	IFDI_RXQ_SETUP(sctx, rxq->ifr_id);
-	if (sctx->isc_ifp->if_capenable & IFCAP_LRO) {
-		if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
-			device_printf(sctx->isc_dev, "LRO Initialization failed!\n");
-			goto fail;
-		}
-		rxq->ifr_lro_enabled = TRUE;
-		rxq->ifr_lc.ifp = sctx->isc_ifp;
-	}
 	bus_dmamap_sync(rxq->ifr_ifdi->idi_tag, rxq->ifr_ifdi->idi_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-fail:
-	RXQ_UNLOCK(rxq);
 	return (err);
 }
 
@@ -865,9 +868,12 @@ static void
 iflib_rx_sds_free(iflib_rxq_t rxq)
 {
 
-	if (rxq->ifr_sds != NULL) {
-		free(rxq->ifr_sds, M_DEVBUF);
-		rxq->ifr_sds = NULL;
+	if (rxq->ifr_fl != NULL) {
+		if (rxq->ifr_fl->ifl_sds != NULL)
+			free(rxq->ifr_fl->ifl_sds, M_DEVBUF);
+
+		free(rxq->ifr_fl, M_DEVBUF);
+		rxq->ifr_fl = NULL;
 		rxq->ifr_cidx = rxq->ifr_pidx = 0;
 	}
 
@@ -979,18 +985,18 @@ iflib_stop(iflib_ctx_t ctx)
 }
 
 static int
-iflib_recycle_rx_buf(iflib_rxq_t rxq, uint32_t idx)
+iflib_recycle_rx_buf(iflib_fl_t fl)
 {
 #if 0
 	/* XXX just reassign */
 	if ((err = IFDI_RECYCLE_RX_BUF(sctx, rxq, idx)) != 0)
 		return (err);
-#endif
 
 	rxq->ifr_sds[rxq->ifr_pidx] = rxq->ifr_sds[idx];
 	rxq->ifr_credits++;
 	if (++rxq->ifr_pidx == rxq->ifr_size)
 		rxq->ifr_pidx = 0;
+#endif
 	return (0);
 }
 
@@ -1020,10 +1026,10 @@ _rxq_refill_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
  * Process one software descriptor
  */
 static struct mbuf *
-iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
+iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 {
-	iflib_rxq_t rxq = &ctx->ifc_rxqs[ri->iri_qidx];
-	iflib_sd_t sd_next, sd = &rxq->ifr_sds[ri->iri_cidx];
+	iflib_sd_t sd_next, sd = &fl->ifl_sds[fl->ifl_cidx];
+	iflib_rxq_t rxq = fl->ifl_rxq;
 	uint32_t flags = M_EXT;
 	caddr_t cl;
 	struct mbuf *m;
@@ -1035,24 +1041,24 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 			goto skip_recycle;
 		cl = mtod(m, void *);
 		memcpy(cl, sd->ifsd_cl, ri->iri_len);
-		iflib_recycle_rx_buf(rxq, ri->iri_cidx);
+		iflib_recycle_rx_buf(fl);
 		m->m_pkthdr.len = m->m_len = len;
 		m->m_flags = 0;
 	} else {
 	skip_recycle:
-		bus_dmamap_unload(rxq->ifr_desc_tag, sd->ifsd_map);
+		bus_dmamap_unload(fl->ifl_rxq->ifr_desc_tag, sd->ifsd_map);
 		cl = sd->ifsd_cl;
 		m = sd->ifsd_m;
 
 		if (sd->ifsd_mh == NULL)
 			flags |= M_PKTHDR;
-		m_init(m, rxq->ifr_zone, rxq->ifr_buf_size, M_NOWAIT, MT_DATA, flags);
+		m_init(m, fl->ifl_zone, fl->ifl_buf_size, M_NOWAIT, MT_DATA, flags);
 		m->m_len = len;
 		if (sd->ifsd_mh == NULL)
 			m->m_pkthdr.len = len;
 		else
 			sd->ifsd_mh->m_pkthdr.len += len;
-		m_cljset(m, cl, rxq->ifr_cltype);
+		m_cljset(m, cl, fl->ifl_cltype);
 	}
 
 	if (sd->ifsd_mh != NULL && 	ri->iri_next_offset != 0) {
@@ -1061,9 +1067,9 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 		 * next descriptor
 		 */
 		cidx_next = ri->iri_cidx + ri->iri_next_offset;
-		if (cidx_next >= rxq->ifr_size)
-			cidx_next -= rxq->ifr_size;
-		sd_next = &rxq->ifr_sds[cidx_next];
+		if (cidx_next >= fl->ifl_size)
+			cidx_next -= fl->ifl_size;
+		sd_next = &fl->ifl_sds[cidx_next];
 		sd_next->ifsd_mh = sd->ifsd_mh;
 		sd_next->ifsd_mt = sd->ifsd_mt;
 		sd->ifsd_mh = sd->ifsd_mt = NULL;
@@ -1075,9 +1081,9 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 		 * We're at the start of a multi-fragment packet
 		 */
 		cidx_next = ri->iri_cidx + ri->iri_next_offset;
-		if (cidx_next >= rxq->ifr_size)
-			cidx_next -= rxq->ifr_size;
-		sd_next = &rxq->ifr_sds[cidx_next];
+		if (cidx_next >= fl->ifl_size)
+			cidx_next -= fl->ifl_size;
+		sd_next = &fl->ifl_sds[cidx_next];
 		sd_next->ifsd_mh = sd_next->ifsd_mt = m;
 		m = NULL;
 	} else if (sd->ifsd_mh != NULL && ri->iri_next_offset == 0) {
@@ -1092,7 +1098,7 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 	if (m == NULL)
 		return (NULL);
 
-	m->m_pkthdr.rcvif = (struct ifnet *)ctx->ifc_sctx->isc_ifp;
+	m->m_pkthdr.rcvif = (struct ifnet *)rxq->ifr_ctx->ifc_sctx->isc_ifp;
 	if (ri->iri_flags & IF_RXD_VLAN) {
 		if_setvtag(m, ri->iri_vtag);
 		m->m_flags |= M_VLANTAG;
@@ -1101,8 +1107,8 @@ iflib_rxd_pkt_get(iflib_ctx_t ctx, if_rxd_info_t ri)
 	M_HASHTYPE_SET(m, ri->iri_hash_type);
 	m->m_pkthdr.csum_flags = ri->iri_csum_flags;
 	m->m_pkthdr.csum_data = ri->iri_csum_data;
-	rxq->ifr_rx_packets++;
-	rxq->ifr_rx_bytes += m->m_pkthdr.len;
+	fl->ifl_rxq->ifr_rx_packets++;
+	fl->ifl_rxq->ifr_rx_bytes += m->m_pkthdr.len;
 	return (m);
 }
 
@@ -1111,13 +1117,14 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 {
 	iflib_ctx_t ctx = rxq->ifr_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
-	int cidx = rxq->ifr_cidx;
+	int fl_cidx, cidx = rxq->ifr_cidx;
 	struct if_rxd_info ri;
 	iflib_dma_info_t di;
-	int qid, err, budget_left = budget;
+	int qsid, err, budget_left = budget;
 	iflib_txq_t txq;
+	iflib_fl_t fl;
 	struct lro_entry *queued;
-
+	int8_t qidx;
 	/*
 	 * XXX early demux data packets so that if_input processing only handles
 	 * acks in interrupt context
@@ -1125,9 +1132,9 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	struct mbuf *m, *mh, *mt;
 
 	if (sctx->isc_txd_credits_update != NULL) {
-		qid = rxq->ifr_id;
-		txq = &ctx->ifc_txqs[qid];
-		if (sctx->isc_txd_credits_update(sctx, qid, txq->ift_cidx))
+		qsid = rxq->ifr_id;
+		txq = &ctx->ifc_txqs[qsid];
+		if (sctx->isc_txd_credits_update(sctx, qsid, txq->ift_cidx))
 			GROUPTASK_ENQUEUE(&txq->ift_task);
 	}
 
@@ -1140,7 +1147,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	}
 #endif /* DEV_NETMAP */
 
-	ri.iri_qidx = rxq->ifr_id;
+	ri.iri_qsidx = rxq->ifr_id;
 
 	mh = mt = NULL;
 	while (__predict_true(budget_left--)) {
@@ -1151,22 +1158,35 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 		if (__predict_false(!sctx->isc_rxd_available(sctx, rxq->ifr_id, cidx)))
 			return (false);
-		err = sctx->isc_rxd_pkt_get(sctx, rxq->ifr_id, cidx, &ri);
-		bus_dmamap_unload(rxq->ifr_desc_tag, rxq->ifr_sds[cidx].ifsd_map);
+		ri.iri_cidx = cidx;
+		err = sctx->isc_rxd_pkt_get(sctx, &ri);
 
+		qidx = ri.iri_qidx;
 		if (++cidx == sctx->isc_nrxd)
 			cidx = 0;
+		/* was this only a completion queue message? */
+		if (qidx == -1)
+			continue;
+		fl = &rxq->ifr_fl[qidx];
+		fl_cidx = fl->ifl_cidx;
+		bus_dmamap_unload(rxq->ifr_desc_tag, fl->ifl_sds[fl_cidx].ifsd_map);
+
 		if (err) {
 			/*
 			 * XXX Note currently we don't free the initial pieces
 			 * of a multi-fragment packet
 			 */
-			iflib_recycle_rx_buf(rxq, ri.iri_cidx);
+			iflib_recycle_rx_buf(fl);
+			if (++fl_cidx == fl->ifl_size)
+				fl_cidx = 0;
+			fl->ifl_cidx = fl_cidx;
 			continue;
 		}
-
-		m = iflib_rxd_pkt_get(ctx, &ri);
-		__iflib_rxq_refill_lt(ctx, rxq, /* XXX em value */ 8);
+		m = iflib_rxd_pkt_get(fl, &ri);
+		if (++fl_cidx == fl->ifl_size)
+			fl_cidx = 0;
+		fl->ifl_cidx = fl_cidx;
+		__iflib_fl_refill_lt(ctx, fl, /* XXX em value */ 8);
 
 		if (m == NULL)
 			continue;
@@ -2081,7 +2101,7 @@ iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN])
 }
 
 int
-iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint32_t nqs)
+iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint8_t nqs)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	device_t dev = sctx->isc_dev;
@@ -2089,11 +2109,11 @@ iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint32_t nqs)
 	iflib_txq_t txq = NULL;
 	iflib_rxq_t rxq = NULL;
 	iflib_qset_t qset = NULL;
+	iflib_fl_t fl = NULL;
 	int i, j, err, txconf, rxconf;
 	iflib_dma_info_t ifdip;
-
-	if ((ifdip = malloc(sizeof(struct iflib_dma_info) * nqs * nqsets, M_DEVBUF, M_WAITOK)) == NULL)
-		return (ENOMEM);
+	int nfree_lists = 1; /* XXX get from driver */
+	int nbuf_rings = 1; /* XXX determine dynamically */
 
 	if (!(qset =
 	    (iflib_qset_t) malloc(sizeof(struct iflib_qset) *
@@ -2104,18 +2124,6 @@ iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint32_t nqs)
 	}
 
 	ctx->ifc_qsets = qset;
-	for (i = 0; i < nqsets; i++, qset++) {
-		qset->ifq_ifdi = ifdip;
-		qset->ifq_nhwqs = nqs;
-		for (j = 0; j < nqs; j++, ifdip++) {
-			if (iflib_dma_alloc(ctx, qsizes[j], ifdip, BUS_DMA_NOWAIT)) {
-				device_printf(dev, "Unable to allocate Descriptor memory\n");
-				err = ENOMEM;
-				goto err_tx_desc;
-			}
-			bzero((void *)ifdip->idi_vaddr, qsizes[j]);
-		}
-	}
 
 /* Allocate the TX ring struct memory */
 	if (!(txq =
@@ -2141,10 +2149,25 @@ iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint32_t nqs)
 	for (qset = ctx->ifc_qsets, rxconf = txconf = i = 0; i < nqsets;
 		 i++, txconf++, rxconf++, qset++) {
 		/* Set up some basics */
+
+		if ((ifdip = malloc(sizeof(struct iflib_dma_info) * nqs, M_DEVBUF, M_WAITOK)) == NULL) {
+			err = ENOMEM;
+			goto fail;
+		}
+		qset->ifq_ifdi = ifdip;
+		qset->ifq_nhwqs = nqs;
+		for (j = 0; j < nqs; j++, ifdip++) {
+			if (iflib_dma_alloc(ctx, qsizes[j], ifdip, BUS_DMA_NOWAIT)) {
+				device_printf(dev, "Unable to allocate Descriptor memory\n");
+				err = ENOMEM;
+				goto err_tx_desc;
+			}
+			bzero((void *)ifdip->idi_vaddr, qsizes[j]);
+		}
 		txq = &ctx->ifc_txqs[i];
 		txq->ift_ctx = ctx;
 		txq->ift_id = i;
-		txq->ift_nbr = 1; /* XXX calculate dynamically */
+		txq->ift_nbr = nbuf_rings;
 		txq->ift_ifdi = &qset->ifq_ifdi[0];
 
 		if (iflib_txsd_alloc(txq)) {
@@ -2160,16 +2183,33 @@ iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint32_t nqs)
 		mtx_init(&txq->ift_mtx, txq->ift_mtx_name, NULL, MTX_DEF);
 
 		/* Allocate a buf ring */
-		txq->ift_br[0] = buf_ring_alloc(4096, M_DEVBUF,
-		    M_WAITOK, &txq->ift_mtx);
+		for (j = 0; j < nbuf_rings; j++)
+			if ((txq->ift_br[j] = buf_ring_alloc(4096, M_DEVBUF,
+												 M_WAITOK, &txq->ift_mtx)) == NULL) {
+				device_printf(dev, "Unable to allocate buf_ring\n");
+				err = ENOMEM;
+				goto fail;
+			}
+
 		/*
-		 * Next the RX queues...
-		 */
+     * Next the RX queues...
+	 */
 		rxq = &ctx->ifc_rxqs[i];
 		rxq->ifr_ctx = ctx;
 		rxq->ifr_id = i;
 		rxq->ifr_ifdi = &qset->ifq_ifdi[1];
-
+		rxq->ifr_nfl = nfree_lists; 
+		if (!(fl =
+			  (iflib_fl_t) malloc(sizeof(struct iflib_fl) * nfree_lists, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+			device_printf(dev, "Unable to allocate free list memory\n");
+			err = ENOMEM;
+			goto fail;
+		}
+		rxq->ifr_fl = fl;
+		for (j = 0; j < nfree_lists; j++) {
+			rxq->ifr_fl[j].ifl_rxq = rxq;
+			rxq->ifr_fl[j].ifl_id = j;
+		}
         /* Allocate receive buffers for the ring*/
 		if (iflib_rxsd_alloc(rxq)) {
 			device_printf(dev,
@@ -2239,12 +2279,29 @@ iflib_rx_structures_setup(if_shared_ctx_t sctx)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	iflib_rxq_t rxq = ctx->ifc_rxqs;
-	int i,  q;
+	iflib_fl_t fl;
+	int i,  q, err;
 
-	for (q = 0; q < sctx->isc_nrxq; q++, rxq++)
-		if (iflib_rxq_setup(rxq))
-			goto fail;
+	for (q = 0; q < sctx->isc_nrxq; q++, rxq++) {
+		RXQ_LOCK(rxq);
+		tcp_lro_free(&rxq->ifr_lc);
+		for (i = 0, fl = rxq->ifr_fl; i < rxq->ifr_nfl; i++, fl++)
+			if (iflib_fl_setup(fl)) {
+				err = ENOBUFS;
+				goto fail;
+			}
+		if (sctx->isc_ifp->if_capenable & IFCAP_LRO) {
+			if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
+				device_printf(sctx->isc_dev, "LRO Initialization failed!\n");
+				goto fail;
+			}
+			rxq->ifr_lro_enabled = TRUE;
+			rxq->ifr_lc.ifp = sctx->isc_ifp;
+		}
 
+		IFDI_RXQ_SETUP(sctx, rxq->ifr_id);
+		RXQ_UNLOCK(rxq);
+	}
 	return (0);
 fail:
 	/*
@@ -2257,8 +2314,8 @@ fail:
 		iflib_rx_sds_free(rxq);
 		rxq->ifr_cidx = rxq->ifr_pidx = 0;
 	}
-
-	return (ENOBUFS);
+	RXQ_UNLOCK(rxq);
+	return (err);
 }
 
 /*********************************************************************
