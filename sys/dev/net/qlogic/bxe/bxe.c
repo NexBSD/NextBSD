@@ -3314,10 +3314,10 @@ bxe_isc_rxd_available(if_shared_ctx_t sctx, uint16_t qsidx, uint32_t cidx)
     if ((hw_cq_cons & RCQ_USABLE_PER_PAGE) == RCQ_USABLE_PER_PAGE) {
         hw_cq_cons++;
     }
-	if (cidx >= hw_cons)
-		avail = cidx - hw_cq_cons;
-	else
+	if (cidx <= hw_cons)
 		avail = hw_cq_cons - cidx;
+	else
+		avail = hw_cq_cons + (RCQ_TOTAL - cidx);
 
 	return (avail);
 }
