@@ -725,7 +725,11 @@ static void bxe_handle_sp_tq(void *context, int pending);
 static void bxe_handle_rx_mode_tq(void *context, int pending);
 static void bxe_handle_fp_tq(void *context, int pending);
 
-
+static void bxe_isc_rxd_pkt_get(if_shared_ctx_t, if_rxd_info_t);
+static void bxe_isc_rxd_refill(if_shared_context_t, uint16_t, uint8_t, uint32_t, uint64_t *, uint8_t);
+static void bxe_isc_rxd_flush(if_shared_ctx_t, uint16_t, uint8_t, uint32_t);
+static int bxe_isc_rxd_available(if_shared_ctx_t, uint16_t, uint32_t);
+	
 /* calculate crc32 on a buffer (NOTE: crc32_length MUST be aligned to 8) */
 uint32_t
 calc_crc32(uint8_t  *crc32_packet,
@@ -899,106 +903,6 @@ bxe_dma_map_addr(void *arg, bus_dma_segment_t *segs, int nseg, int error)
               dma->nseg, dma->size);
 #endif
     }
-}
-
-/*
- * Allocate a block of memory and map it for DMA. No partial completions
- * allowed and release any resources acquired if we can't acquire all
- * resources.
- *
- * Returns:
- *   0 = Success, !0 = Failure
- */
-int
-bxe_dma_alloc(struct bxe_softc *sc,
-              bus_size_t       size,
-              struct bxe_dma   *dma,
-              const char       *msg)
-{
-    int rc;
-
-    if (dma->size > 0) {
-        BLOGE(sc, "dma block '%s' already has size %lu\n", msg,
-              (unsigned long)dma->size);
-        return (1);
-    }
-
-    memset(dma, 0, sizeof(*dma)); /* sanity */
-    dma->sc   = sc;
-    dma->size = size;
-    snprintf(dma->msg, sizeof(dma->msg), "%s", msg);
-
-    rc = bus_dma_tag_create(sc->parent_dma_tag, /* parent tag */
-                            BCM_PAGE_SIZE,      /* alignment */
-                            0,                  /* boundary limit */
-                            BUS_SPACE_MAXADDR,  /* restricted low */
-                            BUS_SPACE_MAXADDR,  /* restricted hi */
-                            NULL,               /* addr filter() */
-                            NULL,               /* addr filter() arg */
-                            size,               /* max map size */
-                            1,                  /* num discontinuous */
-                            size,               /* max seg size */
-                            BUS_DMA_ALLOCNOW,   /* flags */
-                            NULL,               /* lock() */
-                            NULL,               /* lock() arg */
-                            &dma->tag);         /* returned dma tag */
-    if (rc != 0) {
-        BLOGE(sc, "Failed to create dma tag for '%s' (%d)\n", msg, rc);
-        memset(dma, 0, sizeof(*dma));
-        return (1);
-    }
-
-    rc = bus_dmamem_alloc(dma->tag,
-                          (void **)&dma->vaddr,
-                          (BUS_DMA_NOWAIT | BUS_DMA_ZERO),
-                          &dma->map);
-    if (rc != 0) {
-        BLOGE(sc, "Failed to alloc dma mem for '%s' (%d)\n", msg, rc);
-        bus_dma_tag_destroy(dma->tag);
-        memset(dma, 0, sizeof(*dma));
-        return (1);
-    }
-
-    rc = bus_dmamap_load(dma->tag,
-                         dma->map,
-                         dma->vaddr,
-                         size,
-                         bxe_dma_map_addr, /* BLOGD in here */
-                         dma,
-                         BUS_DMA_NOWAIT);
-    if (rc != 0) {
-        BLOGE(sc, "Failed to load dma map for '%s' (%d)\n", msg, rc);
-        bus_dmamem_free(dma->tag, dma->vaddr, dma->map);
-        bus_dma_tag_destroy(dma->tag);
-        memset(dma, 0, sizeof(*dma));
-        return (1);
-    }
-
-    return (0);
-}
-
-void
-bxe_dma_free(struct bxe_softc *sc,
-             struct bxe_dma   *dma)
-{
-    if (dma->size > 0) {
-#if 0
-        BLOGD(sc, DBG_LOAD,
-              "DMA free '%s': vaddr=%p paddr=%p nseg=%d size=%lu\n",
-              dma->msg, dma->vaddr, (void *)dma->paddr,
-              dma->nseg, dma->size);
-#endif
-
-        DBASSERT(sc, (dma->tag != NULL), ("dma tag is NULL"));
-
-        bus_dmamap_sync(dma->tag, dma->map,
-                        (BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE));
-        bus_dmamap_unload(dma->tag, dma->map);
-        bus_dmamem_free(dma->tag, dma->vaddr, dma->map);
-        bus_dma_tag_destroy(dma->tag);
-    }
-
-    memset(dma, 0, sizeof(*dma));
 }
 
 /*
@@ -3238,264 +3142,184 @@ bxe_tpa_stop_exit:
     fp->rx_tpa_queue_used &= ~(1 << queue);
 }
 
-static uint8_t
-bxe_rxeof(struct bxe_softc    *sc,
-          struct bxe_fastpath *fp)
+static void
+bxe_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 {
-    if_t ifp = sc->ifp;
-    uint16_t bd_cons, bd_prod, bd_prod_fw, comp_ring_cons;
-    uint16_t hw_cq_cons, sw_cq_cons, sw_cq_prod;
-    int rx_pkts = 0;
-    int rc;
-
-    BXE_FP_RX_LOCK(fp);
-
-    /* CQ "next element" is of the size of the regular element */
-    hw_cq_cons = le16toh(*fp->rx_cq_cons_sb);
-    if ((hw_cq_cons & RCQ_USABLE_PER_PAGE) == RCQ_USABLE_PER_PAGE) {
-        hw_cq_cons++;
-    }
-
-    bd_cons = fp->rx_bd_cons;
-    bd_prod = fp->rx_bd_prod;
-    bd_prod_fw = bd_prod;
-    sw_cq_cons = fp->rx_cq_cons;
-    sw_cq_prod = fp->rx_cq_prod;
+	struct bxe_softc *sc = DOWNCAST(sctx);
+	struct bxe_fastpath *fp = sc->fp[ri->iri_qsidx];
+	if_t ifp = sctx->isc_ifp;
+	union eth_rx_cqe *cqe;
+	struct eth_fast_path_rx_cqe *cqe_fp;
+	uint8_t cqe_fp_flags;
+	enum eth_rx_cqe_type cqe_fp_type;
 
     /*
      * Memory barrier necessary as speculative reads of the rx
      * buffer can be ahead of the index in the status block
      */
-    rmb();
+	rmb();
 
-    BLOGD(sc, DBG_RX,
-          "fp[%02d] Rx START hw_cq_cons=%u sw_cq_cons=%u\n",
-          fp->index, hw_cq_cons, sw_cq_cons);
+	cqe          = &fp->rcq_chain[ri->iri_cidx];
+	cqe_fp       = &cqe->fast_path_cqe;
+	cqe_fp_flags = cqe_fp->type_error_flags;
+	cqe_fp_type  = cqe_fp_flags & ETH_FAST_PATH_RX_CQE_TYPE;
 
-    while (sw_cq_cons != hw_cq_cons) {
-        struct bxe_sw_rx_bd *rx_buf = NULL;
-        union eth_rx_cqe *cqe;
-        struct eth_fast_path_rx_cqe *cqe_fp;
-        uint8_t cqe_fp_flags;
-        enum eth_rx_cqe_type cqe_fp_type;
-        uint16_t len, pad;
-        struct mbuf *m = NULL;
-
-        comp_ring_cons = RCQ(sw_cq_cons);
-        bd_prod = RX_BD(bd_prod);
-        bd_cons = RX_BD(bd_cons);
-
-        cqe          = &fp->rcq_chain[comp_ring_cons];
-        cqe_fp       = &cqe->fast_path_cqe;
-        cqe_fp_flags = cqe_fp->type_error_flags;
-        cqe_fp_type  = cqe_fp_flags & ETH_FAST_PATH_RX_CQE_TYPE;
-
-        BLOGD(sc, DBG_RX,
-              "fp[%02d] Rx hw_cq_cons=%d hw_sw_cons=%d "
-              "BD prod=%d cons=%d CQE type=0x%x err=0x%x "
-              "status=0x%x rss_hash=0x%x vlan=0x%x len=%u\n",
-              fp->index,
-              hw_cq_cons,
-              sw_cq_cons,
-              bd_prod,
-              bd_cons,
-              CQE_TYPE(cqe_fp_flags),
-              cqe_fp_flags,
-              cqe_fp->status_flags,
-              le32toh(cqe_fp->rss_hash_result),
-              le16toh(cqe_fp->vlan_tag),
-              le16toh(cqe_fp->pkt_len_or_gro_seg_len));
-
-        /* is this a slowpath msg? */
-        if (__predict_false(CQE_TYPE_SLOW(cqe_fp_type))) {
-            bxe_sp_event(sc, fp, cqe);
-            goto next_cqe;
-        }
-
-        rx_buf = &fp->rx_mbuf_chain[bd_cons];
-
-        if (!CQE_TYPE_FAST(cqe_fp_type)) {
-            struct bxe_sw_tpa_info *tpa_info;
-            uint16_t frag_size, pages;
-            uint8_t queue;
-
+	/* is this a slowpath msg? */
+	if (__predict_false(CQE_TYPE_SLOW(cqe_fp_type))) {
+		bxe_sp_event(sc, fp, cqe);
+		ri->iri_qidx = -1; /* no data */
+		goto done;
+	}
+	if (!CQE_TYPE_FAST(cqe_fp_type)) {
+		struct bxe_sw_tpa_info *tpa_info;
+		uint16_t frag_size, pages;
+		uint8_t queue;
+		
 #if 0
-            /* sanity check */
-            if (!fp->tpa_enable &&
-                (CQE_TYPE_START(cqe_fp_type) || CQE_TYPE_STOP(cqe_fp_type))) {
-                BLOGE(sc, "START/STOP packet while !tpa_enable type (0x%x)\n",
-                      CQE_TYPE(cqe_fp_type));
-            }
+		/* sanity check */
+		if (!fp->tpa_enable &&
+			(CQE_TYPE_START(cqe_fp_type) || CQE_TYPE_STOP(cqe_fp_type))) {
+			BLOGE(sc, "START/STOP packet while !tpa_enable type (0x%x)\n",
+				  CQE_TYPE(cqe_fp_type));
+		}
 #endif
 
-            if (CQE_TYPE_START(cqe_fp_type)) {
-                bxe_tpa_start(sc, fp, cqe_fp->queue_index,
-                              bd_cons, bd_prod, cqe_fp);
-                m = NULL; /* packet not ready yet */
-                goto next_rx;
-            }
+		if (CQE_TYPE_START(cqe_fp_type)) {
+			bxe_tpa_start(sc, fp, cqe_fp->queue_index,
+						  bd_cons, bd_prod, cqe_fp);
+			ri->iri_qidx = -1; /* no data */
+			goto done;
+		}
 
-            KASSERT(CQE_TYPE_STOP(cqe_fp_type),
-                    ("CQE type is not STOP! (0x%x)\n", cqe_fp_type));
+		KASSERT(CQE_TYPE_STOP(cqe_fp_type),
+				("CQE type is not STOP! (0x%x)\n", cqe_fp_type));
 
-            queue = cqe->end_agg_cqe.queue_index;
-            tpa_info = &fp->rx_tpa_info[queue];
+		queue = cqe->end_agg_cqe.queue_index;
+		tpa_info = &fp->rx_tpa_info[queue];
 
-            BLOGD(sc, DBG_LRO, "fp[%02d].tpa[%02d] TPA STOP\n",
-                  fp->index, queue);
+		BLOGD(sc, DBG_LRO, "fp[%02d].tpa[%02d] TPA STOP\n",
+			  fp->index, queue);
 
-            frag_size = (le16toh(cqe->end_agg_cqe.pkt_len) -
-                         tpa_info->len_on_bd);
-            pages = SGE_PAGE_ALIGN(frag_size) >> SGE_PAGE_SHIFT;
+		frag_size = (le16toh(cqe->end_agg_cqe.pkt_len) -
+					 tpa_info->len_on_bd);
+		pages = SGE_PAGE_ALIGN(frag_size) >> SGE_PAGE_SHIFT;
 
-            bxe_tpa_stop(sc, fp, tpa_info, queue, pages,
+		bxe_tpa_stop(sc, fp, tpa_info, queue, pages,
                          &cqe->end_agg_cqe, comp_ring_cons);
 
-            bxe_update_sge_prod(sc, fp, pages, &cqe->end_agg_cqe);
+		bxe_update_sge_prod(sc, fp, pages, &cqe->end_agg_cqe);
+		ri->iri_qidx = -1; /* data, but it bypasses iflib */
+		goto done;
+	}
+	
+	/* non TPA */
+	ri->iri_next_offset = 0;
+	ri->iri_qidx = 0;
+	/* is this an error packet? */
+	if (__predict_false(cqe_fp_flags &
+						ETH_FAST_PATH_RX_CQE_PHY_DECODE_ERR_FLG)) {
+		BLOGE(sc, "flags 0x%x rx packet %u\n", cqe_fp_flags, sw_cq_cons);
+		fp->eth_q_stats.rx_soft_errors++;
+		ri->iri_len = 0; /* invalid packet */
+		goto done;
+	}
+	ri->iri_len = le16toh(cqe_fp->pkt_len_or_gro_seg_len);
+	ri->iri_pad = cqe_fp->placement_offset;
+	ri->iri_csum_flags = 0;
+	ri->iri_csum_data = 0;
+	ri->iri_flags = 0;
+	/* validate checksum if offload enabled */
+	if (if_getcapenable(ifp) & IFCAP_RXCSUM) {
+		/* check for a valid IP frame */
+		if (!(cqe->fast_path_cqe.status_flags &
+			  ETH_FAST_PATH_RX_CQE_IP_XSUM_NO_VALIDATION_FLG)) {
+			ri->iri_csum_flags |= CSUM_IP_CHECKED;
+			if (__predict_false(cqe_fp_flags &
+								ETH_FAST_PATH_RX_CQE_IP_BAD_XSUM_FLG)) {
+				fp->eth_q_stats.rx_hw_csum_errors++;
+			} else {
+				fp->eth_q_stats.rx_ofld_frames_csum_ip++;
+				ri->iri_csum_flags |= CSUM_IP_VALID;
+			}
+		}
 
-            goto next_cqe;
-        }
+		/* check for a valid TCP/UDP frame */
+		if (!(cqe->fast_path_cqe.status_flags &
+			  ETH_FAST_PATH_RX_CQE_L4_XSUM_NO_VALIDATION_FLG)) {
+			if (__predict_false(cqe_fp_flags &
+								ETH_FAST_PATH_RX_CQE_L4_BAD_XSUM_FLG)) {
+				fp->eth_q_stats.rx_hw_csum_errors++;
+			} else {
+				fp->eth_q_stats.rx_ofld_frames_csum_tcp_udp++;
+				ri->iri_csum_data = 0xFFFF;
+				ri->iri_csum_flags |= (CSUM_DATA_VALID |
+										   CSUM_PSEUDO_HDR);
+			}
+		}
+	}
 
-        /* non TPA */
+	/* if there is a VLAN tag then flag that info */
+	if (cqe->fast_path_cqe.pars_flags.flags & PARSING_FLAGS_VLAN) {
+		ri->iri_vtag = cqe->fast_path_cqe.vlan_tag;
+		ri->iri_flags |= M_VLANTAG;
+	}
 
-        /* is this an error packet? */
-        if (__predict_false(cqe_fp_flags &
-                            ETH_FAST_PATH_RX_CQE_PHY_DECODE_ERR_FLG)) {
-            BLOGE(sc, "flags 0x%x rx packet %u\n", cqe_fp_flags, sw_cq_cons);
-            fp->eth_q_stats.rx_soft_errors++;
-            goto next_rx;
-        }
+	/* specify what RSS queue was used for this flow */
+	ri->iri_flowid = fp->index;
+	ri->iri_flags |= M_FLOWID;
+done:
+	fp->rx_cq_prod = RCQ_NEXT(fp->rx_cq_prod);
+}
 
-        len = le16toh(cqe_fp->pkt_len_or_gro_seg_len);
-        pad = cqe_fp->placement_offset;
+static void
+bxe_isc_rxd_refill(if_shared_context_t sctx, uint16_t qsidx,
+				   uint8_t flid __unused, uint32_t pidx, uint64_t *paddrs,
+				   uint8_t count)
+{
+	struct bxe_softc *sc = DOWNCAST(sctx);
+	struct bxe_fastpath *fp = sc->fp[qsidx];
+	struct eth_rx_bd *rx_bd;
 
-        m = rx_buf->m;
+	uint32_t newpidx = pidx;
+	int i;
 
-        if (__predict_false(m == NULL)) {
-            BLOGE(sc, "No mbuf in rx chain descriptor %d for fp[%02d]\n",
-                  bd_cons, fp->index);
-            goto next_rx;
-        }
+	for (i = 0; i < count; i++) {
+		rx_bd = &fp->rx_chain[newpidx];
+		rx_bd->addr_hi = htole32(U64_HI(paddrs[i]));
+		rx_bd->addr_lo = htole32(U64_LO(paddrs[i]));
+		RX_BD_NEXT(newpidx);
+	}
+	fp->rx_bd_prod = newpidx;
+}
 
-        /* XXX double copy if packet length under a threshold */
+static void
+bxe_isc_rxd_flush(if_shared_ctx_t sctx, uint16_t qsidx, uint8_t flid __unused,
+				  uint32_t pidx)
+{
+	struct bxe_softc *sc = DOWNCAST(sctx);
+	struct bxe_fastpath *fp = sc->fp[qsidx];
 
-        /*
-         * If all the buffer descriptors are filled with mbufs then fill in
-         * the current consumer index with a new BD. Else if a maximum Rx
-         * buffer limit is imposed then fill in the next producer index.
-         */
-        rc = bxe_alloc_rx_bd_mbuf(fp, bd_cons,
-                                  (sc->max_rx_bufs != RX_BD_USABLE) ?
-                                      bd_prod : bd_cons);
-        if (rc != 0) {
-            BLOGE(sc, "mbuf alloc fail for fp[%02d] rx chain (%d)\n",
-                  fp->index, rc);
-            fp->eth_q_stats.rx_soft_errors++;
+    bxe_update_rx_prod(sc, fp, fp->rx_bd_prod, fp->rx_cq_prod, fp->rx_sge_prod);
+}
 
-            if (sc->max_rx_bufs != RX_BD_USABLE) {
-                /* copy this consumer index to the producer index */
-                memcpy(&fp->rx_mbuf_chain[bd_prod], rx_buf,
-                       sizeof(struct bxe_sw_rx_bd));
-                memset(rx_buf, 0, sizeof(struct bxe_sw_rx_bd));
-            }
+static int
+bxe_isc_rxd_available(if_shared_ctx_t sctx, uint16_t qsidx, uint32_t cidx)
+{
+	struct bxe_softc *sc = DOWNCAST(sctx);
+	struct bxe_fastpath *fp = sc->fp[qsidx];
+	int avail;
+	uint16_t hw_cq_cons; 
 
-            goto next_rx;
-        }
+	hw_cq_cons = le16toh(*fp->rx_cq_cons_sb);
+    if ((hw_cq_cons & RCQ_USABLE_PER_PAGE) == RCQ_USABLE_PER_PAGE) {
+        hw_cq_cons++;
+    }
+	if (cidx >= hw_cons)
+		avail = cidx - hw_cq_cons;
+	else
+		avail = hw_cq_cons - cidx;
 
-        /* current mbuf was detached from the bd */
-        fp->eth_q_stats.mbuf_alloc_rx--;
-
-        /* we allocated a replacement mbuf, fixup the current one */
-        m_adj(m, pad);
-        m->m_pkthdr.len = m->m_len = len;
-
-        /* assign packet to this interface interface */
-	if_setrcvif(m, ifp);
-
-        /* assume no hardware checksum has complated */
-        m->m_pkthdr.csum_flags = 0;
-
-        /* validate checksum if offload enabled */
-        if (if_getcapenable(ifp) & IFCAP_RXCSUM) {
-            /* check for a valid IP frame */
-            if (!(cqe->fast_path_cqe.status_flags &
-                  ETH_FAST_PATH_RX_CQE_IP_XSUM_NO_VALIDATION_FLG)) {
-                m->m_pkthdr.csum_flags |= CSUM_IP_CHECKED;
-                if (__predict_false(cqe_fp_flags &
-                                    ETH_FAST_PATH_RX_CQE_IP_BAD_XSUM_FLG)) {
-                    fp->eth_q_stats.rx_hw_csum_errors++;
-                } else {
-                    fp->eth_q_stats.rx_ofld_frames_csum_ip++;
-                    m->m_pkthdr.csum_flags |= CSUM_IP_VALID;
-                }
-            }
-
-            /* check for a valid TCP/UDP frame */
-            if (!(cqe->fast_path_cqe.status_flags &
-                  ETH_FAST_PATH_RX_CQE_L4_XSUM_NO_VALIDATION_FLG)) {
-                if (__predict_false(cqe_fp_flags &
-                                    ETH_FAST_PATH_RX_CQE_L4_BAD_XSUM_FLG)) {
-                    fp->eth_q_stats.rx_hw_csum_errors++;
-                } else {
-                    fp->eth_q_stats.rx_ofld_frames_csum_tcp_udp++;
-                    m->m_pkthdr.csum_data = 0xFFFF;
-                    m->m_pkthdr.csum_flags |= (CSUM_DATA_VALID |
-                                               CSUM_PSEUDO_HDR);
-                }
-            }
-        }
-
-        /* if there is a VLAN tag then flag that info */
-        if (cqe->fast_path_cqe.pars_flags.flags & PARSING_FLAGS_VLAN) {
-            m->m_pkthdr.ether_vtag = cqe->fast_path_cqe.vlan_tag;
-            m->m_flags |= M_VLANTAG;
-        }
-
-#if __FreeBSD_version >= 800000
-        /* specify what RSS queue was used for this flow */
-        m->m_pkthdr.flowid = fp->index;
-        m->m_flags |= M_FLOWID;
-#endif
-
-next_rx:
-
-        bd_cons    = RX_BD_NEXT(bd_cons);
-        bd_prod    = RX_BD_NEXT(bd_prod);
-        bd_prod_fw = RX_BD_NEXT(bd_prod_fw);
-
-        /* pass the frame to the stack */
-        if (__predict_true(m != NULL)) {
-            if_incipackets(ifp, 1);
-            rx_pkts++;
-            if_input(ifp, m);
-        }
-
-next_cqe:
-
-        sw_cq_prod = RCQ_NEXT(sw_cq_prod);
-        sw_cq_cons = RCQ_NEXT(sw_cq_cons);
-
-        /* limit spinning on the queue */
-        if (rx_pkts == sc->rx_budget) {
-            fp->eth_q_stats.rx_budget_reached++;
-            break;
-        }
-    } /* while work to do */
-
-    fp->rx_bd_cons = bd_cons;
-    fp->rx_bd_prod = bd_prod_fw;
-    fp->rx_cq_cons = sw_cq_cons;
-    fp->rx_cq_prod = sw_cq_prod;
-
-    /* Update producers */
-    bxe_update_rx_prod(sc, fp, bd_prod_fw, sw_cq_prod, fp->rx_sge_prod);
-
-    fp->eth_q_stats.rx_pkts += rx_pkts;
-    fp->eth_q_stats.rx_calls++;
-
-    BXE_FP_RX_UNLOCK(fp);
-
-    return (sw_cq_cons != hw_cq_cons);
+	return (avail);
 }
 
 static uint16_t
@@ -5375,21 +5199,24 @@ bxe_set_pbd_lso(struct mbuf                *m,
  *   0 = Success, !0 = Failure
  *   Note the side effect that an mbuf may be freed if it causes a problem.
  */
+
 static int
-bxe_tx_encap(struct bxe_fastpath *fp, struct mbuf **m_head)
+bxe_isc_txd_encap(if_shared_ctx_t sctx, uint16_t qsidx, if_pkt_info_t pi)
 {
-    bus_dma_segment_t segs[32];
-    struct mbuf *m0;
-    struct bxe_sw_tx_bd *tx_buf;
+	struct bxe_softc *sc = DOWNCAST(sctx);
+	struct fastpath *fp = sc->fp[qsidx];
+    bus_dma_segment_t *segs = pi->ipi_segs;
+	int nsegs = pi->ipi_nsegs;
+    struct mbuf *m0 = pi->ipi_m;
     struct eth_tx_parse_bd_e1x *pbd_e1x = NULL;
     struct eth_tx_parse_bd_e2 *pbd_e2 = NULL;
     /* struct eth_tx_parse_2nd_bd *pbd2 = NULL; */
     struct eth_tx_bd *tx_data_bd;
     struct eth_tx_bd *tx_total_pkt_size_bd;
     struct eth_tx_start_bd *tx_start_bd;
-    uint16_t bd_prod, pkt_prod, total_pkt_size;
+    uint16_t bd_prod, total_pkt_size;
     uint8_t mac_type;
-    int defragged, error, nsegs, rc, nbds, vlan_off, ovlan;
+    int error, rc, nbds, vlan_off, ovlan;
     struct bxe_softc *sc;
     uint16_t tx_bd_avail;
     struct ether_vlan_header *eh;
@@ -5398,139 +5225,22 @@ bxe_tx_encap(struct bxe_fastpath *fp, struct mbuf **m_head)
     int tmp_bd;
     int i;
 
-    sc = fp->sc;
+    M_ASSERTPKTHDR(*m0);
 
-    M_ASSERTPKTHDR(*m_head);
-
-    m0 = *m_head;
-    rc = defragged = nbds = ovlan = vlan_off = total_pkt_size = 0;
+    rc = nbds = ovlan = vlan_off = total_pkt_size = 0;
     tx_start_bd = NULL;
     tx_data_bd = NULL;
     tx_total_pkt_size_bd = NULL;
 
     /* get the H/W pointer for packets and BDs */
-    pkt_prod = fp->tx_pkt_prod;
-    bd_prod = fp->tx_bd_prod;
+    bd_prod = pi->ipi_pidx;/*fp->tx_bd_prod; */
 
     mac_type = UNICAST_ADDRESS;
-
-    /* map the mbuf into the next open DMAable memory */
-    tx_buf = &fp->tx_mbuf_chain[TX_BD(pkt_prod)];
-    error = bus_dmamap_load_mbuf_sg(fp->tx_mbuf_tag,
-                                    tx_buf->m_map, m0,
-                                    segs, &nsegs, BUS_DMA_NOWAIT);
-
-    /* mapping errors */
-    if(__predict_false(error != 0)) {
-        fp->eth_q_stats.tx_dma_mapping_failure++;
-        if (error == ENOMEM) {
-            /* resource issue, try again later */
-            rc = ENOMEM;
-        } else if (error == EFBIG) {
-            /* possibly recoverable with defragmentation */
-            fp->eth_q_stats.mbuf_defrag_attempts++;
-            m0 = m_defrag(*m_head, M_NOWAIT);
-            if (m0 == NULL) {
-                fp->eth_q_stats.mbuf_defrag_failures++;
-                rc = ENOBUFS;
-            } else {
-                /* defrag successful, try mapping again */
-                *m_head = m0;
-                error = bus_dmamap_load_mbuf_sg(fp->tx_mbuf_tag,
-                                                tx_buf->m_map, m0,
-                                                segs, &nsegs, BUS_DMA_NOWAIT);
-                if (error) {
-                    fp->eth_q_stats.tx_dma_mapping_failure++;
-                    rc = error;
-                }
-            }
-        } else {
-            /* unknown, unrecoverable mapping error */
-            BLOGE(sc, "Unknown TX mapping error rc=%d\n", error);
-            bxe_dump_mbuf(sc, m0, FALSE);
-            rc = error;
-        }
-
-        goto bxe_tx_encap_continue;
-    }
-
-    tx_bd_avail = bxe_tx_avail(sc, fp);
-
-    /* make sure there is enough room in the send queue */
-    if (__predict_false(tx_bd_avail < (nsegs + 2))) {
-        /* Recoverable, try again later. */
-        fp->eth_q_stats.tx_hw_queue_full++;
-        bus_dmamap_unload(fp->tx_mbuf_tag, tx_buf->m_map);
-        rc = ENOMEM;
-        goto bxe_tx_encap_continue;
-    }
 
     /* capture the current H/W TX chain high watermark */
     if (__predict_false(fp->eth_q_stats.tx_hw_max_queue_depth <
                         (TX_BD_USABLE - tx_bd_avail))) {
         fp->eth_q_stats.tx_hw_max_queue_depth = (TX_BD_USABLE - tx_bd_avail);
-    }
-
-    /* make sure it fits in the packet window */
-    if (__predict_false(nsegs > BXE_MAX_SEGMENTS)) {
-        /*
-         * The mbuf may be to big for the controller to handle. If the frame
-         * is a TSO frame we'll need to do an additional check.
-         */
-        if (m0->m_pkthdr.csum_flags & CSUM_TSO) {
-            if (bxe_chktso_window(sc, nsegs, segs, m0) == 0) {
-                goto bxe_tx_encap_continue; /* OK to send */
-            } else {
-                fp->eth_q_stats.tx_window_violation_tso++;
-            }
-        } else {
-            fp->eth_q_stats.tx_window_violation_std++;
-        }
-
-        /* lets try to defragment this mbuf and remap it */
-        fp->eth_q_stats.mbuf_defrag_attempts++;
-        bus_dmamap_unload(fp->tx_mbuf_tag, tx_buf->m_map);
-
-        m0 = m_defrag(*m_head, M_NOWAIT);
-        if (m0 == NULL) {
-            fp->eth_q_stats.mbuf_defrag_failures++;
-            /* Ugh, just drop the frame... :( */
-            rc = ENOBUFS;
-        } else {
-            /* defrag successful, try mapping again */
-            *m_head = m0;
-            error = bus_dmamap_load_mbuf_sg(fp->tx_mbuf_tag,
-                                            tx_buf->m_map, m0,
-                                            segs, &nsegs, BUS_DMA_NOWAIT);
-            if (error) {
-                fp->eth_q_stats.tx_dma_mapping_failure++;
-                /* No sense in trying to defrag/copy chain, drop it. :( */
-                rc = error;
-            }
-            else {
-                /* if the chain is still too long then drop it */
-                if (__predict_false(nsegs > BXE_MAX_SEGMENTS)) {
-                    bus_dmamap_unload(fp->tx_mbuf_tag, tx_buf->m_map);
-                    rc = ENODEV;
-                }
-            }
-        }
-    }
-
-bxe_tx_encap_continue:
-
-    /* Check for errors */
-    if (rc) {
-        if (rc == ENOMEM) {
-            /* recoverable try again later  */
-        } else {
-            fp->eth_q_stats.tx_soft_errors++;
-            fp->eth_q_stats.mbuf_alloc_tx--;
-            m_freem(*m_head);
-            *m_head = NULL;
-        }
-
-        return (rc);
     }
 
     /* set flag according to packet type (UNICAST_ADDRESS is default) */
@@ -5539,11 +5249,6 @@ bxe_tx_encap_continue:
     } else if (m0->m_flags & M_MCAST) {
         mac_type = MULTICAST_ADDRESS;
     }
-
-    /* store the mbuf into the mbuf ring */
-    tx_buf->m        = m0;
-    tx_buf->first_bd = fp->tx_bd_prod;
-    tx_buf->flags    = 0;
 
     /* prepare the first transmit (start) BD for the mbuf */
     tx_start_bd = &fp->tx_chain[TX_BD(bd_prod)].start_bd;
@@ -5798,19 +5503,22 @@ bxe_tx_encap_continue:
     if (TX_BD_IDX(bd_prod) < nbds) {
         nbds++;
     }
+	pi->ipi_new_pidx = TX_BD(bd_prod);
+	pi->ipi_ndescs = nbds;
+	return (0);
+}
 
-    /* don't allow reordering of writes for nbd and packets */
+static void
+bxe_isc_txd_flush(if_shared_ctx_t sctx, uint16_t qsidx, uint32_t credits)
+{
+	struct bxe_softc *sc = DOWNCAST(sctx);
+	struct fastpath *fp = sc->fp[qsidx];
+
+/* don't allow reordering of writes for nbd and packets */
     mb();
-
-    fp->tx_db.data.prod += nbds;
-
-    /* producer points to the next free tx_bd at this point */
-    fp->tx_pkt_prod++;
-    fp->tx_bd_prod = bd_prod;
-
+    fp->tx_db.data.prod += credits;
+	
     DOORBELL(sc, fp->index, fp->tx_db.raw);
-
-    fp->eth_q_stats.tx_pkts++;
 
     /* Prevent speculative reads from getting ahead of the status block. */
     bus_space_barrier(sc->bar[BAR0].tag, sc->bar[BAR0].handle,
@@ -5820,285 +5528,7 @@ bxe_tx_encap_continue:
     bus_space_barrier(sc->bar[BAR2].tag, sc->bar[BAR2].handle,
                       0, 0, BUS_SPACE_BARRIER_READ);
 
-    return (0);
 }
-
-static void
-bxe_tx_start_locked(struct bxe_softc *sc,
-                    if_t ifp,
-                    struct bxe_fastpath *fp)
-{
-    struct mbuf *m = NULL;
-    int tx_count = 0;
-    uint16_t tx_bd_avail;
-
-    BXE_FP_TX_LOCK_ASSERT(fp);
-
-    /* keep adding entries while there are frames to send */
-    while (!if_sendq_empty(ifp)) {
-
-        /*
-         * check for any frames to send
-         * dequeue can still be NULL even if queue is not empty
-         */
-        m = if_dequeue(ifp);
-        if (__predict_false(m == NULL)) {
-            break;
-        }
-
-        /* the mbuf now belongs to us */
-        fp->eth_q_stats.mbuf_alloc_tx++;
-
-        /*
-         * Put the frame into the transmit ring. If we don't have room,
-         * place the mbuf back at the head of the TX queue, set the
-         * OACTIVE flag, and wait for the NIC to drain the chain.
-         */
-        if (__predict_false(bxe_tx_encap(fp, &m))) {
-            fp->eth_q_stats.tx_encap_failures++;
-            if (m != NULL) {
-                /* mark the TX queue as full and return the frame */
-                if_setdrvflagbits(ifp, IFF_DRV_OACTIVE, 0);
-		if_sendq_prepend(ifp, m);
-                fp->eth_q_stats.mbuf_alloc_tx--;
-                fp->eth_q_stats.tx_queue_xoff++;
-            }
-
-            /* stop looking for more work */
-            break;
-        }
-
-        /* the frame was enqueued successfully */
-        tx_count++;
-
-        /* send a copy of the frame to any BPF listeners. */
-        if_etherbpfmtap(ifp, m);
-
-        tx_bd_avail = bxe_tx_avail(sc, fp);
-
-        /* handle any completions if we're running low */
-        if (tx_bd_avail < BXE_TX_CLEANUP_THRESHOLD) {
-            /* bxe_txeof will set IFF_DRV_OACTIVE appropriately */
-            bxe_txeof(sc, fp);
-            if (if_getdrvflags(ifp) & IFF_DRV_OACTIVE) {
-                break;
-            }
-        }
-    }
-
-    /* all TX packets were dequeued and/or the tx ring is full */
-    if (tx_count > 0) {
-        /* reset the TX watchdog timeout timer */
-        fp->watchdog_timer = BXE_TX_TIMEOUT;
-    }
-}
-
-/* Legacy (non-RSS) dispatch routine */
-static void
-bxe_tx_start(if_t ifp)
-{
-    struct bxe_softc *sc;
-    struct bxe_fastpath *fp;
-
-    sc = if_getsoftc(ifp);
-
-    if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING)) {
-        BLOGW(sc, "Interface not running, ignoring transmit request\n");
-        return;
-    }
-
-    if (if_getdrvflags(ifp) & IFF_DRV_OACTIVE) {
-        BLOGW(sc, "Interface TX queue is full, ignoring transmit request\n");
-        return;
-    }
-
-    if (!sc->link_vars.link_up) {
-        BLOGW(sc, "Interface link is down, ignoring transmit request\n");
-        return;
-    }
-
-    fp = &sc->fp[0];
-
-    BXE_FP_TX_LOCK(fp);
-    bxe_tx_start_locked(sc, ifp, fp);
-    BXE_FP_TX_UNLOCK(fp);
-}
-
-#if __FreeBSD_version >= 800000
-
-static int
-bxe_tx_mq_start_locked(struct bxe_softc    *sc,
-                       if_t                ifp,
-                       struct bxe_fastpath *fp,
-                       struct mbuf         *m)
-{
-    struct buf_ring *tx_br = fp->tx_br;
-    struct mbuf *next;
-    int depth, rc, tx_count;
-    uint16_t tx_bd_avail;
-
-    rc = tx_count = 0;
-
-    if (!tx_br) {
-        BLOGE(sc, "Multiqueue TX and no buf_ring!\n");
-        return (EINVAL);
-    }
-
-    /* fetch the depth of the driver queue */
-    depth = drbr_inuse_drv(ifp, tx_br);
-    if (depth > fp->eth_q_stats.tx_max_drbr_queue_depth) {
-        fp->eth_q_stats.tx_max_drbr_queue_depth = depth;
-    }
-
-    BXE_FP_TX_LOCK_ASSERT(fp);
-
-    if (m == NULL) {
-        /* no new work, check for pending frames */
-        next = drbr_dequeue_drv(ifp, tx_br);
-    } else if (drbr_needs_enqueue_drv(ifp, tx_br)) {
-        /* have both new and pending work, maintain packet order */
-        rc = drbr_enqueue_drv(ifp, tx_br, m);
-        if (rc != 0) {
-            fp->eth_q_stats.tx_soft_errors++;
-            goto bxe_tx_mq_start_locked_exit;
-        }
-        next = drbr_dequeue_drv(ifp, tx_br);
-    } else {
-        /* new work only and nothing pending */
-        next = m;
-    }
-
-    /* keep adding entries while there are frames to send */
-    while (next != NULL) {
-
-        /* the mbuf now belongs to us */
-        fp->eth_q_stats.mbuf_alloc_tx++;
-
-        /*
-         * Put the frame into the transmit ring. If we don't have room,
-         * place the mbuf back at the head of the TX queue, set the
-         * OACTIVE flag, and wait for the NIC to drain the chain.
-         */
-        rc = bxe_tx_encap(fp, &next);
-        if (__predict_false(rc != 0)) {
-            fp->eth_q_stats.tx_encap_failures++;
-            if (next != NULL) {
-                /* mark the TX queue as full and save the frame */
-                if_setdrvflagbits(ifp, IFF_DRV_OACTIVE, 0);
-                /* XXX this may reorder the frame */
-                rc = drbr_enqueue_drv(ifp, tx_br, next);
-                fp->eth_q_stats.mbuf_alloc_tx--;
-                fp->eth_q_stats.tx_frames_deferred++;
-            }
-
-            /* stop looking for more work */
-            break;
-        }
-
-        /* the transmit frame was enqueued successfully */
-        tx_count++;
-
-        /* send a copy of the frame to any BPF listeners */
-	if_etherbpfmtap(ifp, next);
-
-        tx_bd_avail = bxe_tx_avail(sc, fp);
-
-        /* handle any completions if we're running low */
-        if (tx_bd_avail < BXE_TX_CLEANUP_THRESHOLD) {
-            /* bxe_txeof will set IFF_DRV_OACTIVE appropriately */
-            bxe_txeof(sc, fp);
-            if (if_getdrvflags(ifp) & IFF_DRV_OACTIVE) {
-                break;
-            }
-        }
-
-        next = drbr_dequeue_drv(ifp, tx_br);
-    }
-
-    /* all TX packets were dequeued and/or the tx ring is full */
-    if (tx_count > 0) {
-        /* reset the TX watchdog timeout timer */
-        fp->watchdog_timer = BXE_TX_TIMEOUT;
-    }
-
-bxe_tx_mq_start_locked_exit:
-
-    return (rc);
-}
-
-/* Multiqueue (TSS) dispatch routine. */
-static int
-bxe_tx_mq_start(struct ifnet *ifp,
-                struct mbuf  *m)
-{
-    struct bxe_softc *sc = if_getsoftc(ifp);
-    struct bxe_fastpath *fp;
-    int fp_index, rc;
-
-    fp_index = 0; /* default is the first queue */
-
-    /* change the queue if using flow ID */
-    if ((m->m_flags & M_FLOWID) != 0) {
-        fp_index = (m->m_pkthdr.flowid % sc->num_queues);
-    }
-
-    fp = &sc->fp[fp_index];
-
-    if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING)) {
-        BLOGW(sc, "Interface not running, ignoring transmit request\n");
-        return (ENETDOWN);
-    }
-
-    if (if_getdrvflags(ifp) & IFF_DRV_OACTIVE) {
-        BLOGW(sc, "Interface TX queue is full, ignoring transmit request\n");
-        return (EBUSY);
-    }
-
-    if (!sc->link_vars.link_up) {
-        BLOGW(sc, "Interface link is down, ignoring transmit request\n");
-        return (ENETDOWN);
-    }
-
-    /* XXX change to TRYLOCK here and if failed then schedule taskqueue */
-
-    BXE_FP_TX_LOCK(fp);
-    rc = bxe_tx_mq_start_locked(sc, ifp, fp, m);
-    BXE_FP_TX_UNLOCK(fp);
-
-    return (rc);
-}
-
-static void
-bxe_mq_flush(struct ifnet *ifp)
-{
-    struct bxe_softc *sc = if_getsoftc(ifp);
-    struct bxe_fastpath *fp;
-    struct mbuf *m;
-    int i;
-
-    for (i = 0; i < sc->num_queues; i++) {
-        fp = &sc->fp[i];
-
-        if (fp->state != BXE_FP_STATE_OPEN) {
-            BLOGD(sc, DBG_LOAD, "Not clearing fp[%02d] buf_ring (state=%d)\n",
-                  fp->index, fp->state);
-            continue;
-        }
-
-        if (fp->tx_br != NULL) {
-            BLOGD(sc, DBG_LOAD, "Clearing fp[%02d] buf_ring\n", fp->index);
-            BXE_FP_TX_LOCK(fp);
-            while ((m = buf_ring_dequeue_sc(fp->tx_br)) != NULL) {
-                m_freem(m);
-            }
-            BXE_FP_TX_UNLOCK(fp);
-        }
-    }
-
-    if_qflush(ifp);
-}
-
-#endif /* FreeBSD_version >= 800000 */
 
 static uint16_t
 bxe_cid_ilt_lines(struct bxe_softc *sc)
@@ -9015,95 +8445,6 @@ bxe_handle_sp_tq(void *context,
 #endif
 }
 
-static void
-bxe_handle_fp_tq(void *context,
-                 int  pending)
-{
-    struct bxe_fastpath *fp = (struct bxe_fastpath *)context;
-    struct bxe_softc *sc = fp->sc;
-    uint8_t more_tx = FALSE;
-    uint8_t more_rx = FALSE;
-
-    BLOGD(sc, DBG_INTR, "---> FP TASK QUEUE (%d) <---\n", fp->index);
-
-    /* XXX
-     * IFF_DRV_RUNNING state can't be checked here since we process
-     * slowpath events on a client queue during setup. Instead
-     * we need to add a "process/continue" flag here that the driver
-     * can use to tell the task here not to do anything.
-     */
-#if 0
-    if (!(if_getdrvflags(sc->ifp) & IFF_DRV_RUNNING)) {
-        return;
-    }
-#endif
-
-    /* update the fastpath index */
-    bxe_update_fp_sb_idx(fp);
-
-    /* XXX add loop here if ever support multiple tx CoS */
-    /* fp->txdata[cos] */
-    if (bxe_has_tx_work(fp)) {
-        BXE_FP_TX_LOCK(fp);
-        more_tx = bxe_txeof(sc, fp);
-        BXE_FP_TX_UNLOCK(fp);
-    }
-
-    if (bxe_has_rx_work(fp)) {
-        more_rx = bxe_rxeof(sc, fp);
-    }
-
-    if (more_rx /*|| more_tx*/) {
-        /* still more work to do */
-        taskqueue_enqueue_fast(fp->tq, &fp->tq_task);
-        return;
-    }
-
-    bxe_ack_sb(sc, fp->igu_sb_id, USTORM_ID,
-               le16toh(fp->fp_hc_idx), IGU_INT_ENABLE, 1);
-}
-
-static void
-bxe_task_fp(struct bxe_fastpath *fp)
-{
-    struct bxe_softc *sc = fp->sc;
-    uint8_t more_tx = FALSE;
-    uint8_t more_rx = FALSE;
-
-    BLOGD(sc, DBG_INTR, "---> FP TASK ISR (%d) <---\n", fp->index);
-
-    /* update the fastpath index */
-    bxe_update_fp_sb_idx(fp);
-
-    /* XXX add loop here if ever support multiple tx CoS */
-    /* fp->txdata[cos] */
-    if (bxe_has_tx_work(fp)) {
-        BXE_FP_TX_LOCK(fp);
-        more_tx = bxe_txeof(sc, fp);
-        BXE_FP_TX_UNLOCK(fp);
-    }
-
-    if (bxe_has_rx_work(fp)) {
-        more_rx = bxe_rxeof(sc, fp);
-    }
-
-    if (more_rx /*|| more_tx*/) {
-        /* still more work to do, bail out if this ISR and process later */
-        taskqueue_enqueue_fast(fp->tq, &fp->tq_task);
-        return;
-    }
-
-    /*
-     * Here we write the fastpath index taken before doing any tx or rx work.
-     * It is very well possible other hw events occurred up to this point and
-     * they were actually processed accordingly above. Since we're going to
-     * write an older fastpath index, an interrupt is coming which we might
-     * not do any work in.
-     */
-    bxe_ack_sb(sc, fp->igu_sb_id, USTORM_ID,
-               le16toh(fp->fp_hc_idx), IGU_INT_ENABLE, 1);
-}
-
 /*
  * Legacy interrupt entry point.
  *
@@ -9111,10 +8452,11 @@ bxe_task_fp(struct bxe_fastpath *fp)
  * then calls a separate routine to handle the various
  * interrupt causes: link, RX, and TX.
  */
-static void
+static int
 bxe_intr_legacy(void *xsc)
 {
     struct bxe_softc *sc = (struct bxe_softc *)xsc;
+	if_shared_ctx_t sctx = UPCAST(sc);
     struct bxe_fastpath *fp;
     uint16_t status, mask;
     int i;
@@ -9141,8 +8483,7 @@ bxe_intr_legacy(void *xsc)
 
     /* the interrupt is not for us */
     if (__predict_false(status == 0)) {
-        BLOGD(sc, DBG_INTR, "Not our interrupt!\n");
-        return;
+        return (FILTER_STRAY);
     }
 
     BLOGD(sc, DBG_INTR, "Interrupt status 0x%04x\n", status);
@@ -9153,7 +8494,8 @@ bxe_intr_legacy(void *xsc)
         if (status & mask) {
             /* acknowledge and disable further fastpath interrupts */
             bxe_ack_sb(sc, fp->igu_sb_id, USTORM_ID, 0, IGU_INT_DISABLE, 0);
-            bxe_task_fp(fp);
+			iflib_rx_intr_deferred(sctx, i);
+			iflib_tx_intr_deferred(sctx, i);
             status &= ~mask;
         }
     }
@@ -9173,18 +8515,18 @@ bxe_intr_legacy(void *xsc)
         bxe_ack_sb(sc, sc->igu_dsb_id, USTORM_ID, 0, IGU_INT_DISABLE, 0);
 
         /* schedule slowpath handler */
-        taskqueue_enqueue_fast(sc->sp_tq, &sc->sp_tq_task);
-
+		GROUPTASK_ENQUEUE(&sc->sp_tq_task);
         status &= ~0x1;
     }
 
     if (__predict_false(status)) {
         BLOGW(sc, "Unexpected fastpath status (0x%08x)!\n", status);
     }
+	return (FILTER_HANDLED);
 }
 
 /* slowpath interrupt entry point */
-static void
+static int
 bxe_intr_sp(void *xsc)
 {
     struct bxe_softc *sc = (struct bxe_softc *)xsc;
@@ -9195,11 +8537,12 @@ bxe_intr_sp(void *xsc)
     bxe_ack_sb(sc, sc->igu_dsb_id, USTORM_ID, 0, IGU_INT_DISABLE, 0);
 
     /* schedule slowpath handler */
-    taskqueue_enqueue_fast(sc->sp_tq, &sc->sp_tq_task);
+    GROUPTASK_ENQUEUE(sc->sp_tq, &sc->sp_tq_task);
+	return (FILTER_HANDLED);
 }
 
 /* fastpath interrupt entry point */
-static void
+static int
 bxe_intr_fp(void *xfp)
 {
     struct bxe_fastpath *fp = (struct bxe_fastpath *)xfp;
@@ -9220,8 +8563,8 @@ bxe_intr_fp(void *xfp)
 
     /* acknowledge and disable further fastpath interrupts */
     bxe_ack_sb(sc, fp->igu_sb_id, USTORM_ID, 0, IGU_INT_DISABLE, 0);
-
     bxe_task_fp(fp);
+	return (FILTER_SCHEDULE_THREAD);
 }
 
 /* Release all interrupts allocated by the driver. */
