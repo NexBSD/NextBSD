@@ -47,29 +47,33 @@ typedef struct if_int_delay_info  *if_int_delay_info_t;
  *  - iflib core functions
  */
 
-#define	IF_RXD_VLAN				(1 << 4)
-#define	IF_RXD_FLOWID			(1 << 5)
-
 typedef struct if_rxd_info {
-	uint16_t iri_qsidx;
-	uint16_t iri_vtag;
-	int      iri_flags;
-	uint32_t iri_cidx; /* consumer index of cq when passed in */
-	uint32_t iri_len;
-	uint32_t iri_flowid;
-	uint32_t iri_csum_flags;
-	uint32_t iri_csum_data;
+	uint16_t iri_qsidx;		/* qset index */
+	uint16_t iri_vtag;		/* vlan tag - if flag set */
+	uint16_t iri_len;		/* packet length */
 	uint16_t iri_next_offset; /* 0 for eop */
-	uint8_t	 iri_hash_type;
-	int8_t	 iri_qidx;
+	uint32_t iri_cidx;		/* consumer index of cq */
+	uint32_t iri_flowid;	/* RSS hash for packet */
+	int      iri_flags;		/* mbuf flags for packet */
+	uint32_t iri_csum_flags; /* m_pkthdr csum flags */
+	uint32_t iri_csum_data;	/* m_pkthdr csum data */
+	struct mbuf *iri_m;		/* for driver paths that manage their own rx */
+	struct ifnet *iri_ifp;	/* some drivers >1 interface per softc */
+	uint8_t	 iri_hash_type; /* RSS hash type */
+	uint8_t	 iri_pad;		/* any padding in the received data */
+	int8_t	 iri_qidx;		/* == -1 -> completion queue event
+							 * >=  0 -> free list id
+							 */
 } *if_rxd_info_t;
 
 typedef struct if_pkt_info {
-	struct mbuf *ipi_m; /* experimental */
-	bus_dma_segment_t *ipi_segs;
-	uint16_t ipi_nsegs;
-	uint32_t ipi_pidx;
-	uint32_t ipi_new_pidx;
+	struct mbuf			*ipi_m;		/* tx packet */
+	bus_dma_segment_t	*ipi_segs;	/* physical addresses */
+	uint16_t			ipi_qsidx;	/* queue set index */
+	uint16_t			ipi_nsegs;	/* number of segments */
+	uint16_t			ipi_ndescs;	/* number of descriptors used by encap */
+	uint32_t			ipi_pidx;	/* start pidx for encap */
+	uint32_t			ipi_new_pidx;	/* next available pidx post-encap */
 } *if_pkt_info_t;
 
 struct if_common_stats {
@@ -103,13 +107,13 @@ struct if_shared_ctx {
 	 * Do not move
 	 */
 	KOBJ_FIELDS;
-	int (*isc_txd_encap) (if_shared_ctx_t, uint16_t, if_pkt_info_t);
+	int (*isc_txd_encap) (if_shared_ctx_t, if_pkt_info_t);
 	void (*isc_txd_flush) (if_shared_ctx_t, uint16_t, uint32_t);
 	int (*isc_txd_credits_update) (if_shared_ctx_t, uint16_t, uint32_t);
 
 	int (*isc_rxd_available) (if_shared_ctx_t, uint16_t qsidx, uint32_t pidx);
 	int (*isc_rxd_pkt_get) (if_shared_ctx_t sctx, if_rxd_info_t ri);
-	void (*isc_rxd_refill) (if_shared_ctx_t, uint16_t qsidx, uint8_t flidx, uint32_t pidx, uint64_t *paddrs, uint8_t count);
+	void (*isc_rxd_refill) (if_shared_ctx_t, uint16_t qsidx, uint8_t flidx, uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs, uint8_t count);
 	void (*isc_rxd_flush) (if_shared_ctx_t, uint16_t qsidx, uint8_t flidx, uint32_t pidx);
 
 	iflib_ctx_t isc_ctx;

@@ -179,6 +179,7 @@ struct iflib_txq {
 	uint32_t	ift_cidx;
 	uint32_t	ift_pidx;
 	uint32_t	ift_db_pending;
+	uint32_t	ift_npending;
 	uint32_t	ift_tqid;
 	uint64_t	ift_tx_bytes;
 	uint64_t	ift_tx_packets;
@@ -761,7 +762,7 @@ _iflib_fl_refill(iflib_ctx_t ctx, iflib_fl_t fl, int n)
 		rxsd->ifsd_flags |= RX_SW_DESC_INUSE;
 		rxsd->ifsd_cl = cl;
 		rxsd->ifsd_m = m;
-		sctx->isc_rxd_refill(sctx, fl->ifl_rxq->ifr_id, 0, fl->ifl_pidx, &phys_addr, 1);
+		sctx->isc_rxd_refill(sctx, fl->ifl_rxq->ifr_id, 0, fl->ifl_pidx, &phys_addr, &cl, 1);
 
 		if (++fl->ifl_pidx == fl->ifl_size) {
 			fl->ifl_pidx = 0;
@@ -1029,7 +1030,6 @@ static struct mbuf *
 iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 {
 	iflib_sd_t sd_next, sd = &fl->ifl_sds[fl->ifl_cidx];
-	iflib_rxq_t rxq = fl->ifl_rxq;
 	uint32_t flags = M_EXT;
 	caddr_t cl;
 	struct mbuf *m;
@@ -1042,8 +1042,11 @@ iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 		cl = mtod(m, void *);
 		memcpy(cl, sd->ifsd_cl, ri->iri_len);
 		iflib_recycle_rx_buf(fl);
-		m->m_pkthdr.len = m->m_len = len;
-		m->m_flags = 0;
+		m->m_pkthdr.len = m->m_len = ri->iri_len;
+		if (ri->iri_pad) {
+			m->m_data += ri->iri_pad;
+			len -= ri->iri_pad;
+		}
 	} else {
 	skip_recycle:
 		bus_dmamap_unload(fl->ifl_rxq->ifr_desc_tag, sd->ifsd_map);
@@ -1053,13 +1056,18 @@ iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 		if (sd->ifsd_mh == NULL)
 			flags |= M_PKTHDR;
 		m_init(m, fl->ifl_zone, fl->ifl_buf_size, M_NOWAIT, MT_DATA, flags);
+		m_cljset(m, cl, fl->ifl_cltype);
+
+		if (ri->iri_pad) {
+			m->m_data += ri->iri_pad;
+			len -= ri->iri_pad;
+		}
 		m->m_len = len;
 		if (sd->ifsd_mh == NULL)
 			m->m_pkthdr.len = len;
 		else
 			sd->ifsd_mh->m_pkthdr.len += len;
-		m_cljset(m, cl, fl->ifl_cltype);
-	}
+		}
 
 	if (sd->ifsd_mh != NULL && 	ri->iri_next_offset != 0) {
 		/* We're in the middle of a packet and thus
@@ -1098,11 +1106,11 @@ iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 	if (m == NULL)
 		return (NULL);
 
-	m->m_pkthdr.rcvif = (struct ifnet *)rxq->ifr_ctx->ifc_sctx->isc_ifp;
-	if (ri->iri_flags & IF_RXD_VLAN) {
+	m->m_pkthdr.rcvif = ri->iri_ifp;
+	m->m_flags |= ri->iri_flags;
+
+	if (ri->iri_flags & M_VLANTAG)
 		if_setvtag(m, ri->iri_vtag);
-		m->m_flags |= M_VLANTAG;
-	}
 	m->m_pkthdr.flowid = ri->iri_flowid;
 	M_HASHTYPE_SET(m, ri->iri_hash_type);
 	m->m_pkthdr.csum_flags = ri->iri_csum_flags;
@@ -1148,7 +1156,6 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 #endif /* DEV_NETMAP */
 
 	ri.iri_qsidx = rxq->ifr_id;
-
 	mh = mt = NULL;
 	while (__predict_true(budget_left--)) {
 		if (__predict_false(!CTX_ACTIVE(ctx)))
@@ -1158,12 +1165,27 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 		if (__predict_false(!sctx->isc_rxd_available(sctx, rxq->ifr_id, cidx)))
 			return (false);
+
 		ri.iri_cidx = cidx;
+		/*
+		 * Reset client set fields to their default values
+		 */
+		ri.iri_flags = 0;
+		ri.iri_m = NULL;
+		ri.iri_next_offset = 0;
+		ri.iri_pad = 0;
+		ri.iri_qidx = 0;
+		ri.iri_ifp = sctx->isc_ifp;
 		err = sctx->isc_rxd_pkt_get(sctx, &ri);
 
 		qidx = ri.iri_qidx;
 		if (++cidx == sctx->isc_nrxd)
 			cidx = 0;
+		if (ri.iri_m != NULL) {
+			m = ri.iri_m;
+			ri.iri_m = NULL;
+			goto imm_pkt;
+		}
 		/* was this only a completion queue message? */
 		if (qidx == -1)
 			continue;
@@ -1171,7 +1193,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		fl_cidx = fl->ifl_cidx;
 		bus_dmamap_unload(rxq->ifr_desc_tag, fl->ifl_sds[fl_cidx].ifsd_map);
 
-		if (err) {
+		if (ri.iri_len == 0) {
 			/*
 			 * XXX Note currently we don't free the initial pieces
 			 * of a multi-fragment packet
@@ -1190,6 +1212,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 
 		if (m == NULL)
 			continue;
+	imm_pkt:
 		if (mh == NULL)
 			mh = mt = m;
 		else {
@@ -1227,11 +1250,13 @@ static __inline void
 iflib_txd_db_check(iflib_ctx_t ctx, iflib_txq_t txq, int ring)
 {
 	if_shared_ctx_t sctx;
+	uint32_t dbval;
 
 	if (ring || ++txq->ift_db_pending >= 32) {
 		sctx = ctx->ifc_sctx;
+		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
 		wmb();
-		sctx->isc_txd_flush(sctx, txq->ift_id, txq->ift_pidx);
+		sctx->isc_txd_flush(sctx, txq->ift_id, dbval);
 	}
 }
 
@@ -1299,8 +1324,10 @@ retry:
 	pi.ipi_segs = segs;
 	pi.ipi_nsegs = nsegs;
 	pi.ipi_pidx = pidx;
+	pi.ipi_ndescs = 0;
+	pi.ipi_qsidx = txq->ift_id;
 
-	if ((err = sctx->isc_txd_encap(sctx, txq->ift_id, &pi)) == 0) {
+	if ((err = sctx->isc_txd_encap(sctx, &pi)) == 0) {
 		bus_dmamap_sync(txq->ift_ifdi->idi_tag, txq->ift_ifdi->idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
@@ -1311,6 +1338,7 @@ retry:
 
 		txq->ift_in_use += ndesc;
 		txq->ift_pidx = pi.ipi_new_pidx;
+		txq->ift_npending += pi.ipi_ndescs;
 		iflib_txd_db_check(ctx, txq, 0);
 	}
 	return (err);

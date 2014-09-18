@@ -148,9 +148,9 @@ static int      ixgbe_if_mtu_set(if_shared_ctx_t, uint32_t);
 static void     ixgbe_if_multi_set(if_shared_ctx_t);
 static int		ixgbe_if_i2c_req(if_shared_ctx_t, struct ifi2creq *);
 static void     ixgbe_if_update_link_status(if_shared_ctx_t);
-static int      ixgbe_isc_txd_encap(if_shared_ctx_t, uint16_t, if_pkt_info_t);
+static int      ixgbe_isc_txd_encap(if_shared_ctx_t, if_pkt_info_t);
 static void ixgbe_isc_txd_flush(if_shared_ctx_t, uint16_t, uint32_t);
-static void ixgbe_isc_rxd_refill(if_shared_ctx_t, uint16_t, uint8_t, uint32_t, uint64_t*, uint8_t);
+static void ixgbe_isc_rxd_refill(if_shared_ctx_t, uint16_t, uint8_t, uint32_t, uint64_t*, caddr_t *, uint8_t);
 static void ixgbe_isc_rxd_flush(if_shared_ctx_t, uint16_t, uint8_t, uint32_t);
 static int ixgbe_isc_rxd_available(if_shared_ctx_t, uint16_t, uint32_t);
 
@@ -1276,10 +1276,10 @@ ixgbe_if_media_change(if_shared_ctx_t sctx)
  **********************************************************************/
 
 static int
-ixgbe_isc_txd_encap(if_shared_ctx_t sctx, uint16_t txqid, if_pkt_info_t pi)
+ixgbe_isc_txd_encap(if_shared_ctx_t sctx, if_pkt_info_t pi)
 {
 	struct adapter  *adapter = DOWNCAST(sctx);
-	struct tx_ring *txr = &adapter->tx_rings[txqid];
+	struct tx_ring *txr = &adapter->tx_rings[pi->ipi_qsidx];
 	u32		olinfo_status = 0, cmd_type_len;
 	int             i, j, error, nsegs;
 	int		first;
@@ -2692,7 +2692,7 @@ ixgbe_isc_txd_credits_update(if_shared_ctx_t sctx, uint16_t qid, uint32_t cidx)
 }
 
 static void
-ixgbe_isc_rxd_refill(if_shared_ctx_t sctx, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx, uint64_t *paddrs, uint8_t count)
+ixgbe_isc_rxd_refill(if_shared_ctx_t sctx, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint8_t count)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
@@ -3201,7 +3201,7 @@ ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 		}
 #else /* RSS */
 		ri->iri_flowid = adapter->queues[ri->iri_qsidx].msix;
-		ri->iri_flags |= IF_RXD_FLOWID;
+		ri->iri_flags |= M_FLOWID;
 #endif /* RSS */
 #endif /* FreeBSD_version */
 		rxr->packets++;

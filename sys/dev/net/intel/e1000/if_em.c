@@ -246,10 +246,10 @@ static void em_if_rx_structures_free(if_shared_ctx_t);
 
 static int		em_if_sysctl_int_delay(if_shared_ctx_t, if_int_delay_info_t);
 
-static int	em_isc_txd_encap(if_shared_ctx_t, uint16_t, if_pkt_info_t);
+static int	em_isc_txd_encap(if_shared_ctx_t, if_pkt_info_t);
 static void em_isc_txd_flush(if_shared_ctx_t, uint16_t, uint32_t);
 static int  em_isc_rxd_pkt_get(if_shared_ctx_t, if_rxd_info_t);
-static void em_isc_rxd_refill(if_shared_ctx_t, uint16_t, uint8_t, uint32_t, uint64_t*, uint8_t);
+static void em_isc_rxd_refill(if_shared_ctx_t, uint16_t, uint8_t, uint32_t, uint64_t*, caddr_t *, uint8_t);
 static void em_isc_rxd_flush(if_shared_ctx_t, uint16_t, uint8_t, uint32_t);
 static int em_isc_rxd_available(if_shared_ctx_t, uint16_t, uint32_t);
 
@@ -1224,10 +1224,10 @@ em_if_media_change(if_shared_ctx_t sctx)
  **********************************************************************/
 
 static int
-em_isc_txd_encap(if_shared_ctx_t sctx, uint16_t txqid, if_pkt_info_t pi)
+em_isc_txd_encap(if_shared_ctx_t sctx, if_pkt_info_t pi)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
-	struct tx_ring *txr = &adapter->tx_rings[txqid];
+	struct tx_ring *txr = &adapter->tx_rings[pi->ipi_qsidx];
 	struct e1000_tx_desc	*ctxd = NULL;
 	u32 txd_upper, txd_lower, txd_used, txd_saved;
 	bus_dma_segment_t *segs = pi->ipi_segs;
@@ -2755,7 +2755,7 @@ em_initialize_receive_unit(struct adapter *adapter)
 }
 
 static void
-em_isc_rxd_refill(if_shared_ctx_t sctx, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx, uint64_t *paddrs, uint8_t count)
+em_isc_rxd_refill(if_shared_ctx_t sctx, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint8_t count)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
@@ -2853,7 +2853,7 @@ em_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 		em_receive_checksum(cur, &ri->iri_csum_flags,
 							&ri->iri_csum_data);
 		if (status & E1000_RXD_STAT_VP) {
-			ri->iri_flags |= IF_RXD_VLAN;
+			ri->iri_flags |= M_VLANTAG;
 			ri->iri_vtag = le16toh(cur->special);
 		}
 		ri->iri_next_offset = 0;
