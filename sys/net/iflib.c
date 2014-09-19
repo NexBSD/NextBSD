@@ -2167,7 +2167,7 @@ iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint8_t nqs)
 	iflib_fl_t fl = NULL;
 	int i, j, err, txconf, rxconf;
 	iflib_dma_info_t ifdip;
-	int nfree_lists = 1; /* XXX get from driver */
+	int nfree_lists = sctx->isc_nfl ? sctx->isc_nfl : 1; 
 	int nbuf_rings = 1; /* XXX determine dynamically */
 
 	if (!(qset =
@@ -2222,6 +2222,7 @@ iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint8_t nqs)
 		txq = &ctx->ifc_txqs[i];
 		txq->ift_ctx = ctx;
 		txq->ift_id = i;
+		txq->ift_timer.c_cpu = i % mp_ncpus;
 		txq->ift_nbr = nbuf_rings;
 		txq->ift_ifdi = &qset->ifq_ifdi[0];
 

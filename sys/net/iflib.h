@@ -123,6 +123,7 @@ struct if_shared_ctx {
 	int isc_nrxq;
 	int isc_ntxd;
 	int isc_nrxd;
+	int isc_nfl;
 	bus_size_t isc_q_align;
 	bus_size_t isc_tx_maxsize;
 	bus_size_t isc_tx_maxsegsize;
