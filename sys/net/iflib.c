@@ -1420,8 +1420,11 @@ iflib_tx_desc_free(iflib_txq_t txq, int n)
 				bus_dmamap_unload(txq->ift_desc_tag, txsd->ifsd_map);
 				txsd->ifsd_flags &= ~TX_SW_DESC_MAPPED;
 			}
-			m_freem(txsd->ifsd_m);
-			txsd->ifsd_m = NULL;
+			while (txsd->ifsd_m) {
+				m = txsd->ifsd_m;
+				txsd->ifsd_m = m->m_nextpkt;
+				m_freem(m);
+			}
 		}
 
 		++txsd;
