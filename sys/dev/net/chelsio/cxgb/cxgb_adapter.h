@@ -184,7 +184,7 @@ struct sge_rspq {
 	uint32_t        pure_rsps;
 	uint32_t        unhandled_irqs;
 	uint32_t        starved;
-
+	uint32_t        sleeping;
 	bus_addr_t	phys_addr;
 	bus_dma_tag_t	desc_tag;
 	bus_dmamap_t	desc_map;
@@ -219,6 +219,7 @@ struct sge_fl {
 	struct rx_desc	*desc;
 	struct rx_sw_desc *sdesc;
 	int             type;
+	int             idx;
 };
 
 struct tx_desc;
@@ -239,7 +240,6 @@ struct sge_txq {
 	uint32_t	unacked;
 	uint32_t	db_pending;
 	struct tx_desc	*desc;
-	struct tx_sw_desc *sdesc;
 	uint32_t	token;
 	bus_addr_t	phys_addr;
 	struct task     qresume_task;
@@ -250,12 +250,10 @@ struct sge_txq {
 	bus_dma_tag_t	desc_tag;
 	bus_dmamap_t	desc_map;
 	bus_dma_tag_t   entry_tag;
-	struct mbuf_head sendq;
 
-	struct buf_ring *txq_mr;
-	struct ifaltq	*txq_ifq;
-	struct callout	txq_timer;
-	struct callout	txq_watchdog;
+	bus_dma_segment_t tx_coalesce_segments[7];
+	uint16_t	tx_coalesce_bytes; /* max 10500 */
+	uint8_t		tx_coalesce_count; /* max 7 */
 	uint64_t        txq_coalesced;
 	uint32_t        txq_skipped;
 	uint32_t        txq_enqueued;
