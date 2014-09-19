@@ -230,7 +230,7 @@ static void em_if_media_set(if_shared_ctx_t);
 static void em_if_media_status(if_shared_ctx_t, struct ifmediareq *);
 static int  em_if_media_change(if_shared_ctx_t);
 
-static void em_if_timer(if_shared_ctx_t);
+static void em_if_timer(if_shared_ctx_t, uint16_t);
 static void	em_if_led_func(if_shared_ctx_t, int);
 static void em_if_watchdog_reset(if_shared_ctx_t);
 static int		em_msix_tx(void *);
@@ -1494,7 +1494,7 @@ em_if_multi_set(if_shared_ctx_t sctx)
  **********************************************************************/
 
 static void
-em_if_timer(if_shared_ctx_t sctx)
+em_if_timer(if_shared_ctx_t sctx, uint16_t txqid __unused)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
 	struct rx_ring	*rxr = adapter->rx_rings;

@@ -118,7 +118,7 @@ static int      ixgbe_allocate_legacy(struct adapter *);
 static int	ixgbe_if_queues_alloc(if_shared_ctx_t);
 static int	ixgbe_setup_msix(struct adapter *);
 static void	ixgbe_free_pci_resources(struct adapter *);
-static void	ixgbe_if_timer(if_shared_ctx_t);
+static void	ixgbe_if_timer(if_shared_ctx_t, uint16_t);
 static void	ixgbe_if_watchdog_reset(if_shared_ctx_t);
 static void	ixgbe_if_vlan_register(if_shared_ctx_t, uint16_t);
 static void	ixgbe_if_vlan_unregister(if_shared_ctx_t, uint16_t);
@@ -1463,10 +1463,12 @@ ixgbe_mc_array_itr(struct ixgbe_hw *hw, u8 **update_ptr, u32 *vmdq)
  **********************************************************************/
 
 static void
-ixgbe_if_timer(if_shared_ctx_t sctx)
+ixgbe_if_timer(if_shared_ctx_t sctx, uint16_t txqid)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
 
+	if (txqid != 0)
+		return;
 	/* Check for pluggable optics */
 	if (adapter->sfp_probe)
 		if (!ixgbe_sfp_probe(adapter))

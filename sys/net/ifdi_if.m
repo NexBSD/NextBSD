@@ -46,6 +46,11 @@ CODE {
 	{
 	}
 
+	static void
+	null_timer_op(if_shared_ctx_t _ctx __unused, uint16_t _qsidx __unused)
+	{
+	}
+
 	static int
 	null_int_op(if_shared_ctx_t _ctx __unused)
 	{
@@ -213,7 +218,8 @@ METHOD int rxq_setup {
 
 METHOD void timer {
 	if_shared_ctx_t _ctx;
-} DEFAULT null_void_op;
+	uint16_t _txqid;
+} DEFAULT null_timer_op;
 
 METHOD void watchdog_reset {
 	if_shared_ctx_t _ctx;

@@ -112,7 +112,6 @@ struct iflib_ctx {
 	iflib_qset_t ifc_qsets;
 	uint32_t ifc_if_flags;
 	uint32_t ifc_flags;
-	struct callout ifc_timer;
 	int			ifc_in_detach;
 
 	int ifc_link_state;
@@ -598,8 +597,7 @@ iflib_txq_setup(iflib_txq_t txq)
 	txq->ift_qstatus = IFLIB_QUEUE_IDLE;
 
 	/* Reset indices */
-	txq->ift_cidx = 0;
-	txq->ift_pidx = 0;
+	txq->ift_pidx = txq->ift_cidx = txq->ift_npending = 0;
 
 	/* Free any existing tx buffers. */
 	txsd = txq->ift_sds;
@@ -891,30 +889,28 @@ iflib_rx_sds_free(iflib_rxq_t rxq)
 static void
 iflib_timer(void *arg)
 {
-	iflib_ctx_t ctx = arg;
+	iflib_txq_t txq = arg;
+	iflib_ctx_t ctx = txq->ift_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
-	iflib_txq_t txq = ctx->ifc_txqs;
-	CTX_LOCK(ctx);
 
 	/*
 	** Check on the state of the TX queue(s), this
 	** can be done without the lock because its RO
 	** and the HUNG state will be static if set.
 	*/
-	IFDI_TIMER(sctx);
-	for (int i = 0; i < sctx->isc_nqsets; i++, txq++) {
-		if ((txq->ift_qstatus == IFLIB_QUEUE_HUNG) &&
-		    (sctx->isc_pause_frames == 0))
-			goto hung;
+	IFDI_TIMER(sctx, txq->ift_id);
+	if ((txq->ift_qstatus == IFLIB_QUEUE_HUNG) &&
+		(sctx->isc_pause_frames == 0))
+		goto hung;
 
-		if (TXQ_AVAIL(txq) <= sctx->isc_tx_nsegments)
-			GROUPTASK_ENQUEUE(&txq->ift_task);
-	}
+	if (TXQ_AVAIL(txq) <= sctx->isc_tx_nsegments)
+		GROUPTASK_ENQUEUE(&txq->ift_task);
+
 	sctx->isc_pause_frames = 0;
-	callout_reset(&ctx->ifc_timer, hz, iflib_timer, ctx);
-	goto unlock;
-
+	callout_reset_on(&txq->ift_timer, hz/2, iflib_timer, txq, txq->ift_timer.c_cpu);
+	return;
 hung:
+	CTX_LOCK(ctx);
 	if_setdrvflagbits(sctx->isc_ifp, 0, IFF_DRV_RUNNING);
 	device_printf(sctx->isc_dev,  "TX(%d) desc avail = %d, pidx = %d\n",
 				  txq->ift_id, TXQ_AVAIL(txq), txq->ift_pidx);
@@ -924,7 +920,6 @@ hung:
 	sctx->isc_pause_frames = 0;
 
 	IFDI_INIT(sctx);
-unlock:
 	CTX_UNLOCK(ctx);
 }
 
@@ -932,13 +927,19 @@ static void
 iflib_init_locked(iflib_ctx_t ctx)
 {
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
+	iflib_txq_t txq = ctx->ifc_txqs;
+	int i;
 
 	IFDI_INTR_DISABLE(sctx);
-	callout_stop(&ctx->ifc_timer);
+	for (i = 0; i < sctx->isc_nqsets; i++, txq++)
+		callout_stop(&txq->ift_timer);
 	IFDI_INIT(sctx);
 	if_setdrvflagbits(sctx->isc_ifp, IFF_DRV_RUNNING, 0);
 	IFDI_INTR_ENABLE(sctx);
-	callout_reset(&ctx->ifc_timer, hz, iflib_timer, ctx);
+	txq = ctx->ifc_txqs;
+	for (i = 0; i < sctx->isc_nqsets; i++, txq++)
+		callout_reset_on(&txq->ift_timer, hz/2, iflib_timer, txq,
+			txq->ift_timer.c_cpu);
 }
 
 static int
@@ -972,7 +973,6 @@ iflib_stop(iflib_ctx_t ctx)
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 
 	IFDI_INTR_DISABLE(sctx);
-	callout_stop(&ctx->ifc_timer);
 	/* Tell the stack that the interface is no longer active */
 	if_setdrvflagbits(sctx->isc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
 
@@ -980,6 +980,7 @@ iflib_stop(iflib_ctx_t ctx)
 	for (int i = 0; i < sctx->isc_nqsets; i++, txq++) {
 		TXQ_LOCK(txq);
 		txq->ift_qstatus = IFLIB_QUEUE_IDLE;
+		callout_stop(&txq->ift_timer);
 		TXQ_UNLOCK(txq);
 	}
 	IFDI_STOP(sctx);
@@ -1251,12 +1252,27 @@ iflib_txd_db_check(iflib_ctx_t ctx, iflib_txq_t txq, int ring)
 {
 	if_shared_ctx_t sctx;
 	uint32_t dbval;
+	iflib_sd_t txsd;
+	struct if_pkt_info pi;
 
 	if (ring || ++txq->ift_db_pending >= 32) {
 		sctx = ctx->ifc_sctx;
+		txsd = &txq->ift_sds[txq->ift_pidx];
+
+		/*
+		 * Flush deferred buffers first
+		 */
+		if (__predict_false(txsd->ifsd_m != NULL)) {
+			pi.ipi_m = NULL;
+			pi.ipi_qsidx = txq->ift_id;
+			pi.ipi_pidx = txq->ift_pidx;
+			sctx->isc_txd_encap(sctx, &pi);
+			txq->ift_pidx = pi.ipi_new_pidx;
+		}
 		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
 		wmb();
 		sctx->isc_txd_flush(sctx, txq->ift_id, dbval);
+		txq->ift_npending = 0;
 	}
 }
 
@@ -1330,6 +1346,12 @@ retry:
 	if ((err = sctx->isc_txd_encap(sctx, &pi)) == 0) {
 		bus_dmamap_sync(txq->ift_ifdi->idi_tag, txq->ift_ifdi->idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+
+		if (pi.ipi_m != NULL) {
+			if (txsd->ifsd_m != NULL)
+				pi.ipi_m->m_nextpkt = txsd->ifsd_m;
+			txsd->ifsd_m = pi.ipi_m;
+		}
 
 		if (pi.ipi_new_pidx >= pi.ipi_pidx)
 			ndesc = pi.ipi_new_pidx - pi.ipi_pidx;
@@ -1585,21 +1607,24 @@ _task_fn_link(void *context, int pending)
 	if_shared_ctx_t sctx = context;
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	iflib_txq_t txq = ctx->ifc_txqs;
+	int i;
 
 	if (!(if_getdrvflags(sctx->isc_ifp) & IFF_DRV_RUNNING))
 		return;
 
 	CTX_LOCK(ctx);
-	callout_stop(&ctx->ifc_timer);
+	for (i = 0; i < sctx->isc_nqsets; i++, txq++)
+		callout_stop(&txq->ift_timer);
 	IFDI_UPDATE_LINK_STATUS(sctx);
-	callout_reset(&ctx->ifc_timer, hz, iflib_timer, ctx);
+	for (txq = ctx->ifc_txqs, i = 0; i < sctx->isc_nqsets; i++, txq++)
+		callout_reset_on(&txq->ift_timer, hz/2, iflib_timer, txq, txq->ift_timer.c_cpu);
 	IFDI_LINK_INTR_ENABLE(sctx);
 	CTX_UNLOCK(ctx);
 
 	if (LINK_ACTIVE(ctx) == 0)
 		return;
 
-	for (int i = 0; i < sctx->isc_nqsets; i++, txq++) {
+	for (i = 0; i < sctx->isc_nqsets; i++, txq++) {
 		if (TXQ_TRYLOCK(txq) == 0)
 			continue;
 		iflib_txq_start(txq);
@@ -1960,6 +1985,8 @@ iflib_device_detach(device_t dev)
 	if_shared_ctx_t sctx = device_get_softc(dev);
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	if_t ifp = sctx->isc_ifp;
+	iflib_txq_t txq;
+	int i;
 
 	/* Make sure VLANS are not using driver */
 	if (if_vlantrunkinuse(ifp)) {
@@ -1984,7 +2011,8 @@ iflib_device_detach(device_t dev)
 		led_destroy(ctx->ifc_led_dev);
 	/* XXX drain any dependent tasks */
 	IFDI_DETACH(sctx);
-	callout_drain(&ctx->ifc_timer);
+	for (txq = ctx->ifc_txqs, i = 0; i < sctx->isc_nqsets; i++, txq++)
+		callout_drain(&txq->ift_timer);
 
 #ifdef DEV_NETMAP
 	netmap_detach(ifp);
@@ -2086,7 +2114,6 @@ iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN])
 	if (ctx == NULL)
 		return (ENOMEM);
 	CTX_LOCK_INIT(ctx, device_get_nameunit(dev));
-	callout_init_mtx(&ctx->ifc_timer, &ctx->ifc_mtx, 0);
 	sctx->isc_ctx = ctx;
 	ctx->ifc_sctx = sctx;
 	ifp = sctx->isc_ifp = if_gethandle(IFT_ETHER);
@@ -2209,6 +2236,7 @@ iflib_queues_alloc(if_shared_ctx_t sctx, uint32_t *qsizes, uint8_t nqs)
 		snprintf(txq->ift_mtx_name, sizeof(txq->ift_mtx_name), "%s:tx(%d)",
 		    device_get_nameunit(dev), txq->ift_id);
 		mtx_init(&txq->ift_mtx, txq->ift_mtx_name, NULL, MTX_DEF);
+		callout_init_mtx(&txq->ift_timer, &txq->ift_mtx, 0);
 
 		/* Allocate a buf ring */
 		for (j = 0; j < nbuf_rings; j++)
