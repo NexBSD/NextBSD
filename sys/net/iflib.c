@@ -1404,6 +1404,7 @@ iflib_tx_desc_free(iflib_txq_t txq, int n)
 {
 	iflib_sd_t txsd;
 	uint32_t qsize, cidx, mask;
+	struct mbuf *m;
 
 	TXQ_LOCK_ASSERT(txq);
 	cidx = txq->ift_cidx;
