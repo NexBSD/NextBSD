@@ -129,11 +129,10 @@ static void	ixgbe_config_link(struct adapter *);
 
 static int      ixgbe_allocate_transmit_buffers(struct tx_ring *);
 static void     ixgbe_initialize_transmit_units(struct adapter *);
-static void     ixgbe_if_tx_structures_free(if_shared_ctx_t);
+static void     ixgbe_if_qset_structures_free(if_shared_ctx_t);
 static void     ixgbe_free_transmit_buffers(struct tx_ring *);
 
 static void     ixgbe_initialize_receive_units(struct adapter *);
-static void     ixgbe_if_rx_structures_free(if_shared_ctx_t);
 static void	ixgbe_setup_hw_rsc(struct rx_ring *);
 
 static void     ixgbe_if_rx_intr_enable(if_shared_ctx_t, uint32_t);
@@ -246,8 +245,7 @@ static device_method_t ixgbe_if_methods[] = {
 	DEVMETHOD(ifdi_vlan_unregister, ixgbe_if_vlan_unregister),
 	DEVMETHOD(ifdi_txq_setup, ixgbe_if_txq_setup),
 	DEVMETHOD(ifdi_rxq_setup, ixgbe_if_rxq_setup),
-	DEVMETHOD(ifdi_rx_structures_free, ixgbe_if_rx_structures_free),
-	DEVMETHOD(ifdi_tx_structures_free, ixgbe_if_tx_structures_free),
+	DEVMETHOD(ifdi_qset_structures_free, ixgbe_if_qset_structures_free),
 	DEVMETHOD_END
 };
 
@@ -648,7 +646,7 @@ ixgbe_attach(device_t dev)
 	INIT_DEBUGOUT("ixgbe_attach: end");
 	return (0);
 err_late:
-	iflib_txrx_structures_free(sctx);
+	iflib_qset_structures_free(sctx);
 err_out:
 	if (adapter->hwifp != NULL)
 		if_free(adapter->hwifp);
@@ -768,7 +766,7 @@ ixgbe_if_init(if_shared_ctx_t sctx)
 	}
 
 	/* Prepare transmit descriptors and buffers */
-	if (iflib_txrx_structures_setup(sctx)) {
+	if (iflib_qset_structures_setup(sctx)) {
 		device_printf(dev,"Could not setup transmit/receive structures\n");
 		ixgbe_if_stop(UPCAST(adapter));
 		return;
@@ -2155,7 +2153,7 @@ rx_fail:
 tx_fail:
 	free(adapter->queues, M_DEVBUF);
 fail:
-	iflib_txrx_structures_free(sctx);
+	iflib_qset_structures_free(sctx);
 	return (error);
 }
 
@@ -2280,7 +2278,7 @@ ixgbe_initialize_transmit_units(struct adapter *adapter)
  *
  **********************************************************************/
 static void
-ixgbe_if_tx_structures_free(if_shared_ctx_t sctx)
+ixgbe_if_qset_structures_free(if_shared_ctx_t sctx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct tx_ring *txr = adapter->tx_rings;
@@ -2289,6 +2287,9 @@ ixgbe_if_tx_structures_free(if_shared_ctx_t sctx)
 		ixgbe_free_transmit_buffers(txr);
 
 	free(adapter->tx_rings, M_DEVBUF);
+	free(adapter->rx_rings, M_DEVBUF);
+	adapter->tx_rings = NULL;
+	adapter->rx_rings = NULL;
 }
 
 /*********************************************************************
@@ -3048,20 +3049,6 @@ ixgbe_initialize_receive_units(struct adapter *adapter)
 	IXGBE_WRITE_REG(hw, IXGBE_RXCSUM, rxcsum);
 
 	return;
-}
-
-/*********************************************************************
- *
- *  Free all receive rings.
- *
- **********************************************************************/
-static void
-ixgbe_if_rx_structures_free(if_shared_ctx_t sctx)
-{
-	struct adapter *adapter = DOWNCAST(sctx);
-
-	INIT_DEBUGOUT("ixgbe_free_receive_structures: begin");
-	free(adapter->rx_rings, M_DEVBUF);
 }
 
 /*********************************************************************

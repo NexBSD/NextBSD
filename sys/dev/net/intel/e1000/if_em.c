@@ -241,8 +241,7 @@ static void	em_promisc_disable(if_shared_ctx_t, int);
 static void	em_if_vlan_register(if_shared_ctx_t, u16);
 static void	em_if_vlan_unregister(if_shared_ctx_t, u16);
 static int	em_if_txq_setup(if_shared_ctx_t, uint32_t);
-static void em_if_tx_structures_free(if_shared_ctx_t);
-static void em_if_rx_structures_free(if_shared_ctx_t);
+static void em_if_qset_structures_free(if_shared_ctx_t);
 
 static int		em_if_sysctl_int_delay(if_shared_ctx_t, if_int_delay_info_t);
 
@@ -347,8 +346,7 @@ static device_method_t em_if_methods[] = {
 	DEVMETHOD(ifdi_vlan_register, em_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, em_if_vlan_unregister),
 	DEVMETHOD(ifdi_txq_setup, em_if_txq_setup),
-	DEVMETHOD(ifdi_tx_structures_free, em_if_tx_structures_free),
-	DEVMETHOD(ifdi_rx_structures_free, em_if_rx_structures_free),
+	DEVMETHOD(ifdi_qset_structures_free, em_if_qset_structures_free),
 	DEVMETHOD(ifdi_sysctl_int_delay, em_if_sysctl_int_delay),
 	DEVMETHOD_END
 };
@@ -773,7 +771,7 @@ em_attach(device_t dev)
 	return (0);
 
 err_late:
-	iflib_txrx_structures_free(sctx);
+	iflib_qset_structures_free(sctx);
 	em_release_hw_control(adapter);
 	if (adapter->hwifp != (void *)NULL)
 		if_free(adapter->hwifp);
@@ -946,7 +944,7 @@ em_if_init(if_shared_ctx_t sctx)
 	em_init_manageability(adapter);
 
 	/* Prepare transmit/receive descriptors and buffers */
-	if (iflib_txrx_structures_setup(sctx)) {
+	if (iflib_qset_structures_setup(sctx)) {
 		device_printf(dev, "Could not setup receive structures\n");
 		em_if_stop(sctx);
 		return;
@@ -2210,7 +2208,7 @@ fail:
 }
 
 static void
-em_if_tx_structures_free(if_shared_ctx_t sctx)
+em_if_qset_structures_free(if_shared_ctx_t sctx)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct tx_ring *txr = adapter->tx_rings;
@@ -2221,16 +2219,9 @@ em_if_tx_structures_free(if_shared_ctx_t sctx)
 			free(txr->tx_buffers, M_DEVBUF);
 	free(adapter->tx_rings, M_DEVBUF);
 	adapter->tx_rings = NULL;
-}
-
-static void
-em_if_rx_structures_free(if_shared_ctx_t sctx)
-{
-	struct adapter *adapter = DOWNCAST(sctx);
-
 	free(adapter->rx_rings, M_DEVBUF);
+	adapter->rx_rings = NULL;
 }
-
 
 /*********************************************************************
  *

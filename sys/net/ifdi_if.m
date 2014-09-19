@@ -116,11 +116,7 @@ METHOD int queues_alloc {
 	if_shared_ctx_t _ctx;
 };
 
-METHOD void tx_structures_free {
-	if_shared_ctx_t _ctx;
-};
-
-METHOD void rx_structures_free {
+METHOD void qset_structures_free {
 	if_shared_ctx_t _ctx;
 };
 

@@ -568,12 +568,6 @@ iflib_txsd_free(iflib_ctx_t ctx, iflib_txq_t txq, iflib_sd_t txsd)
 	txsd->ifsd_m = NULL;
 }
 
-/*
- *
- * XXX very busted - fix to reflect new naming
- * and value locations
- */
-
 static int
 iflib_txq_setup(iflib_txq_t txq)
 {
@@ -1789,6 +1783,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		break;
 	case SIOCSIFMTU:
 		CTX_LOCK(ctx);
+		/* detaching ?*/
 		if ((err = IFDI_MTU_SET(sctx, ifr->ifr_mtu)) == 0) {
 			iflib_init_locked(ctx);
 			if_setmtu(ifp, ifr->ifr_mtu);
@@ -1857,30 +1852,13 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 
 		reinit = 0;
 		mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
-#ifdef notyet
-		if (mask & IFCAP_POLLING) {
-			if (ifr->ifr_reqcap & IFCAP_POLLING) {
 
-				err = ether_poll_register_drv(em_poll, ifp);
-
-				err = ENOTSUP;
-				if (err)
-					return (err);
-				CTX_LOCK(ctx);
-				IFDI_INTR_DISABLE(sctx);
-				if_setcapenablebit(ifp, IFCAP_POLLING, 0);
-				CTX_UNLOCK(ctx);
-			} else {
-				err = ether_poll_deregister(ifp);
-				/* Enable interrupt even in err case */
-				CTX_LOCK(ctx);
-				IFDI_INTR_ENABLE(sctx);
-				if_setcapenablebit(ifp, 0, IFCAP_POLLING);
-				CTX_UNLOCK(ctx);
-			}
+#ifdef TCP_OFFLOAD
+		if (mask & IFCAP_TOE4) {
+			if_togglecapenable(ifp, IFCAP_TOE4);
+			reinit = 1;
 		}
 #endif
-
 		if (mask & IFCAP_HWCSUM) {
 			if_togglecapenable(ifp, IFCAP_HWCSUM);
 			reinit = 1;
@@ -1889,8 +1867,16 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 			if_togglecapenable(ifp, IFCAP_TSO4);
 			reinit = 1;
 		}
+		if (mask & IFCAP_TSO6) {
+			if_togglecapenable(ifp, IFCAP_TSO6);
+			reinit = 1;
+		}
 		if (mask & IFCAP_VLAN_HWTAGGING) {
 			if_togglecapenable(ifp, IFCAP_VLAN_HWTAGGING);
+			reinit = 1;
+		}
+		if (mask & IFCAP_VLAN_MTU) {
+			if_togglecapenable(ifp, IFCAP_VLAN_MTU);
 			reinit = 1;
 		}
 		if (mask & IFCAP_VLAN_HWFILTER) {
@@ -2327,7 +2313,7 @@ iflib_tx_structures_free(if_shared_ctx_t sctx)
 	}
 	free(ctx->ifc_txqs, M_DEVBUF);
 	free(ctx->ifc_qsets, M_DEVBUF);
-	IFDI_TX_STRUCTURES_FREE(sctx);
+	IFDI_QSET_STRUCTURES_FREE(sctx);
 }
 
 /*********************************************************************
@@ -2393,11 +2379,10 @@ iflib_rx_structures_free(if_shared_ctx_t sctx)
 	for (int i = 0; i < sctx->isc_nrxq; i++, rxq++) {
 		iflib_rx_sds_free(rxq);
 	}
-	IFDI_RX_STRUCTURES_FREE(sctx);
 }
 
 int
-iflib_txrx_structures_setup(if_shared_ctx_t sctx)
+iflib_qset_structures_setup(if_shared_ctx_t sctx)
 {
 	int err;
 
@@ -2412,7 +2397,7 @@ iflib_txrx_structures_setup(if_shared_ctx_t sctx)
 }
 
 void
-iflib_txrx_structures_free(if_shared_ctx_t sctx)
+iflib_qset_structures_free(if_shared_ctx_t sctx)
 {
 
 	iflib_tx_structures_free(sctx);
