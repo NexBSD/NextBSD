@@ -617,7 +617,6 @@ cxgb_controller_attach(device_t dev)
 	    device_get_nameunit(dev));
 	TASK_INIT(&sc->tick_task, 0, cxgb_tick_handler, sc);
 	TASK_INIT(&sc->init_task, 0, cxgb_adapter_blocking_init, sc);
-	TASKQUEUE_ENQUEUE(&sc->tq, &sc->init_task);
 	
 	/* Create a periodic callout for checking adapter status */
 	callout_init(&sc->cxgb_tick_ch, TRUE);
@@ -645,7 +644,8 @@ cxgb_controller_attach(device_t dev)
 	} else {
 		sc->flags |= TPS_UPTODATE;
 	}
-
+	if ((sc->flags & (TPS_UPTODATE|FW_UPTODATE)) != (TPS_UPTODATE|FW_UPTODATE))
+		TASKQUEUE_ENQUEUE(&sc->tq, &sc->init_task);
 	/*
 	 * Create a child device for each MAC.  The ethernet attachment
 	 * will be done in these children.
@@ -1578,14 +1578,6 @@ cxgb_adapter_blocking_init(void *arg, int pending __unused)
 		if ((err = update_tpsram(sc)))
 			goto out;
 
-	if (is_offload(sc) && nfilters != 0) {
-		sc->params.mc5.nservers = 0;
-
-		if (nfilters < 0)
-			sc->params.mc5.nfilters = mxf;
-		else
-			sc->params.mc5.nfilters = min(nfilters, mxf);
-	}
 }
 
 /**
@@ -1606,6 +1598,16 @@ cxgb_up(struct adapter *sc)
 					   __func__, sc->open_device_map));
 
 	if ((sc->flags & FULL_INIT_DONE) == 0) {
+
+		if (is_offload(sc) && nfilters != 0) {
+			sc->params.mc5.nservers = 0;
+
+			if (nfilters < 0)
+				sc->params.mc5.nfilters = mxf;
+			else
+				sc->params.mc5.nfilters = min(nfilters, mxf);
+		}
+
 		err = t3_init_hw(sc, 0);
 		if (err)
 			goto out;
