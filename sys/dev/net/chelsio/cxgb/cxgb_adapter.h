@@ -138,7 +138,7 @@ enum {
 	TP_PARITY_INIT	= (1 << 8),
 	CXGB_BUSY	= (1 << 9),
 	TOM_INIT_DONE	= (1 << 10),
-
+	TOE_INIT = (1 << 11),
 	/* port flags */
 	DOOMED		= (1 << 0),
 };
@@ -351,6 +351,7 @@ struct adapter {
 	/* Tasks */
 	struct task		slow_intr_task;
 	struct task		tick_task;
+	struct task		init_task;
 	struct taskqueue	*tq;
 	struct callout		cxgb_tick_ch;
 	struct callout		sge_timer_ch;

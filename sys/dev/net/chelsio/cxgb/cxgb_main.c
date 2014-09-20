@@ -109,7 +109,10 @@ static inline void mk_set_tcb_field(struct cpl_set_tcb_field *, unsigned int,
     unsigned int, u64, u64);
 static inline void set_tcb_field_ulp(struct cpl_set_tcb_field *, unsigned int,
     unsigned int, u64, u64);
+static void cxgb_adapter_serialized_init(void *, int);
+
 #ifdef TCP_OFFLOAD
+static void toe_init(struct adapter *);
 static int cpl_not_handled(struct sge_qset *, struct rsp_desc *, struct mbuf *);
 #endif
 
@@ -217,6 +220,8 @@ static devclass_t	cxgb_port_devclass;
 DRIVER_MODULE(cxgb, cxgbc, cxgb_port_driver, cxgb_port_devclass, 0, 0);
 MODULE_VERSION(cxgb, 1);
 
+static uint8_t *cxgb_fw_data;
+static uint32_t cxgb_fw_len;
 static struct mtx t3_list_lock;
 static SLIST_HEAD(, adapter) t3_list;
 #ifdef TCP_OFFLOAD
@@ -477,10 +482,6 @@ cxgb_controller_attach(device_t dev)
 	sc->msi_count = 0;
 	ai = cxgb_get_adapter_info(dev);
 
-	snprintf(sc->lockbuf, ADAPTER_LOCK_NAME_LEN, "cxgb controller lock %d",
-	    device_get_unit(dev));
-	ADAPTER_LOCK_INIT(sc, sc->lockbuf);
-
 	snprintf(sc->reglockbuf, ADAPTER_LOCK_NAME_LEN, "SGE reg lock %d",
 	    device_get_unit(dev));
 	snprintf(sc->mdiolockbuf, ADAPTER_LOCK_NAME_LEN, "cxgb mdio lock %d",
@@ -616,7 +617,7 @@ cxgb_controller_attach(device_t dev)
 	taskqueue_start_threads(&sc->tq, 1, PI_NET, "%s taskq",
 	    device_get_nameunit(dev));
 	TASK_INIT(&sc->tick_task, 0, cxgb_tick_handler, sc);
-	TASK_INIT(&sc->init_task, 0, cxgb_adapter_blocking_init, sc);
+	TASK_INIT(&sc->init_task, 0, cxgb_adapter_serialized_init, sc);
 	
 	/* Create a periodic callout for checking adapter status */
 	callout_init(&sc->cxgb_tick_ch, TRUE);
@@ -760,10 +761,7 @@ cxgb_free(struct adapter *sc)
 {
 	int i, nqsets = 0;
 
-	ADAPTER_LOCK(sc);
 	sc->flags |= CXGB_SHUTDOWN;
-	ADAPTER_UNLOCK(sc);
-
 	/*
 	 * Make sure all child devices are gone.
 	 */
@@ -1566,18 +1564,33 @@ release_tpsram:
 
 
 static void
-cxgb_adapter_blocking_init(void *arg, int pending __unused)
+cxgb_adapter_serialized_init(void *arg, int pending __unused)
 {
 	struct adapter *sc = arg;
 
-	if ((sc->flags & FW_UPTODATE) == 0)
-		if ((err = upgrade_fw(sc)))
-			goto out;
-
+	if ((sc->flags & FW_UPTODATE) == 0) {
+		if (upgrade_fw(sc))
+			return;
+	} else if (cxgb_fw_len && t3_load_fw(sc, cxgb_fw_data, cxgb_fw_len) == 0) {
+			if (t3_get_fw_version(sc, &vers) == 0) {
+				snprintf(&sc->fw_version[0], sizeof(sc->fw_version),
+						 "%d.%d.%d", G_FW_VERSION_MAJOR(vers),
+						 G_FW_VERSION_MINOR(vers), G_FW_VERSION_MICRO(vers));
+			}
+			cxgb_fw_len = 0;
+			free(cxgb_fw_data, M_DEVBUF);
+			cxgb_fw_data = NULL;
+	}
 	if ((sc->flags & TPS_UPTODATE) == 0)
-		if ((err = update_tpsram(sc)))
-			goto out;
+		if (update_tpsram(sc))
+			return;
 
+#ifdef TCP_OFFLOAD
+	if (sc->flags & TOE_INIT) {
+		toe_init(sc);
+		sc->flags &= ~TOE_INIT;
+	}
+#endif
 }
 
 /**
@@ -2429,7 +2442,6 @@ cxgb_extension_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
 		break;
 	}
 	case CHELSIO_LOAD_FW: {
-		uint8_t *fw_data;
 		uint32_t vers;
 		struct ch_mem_range *t = (struct ch_mem_range *)data;
 
@@ -2442,32 +2454,19 @@ cxgb_extension_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data,
 		 * the foot).
 		 */
 
-		ADAPTER_LOCK(sc);
-		if (sc->open_device_map || sc->flags & FULL_INIT_DONE) {
-			ADAPTER_UNLOCK(sc);
+		if (sc->open_device_map)
 			return (EBUSY);
-		}
 
-		fw_data = malloc(t->len, M_DEVBUF, M_NOWAIT);
-		if (!fw_data)
+		cxgb_fw_data = malloc(t->len, M_DEVBUF, M_NOWAIT);
+		if (cxgb_fw_data == NULL)
 			error = ENOMEM;
 		else
-			error = copyin(t->buf, fw_data, t->len);
+			error = copyin(t->buf, cxgb_fw_data, t->len);
 
-		if (!error)
-			error = -t3_load_fw(sc, fw_data, t->len);
-
-		if (t3_get_fw_version(sc, &vers) == 0) {
-			snprintf(&sc->fw_version[0], sizeof(sc->fw_version),
-			    "%d.%d.%d", G_FW_VERSION_MAJOR(vers),
-			    G_FW_VERSION_MINOR(vers), G_FW_VERSION_MICRO(vers));
+		if (!error) {
+			cxgb_fw_len = t->len;
+			TASKQUEUE_ENQUEUE(&sc->tq, &sc->init_task);
 		}
-
-		if (!error)
-			sc->flags |= FW_UPTODATE;
-
-		free(fw_data, M_DEVBUF);
-		ADAPTER_UNLOCK(sc);
 		break;
 	}
 	case CHELSIO_LOAD_BOOT: {
@@ -3108,13 +3107,40 @@ t3_iterate(void (*func)(struct adapter *, void *), void *arg)
 }
 
 #ifdef TCP_OFFLOAD
+static void
+toe_init(struct adapter *sc)
+{
+	if (!(sc->flags & TOM_INIT_DONE)) {
+		rc = t3_activate_uld(sc, ULD_TOM);
+		if (rc == EAGAIN) {
+			log(LOG_WARNING,
+				"You must kldload t3_tom.ko before trying "
+				"to enable TOE on a cxgb interface.\n");
+		}
+		if (rc != 0)
+			return (rc);
+		KASSERT(sc->tom_softc != NULL,
+			    ("%s: TOM activated but softc NULL", __func__));
+		KASSERT(sc->flags & TOM_INIT_DONE,
+			    ("%s: TOM activated but flag not set", __func__));
+	}
+	setbit(&sc->offload_map, pi->port_id);
+
+		/*
+		 * XXX: Temporary code to allow iWARP to be enabled when TOE is
+		 * enabled on any port.  Need to figure out how to enable,
+		 * disable, load, and unload iWARP cleanly.
+		 */
+	if (!isset(&sc->offload_map, MAX_NPORTS) &&
+		t3_activate_uld(sc, ULD_IWARP) == 0)
+		setbit(&sc->offload_map, MAX_NPORTS);
+}
+
 static int
 toe_capability(struct port_info *pi, int enable)
 {
 	int rc;
 	struct adapter *sc = pi->adapter;
-
-	ADAPTER_LOCK_ASSERT_OWNED(sc);
 
 	if (!is_offload(sc))
 		return (ENODEV);
@@ -3128,32 +3154,8 @@ toe_capability(struct port_info *pi, int enable)
 
 		if (isset(&sc->offload_map, pi->port_id))
 			return (0);
-
-		if (!(sc->flags & TOM_INIT_DONE)) {
-			rc = t3_activate_uld(sc, ULD_TOM);
-			if (rc == EAGAIN) {
-				log(LOG_WARNING,
-				    "You must kldload t3_tom.ko before trying "
-				    "to enable TOE on a cxgb interface.\n");
-			}
-			if (rc != 0)
-				return (rc);
-			KASSERT(sc->tom_softc != NULL,
-			    ("%s: TOM activated but softc NULL", __func__));
-			KASSERT(sc->flags & TOM_INIT_DONE,
-			    ("%s: TOM activated but flag not set", __func__));
-		}
-
-		setbit(&sc->offload_map, pi->port_id);
-
-		/*
-		 * XXX: Temporary code to allow iWARP to be enabled when TOE is
-		 * enabled on any port.  Need to figure out how to enable,
-		 * disable, load, and unload iWARP cleanly.
-		 */
-		if (!isset(&sc->offload_map, MAX_NPORTS) &&
-		    t3_activate_uld(sc, ULD_IWARP) == 0)
-			setbit(&sc->offload_map, MAX_NPORTS);
+		sc->flags |= TOE_INIT;
+		TASKQUEUE_ENQUEUE(&sc->tq, &sc->init_task);
 	} else {
 		if (!isset(&sc->offload_map, pi->port_id))
 			return (0);
