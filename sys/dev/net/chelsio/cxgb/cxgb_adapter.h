@@ -90,16 +90,22 @@ enum {
 };
 
 struct port_info {
+	struct if_shared_ctx shared;
+#define media shared.isc_media
+#define hwdev shared.isc_dev
+#define hwifp shared.isc_ifp
+#define pause_frames shared.isc_pause_frames
+#define common_stats shared.isc_common_stats
+#define max_frame_size shared.isc_max_frame_size
 	struct adapter	*adapter;
-	struct ifnet	*ifp;
+	struct sge_qset *qs;
 	int		if_flags;
 	int		flags;
 	const struct port_type_info *port_type;
 	struct cphy	phy;
 	struct cmac	mac;
 	struct link_config link_config;
-	struct ifmedia	media;
-	struct mtx	lock;
+	struct mtx	*lock;
 	uint32_t	port_id;
 	uint32_t	tx_chan;
 	uint32_t	txpkt_intf;
@@ -138,9 +144,6 @@ enum {
 };
 #define IS_DOOMED(p)	(p->flags & DOOMED)
 #define SET_DOOMED(p)	do {p->flags |= DOOMED;} while (0)
-#define IS_BUSY(sc)	(sc->flags & CXGB_BUSY)
-#define SET_BUSY(sc)	do {sc->flags |= CXGB_BUSY;} while (0)
-#define CLR_BUSY(sc)	do {sc->flags &= ~CXGB_BUSY;} while (0)
 
 #define FL_Q_SIZE	4096
 #define JUMBO_Q_SIZE	1024
@@ -517,6 +520,7 @@ int t3_sge_free(struct adapter *);
 int t3_sge_alloc_qset(adapter_t *, uint32_t, int, int, const struct qset_params *,
     int, struct port_info *);
 void t3_free_sge_resources(adapter_t *, int);
+void t3_free_port_sge_resources(struct port_info *);
 void t3_sge_start(adapter_t *);
 void t3_sge_stop(adapter_t *);
 void t3b_intr(void *data);

@@ -512,79 +512,6 @@ t3_sge_prep(adapter_t *adap, struct sge_params *p)
 	}
 }
 
-int
-t3_sge_alloc(adapter_t *sc)
-{
-
-	/* The parent tag. */
-	if (bus_dma_tag_create( bus_get_dma_tag(sc->dev),/* PCI parent */
-				1, 0,			/* algnmnt, boundary */
-				BUS_SPACE_MAXADDR,	/* lowaddr */
-				BUS_SPACE_MAXADDR,	/* highaddr */
-				NULL, NULL,		/* filter, filterarg */
-				BUS_SPACE_MAXSIZE_32BIT,/* maxsize */
-				BUS_SPACE_UNRESTRICTED, /* nsegments */
-				BUS_SPACE_MAXSIZE_32BIT,/* maxsegsize */
-				0,			/* flags */
-				NULL, NULL,		/* lock, lockarg */
-				&sc->parent_dmat)) {
-		device_printf(sc->dev, "Cannot allocate parent DMA tag\n");
-		return (ENOMEM);
-	}
-
-	/*
-	 * DMA tag for normal sized RX frames
-	 */
-	if (bus_dma_tag_create(sc->parent_dmat, MCLBYTES, 0, BUS_SPACE_MAXADDR,
-		BUS_SPACE_MAXADDR, NULL, NULL, MCLBYTES, 1,
-		MCLBYTES, BUS_DMA_ALLOCNOW, NULL, NULL, &sc->rx_dmat)) {
-		device_printf(sc->dev, "Cannot allocate RX DMA tag\n");
-		return (ENOMEM);
-	}
-
-	/* 
-	 * DMA tag for jumbo sized RX frames.
-	 */
-	if (bus_dma_tag_create(sc->parent_dmat, MJUM16BYTES, 0, BUS_SPACE_MAXADDR,
-		BUS_SPACE_MAXADDR, NULL, NULL, MJUM16BYTES, 1, MJUM16BYTES,
-		BUS_DMA_ALLOCNOW, NULL, NULL, &sc->rx_jumbo_dmat)) {
-		device_printf(sc->dev, "Cannot allocate RX jumbo DMA tag\n");
-		return (ENOMEM);
-	}
-
-	/* 
-	 * DMA tag for TX frames.
-	 */
-	if (bus_dma_tag_create(sc->parent_dmat, 1, 0, BUS_SPACE_MAXADDR,
-		BUS_SPACE_MAXADDR, NULL, NULL, TX_MAX_SIZE, TX_MAX_SEGS,
-		TX_MAX_SIZE, BUS_DMA_ALLOCNOW,
-		NULL, NULL, &sc->tx_dmat)) {
-		device_printf(sc->dev, "Cannot allocate TX DMA tag\n");
-		return (ENOMEM);
-	}
-
-	return (0);
-}
-
-int
-t3_sge_free(struct adapter * sc)
-{
-
-	if (sc->tx_dmat != NULL)
-		bus_dma_tag_destroy(sc->tx_dmat);
-
-	if (sc->rx_jumbo_dmat != NULL)
-		bus_dma_tag_destroy(sc->rx_jumbo_dmat);
-
-	if (sc->rx_dmat != NULL)
-		bus_dma_tag_destroy(sc->rx_dmat);
-
-	if (sc->parent_dmat != NULL)
-		bus_dma_tag_destroy(sc->parent_dmat);
-
-	return (0);
-}
-
 void
 t3_update_qset_coalesce(struct sge_qset *qs, const struct qset_params *p)
 {
@@ -592,8 +519,6 @@ t3_update_qset_coalesce(struct sge_qset *qs, const struct qset_params *p)
 	qs->rspq.holdoff_tmr = max(p->coalesce_usecs * 10, 1U);
 	qs->rspq.polling = 0 /* p->polling */;
 }
-
-
 
 /**
  *	recycle_rx_buf - recycle a receive buffer
@@ -625,58 +550,17 @@ recycle_rx_buf(adapter_t *adap, struct sge_fl *q, unsigned int idx)
 	t3_write_reg(adap, A_SG_KDOORBELL, V_EGRCNTX(q->cntxt_id));
 }
 
-static void
-alloc_ring_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int error)
-{
-	uint32_t *addr;
-
-	addr = arg;
-	*addr = segs[0].ds_addr;
-}
-
 static int
-alloc_ring(adapter_t *sc, size_t nelem, size_t elem_size, size_t sw_size,
-    bus_addr_t *phys, void *desc, void *sdesc, bus_dma_tag_t *tag,
-    bus_dmamap_t *map, bus_dma_tag_t parent_entry_tag, bus_dma_tag_t *entry_tag)
+alloc_sw_ring(adapter_t *sc, size_t nelem,  size_t sw_size, void *sdesc)
 {
 	size_t len = nelem * elem_size;
 	void *s = NULL;
-	void *p = NULL;
 	int err;
-
-	if ((err = bus_dma_tag_create(sc->parent_dmat, PAGE_SIZE, 0,
-				      BUS_SPACE_MAXADDR_32BIT,
-				      BUS_SPACE_MAXADDR, NULL, NULL, len, 1,
-				      len, 0, NULL, NULL, tag)) != 0) {
-		device_printf(sc->dev, "Cannot allocate descriptor tag\n");
-		return (ENOMEM);
-	}
-
-	if ((err = bus_dmamem_alloc(*tag, (void **)&p, BUS_DMA_NOWAIT,
-				    map)) != 0) {
-		device_printf(sc->dev, "Cannot allocate descriptor memory\n");
-		return (ENOMEM);
-	}
-
-	bus_dmamap_load(*tag, *map, p, len, alloc_ring_cb, phys, 0);
-	bzero(p, len);
-	*(void **)desc = p;
 
 	if (sw_size) {
 		len = nelem * sw_size;
 		s = malloc(len, M_DEVBUF, M_WAITOK|M_ZERO);
 		*(void **)sdesc = s;
-	}
-	if (parent_entry_tag == NULL)
-		return (0);
-	    
-	if ((err = bus_dma_tag_create(parent_entry_tag, 1, 0,
-				      BUS_SPACE_MAXADDR, BUS_SPACE_MAXADDR,
-		                      NULL, NULL, TX_MAX_SIZE, TX_MAX_SEGS,
-				      TX_MAX_SIZE, BUS_DMA_ALLOCNOW,
-		                      NULL, NULL, entry_tag)) != 0) {
-		device_printf(sc->dev, "Cannot allocate descriptor entry tag\n");
-		return (ENOMEM);
 	}
 	return (0);
 }
@@ -1694,6 +1578,18 @@ t3_free_sge_resources(adapter_t *sc, int nqsets)
 	}
 }
 
+
+void
+t3_free_port_sge_resources(struct port_info *pi)
+{
+	struct sge_qset *qs = pi->qs;
+	int i;
+
+	for (i = 0; i < pi->nqsets; ++i, qs++) {
+		t3_free_qset(pi->adapter, qs);
+	}
+}
+
 /**
  *	t3_sge_start - enable SGE
  *	@sc: the controller softc
@@ -1988,41 +1884,49 @@ restart_tx(struct sge_qset *qs)
  *	queue, offload queue, and control queue.
  */
 int
-t3_sge_alloc_qset(adapter_t *sc, u_int id, int nports, int irq_vec_idx,
+t3_sge_alloc_qset(adapter_t *sc, struct sge_qset *qs, uint8_t id, int nports, int irq_vec_idx,
 		  const struct qset_params *p, int ntxq, struct port_info *pi)
 {
-	struct sge_qset *q = &sc->sge.qs[id];
-	int i, ret = 0;
+	int i, addridx, ret = 0;
+	caddr_t vaddrs[6];
+	uint64_t paddrs[6];
 
-	MTX_INIT(&q->lock, q->namebuf, NULL, MTX_DEF);
 	q->port = pi;
 	q->adap = sc;
 
-	init_qset_cntxt(q, id);
+	init_qset_cntxt(q, pi->first_qset + id);
 	q->idx = id;
-	if ((ret = alloc_ring(sc, p->fl_size, sizeof(struct rx_desc),
-		    sizeof(struct rx_sw_desc), &q->fl[0].phys_addr,
-		    &q->fl[0].desc, &q->fl[0].sdesc,
-		    &q->fl[0].desc_tag, &q->fl[0].desc_map,
-		    sc->rx_dmat, &q->fl[0].entry_tag)) != 0) {
+	if ((ret = iflib_qset_addr_get(sctx, id, vaddrs, paddrs, ntxq + 3)))
+		goto err;
+
+	/*
+   * Iflib expects the txq and rx completion queue to come first
+   *
+   */
+	q->txq[0],phys_addr = paddrs[0];
+	q->txq[0].desc = vaddrs[0];
+	q->rspq.phys_addr = paddrs[1];
+	q->rspq.desc = vaddrs[1];
+	addridx = 2
+	q->fl[0].phys_addr = paddrs[addridx];
+	q->fl[0].desc = vaddrs[addridx];
+	addridx++;
+	q->fl[1].phys_addr = paddrs[addridx];
+	q->fl[1].desc = vaddrs[addridx];
+	addridx++;
+	/* do ULP last */
+	for (i = 1; i < ntxq ; i++, addridx++) {
+		q->txq[i],phys_addr = paddrs[addridx];
+		q->txq[i].desc = vaddrs[addridx];
+	}
+
+	if ((ret = alloc_sw_ring(sc, p->fl_size, &q->fl[0].sdesc)) != 0) {
 		printf("error %d from alloc ring fl0\n", ret);
 		goto err;
 	}
 
-	if ((ret = alloc_ring(sc, p->jumbo_size, sizeof(struct rx_desc),
-		    sizeof(struct rx_sw_desc), &q->fl[1].phys_addr,
-		    &q->fl[1].desc, &q->fl[1].sdesc,
-		    &q->fl[1].desc_tag, &q->fl[1].desc_map,
-		    sc->rx_jumbo_dmat, &q->fl[1].entry_tag)) != 0) {
+	if ((ret = alloc_sw_ring(sc, p->jumbo_size, sizeof(struct rx_sw_desc),  &q->fl[1].sdesc))) {
 		printf("error %d from alloc ring fl1\n", ret);
-		goto err;
-	}
-
-	if ((ret = alloc_ring(sc, p->rspq_size, sizeof(struct rsp_desc), 0,
-		    &q->rspq.phys_addr, &q->rspq.desc, NULL,
-		    &q->rspq.desc_tag, &q->rspq.desc_map,
-		    NULL, NULL)) != 0) {
-		printf("error %d from alloc ring rspq\n", ret);
 		goto err;
 	}
 
@@ -2031,15 +1935,6 @@ t3_sge_alloc_qset(adapter_t *sc, u_int id, int nports, int irq_vec_idx,
 	MTX_INIT(&q->rspq.lock, q->rspq.lockbuf, NULL, MTX_DEF);
 
 	for (i = 0; i < ntxq; ++i) {
-		if ((ret = alloc_ring(sc, p->txq_size[i],
-			    sizeof(struct tx_desc), 0,
-			    &q->txq[i].phys_addr, &q->txq[i].desc,
-			    &q->txq[i].sdesc, &q->txq[i].desc_tag,
-			    &q->txq[i].desc_map,
-			    sc->tx_dmat, &q->txq[i].entry_tag)) != 0) {
-			printf("error %d from alloc ring tx %i\n", ret, i);
-			goto err;
-		}
 		mbufq_init(&q->txq[i].sendq);
 		q->txq[i].gen = 1;
 		q->txq[i].size = p->txq_size[i];
@@ -2064,24 +1959,10 @@ t3_sge_alloc_qset(adapter_t *sc, u_int id, int nports, int irq_vec_idx,
 	    flits_to_desc(sgl_len(TX_MAX_SEGS + 1) + 3);
 
 	q->fl[0].buf_size = MCLBYTES;
-	q->fl[0].zone = zone_pack;
-	q->fl[0].type = EXT_PACKET;
-
-	if (p->jumbo_buf_size ==  MJUM16BYTES) {
-		q->fl[1].zone = zone_jumbo16;
-		q->fl[1].type = EXT_JUMBO16;
-	} else if (p->jumbo_buf_size ==  MJUM9BYTES) {
-		q->fl[1].zone = zone_jumbo9;
-		q->fl[1].type = EXT_JUMBO9;		
-	} else if (p->jumbo_buf_size ==  MJUMPAGESIZE) {
-		q->fl[1].zone = zone_jumbop;
-		q->fl[1].type = EXT_JUMBOP;
-	} else {
-		KASSERT(0, ("can't deal with jumbo_buf_size %d.", p->jumbo_buf_size));
-		ret = EDOOFUS;
-		goto err;
-	}
 	q->fl[1].buf_size = p->jumbo_buf_size;
+	/*
+   * XXX Still need to communicate multiple rx buffer sizes to iflib
+   */
 
 	mtx_lock_spin(&sc->sge.reg_lock);
 	ret = -t3_sge_init_rspcntxt(sc, q->rspq.cntxt_id, irq_vec_idx,
@@ -2410,9 +2291,13 @@ skip:
 			ri->iri_flowid = rss_hash;
 		}
 		t3_rx_eth(adap, ri, data);
-		if (__predict_false(++cidx == rspq->size))
-			rspq->gen ^= 1;
 	}
+	if (__predict_false(++cidx == rspq->size)) {
+		rspq->gen ^= 1;
+		cidx = 0;
+	}
+	rspq->cidx = cidx;
+
 	if (++rspq->credits >= 64) {
 		refill_rspq(adap, rspq, rspq->credits);
 		rspq->credits = 0;
