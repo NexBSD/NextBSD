@@ -390,7 +390,7 @@ struct adapter {
 	int			offload_map;
 #endif
 	struct mtx              lock;
-	driver_intr_t           *cxgb_intr;
+	driver_filter_t           *cxgb_intr;
 	int                     msi_count;
 
 #define ADAPTER_LOCK_NAME_LEN	32
@@ -521,9 +521,8 @@ void t3_free_sge_resources(adapter_t *, int);
 void t3_free_port_sge_resources(struct port_info *);
 void t3_sge_start(adapter_t *);
 void t3_sge_stop(adapter_t *);
-void t3b_intr(void *data);
-void t3_intr_msi(void *data);
-void t3_intr_msix(void *data);
+int t3b_intr(void *data);
+int t3_intr_msi(void *data);
 
 int t3_sge_init_adapter(adapter_t *);
 int t3_sge_reset_adapter(adapter_t *);

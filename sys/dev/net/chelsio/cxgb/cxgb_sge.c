@@ -651,6 +651,7 @@ t3_sge_init_adapter(adapter_t *sc)
 	callout_init(&sc->sge_timer_ch, CALLOUT_MPSAFE);
 	callout_reset(&sc->sge_timer_ch, TX_RECLAIM_PERIOD, sge_timer_cb, sc);
 	GROUPTASK_INIT(&sc->slow_intr_task, 0, sge_slow_intr_handler, sc);
+	iflib_taskqgroup_attach(&sc->slow_intr_task, sc, "slow_intr");
 	return (0);
 }
 
@@ -1889,8 +1890,13 @@ t3_sge_alloc_qset(adapter_t *sc, struct sge_qset *q, uint8_t id, int nports, int
    * XXX should really be able to share the appropriate tx taskq
    */
 	GROUPTASK_INIT(&q->txq[TXQ_OFLD].qresume_task, 0, restart_offloadq, q);
+	/*
+   * XXX should really be able to share the appropriate tx taskq
+   */
+	iflib_taskqgroup_attach(&q->txq[TXQ_OFLD].qresume_task, q, "q resume");
 #endif
 	GROUPTASK_INIT(&q->txq[TXQ_CTRL].qresume_task, 0, restart_ctrlq, q);
+	iflib_taskqgroup_attach(&q->txq[TXQ_CTRL].qresume_task, q, "q resume");
 
 	q->fl[0].gen = q->fl[1].gen = 1;
 	q->fl[0].size = p->fl_size;
@@ -2300,7 +2306,7 @@ cxgb_isc_rxd_flush(if_shared_ctx_t sctx, uint16_t qsidx, uint8_t flidx,
  * response queue per port in this mode and protect all response queues with
  * queue 0's lock.
  */
-void
+int
 t3b_intr(void *data)
 {
 	uint32_t i, map;
@@ -2310,7 +2316,7 @@ t3b_intr(void *data)
 	map = t3_read_reg(adap, A_SG_DATA_INTR);
 
 	if (!map) 
-		return;
+		return (FILTER_STRAY);
 
 	if (__predict_false(map & F_ERRINTR)) {
 		t3_write_reg(adap, A_PL_INT_ENABLE0, 0);
@@ -2321,6 +2327,7 @@ t3b_intr(void *data)
 	for_each_port(adap, i)
 	    if (map & (1 << i))
 			iflib_rx_intr_deferred(UPCAST(adap2pinfo(adap, i)), 0);
+	return (FILTER_HANDLED);
 }
 
 /*
@@ -2329,7 +2336,7 @@ t3b_intr(void *data)
  * the same MSI vector.  We use one SGE response queue per port in this mode
  * and protect all response queues with queue 0's lock.
  */
-void
+int
 t3_intr_msi(void *data)
 {
 	adapter_t *adap = data;
@@ -2341,6 +2348,7 @@ t3_intr_msi(void *data)
 	t3_write_reg(adap, A_PL_INT_ENABLE0, 0);
 	(void) t3_read_reg(adap, A_PL_INT_ENABLE0);
 	GROUPTASK_ENQUEUE(&adap->slow_intr_task);
+	return (FILTER_HANDLED);
 }
 
 #define QDUMP_SBUF_SIZE		32 * 400

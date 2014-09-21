@@ -99,7 +99,7 @@ static int cxgb_if_media_change(if_shared_ctx_t);
 static int cxgb_ifm_type(int);
 static void cxgb_build_medialist(struct port_info *);
 static void cxgb_if_media_status(if_shared_ctx_t, struct ifmediareq *);
-static void cxgb_async_intr(void *);
+static int cxgb_async_intr(void *);
 static void cxgb_tick_handler(void *, int);
 static void cxgb_if_timer(if_shared_ctx_t, uint16_t);
 static void link_check_callout(void *);
@@ -610,6 +610,10 @@ cxgb_controller_attach(device_t dev)
 	}
 
 	/******************** XXXX **********************************/
+	/* XXX need to attach all group tasks
+   * restore bind_queues and make it a configurable value
+   *
+   */
 	/* Create a private taskqueue thread for handling driver events */
 	GROUPTASK_INIT(&sc->tick_task, 0, cxgb_tick_handler, sc);
 	iflib_taskqgroup_attach(&sc->tick_task, sc, "tick");
@@ -904,9 +908,7 @@ cxgb_teardown_interrupts(adapter_t *sc)
 static int
 cxgb_setup_interrupts(adapter_t *sc)
 {
-	struct resource *res;
-	void *tag;
-	int i, rid, err, intr_flag = sc->flags & (USING_MSI | USING_MSIX);
+	int err, intr_flag = sc->flags & (USING_MSI | USING_MSIX);
 
 	sc->irq_rid = intr_flag ? 1 : 0;
 	sc->irq_res = bus_alloc_resource_any(sc->dev, SYS_RES_IRQ, &sc->irq_rid,
@@ -918,8 +920,8 @@ cxgb_setup_interrupts(adapter_t *sc)
 		sc->irq_rid = 0;
 	} else {
 		err = bus_setup_intr(sc->dev, sc->irq_res,
-		    INTR_MPSAFE | INTR_TYPE_NET, NULL,
-		    sc->cxgb_intr, sc, &sc->intr_tag);
+		    INTR_MPSAFE | INTR_TYPE_NET,
+							 sc->cxgb_intr, NULL, sc, &sc->intr_tag);
 
 		if (err) {
 			device_printf(sc->dev,
@@ -931,40 +933,6 @@ cxgb_setup_interrupts(adapter_t *sc)
 			sc->irq_rid = 0;
 		}
 	}
-
-	/* That's all for INTx or MSI */
-	if (!(intr_flag & USING_MSIX) || err)
-		return (err);
-
-	bus_describe_intr(sc->dev, sc->irq_res, sc->intr_tag, "err");
-	for (i = 0; i < sc->msi_count - 1; i++) {
-		rid = i + 2;
-		res = bus_alloc_resource_any(sc->dev, SYS_RES_IRQ, &rid,
-					     RF_SHAREABLE | RF_ACTIVE);
-		if (res == NULL) {
-			device_printf(sc->dev, "Cannot allocate interrupt "
-				      "for message %d\n", rid);
-			err = EINVAL;
-			break;
-		}
-
-		err = bus_setup_intr(sc->dev, res, INTR_MPSAFE | INTR_TYPE_NET,
-				     NULL, t3_intr_msix, &sc->sge.qs[i], &tag);
-		if (err) {
-			device_printf(sc->dev, "Cannot set up interrupt "
-				      "for message %d (%d)\n", rid, err);
-			bus_release_resource(sc->dev, SYS_RES_IRQ, rid, res);
-			break;
-		}
-
-		sc->msix_irq_rid[i] = rid;
-		sc->msix_irq_res[i] = res;
-		sc->msix_intr_tag[i] = tag;
-		bus_describe_intr(sc->dev, res, tag, "qs%d", i);
-	}
-
-	if (err)
-		cxgb_teardown_interrupts(sc);
 
 	return (err);
 }
@@ -1010,8 +978,9 @@ cxgb_port_attach(device_t dev)
 {
 	struct port_info *p;
 	struct ifnet *ifp;
-	int err;
 	struct adapter *sc;
+	int i, err, rid;
+	struct if_irq irq;
 
 	p = device_get_softc(dev);
 	sc = p->adapter;
@@ -1020,10 +989,26 @@ cxgb_port_attach(device_t dev)
 	if ((err = iflib_register(dev, &cxgb_if_driver, p->hw_addr)) != 0)
 		return (err);
 
+	if (sc->flags & USING_MSIX) {
+		for (i = p->first_qset; i < sc->msi_count + p->first_qset - 1; i++) {
+			rid = i + 2;
+			if ((err = iflib_irq_alloc_generic(UPCAST(p), &irq, rid, IFLIB_INTR_RX, NULL,
+											   NULL, i - p->first_qset, "qs")) != 0) {
+				/*
+		* XXX free allocated :-/
+		*/
+				return (err);
+			}
+			sc->msix_irq_rid[i] = irq.ii_rid;
+			sc->msix_irq_res[i] = irq.ii_res;
+			sc->msix_intr_tag[i] = irq.ii_tag;
+		}
+	}
 	ifp = p->hwifp;
 	p->lock = iflib_sctx_lock_get(UPCAST(p));
 	callout_init(&p->link_check_ch, CALLOUT_MPSAFE);
 	GROUPTASK_INIT(&p->link_check_task, 0, check_link_status, p);
+	iflib_taskqgroup_attach(&p->link_check_task, p, "link_check");
 
 	ifp->if_capabilities = CXGB_CAP;
 #ifdef TCP_OFFLOAD
@@ -1932,7 +1917,7 @@ cxgb_if_media_status(if_shared_ctx_t sctx, struct ifmediareq *ifmr)
 			    speed));
 }
 
-static void
+static int
 cxgb_async_intr(void *data)
 {
 	adapter_t *sc = data;
@@ -1940,6 +1925,7 @@ cxgb_async_intr(void *data)
 	t3_write_reg(sc, A_PL_INT_ENABLE0, 0);
 	(void) t3_read_reg(sc, A_PL_INT_ENABLE0);
 	GROUPTASK_ENQUEUE(&sc->slow_intr_task);
+	return (FILTER_HANDLED);
 }
 
 static void
