@@ -859,6 +859,10 @@ cxgb_if_queues_alloc(if_shared_ctx_t sctx)
 	return (0);
 }
 
+/*
+ * XXX interrupt setup / teardown is the one remaining
+ * piece in iflib conversion
+ */
 static void
 cxgb_teardown_interrupts(adapter_t *sc)
 {
@@ -1070,7 +1074,6 @@ cxgb_if_port_detach(if_shared_ctx_t sctx)
 	if (p->port_cdev != NULL)
 		destroy_dev(p->port_cdev);
 
-	cxgb_if_stop(sctx);
 	return (0);
 }
 
@@ -1652,7 +1655,12 @@ cxgb_if_init(if_shared_ctx_t sctx)
 		return;
 	}
 	if (sc->open_device_map == 0 && ((rc = cxgb_up(sc)) != 0)) {
-		device_printf(p->hwdev, "device setup failed");
+		device_printf(p->hwdev, "adapter setup failed");
+		return;
+	}
+
+	if (iflib_qset_structures_setup(UPCAST(p))) {
+		device_printf(p->hwdev, "port qset setup failed");
 		return;
 	}
 
