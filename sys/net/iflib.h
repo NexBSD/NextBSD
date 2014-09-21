@@ -169,7 +169,7 @@ int iflib_queues_alloc(if_shared_ctx_t ctx, uint32_t *qsizes, uint8_t nqs);
 int iflib_qset_structures_setup(if_shared_ctx_t);
 void iflib_qset_structures_free(if_shared_ctx_t);
 
-int iflib_qset_addr_get(if_shared_ctx_t, int qidx, uint64_t *vaddrs, uint64_t *paddrs, int nqs);
+int iflib_qset_addr_get(if_shared_ctx_t, int qidx, caddr_t *vaddrs, uint64_t *paddrs, int nqs);
 
 int iflib_irq_alloc(if_shared_ctx_t, if_irq_t, int, driver_filter_t, driver_intr_t, void *arg, char *name);
 int iflib_irq_alloc_generic(if_shared_ctx_t ctx, if_irq_t irq, int rid,
@@ -195,4 +195,8 @@ void iflib_stats_update(if_shared_ctx_t);
 void iflib_add_int_delay_sysctl(if_shared_ctx_t, const char *, const char *,
 								if_int_delay_info_t, int, int);
 void iflib_taskqgroup_attach(struct grouptask *gtask, void *uniq, char *name);
+
+struct mtx *iflib_sctx_lock_get(if_shared_ctx_t);
+struct mtx *iflib_qset_lock_get(if_shared_ctx_t, uint16_t);
+
 #endif /*  __IFLIB_H_ */

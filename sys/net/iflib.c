@@ -2405,7 +2405,7 @@ iflib_qset_structures_free(if_shared_ctx_t sctx)
 }
 
 int
-iflib_qset_addr_get(if_shared_ctx_t sctx, int qidx, uint64_t *vaddrs, uint64_t *paddrs, int nqs)
+iflib_qset_addr_get(if_shared_ctx_t sctx, int qidx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 {
 	iflib_dma_info_t di = sctx->isc_ctx->ifc_qsets[qidx].ifq_ifdi;
 	int i, nhwqs = sctx->isc_ctx->ifc_qsets[qidx].ifq_nhwqs;
@@ -2413,7 +2413,7 @@ iflib_qset_addr_get(if_shared_ctx_t sctx, int qidx, uint64_t *vaddrs, uint64_t *
 	if (nqs != nhwqs)
 		return (EINVAL);
 	for (i = 0; i < nhwqs; i++, di++) {
-		vaddrs[i] = (uint64_t)di->idi_vaddr;
+		vaddrs[i] = di->idi_vaddr;
 		paddrs[i] = di->idi_paddr;
 	}
 	return (0);
@@ -2619,4 +2619,18 @@ iflib_taskqgroup_attach(struct grouptask *gtask, void *uniq, char *name)
 {
 
 	taskqgroup_attach(gctx->igc_config_tqg, gtask, uniq, -1, name);
+}
+
+struct mtx *
+iflib_sctx_lock_get(if_shared_ctx_t sctx)
+{
+
+	return (&sctx->isc_ctx->ifc_mtx);
+}
+
+struct mtx *
+iflib_qset_lock_get(if_shared_ctx_t sctx, uint16_t qsidx)
+{
+
+	return (&sctx->isc_ctx->ifc_txqs[qsidx].ift_mtx);
 }

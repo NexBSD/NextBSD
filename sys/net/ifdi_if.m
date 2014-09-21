@@ -58,7 +58,7 @@ CODE {
 	}
 
 	static void
-	null_queue_intr_enable(if_shared_ctx_t _ctx __unused, uint32_t _qid __unused)
+	null_queue_intr_enable(if_shared_ctx_t _ctx __unused, uint16_t _qid __unused)
 	{
 	}
 
@@ -146,7 +146,7 @@ METHOD void intr_disable {
 
 METHOD void rx_intr_enable {
 	if_shared_ctx_t _ctx;
-	uint32_t _rxqid;
+	uint16_t _rxqid;
 } DEFAULT null_queue_intr_enable;
 
 METHOD void link_intr_enable {
