@@ -2396,14 +2396,6 @@ iflib_qset_structures_setup(if_shared_ctx_t sctx)
 	return (err);
 }
 
-void
-iflib_qset_structures_free(if_shared_ctx_t sctx)
-{
-
-	iflib_tx_structures_free(sctx);
-	iflib_rx_structures_free(sctx);
-}
-
 int
 iflib_qset_addr_get(if_shared_ctx_t sctx, int qidx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 {

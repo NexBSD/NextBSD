@@ -167,7 +167,6 @@ int iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN]);
 int iflib_queues_alloc(if_shared_ctx_t ctx, uint32_t *qsizes, uint8_t nqs);
 
 int iflib_qset_structures_setup(if_shared_ctx_t);
-void iflib_qset_structures_free(if_shared_ctx_t);
 
 int iflib_qset_addr_get(if_shared_ctx_t, int qidx, caddr_t *vaddrs, uint64_t *paddrs, int nqs);
 
