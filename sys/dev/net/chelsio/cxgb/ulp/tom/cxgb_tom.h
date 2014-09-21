@@ -100,7 +100,7 @@ struct tom_data {
 
         void **tid_release_list;
         struct mtx tid_release_lock;
-        struct task tid_release_task;
+        struct grouptask tid_release_task;
 };
 
 struct synq_entry {

@@ -526,7 +526,7 @@ do_pass_accept_req(struct sge_qset *qs, struct rsp_desc *r, struct mbuf *m)
 	}
 	if (pi == NULL)
 		REJECT_PASS_ACCEPT();
-	ifp = pi->ifp;
+	ifp = pi->hwifp;
 	if ((ifp->if_capenable & IFCAP_TOE4) == 0)
 		REJECT_PASS_ACCEPT();
 
@@ -837,7 +837,7 @@ t3_listen_start(struct toedev *tod, struct tcpcb *tp)
 	 */
 	for_each_port(sc, i) {
 		if (isset(&sc->open_device_map, i) &&
-		    sc->port[i].ifp->if_capenable & IFCAP_TOE4)
+		    sc->port[i].hwifp->if_capenable & IFCAP_TOE4)
 				break;
 	}
 	KASSERT(i < sc->params.nports,

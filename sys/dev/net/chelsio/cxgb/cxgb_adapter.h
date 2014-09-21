@@ -60,6 +60,10 @@ $FreeBSD$
 
 #include <cxgb_osdep.h>
 #include <sys/mbufq.h>
+#include <net/iflib.h>
+#include "ifdi_if.h"
+
+#define DOWNCAST(sctx) ((struct port_info *)(sctx))
 
 struct adapter;
 struct sge_qset;
@@ -115,8 +119,8 @@ struct port_info {
 
 	uint8_t		hw_addr[ETHER_ADDR_LEN];
 	struct callout	link_check_ch;
-	struct task	link_check_task;
-	struct task	timer_reclaim_task;
+	struct grouptask	link_check_task;
+	struct grouptask	init_task;
 	struct cdev     *port_cdev;
 
 #define PORT_LOCK_NAME_LEN 32
@@ -156,6 +160,12 @@ enum { TXQ_ETH = 0,
        TXQ_OFLD = 1,
        TXQ_CTRL = 2, };
 
+/*
+ * XXX temporary so that the code will compile
+ */
+#define ADAPTER_LOCK(sc)
+#define ADAPTER_LOCK_ASSERT_OWNED(sc)
+#define ADAPTER_UNLOCK(sc)
 
 /* 
  * work request size in bytes
@@ -245,16 +255,13 @@ struct sge_txq {
 	struct tx_desc	*desc;
 	uint32_t	token;
 	bus_addr_t	phys_addr;
-	struct task     qresume_task;
-	struct task     qreclaim_task;
+	struct grouptask     qresume_task;
 	uint32_t	cntxt_id;
 	uint64_t	stops;
 	uint64_t	restarts;
-	bus_dma_tag_t	desc_tag;
-	bus_dmamap_t	desc_map;
-	bus_dma_tag_t   entry_tag;
+	struct mbuf_head sendq;
 
-	bus_dma_segment_t tx_coalesce_segments[7];
+	bus_dma_segment_t tx_coalesce_segs[7];
 	uint16_t	tx_coalesce_bytes; /* max 10500 */
 	uint8_t		tx_coalesce_count; /* max 7 */
 	uint64_t        txq_coalesced;
@@ -288,7 +295,7 @@ struct sge_qset {
 	int                     qs_flags;
 	int			coalescing;
 	struct cv		qs_cv;
-	struct mtx		lock;
+	struct mtx		*lock;
 #define QS_NAME_LEN 32
 	char                    namebuf[QS_NAME_LEN];
 };
@@ -349,10 +356,9 @@ struct adapter {
 	struct filter_info      *filters;
 	
 	/* Tasks */
-	struct task		slow_intr_task;
-	struct task		tick_task;
-	struct task		init_task;
-	struct taskqueue	*tq;
+	struct grouptask		slow_intr_task;
+	struct grouptask		tick_task;
+	struct grouptask		init_task;
 	struct callout		cxgb_tick_ch;
 	struct callout		sge_timer_ch;
 
@@ -413,20 +419,10 @@ struct t3_rx_mode {
 #define ELMR_UNLOCK(adapter)	mtx_unlock(&(adapter)->elmer_lock)
 
 
-#define PORT_LOCK(port)		     mtx_lock(&(port)->lock);
-#define PORT_UNLOCK(port)	     mtx_unlock(&(port)->lock);
-#define PORT_LOCK_INIT(port, name)   mtx_init(&(port)->lock, name, 0, MTX_DEF)
-#define PORT_LOCK_DEINIT(port)       mtx_destroy(&(port)->lock)
-#define PORT_LOCK_ASSERT_NOTOWNED(port) mtx_assert(&(port)->lock, MA_NOTOWNED)
-#define PORT_LOCK_ASSERT_OWNED(port) mtx_assert(&(port)->lock, MA_OWNED)
-
-#define ADAPTER_LOCK(adap)	mtx_lock(&(adap)->lock);
-#define ADAPTER_UNLOCK(adap)	mtx_unlock(&(adap)->lock);
-#define ADAPTER_LOCK_INIT(adap, name) mtx_init(&(adap)->lock, name, 0, MTX_DEF)
-#define ADAPTER_LOCK_DEINIT(adap) mtx_destroy(&(adap)->lock)
-#define ADAPTER_LOCK_ASSERT_NOTOWNED(adap) mtx_assert(&(adap)->lock, MA_NOTOWNED)
-#define ADAPTER_LOCK_ASSERT_OWNED(adap) mtx_assert(&(adap)->lock, MA_OWNED)
-
+#define PORT_LOCK(port)		     mtx_lock((port)->lock);
+#define PORT_UNLOCK(port)	     mtx_unlock((port)->lock);
+#define PORT_LOCK_ASSERT_NOTOWNED(port) mtx_assert((port)->lock, MA_NOTOWNED)
+#define PORT_LOCK_ASSERT_OWNED(port) mtx_assert((port)->lock, MA_OWNED)
 
 static __inline uint32_t
 t3_read_reg(adapter_t *adapter, uint32_t reg_addr)
@@ -468,7 +464,7 @@ static __inline uint8_t *
 t3_get_next_mcaddr(struct t3_rx_mode *rm)
 {
 	uint8_t *macaddr = NULL;
-	struct ifnet *ifp = rm->port->ifp;
+	struct ifnet *ifp = rm->port->hwifp;
 	struct ifmultiaddr *ifma;
 	int i = 0;
 
@@ -518,8 +514,9 @@ int t3_register_cpl_handler(struct adapter *, int, cpl_handler_t);
 
 int t3_sge_alloc(struct adapter *);
 int t3_sge_free(struct adapter *);
-int t3_sge_alloc_qset(adapter_t *, uint32_t, int, int, const struct qset_params *,
-    int, struct port_info *);
+int t3_sge_alloc_qset(adapter_t *, struct sge_qset *, uint8_t, int, int, const struct qset_params *,
+					  int, struct port_info *);
+int cxgb_port_queues_alloc(struct port_info *pi);
 void t3_free_sge_resources(adapter_t *, int);
 void t3_free_port_sge_resources(struct port_info *);
 void t3_sge_start(adapter_t *);
@@ -532,8 +529,6 @@ int t3_sge_init_adapter(adapter_t *);
 int t3_sge_reset_adapter(adapter_t *);
 int t3_sge_init_port(struct port_info *);
 void t3_free_tx_desc(struct sge_qset *qs, int n, int qid);
-
-void t3_rx_eth(struct adapter *adap, struct mbuf *m, int ethpad);
 
 void t3_add_attach_sysctls(adapter_t *sc);
 void t3_add_configured_sysctls(adapter_t *sc);

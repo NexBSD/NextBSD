@@ -221,7 +221,7 @@ t3_tom_activate(struct adapter *sc)
 	    &td->listen_mask, HASH_NOWAIT);
 
 	/* TID release task */
-	TASK_INIT(&td->tid_release_task, 0 , t3_process_tid_release_list, td);
+	GROUPTASK_INIT(&td->tid_release_task, 0 , t3_process_tid_release_list, td);
 	mtx_init(&td->tid_release_lock, "tid release", NULL, MTX_DEF);
 
 	/* L2 table */
@@ -264,17 +264,17 @@ t3_tom_activate(struct adapter *sc)
 	tod->tod_offload_socket = t3_offload_socket;
 
 	/* port MTUs */
-	mtus = sc->port[0].ifp->if_mtu;
+	mtus = sc->port[0].hwifp->if_mtu;
 	if (sc->params.nports > 1)
-		mtus |= sc->port[1].ifp->if_mtu << 16;
+		mtus |= sc->port[1].hwifp->if_mtu << 16;
 	t3_write_reg(sc, A_TP_MTU_PORT_TABLE, mtus);
 	t3_load_mtus(sc, sc->params.mtus, sc->params.a_wnd, sc->params.b_wnd,
-	    sc->params.rev == 0 ? sc->port[0].ifp->if_mtu : 0xffff);
+	    sc->params.rev == 0 ? sc->port[0].hwifp->if_mtu : 0xffff);
 
 	/* SMT entry for each port */
 	for_each_port(sc, i) {
 		write_smt_entry(sc, i);
-		TOEDEV(sc->port[i].ifp) = &td->tod;
+		TOEDEV(sc->port[i].hwifp) = &td->tod;
 	}
 
 	/* Switch TP to offload mode */

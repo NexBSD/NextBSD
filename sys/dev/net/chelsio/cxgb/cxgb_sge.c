@@ -80,6 +80,13 @@ __FBSDID("$FreeBSD$");
 int	txq_fills = 0;
 int	multiq_tx_enable = 1;
 
+static int cxgb_isc_txd_encap(if_shared_ctx_t, if_pkt_info_t);
+static void cxgb_isc_txd_flush(if_shared_ctx_t, uint16_t, uint32_t);
+static int	cxgb_isc_rxd_pkt_get(if_shared_ctx_t, if_rxd_info_t);
+static void cxgb_isc_rxd_refill(if_shared_ctx_t, uint16_t, uint8_t, uint32_t, uint64_t*, caddr_t *, uint8_t);
+static void cxgb_isc_rxd_flush(if_shared_ctx_t, uint16_t, uint8_t, uint32_t);
+static int cxgb_isc_rxd_available(if_shared_ctx_t, uint16_t, uint32_t);
+
 #ifdef TCP_OFFLOAD
 CTASSERT(NUM_CPL_HANDLERS >= NUM_CPL_CMDS);
 #endif
@@ -103,11 +110,11 @@ SYSCTL_INT(_hw_cxgb, OID_AUTO, tx_coalesce_force, CTLFLAG_RWTUN,
 #define	TX_RECLAIM_MIN			TX_ETH_Q_SIZE>>6
 
 
-static int cxgb_tx_coalesce_enable_start = COALESCE_START_DEFAULT;
+int cxgb_tx_coalesce_enable_start = COALESCE_START_DEFAULT;
 SYSCTL_INT(_hw_cxgb, OID_AUTO, tx_coalesce_enable_start, CTLFLAG_RWTUN,
     &cxgb_tx_coalesce_enable_start, 0,
     "coalesce enable threshold");
-static int cxgb_tx_coalesce_enable_stop = COALESCE_STOP_DEFAULT;
+int cxgb_tx_coalesce_enable_stop = COALESCE_STOP_DEFAULT;
 SYSCTL_INT(_hw_cxgb, OID_AUTO, tx_coalesce_enable_stop, CTLFLAG_RWTUN,
     &cxgb_tx_coalesce_enable_stop, 0,
     "coalesce disable threshold");
@@ -115,12 +122,6 @@ static int cxgb_tx_reclaim_threshold = TX_RECLAIM_DEFAULT;
 SYSCTL_INT(_hw_cxgb, OID_AUTO, tx_reclaim_threshold, CTLFLAG_RWTUN,
     &cxgb_tx_reclaim_threshold, 0,
     "tx cleaning minimum threshold");
-
-/*
- * XXX don't re-enable this until TOE stops assuming
- * we have an m_ext
- */
-static int recycle_enable = 0;
 
 extern int cxgb_use_16k_clusters;
 extern int nmbjumbop;
@@ -206,18 +207,10 @@ static uint8_t flit_desc_map[] = {
 #endif
 };
 
-#define	TXQ_LOCK_ASSERT(qs)	mtx_assert(&(qs)->lock, MA_OWNED)
-#define	TXQ_TRYLOCK(qs)		mtx_trylock(&(qs)->lock)	
-#define	TXQ_LOCK(qs)		mtx_lock(&(qs)->lock)	
-#define	TXQ_UNLOCK(qs)		mtx_unlock(&(qs)->lock)	
-#define	TXQ_RING_EMPTY(qs)	drbr_empty((qs)->port->ifp, (qs)->txq[TXQ_ETH].txq_mr)
-#define	TXQ_RING_NEEDS_ENQUEUE(qs)					\
-	drbr_needs_enqueue((qs)->port->ifp, (qs)->txq[TXQ_ETH].txq_mr)
-#define	TXQ_RING_FLUSH(qs)	drbr_flush((qs)->port->ifp, (qs)->txq[TXQ_ETH].txq_mr)
-#define	TXQ_RING_DEQUEUE_COND(qs, func, arg)				\
-	drbr_dequeue_cond((qs)->port->ifp, (qs)->txq[TXQ_ETH].txq_mr, func, arg)
-#define	TXQ_RING_DEQUEUE(qs) \
-	drbr_dequeue((qs)->port->ifp, (qs)->txq[TXQ_ETH].txq_mr)
+#define	TXQ_LOCK_ASSERT(qs)	mtx_assert((qs)->lock, MA_OWNED)
+#define	TXQ_TRYLOCK(qs)		mtx_trylock((qs)->lock)
+#define	TXQ_LOCK(qs)		mtx_lock((qs)->lock)
+#define	TXQ_UNLOCK(qs)		mtx_unlock((qs)->lock)
 
 int cxgb_debug = 0;
 
@@ -253,11 +246,10 @@ check_pkt_coalesce(struct sge_qset *qs)
 	 * when we go below 1/32 full and there are no packets enqueued, 
 	 * this provides us with some degree of hysteresis
 	 */
-        if (*fill != 0 && (txq->in_use <= cxgb_tx_coalesce_enable_stop) &&
-	    TXQ_RING_EMPTY(qs) && (qs->coalescing == 0))
-                *fill = 0; 
-        else if (*fill == 0 && (txq->in_use >= cxgb_tx_coalesce_enable_start))
-                *fill = 1; 
+	if (*fill != 0 && (txq->in_use <= cxgb_tx_coalesce_enable_stop) && qs->coalescing == 0)
+		*fill = 0;
+	else if (*fill == 0 && (txq->in_use >= cxgb_tx_coalesce_enable_start))
+		*fill = 1;
 
 	return (sc->tunq_coalesce);
 } 
@@ -287,39 +279,38 @@ set_wr_hdr(struct work_request_hdr *wrp, uint32_t wr_hi, uint32_t wr_lo)
 }
 #endif
 
-struct coalesce_info {
-	int count;
-	int nbytes;
-};
-
-static int
-coalesce_check(struct mbuf *m, void *arg)
-{
-	struct coalesce_info *ci = arg;
-	int *count = &ci->count;
-	int *nbytes = &ci->nbytes;
-
-	if ((*nbytes == 0) || ((*nbytes + m->m_len <= 10500) &&
-		(*count < 7) && (m->m_next == NULL))) {
-		*count += 1;
-		*nbytes += m->m_len;
-		return (1);
-	}
-	return (0);
-}
-
 /**
- *	should_restart_tx - are there enough resources to restart a Tx queue?
- *	@q: the Tx queue
+ *	reclaim_completed_tx - reclaims completed Tx descriptors
+ *	@adapter: the adapter
+ *	@q: the Tx queue to reclaim completed descriptors from
  *
- *	Checks if there are enough descriptors to restart a suspended Tx queue.
+ *	Reclaims Tx descriptors that the SGE has indicated it has processed,
+ *	and frees the associated buffers if possible.  Called with the Tx
+ *	queue's lock held.
  */
 static __inline int
-should_restart_tx(const struct sge_txq *q)
+reclaim_completed_tx(struct sge_qset *qs, int reclaim_min, int queue)
 {
-	unsigned int r = q->processed - q->cleaned;
+	struct sge_txq *q = &qs->txq[queue];
+	int reclaim = desc_reclaimable(q);
 
-	return q->in_use - r < (q->size >> 1);
+	if ((cxgb_tx_reclaim_threshold > TX_RECLAIM_MAX) ||
+	    (cxgb_tx_reclaim_threshold < TX_RECLAIM_MIN))
+		cxgb_tx_reclaim_threshold = TX_RECLAIM_DEFAULT;
+
+	if (reclaim < reclaim_min)
+		return (0);
+
+	mtx_assert(qs->lock, MA_OWNED);
+	if (reclaim > 0) {
+		t3_free_tx_desc(qs, reclaim, queue);
+		q->cleaned += reclaim;
+		q->in_use -= reclaim;
+	}
+	if (isset(&qs->txq_stopped, TXQ_ETH))
+                clrbit(&qs->txq_stopped, TXQ_ETH);
+
+	return (reclaim);
 }
 
 /**
@@ -520,46 +511,45 @@ t3_update_qset_coalesce(struct sge_qset *qs, const struct qset_params *p)
 	qs->rspq.polling = 0 /* p->polling */;
 }
 
-/**
- *	recycle_rx_buf - recycle a receive buffer
- *	@adapter: the adapter
- *	@q: the SGE free list
- *	@idx: index of buffer to recycle
- *
- *	Recycles the specified buffer on the given free list by adding it at
- *	the next available slot on the list.
- */
-static void
-recycle_rx_buf(adapter_t *adap, struct sge_fl *q, unsigned int idx)
+static __inline int
+should_restart_tx(const struct sge_txq *q)
 {
-	struct rx_desc *from = &q->desc[idx];
-	struct rx_desc *to   = &q->desc[q->pidx];
+	unsigned int r = q->processed - q->cleaned;
 
-	q->sdesc[q->pidx] = q->sdesc[idx];
-	to->addr_lo = from->addr_lo;        // already big endian
-	to->addr_hi = from->addr_hi;        // likewise
-	wmb();	/* necessary ? */
-	to->len_gen = htobe32(V_FLD_GEN1(q->gen));
-	to->gen2 = htobe32(V_FLD_GEN2(q->gen));
-	q->credits++;
+	return q->in_use - r < (q->size >> 1);
+}
 
-	if (++q->pidx == q->size) {
-		q->pidx = 0;
-		q->gen ^= 1;
-	}
-	t3_write_reg(adap, A_SG_KDOORBELL, V_EGRCNTX(q->cntxt_id));
+int
+cxgb_port_queues_alloc(struct port_info *pi)
+{
+	uint32_t sizes[6];
+	uint8_t i, szidx, nqs = SGE_TXQ_PER_SET + 3;
+	struct qset_params *p = &pi->adapter->params.sge.qset[pi->first_qset];
+	/*
+   * Calculate queue sizes
+   */
+
+	sizes[0] = sizeof(struct tx_desc) * p->txq_size[0 /* TXQ_ETH */];
+	sizes[1] = sizeof(struct rsp_desc) * p->rspq_size;
+	sizes[2] = sizeof(struct rx_desc) * p->fl_size;
+	sizes[3] = sizeof(struct rx_desc) * p->jumbo_size;
+	for (szidx = 4, i = 1; i < SGE_TXQ_PER_SET; i++, szidx++)
+		sizes[szidx] = p->txq_size[i];
+
+	return (iflib_queues_alloc(UPCAST(pi), sizes, nqs));
 }
 
 static int
-alloc_sw_ring(adapter_t *sc, size_t nelem,  size_t sw_size, void *sdesc)
+alloc_sw_ring(size_t nelem,  size_t sw_size, void *sdesc)
 {
-	size_t len = nelem * elem_size;
+	size_t len;
 	void *s = NULL;
-	int err;
 
 	if (sw_size) {
 		len = nelem * sw_size;
 		s = malloc(len, M_DEVBUF, M_WAITOK|M_ZERO);
+		if (s == NULL)
+			return (ENOMEM);
 		*(void **)sdesc = s;
 	}
 	return (0);
@@ -628,8 +618,7 @@ sge_timer_cb(void *arg)
 				refill_rx = ((qs->fl[0].credits < qs->fl[0].size) || 
 				    (qs->fl[1].credits < qs->fl[1].size));
 				if (reclaim_ofl || refill_rx) {
-					taskqueue_enqueue(sc->tq, &pi->timer_reclaim_task);
-					break;
+					iflib_tx_intr_deferred(UPCAST(pi), j);
 				}
 			}
 		}
@@ -661,7 +650,7 @@ t3_sge_init_adapter(adapter_t *sc)
 {
 	callout_init(&sc->sge_timer_ch, CALLOUT_MPSAFE);
 	callout_reset(&sc->sge_timer_ch, TX_RECLAIM_PERIOD, sge_timer_cb, sc);
-	TASK_INIT(&sc->slow_intr_task, 0, sge_slow_intr_handler, sc);
+	GROUPTASK_INIT(&sc->slow_intr_task, 0, sge_slow_intr_handler, sc);
 	return (0);
 }
 
@@ -675,7 +664,24 @@ t3_sge_reset_adapter(adapter_t *sc)
 int
 t3_sge_init_port(struct port_info *pi)
 {
-	TASK_INIT(&pi->timer_reclaim_task, 0, sge_timer_reclaim, pi);
+	if_shared_ctx_t sctx = UPCAST(pi);
+
+	sctx->isc_q_align = PAGE_SIZE;
+	sctx->isc_tx_maxsize = TX_MAX_SIZE;
+	sctx->isc_tx_nsegments = TX_MAX_SEGS;
+	sctx->isc_tx_maxsegsize = TX_MAX_SIZE;
+	sctx->isc_rx_maxsize = MJUM16BYTES;
+	sctx->isc_rx_nsegments = 1;
+	sctx->isc_rx_maxsegsize = MJUM16BYTES;
+
+	sctx->isc_txd_encap = cxgb_isc_txd_encap;
+	sctx->isc_txd_flush = cxgb_isc_txd_flush;
+	sctx->isc_txd_credits_update = NULL;
+
+	sctx->isc_rxd_available = cxgb_isc_rxd_available;
+	sctx->isc_rxd_pkt_get = cxgb_isc_rxd_pkt_get;
+	sctx->isc_rxd_refill = cxgb_isc_rxd_refill;
+	sctx->isc_rxd_flush = cxgb_isc_rxd_flush;
 	return (0);
 }
 
@@ -996,19 +1002,19 @@ do { \
 static int
 cxgb_isc_txd_encap(if_shared_ctx_t sctx, if_pkt_info_t pkt)
 {
-	adapter_t *sc = DOWNCAST(sctx);
-	struct sge_qset *qs = sc->qs[pkt->ipi_qsidx];
-	struct mbuf *m0;
+	struct port_info *pi = DOWNCAST(sctx);
+	adapter_t *sc = pi->adapter;
+	struct sge_qset *qs = &pi->qs[pkt->ipi_qsidx];
+	struct mbuf *m0 = NULL;
 	struct sge_txq *txq;
 	struct txq_state txqs;
-	struct port_info *pi;
 	unsigned int ndesc, flits, cntrl, mlen;
-	int err, nsegs, tso_info = 0, coalescing;
+	int nsegs, tso_info = 0, coalescing;
 
 	struct work_request_hdr *wrp;
 	struct sg_ent *sgp, *sgl;
 	uint32_t wr_hi, wr_lo, sgl_flits; 
-	bus_dma_segment_t segs;
+	bus_dma_segment_t *segs;
 	struct tx_desc *txd;
 		
 	pi = qs->port;
@@ -1017,23 +1023,26 @@ cxgb_isc_txd_encap(if_shared_ctx_t sctx, if_pkt_info_t pkt)
 	txd = &txq->desc[pkt->ipi_pidx];
 	prefetch(txd);
 
-	if (pkt->ipi_m == NULL && txq->tx_coalesce_count == 0)
-		return (0);
-	if (pkt->ipi_m == NULL && txq->tx_coalesce_count > 0)
-		goto flush;
-
+	if (pkt->ipi_m == NULL) {
+		if (txq->tx_coalesce_count == 0)
+			return (0);
+		if (txq->tx_coalesce_count > 0)
+			goto flush;
+	}
 coalesce_retry:
 	m0 = pkt->ipi_m;
 	nsegs = pkt->ipi_nsegs;
 	segs = pkt->ipi_segs;
 	sgl = txq->txq_sgl;
 	coalescing = txq->tx_coalesce_count || check_pkt_coalesce(qs);
-	if (coalescing && txq->tx_coalesce_count < 7 &&
-		nsegs == 1 && txq->tx_coalesce_bytes + segs[0].ds_len <= 10500) {
-		txq->tx_coalesce_segs[txq->tx_coalesce_count++] = &segs[0];
+	if (coalescing && txq->tx_coalesce_count < TX_WR_COUNT_MAX &&
+		nsegs == 1 && txq->tx_coalesce_bytes + segs[0].ds_len <= TX_WR_SIZE_MAX) {
+		txq->tx_coalesce_segs[txq->tx_coalesce_count].ds_len = segs[0].ds_len;
+		txq->tx_coalesce_segs[txq->tx_coalesce_count].ds_addr = segs[0].ds_addr;
+		txq->tx_coalesce_count++;
 		txq->tx_coalesce_bytes += segs[0].ds_len;
-		pi->ipi_new_pidx = pi->ipi_pidx; /* unchanged */
-		pi->ipi_ndescs = 0;
+		pkt->ipi_new_pidx = pkt->ipi_pidx; /* unchanged */
+		pkt->ipi_ndescs = 0;
 		return (0);
 	}
 	cntrl = V_TXPKT_INTF(pi->txpkt_intf);
@@ -1044,10 +1053,10 @@ coalesce_retry:
 	 * current packet - flush and try to coalesce the current
 	 * packet
 	 */
-	if (txq->coalesce_count) {
+	if (txq->tx_coalesce_count) {
 	flush:
 		segs = txq->tx_coalesce_segs;
-		nsegs = txq->coalesce_count;
+		nsegs = txq->tx_coalesce_count;
 		ndesc = 1;
 		mlen = 0;
 		txq->tx_coalesce_count = 0;
@@ -1064,7 +1073,7 @@ coalesce_retry:
 
 	KASSERT(m0->m_pkthdr.len, ("empty packet nsegs=%d", nsegs));
 
-	if (txq->coalesce_count) {
+	if (txq->tx_coalesce_count) {
 		struct cpl_tx_pkt_batch *cpl_batch = (struct cpl_tx_pkt_batch *)txd;
 		int i, fidx;
 
@@ -1189,13 +1198,13 @@ coalesce_retry:
 			    V_WR_GEN(txqs.gen) | V_WR_TID(txq->token));
 			set_wr_hdr(&hdr->wr, wr_hi, wr_lo);
 			wmb();
-			ETHER_BPF_MTAP(pi->ifp, m0);
+			ETHER_BPF_MTAP(pi->hwifp, m0);
 			wr_gen2(txd, txqs.gen);
 			m_freem(m0);
 			/* tell caller it's been freed */
 			pkt->ipi_m = NULL;
 			pkt->ipi_ndescs = 0;
-			pkt->ipi_new_pidx = (pkt->ipi_pidx + 1) & (txq->count-1);
+			pkt->ipi_new_pidx = (pkt->ipi_pidx + 1) & (txq->size-1);
 			return (0);
 		}
 		flits = 3;	
@@ -1223,12 +1232,12 @@ coalesce_retry:
 			    V_WR_GEN(txqs.gen) | V_WR_TID(txq->token));
 			set_wr_hdr(&cpl->wr, wr_hi, wr_lo);
 			wmb();
-			ETHER_BPF_MTAP(pi->ifp, m0);
+			ETHER_BPF_MTAP(pi->hwifp, m0);
 			wr_gen2(txd, txqs.gen);
 			m_freem(m0);
 			/* tell caller it's been freed */
 			pkt->ipi_m = NULL;
-			pkt->ipi_new_pidx = (pkt->ipi_pidx + 1) & (txq->count-1);
+			pkt->ipi_new_pidx = (pkt->ipi_pidx + 1) & (txq->size-1);
 			pkt->ipi_ndescs = 0;
 			return (0);
 		}
@@ -1250,43 +1259,13 @@ coalesce_retry:
 }
 
 static void
-cxgb_txd_flush(if_shared_ctx_t sctx, uint16_t qsidx, uint32_t pidx __unused)
+cxgb_isc_txd_flush(if_shared_ctx_t sctx, uint16_t qsidx, uint32_t pidx __unused)
 {
-	adapter_t *adap = DOWNCAST(sctx);
-	struct sge_txq *txq = &adap->qs[qsidx].txq[TXQ_ETH];
+	struct port_info *pi = DOWNCAST(sctx);
+	struct sge_txq *txq = &pi->qs[qsidx].txq[TXQ_ETH];
+	struct adapter *adap = pi->adapter;
 
 	check_ring_tx_db(adap, txq, 1);
-}
-
-void
-cxgb_tx_watchdog(void *arg)
-{
-	struct sge_qset *qs = arg;
-	struct sge_txq *txq = &qs->txq[TXQ_ETH];
-
-	if (qs->coalescing != 0 &&
-	    (txq->in_use <= cxgb_tx_coalesce_enable_stop) &&
-	    TXQ_RING_EMPTY(qs))
-		qs->coalescing = 0;
-	else if (qs->coalescing == 0 &&
-			 (txq->in_use >= cxgb_tx_coalesce_enable_start))
-		qs->coalescing = 1;
-}
-
-static void
-cxgb_tx_timeout(void *arg)
-{
-	struct sge_qset *qs = arg;
-	struct sge_txq *txq = &qs->txq[TXQ_ETH];
-
-	if (qs->coalescing == 0 && (txq->in_use >= (txq->size>>3)))
-                qs->coalescing = 1;	
-	if (TXQ_TRYLOCK(qs)) {
-		qs->qs_flags |= QS_TIMEOUT;
-		cxgb_start_locked(qs);
-		qs->qs_flags &= ~QS_TIMEOUT;
-		TXQ_UNLOCK(qs);
-	}
 }
 
 /**
@@ -1501,48 +1480,23 @@ static void
 t3_free_qset(adapter_t *sc, struct sge_qset *q)
 {
 	int i;
-	
-	reclaim_completed_tx(q, 0, TXQ_ETH);
-	if (q->txq[TXQ_ETH].txq_mr != NULL) 
-		buf_ring_free(q->txq[TXQ_ETH].txq_mr, M_DEVBUF);
-	if (q->txq[TXQ_ETH].txq_ifq != NULL) {
-		ifq_delete(q->txq[TXQ_ETH].txq_ifq);
-		free(q->txq[TXQ_ETH].txq_ifq, M_DEVBUF);
-	}
 
 	for (i = 0; i < SGE_RXQ_PER_SET; ++i) {
 		if (q->fl[i].desc) {
 			mtx_lock_spin(&sc->sge.reg_lock);
 			t3_sge_disable_fl(sc, q->fl[i].cntxt_id);
 			mtx_unlock_spin(&sc->sge.reg_lock);
-			bus_dmamap_unload(q->fl[i].desc_tag, q->fl[i].desc_map);
-			bus_dmamem_free(q->fl[i].desc_tag, q->fl[i].desc,
-					q->fl[i].desc_map);
-			bus_dma_tag_destroy(q->fl[i].desc_tag);
-			bus_dma_tag_destroy(q->fl[i].entry_tag);
 		}
 		if (q->fl[i].sdesc) {
-			free_rx_bufs(sc, &q->fl[i]);
 			free(q->fl[i].sdesc, M_DEVBUF);
 		}
 	}
 
-	mtx_unlock(&q->lock);
-	MTX_DESTROY(&q->lock);
 	for (i = 0; i < SGE_TXQ_PER_SET; i++) {
 		if (q->txq[i].desc) {
 			mtx_lock_spin(&sc->sge.reg_lock);
 			t3_sge_enable_ecntxt(sc, q->txq[i].cntxt_id, 0);
 			mtx_unlock_spin(&sc->sge.reg_lock);
-			bus_dmamap_unload(q->txq[i].desc_tag,
-					q->txq[i].desc_map);
-			bus_dmamem_free(q->txq[i].desc_tag, q->txq[i].desc,
-					q->txq[i].desc_map);
-			bus_dma_tag_destroy(q->txq[i].desc_tag);
-			bus_dma_tag_destroy(q->txq[i].entry_tag);
-		}
-		if (q->txq[i].sdesc) {
-			free(q->txq[i].sdesc, M_DEVBUF);
 		}
 	}
 
@@ -1550,14 +1504,8 @@ t3_free_qset(adapter_t *sc, struct sge_qset *q)
 		mtx_lock_spin(&sc->sge.reg_lock);
 		t3_sge_disable_rspcntxt(sc, q->rspq.cntxt_id);
 		mtx_unlock_spin(&sc->sge.reg_lock);
-		
-		bus_dmamap_unload(q->rspq.desc_tag, q->rspq.desc_map);
-		bus_dmamem_free(q->rspq.desc_tag, q->rspq.desc,
-			        q->rspq.desc_map);
-		bus_dma_tag_destroy(q->rspq.desc_tag);
 		MTX_DESTROY(&q->rspq.lock);
 	}
-
 	bzero(q, sizeof(*q));
 }
 
@@ -1573,7 +1521,6 @@ t3_free_sge_resources(adapter_t *sc, int nqsets)
 	int i;
 
 	for (i = 0; i < nqsets; ++i) {
-		TXQ_LOCK(&sc->sge.qs[i]);
 		t3_free_qset(sc, &sc->sge.qs[i]);
 	}
 }
@@ -1623,9 +1570,6 @@ t3_sge_stop(adapter_t *sc)
 	
 	t3_set_reg_field(sc, A_SG_CONTROL, F_GLOBALENABLE, 0);
 
-	if (sc->tq == NULL)
-		return;
-	
 	for (nqsets = i = 0; i < (sc)->params.nports; i++) 
 		nqsets += sc->port[i].nqsets;
 #ifdef notyet
@@ -1851,20 +1795,19 @@ t3_offload_tx(struct adapter *sc, struct mbuf *m)
 static void
 restart_tx(struct sge_qset *qs)
 {
-	struct adapter *sc = qs->port->adapter;
 
 	if (isset(&qs->txq_stopped, TXQ_OFLD) &&
 	    should_restart_tx(&qs->txq[TXQ_OFLD]) &&
 	    test_and_clear_bit(TXQ_OFLD, &qs->txq_stopped)) {
 		qs->txq[TXQ_OFLD].restarts++;
-		taskqueue_enqueue(sc->tq, &qs->txq[TXQ_OFLD].qresume_task);
+		GROUPTASK_ENQUEUE(&qs->txq[TXQ_OFLD].qresume_task);
 	}
 
 	if (isset(&qs->txq_stopped, TXQ_CTRL) &&
 	    should_restart_tx(&qs->txq[TXQ_CTRL]) &&
 	    test_and_clear_bit(TXQ_CTRL, &qs->txq_stopped)) {
 		qs->txq[TXQ_CTRL].restarts++;
-		taskqueue_enqueue(sc->tq, &qs->txq[TXQ_CTRL].qresume_task);
+		GROUPTASK_ENQUEUE(&qs->txq[TXQ_CTRL].qresume_task);
 	}
 }
 
@@ -1884,7 +1827,7 @@ restart_tx(struct sge_qset *qs)
  *	queue, offload queue, and control queue.
  */
 int
-t3_sge_alloc_qset(adapter_t *sc, struct sge_qset *qs, uint8_t id, int nports, int irq_vec_idx,
+t3_sge_alloc_qset(adapter_t *sc, struct sge_qset *q, uint8_t id, int nports, int irq_vec_idx,
 		  const struct qset_params *p, int ntxq, struct port_info *pi)
 {
 	int i, addridx, ret = 0;
@@ -1893,39 +1836,40 @@ t3_sge_alloc_qset(adapter_t *sc, struct sge_qset *qs, uint8_t id, int nports, in
 
 	q->port = pi;
 	q->adap = sc;
+	q->lock = iflib_qset_lock_get(UPCAST(pi), id);
 
 	init_qset_cntxt(q, pi->first_qset + id);
 	q->idx = id;
-	if ((ret = iflib_qset_addr_get(sctx, id, vaddrs, paddrs, ntxq + 3)))
+	if ((ret = iflib_qset_addr_get(UPCAST(pi), id, vaddrs, paddrs, ntxq + 3)))
 		goto err;
 
 	/*
    * Iflib expects the txq and rx completion queue to come first
    *
    */
-	q->txq[0],phys_addr = paddrs[0];
-	q->txq[0].desc = vaddrs[0];
+	q->txq[0].phys_addr = paddrs[0];
+	q->txq[0].desc = (struct tx_desc *)vaddrs[0];
 	q->rspq.phys_addr = paddrs[1];
-	q->rspq.desc = vaddrs[1];
-	addridx = 2
+	q->rspq.desc = (struct rsp_desc *)vaddrs[1];
+	addridx = 2;
 	q->fl[0].phys_addr = paddrs[addridx];
-	q->fl[0].desc = vaddrs[addridx];
+	q->fl[0].desc = (struct rx_desc *)vaddrs[addridx];
 	addridx++;
 	q->fl[1].phys_addr = paddrs[addridx];
-	q->fl[1].desc = vaddrs[addridx];
+	q->fl[1].desc = (struct rx_desc *)vaddrs[addridx];
 	addridx++;
 	/* do ULP last */
 	for (i = 1; i < ntxq ; i++, addridx++) {
-		q->txq[i],phys_addr = paddrs[addridx];
-		q->txq[i].desc = vaddrs[addridx];
+		q->txq[i].phys_addr = paddrs[addridx];
+		q->txq[i].desc = (struct tx_desc *)vaddrs[addridx];
 	}
 
-	if ((ret = alloc_sw_ring(sc, p->fl_size, &q->fl[0].sdesc)) != 0) {
+	if ((ret = alloc_sw_ring(p->fl_size, sizeof(struct rx_sw_desc), &q->fl[0].sdesc)) != 0) {
 		printf("error %d from alloc ring fl0\n", ret);
 		goto err;
 	}
 
-	if ((ret = alloc_sw_ring(sc, p->jumbo_size, sizeof(struct rx_sw_desc),  &q->fl[1].sdesc))) {
+	if ((ret = alloc_sw_ring(p->jumbo_size, sizeof(struct rx_sw_desc),  &q->fl[1].sdesc))) {
 		printf("error %d from alloc ring fl1\n", ret);
 		goto err;
 	}
@@ -1941,11 +1885,12 @@ t3_sge_alloc_qset(adapter_t *sc, struct sge_qset *qs, uint8_t id, int nports, in
 	}
 
 #ifdef TCP_OFFLOAD
-	TASK_INIT(&q->txq[TXQ_OFLD].qresume_task, 0, restart_offloadq, q);
+	/*
+   * XXX should really be able to share the appropriate tx taskq
+   */
+	GROUPTASK_INIT(&q->txq[TXQ_OFLD].qresume_task, 0, restart_offloadq, q);
 #endif
-	TASK_INIT(&q->txq[TXQ_CTRL].qresume_task, 0, restart_ctrlq, q);
-	TASK_INIT(&q->txq[TXQ_ETH].qreclaim_task, 0, sge_txq_reclaim_handler, q);
-	TASK_INIT(&q->txq[TXQ_OFLD].qreclaim_task, 0, sge_txq_reclaim_handler, q);
+	GROUPTASK_INIT(&q->txq[TXQ_CTRL].qresume_task, 0, restart_ctrlq, q);
 
 	q->fl[0].gen = q->fl[1].gen = 1;
 	q->fl[0].size = p->fl_size;
@@ -2028,7 +1973,6 @@ t3_sge_alloc_qset(adapter_t *sc, struct sge_qset *qs, uint8_t id, int nports, in
 err_unlock:
 	mtx_unlock_spin(&sc->sge.reg_lock);
 err:	
-	TXQ_LOCK(q);
 	t3_free_qset(sc, q);
 
 	return (ret);
@@ -2044,25 +1988,25 @@ t3_rx_eth(struct adapter *adap, if_rxd_info_t ri, void *data)
 {
 	struct cpl_rx_pkt *cpl = (struct cpl_rx_pkt *)((uint8_t *)data + ri->iri_pad);
 	struct port_info *pi = &adap->port[adap->rxpkt_map[cpl->iff]];
-	struct ifnet *ifp = pi->ifp;
-
+	struct ifnet *ifp = pi->hwifp;
 	if (cpl->vlan_valid) {
-		ri.iri_vtag = ntohs(cpl->vlan);
-		ri.iri_flags |= M_VLANTAG;
+		ri->iri_vtag = ntohs(cpl->vlan);
+		ri->iri_flags |= M_VLANTAG;
 	}
 
-	ri.iri_ifp = ifp;
-	ri.iri_pad += sizeof(*cpl);
+	ri->iri_ifp = ifp;
+	ri->iri_pad += sizeof(*cpl);
+	data = ((uint8_t *)data) + ri->iri_pad;
 	/*
 	 * adjust after conversion to mbuf chain
 	 */
 
 	if (!cpl->fragment && cpl->csum_valid && cpl->csum == 0xffff) {
-		struct ether_header *eh = mtod(m, void *);
+		struct ether_header *eh = data;
 		uint16_t eh_type;
 
 		if (eh->ether_type == htons(ETHERTYPE_VLAN)) {
-			struct ether_vlan_header *evh = mtod(m, void *);
+			struct ether_vlan_header *evh = data;
 
 			eh_type = evh->evl_proto;
 		} else
@@ -2113,7 +2057,7 @@ get_fragment(struct sge_qset *qs, if_rxd_info_t ri, caddr_t *data, struct rsp_de
 	prefetch(fl->sdesc[(cidx + 2) & mask].rxsd_cl);
 
 	ri->iri_len = len;
-	ri->iri_flidx = fl->idx
+	ri->iri_qidx = fl->idx;
 	ri->iri_next_offset = 0;
 	if ((sopeop == RSPQ_NSOP_NEOP) || (sopeop == RSPQ_SOP))
 		ri->iri_next_offset = 1;
@@ -2173,9 +2117,9 @@ check_ring_db(adapter_t *adap, struct sge_qset *qs,
 static int
 cxgb_isc_rxd_available(if_shared_ctx_t sctx, uint16_t qsidx, uint32_t cidx)
 {
-	struct adapter *adapter = DOWNCAST(sctx);
-	struct sge_qset *qs = adapter->qs[qsidx];
-	struct sge_rspq *rspq = qs->rspq;
+	struct port_info *pi = DOWNCAST(sctx);
+	struct sge_qset *qs = &pi->qs[qsidx];
+	struct sge_rspq *rspq = &qs->rspq;
 	struct rsp_desc *r;
 	int i, ncidx;
 
@@ -2183,7 +2127,7 @@ cxgb_isc_rxd_available(if_shared_ctx_t sctx, uint16_t qsidx, uint32_t cidx)
 	 * arbitrarily limit ourselves to polling 10 descriptors
 	 */
 	for (ncidx = cidx, i = 0; i < 10; i++) {
-		r = rspq->desc[ncidx];
+		r = &rspq->desc[ncidx];
 		if ((r->intr_gen & F_RSPD_GEN2) != rspq->gen)
 			break;
 		ncidx = (ncidx + 1) & (rspq->size - 1);
@@ -2209,13 +2153,14 @@ cxgb_isc_rxd_available(if_shared_ctx_t sctx, uint16_t qsidx, uint32_t cidx)
 static int
 cxgb_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 {
-	struct adapter *adapter = DOWNCAST(sctx);
-	struct sge_qset *qs = adapter->qs[ri->iri_qsidx];
+	struct port_info *pi = DOWNCAST(sctx);
+	struct adapter *sc = pi->adapter;
+	struct sge_qset *qs = &pi->qs[ri->iri_qsidx];
 	struct sge_rspq *rspq = &qs->rspq;
-	struct rsp_desc *r = &rspq->desc[ri->iri_cidx];
-	unsigned int sleeping = 0;
+	int cidx = ri->iri_cidx;
+	struct rsp_desc *r = &rspq->desc[cidx];
 	struct mbuf *m;
-	int eth, eop = 0;
+	int eth, eop = 0; 
 	uint32_t flags = ntohl(r->flags);
 	uint32_t rss_hash = be32toh(r->rss_hdr.rss_hash_val);
 	uint8_t opcode = r->rss_hdr.opcode;
@@ -2256,9 +2201,9 @@ cxgb_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 			return (ENOMEM);
 		}
 
-		get_imm_packet(adap, r, m);
+		get_imm_packet(r, m);
 		if (eth) {
-			t3_rx_eth(adap, ri, mtod(m, uint8_t *), 0);
+			t3_rx_eth(sc, ri, mtod(m, uint8_t *));
 			ri->iri_pad = 0;
 			ri->iri_m = m;
 		} else
@@ -2266,7 +2211,7 @@ cxgb_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 		eop = 1;
 		rspq->imm_data++;
 	} else if (r->len_cq) {
-		eop = get_fragment(ri, &data, r);
+		eop = get_fragment(qs, ri, &data, r);
 		ri->iri_pad = 2;
 	} else {
 		rspq->pure_rsps++;
@@ -2281,27 +2226,28 @@ skip:
 	if (!eth && eop) {
 		rspq->offload_pkts++;
 #ifdef TCP_OFFLOAD
-		adap->cpl_handler[opcode](qs, r, m);
+		sc->cpl_handler[opcode](qs, r, m);
 #else
 		m_freem(m);
 #endif
 	} else if (eth && eop) {
-		if (r->rss_hdr.hash_type && !adap->timestamp) {
+		if (r->rss_hdr.hash_type && !sc->timestamp) {
 			ri->iri_flags |= M_FLOWID;
 			ri->iri_flowid = rss_hash;
 		}
-		t3_rx_eth(adap, ri, data);
+		t3_rx_eth(sc, ri, data);
 	}
-	if (__predict_false(++cidx == rspq->size)) {
+	if (__predict_false((++cidx == rspq->size))) {
 		rspq->gen ^= 1;
 		cidx = 0;
 	}
 	rspq->cidx = cidx;
 
 	if (++rspq->credits >= 64) {
-		refill_rspq(adap, rspq, rspq->credits);
+		refill_rspq(sc, rspq, rspq->credits);
 		rspq->credits = 0;
 	}
+	return (0);
 }
 
 static void
@@ -2309,15 +2255,15 @@ cxgb_isc_rxd_refill(if_shared_ctx_t sctx, uint16_t qsidx, uint8_t flidx,
 					uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs,
 					uint8_t count)
 {
-	struct adapter *adapter = DOWNCAST(sctx);
-	struct sge_qset *qs = adapter->qs[qsidx];
-	struct sge_fl *fl = qs->fl[flidx];
+	struct port_info *pi = DOWNCAST(sctx);
+	struct sge_qset *qs = &pi->qs[qsidx];
+	struct sge_fl *fl = &qs->fl[flidx];
 	struct rx_desc *d;
 	int i, npidx;
 
 	for (npidx = pidx, i = 0; i < count; i++) {
 		fl->sdesc[npidx].rxsd_cl = vaddrs[i];
-		d = fl->desc[npidx];
+		d = &fl->desc[npidx];
 		d->addr_lo = htobe32(paddrs[i] & 0xffffffff);
 		d->addr_hi = htobe32(((uint64_t)paddrs[i] >>32) & 0xffffffff);
 		d->len_gen = htobe32(V_FLD_GEN1(fl->gen));
@@ -2333,37 +2279,19 @@ static void
 cxgb_isc_rxd_flush(if_shared_ctx_t sctx, uint16_t qsidx, uint8_t flidx,
 				   uint32_t pidx __unused)
 {
-	struct adapter *sc = DOWNCAST(sctx);
-	struct sge_qset *qs = adapter->qs[qsidx];
-	struct sge_fl *fl = qs->fl[flidx];
+	struct port_info *pi = DOWNCAST(sctx);
+	struct sge_qset *qs = &pi->qs[qsidx];
+	struct sge_fl *fl = &qs->fl[flidx];
 
-	if (qs->rspq->sleeping)
-		check_ring_db(sc, qs, sleeping);
+	if (qs->rspq.sleeping)
+		check_ring_db(pi->adapter, qs, qs->rspq.sleeping);
 
-	t3_write_reg(sc, A_SG_KDOORBELL, V_EGRCNTX(fl->cntxt_id));
+	mb();  /* commit Tx queue processed updates */
+	if (__predict_false(qs->txq_stopped > 1))
+		restart_tx(qs);
+
+	t3_write_reg(pi->adapter, A_SG_KDOORBELL, V_EGRCNTX(fl->cntxt_id));
 }
-
-/*
- * A helper function that processes responses and issues GTS.
- */
-static __inline int
-process_responses_gts(adapter_t *adap, struct sge_rspq *rq)
-{
-	int work;
-	static int last_holdoff = 0;
-	
-	work = process_responses(adap, rspq_to_qset(rq), -1);
-
-	if (cxgb_debug && (rq->next_holdoff != last_holdoff)) {
-		printf("next_holdoff=%d\n", rq->next_holdoff);
-		last_holdoff = rq->next_holdoff;
-	}
-	t3_write_reg(adap, A_SG_GTS, V_RSPQ(rq->cntxt_id) |
-	    V_NEWTIMER(rq->next_holdoff) | V_NEWINDEX(rq->cidx));
-	
-	return (work);
-}
-
 
 /*
  * Interrupt handler for legacy INTx interrupts for T3B-based cards.
@@ -2377,7 +2305,6 @@ t3b_intr(void *data)
 {
 	uint32_t i, map;
 	adapter_t *adap = data;
-	struct sge_rspq *q0 = &adap->sge.qs[0].rspq;
 	
 	t3_write_reg(adap, A_PL_CLI, 0);
 	map = t3_read_reg(adap, A_SG_DATA_INTR);
@@ -2388,14 +2315,12 @@ t3b_intr(void *data)
 	if (__predict_false(map & F_ERRINTR)) {
 		t3_write_reg(adap, A_PL_INT_ENABLE0, 0);
 		(void) t3_read_reg(adap, A_PL_INT_ENABLE0);
-		taskqueue_enqueue(adap->tq, &adap->slow_intr_task);
+		GROUPTASK_ENQUEUE(&adap->slow_intr_task);
 	}
 
-	mtx_lock(&q0->lock);
 	for_each_port(adap, i)
 	    if (map & (1 << i))
-			process_responses_gts(adap, &adap->sge.qs[i].rspq);
-	mtx_unlock(&q0->lock);
+			iflib_rx_intr_deferred(UPCAST(adap2pinfo(adap, i)), 0);
 }
 
 /*
@@ -2408,31 +2333,14 @@ void
 t3_intr_msi(void *data)
 {
 	adapter_t *adap = data;
-	struct sge_rspq *q0 = &adap->sge.qs[0].rspq;
-	int i, new_packets = 0;
-
-	mtx_lock(&q0->lock);
+	int i;
 
 	for_each_port(adap, i)
-	    if (process_responses_gts(adap, &adap->sge.qs[i].rspq)) 
-		    new_packets = 1;
-	mtx_unlock(&q0->lock);
-	if (new_packets == 0) {
-		t3_write_reg(adap, A_PL_INT_ENABLE0, 0);
-		(void) t3_read_reg(adap, A_PL_INT_ENABLE0);
-		taskqueue_enqueue(adap->tq, &adap->slow_intr_task);
-	}
-}
+	    iflib_rx_intr_deferred(UPCAST(adap2pinfo(adap, i)), 0);
 
-void
-t3_intr_msix(void *data)
-{
-	struct sge_qset *qs = data;
-	adapter_t *adap = qs->port->adapter;
-	struct sge_rspq *rspq = &qs->rspq;
-
-	if (process_responses_gts(adap, rspq) == 0)
-		rspq->unhandled_irqs++;
+	t3_write_reg(adap, A_PL_INT_ENABLE0, 0);
+	(void) t3_read_reg(adap, A_PL_INT_ENABLE0);
+	GROUPTASK_ENQUEUE(&adap->slow_intr_task);
 }
 
 #define QDUMP_SBUF_SIZE		32 * 400
@@ -2749,6 +2657,11 @@ static const char *txq_names[] =
 	"txq_ctrl"	
 };
 
+/*
+ * XXX Should really be able to assimilate this in to a higher layer
+ * but easier to just leave this as is for now
+ */
+
 static int
 sysctl_handle_macstat(SYSCTL_HANDLER_ARGS)
 {
@@ -2865,13 +2778,13 @@ t3_add_configured_sysctls(adapter_t *sc)
 			    CTLTYPE_STRING | CTLFLAG_RD, &qs->rspq,
 			    0, t3_dump_rspq, "A", "dump of the response queue");
 
+#if 0
 			SYSCTL_ADD_UQUAD(ctx, txqpoidlist, OID_AUTO, "dropped",
 			    CTLFLAG_RD, &qs->txq[TXQ_ETH].txq_mr->br_drops,
 			    "#tunneled packets dropped");
 			SYSCTL_ADD_UINT(ctx, txqpoidlist, OID_AUTO, "sendqlen",
 			    CTLFLAG_RD, &qs->txq[TXQ_ETH].sendq.qlen,
 			    0, "#tunneled packets waiting to be sent");
-#if 0			
 			SYSCTL_ADD_UINT(ctx, txqpoidlist, OID_AUTO, "queue_pidx",
 			    CTLFLAG_RD, (uint32_t *)(uintptr_t)&qs->txq[TXQ_ETH].txq_mr.br_prod,
 			    0, "#tunneled packets queue producer index");

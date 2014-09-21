@@ -254,13 +254,12 @@ queue_tid_release(struct toedev *tod, unsigned int tid)
 {
 	struct tom_data *td = t3_tomdata(tod);
 	void **p = &td->tid_maps.tid_tab[tid];
-	struct adapter *sc = tod->tod_softc;
 
 	mtx_lock(&td->tid_release_lock);
 	*p = td->tid_release_list;
 	td->tid_release_list = p;
 	if (!*p)
-		taskqueue_enqueue(sc->tq, &td->tid_release_task);
+		GROUPTASK_ENQUEUE(&td->tid_release_task);
 	mtx_unlock(&td->tid_release_lock);
 }
 
