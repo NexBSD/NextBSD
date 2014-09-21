@@ -135,20 +135,21 @@ static void     ixgbe_free_transmit_buffers(struct tx_ring *);
 static void     ixgbe_initialize_receive_units(struct adapter *);
 static void	ixgbe_setup_hw_rsc(struct rx_ring *);
 
-static void     ixgbe_if_rx_intr_enable(if_shared_ctx_t, uint32_t);
+static void     ixgbe_if_rx_intr_enable(if_shared_ctx_t, uint16_t);
 static void     ixgbe_if_intr_enable(if_shared_ctx_t);
 static void     ixgbe_if_intr_disable(if_shared_ctx_t);
 static void     ixgbe_update_stats_counters(struct adapter *);
-static int	ixgbe_isc_txd_credits_update(if_shared_ctx_t, uint16_t, uint32_t);
-static int	ixgbe_isc_rxd_pkt_get(if_shared_ctx_t, if_rxd_info_t);
 static void	ixgbe_rx_checksum(u32, if_rxd_info_t, u32);
 static void     ixgbe_if_promisc_set(if_shared_ctx_t, int);
 static int      ixgbe_if_mtu_set(if_shared_ctx_t, uint32_t);
 static void     ixgbe_if_multi_set(if_shared_ctx_t);
 static int		ixgbe_if_i2c_req(if_shared_ctx_t, struct ifi2creq *);
 static void     ixgbe_if_update_link_status(if_shared_ctx_t);
+
 static int      ixgbe_isc_txd_encap(if_shared_ctx_t, if_pkt_info_t);
 static void ixgbe_isc_txd_flush(if_shared_ctx_t, uint16_t, uint32_t);
+static int	ixgbe_isc_txd_credits_update(if_shared_ctx_t, uint16_t, uint32_t);
+static int	ixgbe_isc_rxd_pkt_get(if_shared_ctx_t, if_rxd_info_t);
 static void ixgbe_isc_rxd_refill(if_shared_ctx_t, uint16_t, uint8_t, uint32_t, uint64_t*, caddr_t *, uint8_t);
 static void ixgbe_isc_rxd_flush(if_shared_ctx_t, uint16_t, uint8_t, uint32_t);
 static int ixgbe_isc_rxd_available(if_shared_ctx_t, uint16_t, uint32_t);
@@ -969,7 +970,7 @@ ixgbe_if_init(if_shared_ctx_t sctx)
 */
 
 static void
-ixgbe_if_rx_intr_enable(if_shared_ctx_t sctx, uint32_t qid)
+ixgbe_if_rx_intr_enable(if_shared_ctx_t sctx, uint16_t qid)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct ixgbe_hw *hw = &adapter->hw;
@@ -2067,7 +2068,8 @@ ixgbe_if_queues_alloc(if_shared_ctx_t sctx)
 	struct ix_queue	*que;
 	struct tx_ring	*txr;
 	struct rx_ring	*rxr;
-	uint64_t vaddrs[2], paddrs[2];
+	uint64_t paddrs[2];
+	caddr_t vaddrs[2];
 	int error = IXGBE_SUCCESS;
 	int txconf = 0, rxconf = 0;
 

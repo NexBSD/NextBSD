@@ -216,8 +216,8 @@ static void	em_if_stop(if_shared_ctx_t);
 
 static void	em_if_intr_enable(if_shared_ctx_t);
 static void	em_if_intr_disable(if_shared_ctx_t);
-static void em_if_tx_intr_enable(if_shared_ctx_t, uint32_t);
-static void em_if_rx_intr_enable(if_shared_ctx_t, uint32_t);
+static void em_if_tx_intr_enable(if_shared_ctx_t, uint16_t);
+static void em_if_rx_intr_enable(if_shared_ctx_t, uint16_t);
 static void em_if_link_intr_enable(if_shared_ctx_t);
 
 static void	em_if_multi_set(if_shared_ctx_t);
@@ -1053,7 +1053,7 @@ em_irq_fast(void *arg)
  *
  **********************************************************************/
 static void
-em_if_tx_intr_enable(if_shared_ctx_t sctx, uint32_t txqid)
+em_if_tx_intr_enable(if_shared_ctx_t sctx, uint16_t txqid)
 {
 	struct adapter *adapter = DOWNCAST(sctx);
 	struct tx_ring *txr = &adapter->tx_rings[txqid];
@@ -1069,7 +1069,7 @@ em_if_tx_intr_enable(if_shared_ctx_t sctx, uint32_t txqid)
  **********************************************************************/
 
 static void
-em_if_rx_intr_enable(if_shared_ctx_t sctx, uint32_t rxqid)
+em_if_rx_intr_enable(if_shared_ctx_t sctx, uint16_t rxqid)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
 	struct rx_ring *rxr = &adapter->rx_rings[rxqid];
@@ -2187,7 +2187,8 @@ em_if_queues_alloc(if_shared_ctx_t sctx)
 	}
 	for (i = 0, txr = adapter->tx_rings, rxr = adapter->rx_rings;
 		 i < adapter->num_queues; i++, rxr++, txr++) {
-		uint64_t paddrs[2], vaddrs[2];
+		uint64_t paddrs[2];
+		caddr_t vaddrs[2];
 		txr->adapter = rxr->adapter = adapter;
 		rxr->me = txr->me = i;
 
