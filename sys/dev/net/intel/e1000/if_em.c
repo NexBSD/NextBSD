@@ -771,7 +771,6 @@ em_attach(device_t dev)
 	return (0);
 
 err_late:
-	iflib_qset_structures_free(sctx);
 	em_release_hw_control(adapter);
 	if (adapter->hwifp != (void *)NULL)
 		if_free(adapter->hwifp);

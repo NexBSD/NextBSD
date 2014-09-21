@@ -647,7 +647,6 @@ ixgbe_attach(device_t dev)
 	INIT_DEBUGOUT("ixgbe_attach: end");
 	return (0);
 err_late:
-	iflib_qset_structures_free(sctx);
 err_out:
 	if (adapter->hwifp != NULL)
 		if_free(adapter->hwifp);
@@ -2155,7 +2154,6 @@ rx_fail:
 tx_fail:
 	free(adapter->queues, M_DEVBUF);
 fail:
-	iflib_qset_structures_free(sctx);
 	return (error);
 }
 
