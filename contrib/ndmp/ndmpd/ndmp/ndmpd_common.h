@@ -45,7 +45,6 @@
 #define	_NDMP_COMMON_H
 
 #include <thread.h>
-#include <synch.h>
 #include "ndmpd_log.h"
 #include "ndmp.h"
 #include <unistd.h>
@@ -53,8 +52,11 @@
 #include <rpc/rpc.h>
 #include <sys/stat.h>
 #include <stdio.h>
-#include <bsm/adt.h>
-#include <bsm/adt_event.h>
+
+#include <adt.h>
+#include <adt_event.h>
+#undef mutex_init
+#define mutex_init(mp, a, b) zmutex_init((kmutex_t *)mp)
 
 
 #define	XDR_AND_SIZE(func) (bool_t(*)(XDR*, ...))xdr_##func, sizeof (func)
@@ -84,6 +86,7 @@ typedef struct ndmp_connection {
 	ushort_t conn_version;
 	void *conn_client_data;
 	mutex_t conn_lock;
+
 	adt_session_data_t *conn_ah;
 } ndmp_connection_t;
 

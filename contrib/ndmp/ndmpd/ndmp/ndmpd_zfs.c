@@ -41,7 +41,6 @@
 
 #include <sys/types.h>
 #include <sys/param.h>
-#include <sys/lwp.h>
 #include <sys/fs/zfs.h>
 #include <sys/mtio.h>
 #include <sys/time.h>

@@ -47,14 +47,15 @@
 #include <sys/stat.h>
 #include <sys/mnttab.h>
 #include <sys/mntent.h>
-#include <sys/mntio.h>
 #include <sys/statvfs.h>
 #include <sys/utsname.h>
+#if 0
 #include <sys/scsi/scsi.h>
+#endif
 #include <unistd.h>
 #include <sys/systeminfo.h>
-#include "ndmpd_common.h"
 #include "ndmpd.h"
+#include "ndmpd_common.h"
 
 static void simple_get_attrs(ulong_t *attributes);
 
@@ -120,7 +121,7 @@ ndmpd_config_get_host_info_v2(ndmp_connection_t *connection, void *body)
 	(void) uname(&uts);
 	reply.os_type = uts.sysname;
 	reply.os_vers = uts.release;
-
+#if 0
 	if (sysinfo(SI_HW_SERIAL, hostidstr, sizeof (hostidstr)) < 0) {
 		NDMP_LOG(LOG_DEBUG, "sysinfo error: %m.");
 		reply.error = NDMP_UNDEFINED_ERR;
@@ -132,8 +133,10 @@ ndmpd_config_get_host_info_v2(ndmp_connection_t *connection, void *body)
 	 */
 	hostid = strtoul(hostidstr, 0, 0);
 	(void) snprintf(hostidstr, sizeof (hostidstr), "%lx", hostid);
+#endif
+	hostid = gethostid();
+	snprintf(hostidstr, sizeof(hostidstr), "%lx", hostid);
 	reply.hostid = hostidstr;
-
 	auth_types[0] = NDMP_AUTH_TEXT;
 	reply.auth_type.auth_type_len = 1;
 	reply.auth_type.auth_type_val = auth_types;
@@ -304,18 +307,19 @@ ndmpd_config_get_host_info_v3(ndmp_connection_t *connection, void *body)
 	(void) uname(&uts);
 	reply.os_type = uts.sysname;
 	reply.os_vers = uts.release;
-
+#if 0
 	if (sysinfo(SI_HW_SERIAL, hostidstr, sizeof (hostidstr)) < 0) {
 
 		NDMP_LOG(LOG_DEBUG, "sysinfo error: %m.");
 		reply.error = NDMP_UNDEFINED_ERR;
 	}
-
+#endif
 	/*
 	 * Convert the hostid to hex. The returned string must match
 	 * the string returned by hostid(1).
 	 */
-	hostid = strtoul(hostidstr, 0, 0);
+	hostid = gethostid();
+	snprintf(hostidstr, sizeof(hostidstr), "%lx", hostid);
 	(void) snprintf(hostidstr, sizeof (hostidstr), "%lx", hostid);
 	reply.hostid = hostidstr;
 
@@ -536,7 +540,8 @@ ndmpd_config_get_fs_info_v3(ndmp_connection_t *connection, void *body)
 	int log_dev_len;
 	FILE *fp = NULL;
 	struct mnttab mt, *fs;
-	struct statvfs64 stat_buf;
+	struct statvfs stat_buf;
+	struct statfs *mntbuf;
 	ndmp_pval *envp, *save;
 
 	(void) memset((void*)&reply, 0, sizeof (reply));
@@ -548,13 +553,19 @@ ndmpd_config_get_fs_info_v3(ndmp_connection_t *connection, void *body)
 		goto send_reply;
 	}
 
+#if 0	
 	/* nothing was found, send an empty reply */
 	if (ioctl(fd, MNTIOC_NMNTS, &nmnt) != 0 || nmnt <= 0) {
 		(void) close(fd);
 		NDMP_LOG(LOG_ERR, "No file system found.");
 		goto send_reply;
 	}
-
+#endif
+	if ((nmnt = getmntinfo(&mntbuf, MNT_WAIT)) == 0) {
+		(void) close(fd);
+		NDMP_LOG(LOG_ERR, "No file system found.");
+		goto send_reply;
+	}
 	fp = fdopen(fd, "r");
 	if (!fp) {
 		(void) close(fd);
@@ -596,7 +607,7 @@ ndmpd_config_get_fs_info_v3(ndmp_connection_t *connection, void *body)
 		    fs->mnt_mountp);
 		fsip->invalid = 0;
 
-		if (statvfs64(fs->mnt_mountp, &stat_buf) < 0) {
+		if (statvfs(fs->mnt_mountp, &stat_buf) < 0) {
 			NDMP_LOG(LOG_DEBUG,
 			    "statvfs(%s) error.", fs->mnt_mountp);
 			fsip->fs_status =

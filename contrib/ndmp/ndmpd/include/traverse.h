@@ -282,7 +282,6 @@ extern int traverse_post(fs_traverse_t *);
 extern int traverse_pre(fs_traverse_t *);
 extern int traverse_level(fs_traverse_t *);
 #undef	getdents
-extern int getdents(int, struct dirent *, size_t);
 #ifdef __cplusplus
 }
 #endif

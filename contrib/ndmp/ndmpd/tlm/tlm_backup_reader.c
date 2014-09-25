@@ -45,9 +45,7 @@
 #include <archives.h>
 #include <tlm.h>
 #include <sys/fs/zfs.h>
-#include <sys/mkdev.h>
 #include <libzfs.h>
-#include <libcmdutils.h>
 #include <pwd.h>
 #include <grp.h>
 #include "tlm_proto.h"
@@ -153,7 +151,7 @@ output_acl_header(sec_attr_t *acl_info,
 {
 	long	actual_size;
 	tlm_tar_hdr_t *tar_hdr;
-	long	acl_size;
+	unsigned int	acl_size;
 
 	if ((acl_info == NULL) || (*acl_info->attr_info == '\0'))
 		return (0);
@@ -166,7 +164,7 @@ output_acl_header(sec_attr_t *acl_info,
 	tar_hdr->th_linkflag = LF_ACL;
 	acl_info->attr_type = UFSD_ACL;
 	(void) snprintf(acl_info->attr_len, sizeof (acl_info->attr_len),
-	    "%06o", strlen(acl_info->attr_info));
+					"%06o", (unsigned int) strlen(acl_info->attr_info));
 
 	acl_size = sizeof (*acl_info);
 	(void) strlcpy(tar_hdr->th_name, "UFSACL", TLM_NAME_SIZE);
@@ -295,7 +293,7 @@ output_xattr_header(char *fname, char *aname, int fd,
 	(void) snprintf(tar_hdr->th_gid, sizeof (tar_hdr->th_gid), "%06o ",
 	    attr->st_gid);
 	(void) snprintf(tar_hdr->th_mtime, sizeof (tar_hdr->th_mtime), "%011o ",
-	    attr->st_mtime);
+					(unsigned int)attr->st_mtime);
 	(void) strlcpy(tar_hdr->th_magic, TLM_MAGIC,
 	    sizeof (tar_hdr->th_magic));
 
@@ -314,17 +312,17 @@ output_xattr_header(char *fname, char *aname, int fd,
 	(void) snprintf(xhdr->h_version, sizeof (xhdr->h_version), "%s",
 	    XATTR_ARCH_VERS);
 	(void) snprintf(xhdr->h_size, sizeof (xhdr->h_size), "%0*d",
-	    sizeof (xhdr->h_size) - 1, hsize);
+					(int)sizeof (xhdr->h_size) - 1, hsize);
 	(void) snprintf(xhdr->h_component_len, sizeof (xhdr->h_component_len),
-	    "%0*d", sizeof (xhdr->h_component_len) - 1, comlen);
+					"%0*d", (int)sizeof (xhdr->h_component_len) - 1, comlen);
 	(void) snprintf(xhdr->h_link_component_len,
 	    sizeof (xhdr->h_link_component_len), "%0*d",
-	    sizeof (xhdr->h_link_component_len) - 1, 0);
+					(int)sizeof (xhdr->h_link_component_len) - 1, 0);
 
 	xbuf = (struct xattr_buf *)(((caddr_t)xhdr) +
 	    sizeof (struct xattr_hdr));
 	(void) snprintf(xbuf->h_namesz, sizeof (xbuf->h_namesz), "%0*d",
-	    sizeof (xbuf->h_namesz) - 1, namesz);
+					(int)sizeof (xbuf->h_namesz) - 1, namesz);
 
 	/* No support for links in extended attributes */
 	xbuf->h_typeflag = LF_NORMAL;
@@ -380,12 +378,13 @@ output_file_header(char *name, char *link,
 		uname = pwd->pw_name;
 	if ((grp = getgrgid(attr->st_gid)) != NULL)
 		gname = grp->gr_name;
-
+#ifdef notyet
+	
 	if ((ulong_t)(uid = attr->st_uid) > (ulong_t)OCTAL7CHAR)
 		uid = UID_NOBODY;
 	if ((ulong_t)(gid = attr->st_gid) > (ulong_t)OCTAL7CHAR)
 		gid = GID_NOBODY;
-
+#endif
 	nmlen = strlen(section_name);
 	if (nmlen >= NAMSIZ) {
 		/*
@@ -418,7 +417,7 @@ output_file_header(char *name, char *link,
 		(void) snprintf(tar_hdr->th_gname, sizeof (tar_hdr->th_gname),
 		    "%.31s", gname);
 		(void) snprintf(tar_hdr->th_mtime, sizeof (tar_hdr->th_mtime),
-		    "%011o ", attr->st_mtime);
+						"%011o ", (unsigned int)attr->st_mtime);
 		(void) strlcpy(tar_hdr->th_magic, TLM_MAGIC,
 		    sizeof (tar_hdr->th_magic));
 
@@ -461,7 +460,7 @@ output_file_header(char *name, char *link,
 		(void) snprintf(tar_hdr->th_gname, sizeof (tar_hdr->th_gname),
 		    "%.31s", gname);
 		(void) snprintf(tar_hdr->th_mtime, sizeof (tar_hdr->th_mtime),
-		    "%011o ", attr->st_mtime);
+						"%011o ", (unsigned int) attr->st_mtime);
 		(void) strlcpy(tar_hdr->th_magic, TLM_MAGIC,
 		    sizeof (tar_hdr->th_magic));
 
@@ -525,7 +524,7 @@ output_file_header(char *name, char *link,
 			tar_hdr->th_linkflag = LF_LINK;
 			(void) snprintf(tar_hdr->th_shared.th_hlink_ino,
 			    sizeof (tar_hdr->th_shared.th_hlink_ino),
-			    "%011llo ", attr->st_ino);
+							"%011lo ", (unsigned long)attr->st_ino);
 		} else {
 			tar_hdr->th_linkflag = *link == 0 ? LF_NORMAL :
 			    LF_SYMLINK;
@@ -534,7 +533,7 @@ output_file_header(char *name, char *link,
 		}
 	}
 	(void) snprintf(tar_hdr->th_size, sizeof (tar_hdr->th_size), "%011o ",
-	    (long)attr->st_size);
+					(unsigned int)attr->st_size);
 	(void) snprintf(tar_hdr->th_mode, sizeof (tar_hdr->th_mode), "%06o ",
 	    attr->st_mode & 07777);
 	(void) snprintf(tar_hdr->th_uid, sizeof (tar_hdr->th_uid), "%06o ",
@@ -546,7 +545,7 @@ output_file_header(char *name, char *link,
 	(void) snprintf(tar_hdr->th_gname, sizeof (tar_hdr->th_gname), "%.31s",
 	    gname);
 	(void) snprintf(tar_hdr->th_mtime, sizeof (tar_hdr->th_mtime), "%011o ",
-	    attr->st_mtime);
+					(unsigned int)attr->st_mtime);
 	(void) strlcpy(tar_hdr->th_magic, TLM_MAGIC,
 	    sizeof (tar_hdr->th_magic));
 
@@ -624,7 +623,7 @@ get_write_one_buf(char *buf, char *rec, int buf_size, int rec_size,
 	return (rec);
 }
 
-
+#ifdef notyet
 /*
  * tlm_output_xattr
  *
@@ -666,12 +665,13 @@ tlm_output_xattr(char  *dir, char *name, char *chkdir,
 		return (-TLM_NO_SCRATCH_SPACE);
 	}
 
+#ifdef notyet	
 	if (pathconf(fullname, _PC_XATTR_EXISTS) != 1 &&
 	    sysattr_support(fullname, _PC_SATTR_EXISTS) != 1) {
 		free(fullname);
 		return (0);
 	}
-
+#endif
 	attrname = ndmp_malloc(TLM_MAX_PATH_NAME);
 	snapname = ndmp_malloc(TLM_MAX_PATH_NAME);
 	if (attrname == NULL || snapname == NULL) {
@@ -832,7 +832,7 @@ err_out:
 	free(snapname);
 	return (rv);
 }
-
+#endif
 
 /*
  * tlm_output_file
@@ -1116,10 +1116,10 @@ tar_putfile(char *dir, char *name, char *chkdir,
 	    local_commands, job_stats, hardlink_q);
 	if (rv < 0)
 		return (rv);
-
+#ifdef notyet
 	rv = tlm_output_xattr(dir, name, chkdir, tlm_acls, commands,
 	    local_commands, job_stats);
-
+#endif
 	return (rv < 0 ? rv : 0);
 }
 
@@ -1287,7 +1287,7 @@ zfs_put_quota_cb(void *pp, const char *domain, uid_t rid, uint64_t space)
 	else
 		(void) snprintf(mpp->mp_name, ZFS_MAXNAMELEN, "%s@%s-%llu",
 		    typestr, domain, (longlong_t)rid);
-	(void) snprintf(mpp->mp_value, ZFS_MAXPROPLEN, "%llu", space);
+	(void) snprintf(mpp->mp_value, ZFS_MAXPROPLEN, "%lu", space);
 	(void) strlcpy(mpp->mp_source, mhp->nh_dataset, ZFS_MAXPROPLEN);
 
 	mhp->nh_count++;

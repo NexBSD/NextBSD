@@ -46,8 +46,8 @@
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <string.h>
-#include "ndmpd_common.h"
 #include "ndmpd.h"
+#include "ndmpd_common.h"
 
 static int ndmpd_data_error_send_v4(ndmpd_session_t *session,
     ndmp_data_halt_reason reason);

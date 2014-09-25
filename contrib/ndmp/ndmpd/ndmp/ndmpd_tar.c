@@ -50,7 +50,7 @@
 #include <cstack.h>
 #include <dirent.h>
 #include <traverse.h>
-#include "bitmap.h"
+#include "tlm_bitmap.h"
 #include "ndmpd.h"
 #include "tlm_buffers.h"
 
@@ -439,22 +439,24 @@ get_acl_info(char *name, tlm_acls_t *tlm_acls)
 	int erc;
 	acl_t *aclp = NULL;
 	char *acltp;
+	ssize_t size;
 
-	erc = lstat64(name, &tlm_acls->acl_attr);
+	erc = lstat(name, &tlm_acls->acl_attr);
 	if (erc != 0) {
 		NDMP_LOG(LOG_ERR, "Could not find file %s.", name);
 		erc = TLM_NO_SOURCE_FILE;
 		return (erc);
 	}
-	erc = acl_get(name, ACL_NO_TRIVIAL, &aclp);
-	if (erc != 0) {
+	aclp = acl_get_file(name, ACL_NO_TRIVIAL);
+	if (aclp == NULL) {
 		NDMP_LOG(LOG_DEBUG,
 		    "Could not read ACL for file [%s]", name);
 		erc = TLM_NO_SOURCE_FILE;
 		return (erc);
 	}
-	if (aclp && (acltp = acl_totext(aclp,
-	    ACL_APPEND_ID | ACL_SID_FMT | ACL_COMPACT_FMT)) != NULL) {
+	if (aclp && (acltp = acl_to_text_np(aclp, &size, 
+									 ACL_TEXT_APPEND_ID /* | ACL_SID_FMT | ACL_COMPACT_FMT, */
+									 )) != NULL) {
 		(void) strlcpy(tlm_acls->acl_info.attr_info, acltp,
 		    TLM_MAX_ACL_TXT);
 		acl_free(aclp);
@@ -477,6 +479,7 @@ get_dir_acl_info(char *dir, tlm_acls_t *tlm_acls, tlm_job_stats_t *js)
 	char	*fil;
 	acl_t	*aclp = NULL;
 	char 	*acltp;
+	ssize_t size;
 
 	checkpointed_dir = ndmp_malloc(TLM_MAX_PATH_NAME);
 	if (checkpointed_dir == NULL)
@@ -487,7 +490,7 @@ get_dir_acl_info(char *dir, tlm_acls_t *tlm_acls, tlm_job_stats_t *js)
 		    js->js_job_name);
 	else
 		fil = dir;
-	erc = lstat64(fil, &tlm_acls->acl_attr);
+	erc = lstat(fil, &tlm_acls->acl_attr);
 	if (erc != 0) {
 		NDMP_LOG(LOG_ERR, "Could not find directory %s.", dir);
 		free(checkpointed_dir);
@@ -505,7 +508,7 @@ get_dir_acl_info(char *dir, tlm_acls_t *tlm_acls, tlm_job_stats_t *js)
 	if (strcmp(root_dir, tlm_acls->acl_root_dir) != 0) {
 		struct stat64 attr;
 
-		erc = lstat64(root_dir, &attr);
+		erc = lstat(root_dir, &attr);
 		if (erc != 0) {
 			NDMP_LOG(LOG_ERR, "Cannot find root directory %s.",
 			    root_dir);
@@ -515,15 +518,15 @@ get_dir_acl_info(char *dir, tlm_acls_t *tlm_acls, tlm_job_stats_t *js)
 		(void) strlcpy(tlm_acls->acl_root_dir, root_dir,
 		    TLM_VOLNAME_MAX_LENGTH);
 	}
-	erc = acl_get(fil, ACL_NO_TRIVIAL, &aclp);
-	if (erc != 0) {
+	aclp = acl_get_file(fil, ACL_NO_TRIVIAL);
+	if (aclp == NULL) {
 		NDMP_LOG(LOG_DEBUG,
 		    "Could not read metadata for directory [%s]", dir);
 		free(checkpointed_dir);
 		return (-1);
 	}
-	if (aclp && (acltp = acl_totext(aclp,
-	    ACL_APPEND_ID | ACL_SID_FMT | ACL_COMPACT_FMT)) != NULL) {
+	if (aclp && (acltp = acl_to_text_np(aclp, &size,
+									 ACL_TEXT_APPEND_ID /* | ACL_SID_FMT | ACL_COMPACT_FMT */)) != NULL) {
 		(void) strlcpy(tlm_acls->acl_info.attr_info, acltp,
 		    TLM_MAX_ACL_TXT);
 		acl_free(aclp);

@@ -82,9 +82,9 @@ extern "C" {
  * The on-disk bitmap functions are the same except they start
  * with dbm_*
  */
-
+#if 0
 typedef	u_longlong_t u_quad_t;
-
+#endif
 /*
  * A vector for setting bits in the bitmap.
  *     - bmv_base: The starting bit number.

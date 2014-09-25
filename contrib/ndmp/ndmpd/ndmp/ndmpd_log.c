@@ -209,7 +209,7 @@ ndmp_log_open_file(boolean_t to_stderr, boolean_t override_debug)
 
 	/* Create the debug path if it doesn't exist */
 	lpath = ndmpd_get_prop(NDMP_DEBUG_PATH);
-	if ((lpath == NULL) || (*lpath == NULL))
+	if ((lpath == NULL) || (*lpath == 0))
 		lpath = LOG_PATH;
 
 	if (stat64(lpath, &st) < 0) {

@@ -59,7 +59,7 @@
 #include <string.h>
 #include "ndmpd.h"
 #include <dirent.h>
-#include <bitmap.h>
+#include <tlm_bitmap.h>
 
 
 #define	N_PATH_ENTRIES	1000

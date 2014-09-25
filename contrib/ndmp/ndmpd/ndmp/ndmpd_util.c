@@ -49,7 +49,7 @@
 #include <strings.h>
 #include <time.h>
 #include "ndmpd.h"
-#include <bitmap.h>
+#include <tlm_bitmap.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -60,8 +60,10 @@
 #include <netdb.h>
 #include <sys/filio.h>
 #include <sys/mtio.h>
+#if 0
 #include <sys/scsi/impl/uscsi.h>
 #include <sys/scsi/scsi.h>
+#endif
 #include "tlm.h"
 
 /*
@@ -140,7 +142,7 @@ LIST_HEAD(ol_head, open_list);
  */
 static struct ol_head ol_head;
 
-mutex_t ol_mutex = DEFAULTMUTEX;
+mutex_t ol_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 /*
@@ -1165,7 +1167,7 @@ is_buffer_erroneous(tlm_buffer_t *buf)
 
 	return (rv);
 }
-
+#if 0
 /*
  * ndmp_execute_cdb
  *
@@ -1290,7 +1292,7 @@ ndmp_execute_cdb(ndmpd_session_t *session, char *adapter_name, int sid, int lun,
 	if (request->flags == NDMP_SCSI_DATA_IN)
 		free(cmd.uscsi_bufaddr);
 }
-
+#endif
 
 /*
  * ndmp_stop_local_reader
@@ -2048,7 +2050,7 @@ cctime(time_t *t)
 	if (*t == (time_t)0)
 		return ("the epoch");
 
-	if ((bp = ctime_r(t, tbuf, BUFSIZ)) == NULL)
+	if ((bp = ctime_r(t, tbuf)) == NULL)
 		return ("");
 
 	cp = strchr(bp, '\n');
@@ -2395,7 +2397,7 @@ ndmp_get_nlp(void *cookie)
 	return (((ndmpd_session_t *)cookie)->ns_ndmp_lbr_params);
 }
 
-
+#if 0
 /*
  * is_tape_unit_ready
  *
@@ -2435,8 +2437,8 @@ is_tape_unit_ready(char *adptnm, int dev_id)
 	NDMP_LOG(LOG_DEBUG, "Unit didn't get ready");
 	return (FALSE);
 }
-
-
+#endif
+#if 0
 /*
  * scsi_test_unit_ready
  *
@@ -2472,7 +2474,7 @@ scsi_test_unit_ready(int dev_id)
 
 	return (retval);
 }
-
+#endif
 
 /*
  * ndmp_load_params
@@ -2505,8 +2507,9 @@ ndmp_load_params(void)
 
 	/* Get the value from ndmp SMF property. */
 	ndmp_dar_support = ndmpd_get_prop_yorn(NDMP_DAR_SUPPORT);
-
+#if 0
 	if ((ndmp_ver = atoi(ndmpd_get_prop(NDMP_VERSION_ENV))) == 0)
+#endif		
 		ndmp_ver = NDMPVER;
 }
 

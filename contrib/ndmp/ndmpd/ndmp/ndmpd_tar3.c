@@ -54,7 +54,8 @@
 #include <cstack.h>
 #include "ndmp.h"
 #include "ndmpd.h"
-#include <bitmap.h>
+#include "ndmpd_common.h"
+#include <tlm_bitmap.h>
 #include <traverse.h>
 
 
@@ -1651,6 +1652,7 @@ backup_dirv3(bk_param_v3_t *bpp, fst_node_t *pnp,
 	struct stat64 st;
 	char fullpath[TLM_MAX_PATH_NAME];
 	char *p;
+	ssize_t size;
 
 	if (!bpp || !pnp || !enp) {
 		NDMP_LOG(LOG_DEBUG, "Invalid argument");
@@ -1659,15 +1661,15 @@ backup_dirv3(bk_param_v3_t *bpp, fst_node_t *pnp,
 
 	NDMP_LOG(LOG_DEBUG, "d(%s)", bpp->bp_tmp);
 
-	if (lstat64(bpp->bp_tmp, &st) != 0)
+	if (lstat(bpp->bp_tmp, &st) != 0)
 		return (0);
 
-	if (acl_get(bpp->bp_tmp, ACL_NO_TRIVIAL, &aclp) != 0) {
+	if ((aclp = acl_get_file(bpp->bp_tmp, ACL_NO_TRIVIAL)) == NULL) {
 		NDMP_LOG(LOG_DEBUG, "acl_get error errno=%d", errno);
 		return (-1);
 	}
-	if (aclp && (acltp = acl_totext(aclp,
-	    ACL_APPEND_ID | ACL_SID_FMT | ACL_COMPACT_FMT)) != NULL) {
+	if (aclp && (acltp = acl_to_text_np(aclp, &size,
+	    ACL_TEXT_APPEND_ID /*| ACL_SID_FMT | ACL_COMPACT_FMT */)) != NULL) {
 		(void) strlcpy(bpp->bp_tlmacl->acl_info.attr_info,
 		    acltp, TLM_MAX_ACL_TXT);
 		acl_free(aclp);
@@ -1725,6 +1727,7 @@ backup_filev3(bk_param_v3_t *bpp, fst_node_t *pnp,
 	struct stat64 st;
 	char fullpath[TLM_MAX_PATH_NAME];
 	char *p;
+	ssize_t size;
 
 	if (!bpp || !pnp || !enp) {
 		NDMP_LOG(LOG_DEBUG, "Invalid argument");
@@ -1733,18 +1736,18 @@ backup_filev3(bk_param_v3_t *bpp, fst_node_t *pnp,
 
 	NDMP_LOG(LOG_DEBUG, "f(%s)", bpp->bp_tmp);
 
-	if (lstat64(bpp->bp_tmp, &st) != 0)
+	if (lstat(bpp->bp_tmp, &st) != 0)
 		return (0);
 
 	if (!S_ISLNK(bpp->bp_tlmacl->acl_attr.st_mode)) {
-		if (acl_get(bpp->bp_tmp, ACL_NO_TRIVIAL, &aclp) != 0) {
+		if ((aclp = acl_get_file(bpp->bp_tmp, ACL_NO_TRIVIAL)) == NULL) {
 			NDMP_LOG(LOG_DEBUG, "acl_get error");
 			return (-1);
 		}
 
 		if (aclp &&
-		    (acltp = acl_totext(aclp,
-		    ACL_APPEND_ID | ACL_SID_FMT | ACL_COMPACT_FMT)) != NULL) {
+		    (acltp = acl_to_text_np(aclp, &size,
+									ACL_TEXT_APPEND_ID /*| ACL_SID_FMT | ACL_COMPACT_FMT*/)) != NULL) {
 			(void) strlcpy(bpp->bp_tlmacl->acl_info.attr_info,
 			    acltp, TLM_MAX_ACL_TXT);
 			acl_free(aclp);
@@ -1999,19 +2002,20 @@ int iscreated(ndmp_lbr_params_t *nlp, char *name, tlm_acls_t *tacl,
 	int ret;
 	acl_t *aclp = NULL;
 	char *acltp;
+	ssize_t size;
 
 	NDMP_LOG(LOG_DEBUG, "flags %x", nlp->nlp_flags);
 	if (NLP_INCLMTIME(nlp) == FALSE)
 		return (0);
 
-	ret = acl_get(name, ACL_NO_TRIVIAL, &aclp);
-	if (ret != 0) {
+	aclp = acl_get_file(name, ACL_NO_TRIVIAL);
+	if (aclp == NULL) {
 		NDMP_LOG(LOG_DEBUG,
-		    "Error getting the acl information: err %d", ret);
+		    "Error getting the acl information: err %d", errno);
 		return (0);
 	}
-	if (aclp && (acltp = acl_totext(aclp,
-	    ACL_APPEND_ID | ACL_SID_FMT | ACL_COMPACT_FMT)) != NULL) {
+	if (aclp && (acltp = acl_to_text_np(aclp, &size,
+	    ACL_TEXT_APPEND_ID /*| ACL_SID_FMT | ACL_COMPACT_FMT*/)) != NULL) {
 		(void) strlcpy(tacl->acl_info.attr_info, acltp,
 		    TLM_MAX_ACL_TXT);
 		acl_free(aclp);
@@ -2456,7 +2460,7 @@ tar_backup_v3(ndmpd_session_t *session, ndmpd_module_params_t *params,
 		nlp->nlp_jstat->js_stop_time = time(NULL);
 
 		(void) snprintf(info, sizeof (info),
-		    "Runtime [%s] %llu bytes (%llu): %d seconds\n",
+		    "Runtime [%s] %llu bytes (%llu): %ld seconds\n",
 		    nlp->nlp_backup_path,
 		    session->ns_data.dd_module.dm_stats.ms_bytes_processed,
 		    session->ns_data.dd_module.dm_stats.ms_bytes_processed,

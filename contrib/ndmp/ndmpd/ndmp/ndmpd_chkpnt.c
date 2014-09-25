@@ -115,7 +115,7 @@ ndmp_has_backup_snapshot(char *volname, char *jobname)
 	(void) snprintf(chname, ZFS_MAXNAMELEN, "@%s", jobname);
 	snp.snp_name = chname;
 
-	(void) zfs_iter_snapshots(zhp, ndmp_has_backup, &snp);
+	(void) zfs_iter_snapshots(zhp, FALSE, ndmp_has_backup, &snp);
 	zfs_close(zhp);
 	(void) mutex_unlock(&zlib_mtx);
 

@@ -58,7 +58,7 @@ static void ndmp_door_server(void *cookie, char *ptr, size_t size,
 /*
  * Statistics used in ndmpstat command
  */
-ndmp_stat_t ndstat;
+extern ndmp_stat_t ndstat;
 
 int
 ndmp_door_init(void)

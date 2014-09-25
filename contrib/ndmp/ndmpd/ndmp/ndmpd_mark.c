@@ -43,7 +43,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include "ndmpd.h"
-#include <bitmap.h>
+#include <tlm_bitmap.h>
 #include <traverse.h>
 #include <limits.h>
 #include <stdio.h>

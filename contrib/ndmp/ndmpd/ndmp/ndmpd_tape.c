@@ -46,8 +46,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include "ndmpd_common.h"
 #include "ndmpd.h"
+#include "ndmpd_common.h"
 
 static void tape_open_send_reply(ndmp_connection_t *connection, int err);
 static void unbuffered_read(ndmpd_session_t *session, char *buf, long wanted,

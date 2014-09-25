@@ -238,6 +238,7 @@ ndmp_handler_t ndmp_msghdl_tab[] = {
 			}
 		}
 	},
+#ifdef notyet
 	{
 		/* SCSI - 0x200 */
 		7,
@@ -385,6 +386,7 @@ ndmp_handler_t ndmp_msghdl_tab[] = {
 			}
 		}
 	},
+#endif
 	{
 		/* DATA - 0x400 */
 		12,

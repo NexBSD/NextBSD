@@ -52,8 +52,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include "ndmpd_common.h"
 #include "ndmpd.h"
+#include "ndmpd_common.h"
 #include <sys/mtio.h>
 
 /*
@@ -98,6 +98,14 @@ int ndmp_max_mover_recsize = MAX_MOVER_RECSIZE; /* patchable */
 
 #define	TAPE_READ_ERR		-1
 #define	TAPE_NO_WRITER_ERR	-2
+
+/*
+ * XXX just to get us to build
+ */
+#define fm_dance(x)
+#define tape_is_at_bof(x) 0
+#define tape_is_at_bot(x) 0
+
 
 /*
  * Set non-blocking mode for socket.
@@ -3849,7 +3857,6 @@ mover_tape_read_v3(ndmpd_session_t *session, char *data)
 	return (session->ns_mover.md_record_size);
 }
 
-
 /*
  * mover_data_write_v3
  *
@@ -4201,7 +4208,7 @@ mover_connect_sock(ndmpd_session_t *session, ndmp_mover_mode mode,
 	return (NDMP_NO_ERR);
 }
 
-
+#if 0
 /*
  * ndmpd_local_read_v3
  *
@@ -4373,3 +4380,4 @@ ndmpd_local_read_v3(ndmpd_session_t *session, char *data, ulong_t length)
 
 	return (0);
 }
+#endif

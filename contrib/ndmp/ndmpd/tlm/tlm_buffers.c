@@ -47,6 +47,8 @@
 #include <tlm.h>
 #include "tlm_proto.h"
 
+#undef mutex_init
+#define mutex_init(mp, b, c) zmutex_init((kmutex_t *)(mp))
 
 /*
  * tlm_allocate_buffers

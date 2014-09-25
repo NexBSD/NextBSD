@@ -44,12 +44,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
-#include "ndmpd_common.h"
 #include "ndmpd.h"
+#include "ndmpd_common.h"
 #include <string.h>
+#if 0
 #include <sys/scsi/impl/uscsi.h>
 #include <sys/scsi/scsi.h>
-
+#endif
 static void scsi_open_send_reply(ndmp_connection_t *connection, int err);
 static void common_open(ndmp_connection_t *connection, char *devname);
 static void common_set_target(ndmp_connection_t *connection, char *device,
@@ -202,7 +203,7 @@ ndmpd_scsi_set_target_v2(ndmp_connection_t *connection, void *body)
 	    request->target_lun);
 }
 
-
+#ifdef notyet
 /*
  * ndmpd_scsi_reset_device_v2
  *
@@ -243,7 +244,7 @@ ndmpd_scsi_reset_device_v2(ndmp_connection_t *connection, void *body)
 	ndmp_send_reply(connection, (void *) &reply,
 	    "sending scsi_reset_device reply");
 }
-
+#endif
 
 /*
  * ndmpd_scsi_reset_bus_v2

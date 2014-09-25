@@ -44,7 +44,6 @@
 #include <time.h>
 #include <sys/types.h>
 #include <sys/acl.h>
-#include <sys/mkdev.h>
 #include <utime.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -56,6 +55,8 @@
 #include <grp.h>
 #include <ndmpd_prop.h>
 #include "tlm_proto.h"
+
+#include <sys/acl.h>
 
 
 #define	PM_EXACT_OR_CHILD(m)	((m) == PM_EXACT || (m) == PM_CHILD)
@@ -72,14 +73,16 @@ static int restore_file(int *fp,
     boolean_t want_this_file,
     tlm_cmd_t *,
     tlm_job_stats_t *,
-    long *);
+						long *);
+#ifdef notyet
 static long restore_xattr_hdr(int *fp,
     char *name,
     char *fname,
     long size,
     tlm_acls_t *acls,
     tlm_cmd_t *local_commands,
-    tlm_job_stats_t *job_stats);
+							  tlm_job_stats_t *job_stats);
+#endif
 static int get_long_name(int lib,
     int drv,
     long recsize,
@@ -659,7 +662,7 @@ tar_getdir(tlm_commands_t *commands,
 			}
 
 			if (nmp)
-				(void) strlcpy(parentlnk, nmp, strlen(nmp) + 1);
+				(void) strlcpy(parentlnk, nmp, strlen(parentlnk) + 1);
 
 			/*
 			 * For a hardlink, even if it's not asked to be
@@ -793,6 +796,7 @@ tar_getdir(tlm_commands_t *commands,
 				is_long_name = FALSE;
 			}
 			break;
+#ifdef notyet			
 		case LF_XATTR:
 			file_name = (*longname == 0) ? thname_buf :
 			    longname;
@@ -802,6 +806,7 @@ tar_getdir(tlm_commands_t *commands,
 			    job_stats);
 
 			break;
+#endif			
 		case LF_SYMLINK:
 			file_name = (*longname == 0) ? thname_buf :
 			    longname;
@@ -840,7 +845,7 @@ tar_getdir(tlm_commands_t *commands,
 				nmp = rs_new_name(rnp, name, pos, file_name);
 				if (nmp && mchtype != PM_PARENT) {
 					(void) strlcpy(parentlnk, nmp,
-					    strlen(nmp));
+					    strlen(parentlnk));
 					erc = create_directory(nmp, job_stats);
 					if (ERROR_IS_FATAL(erc)) {
 						rv = erc;
@@ -1102,7 +1107,7 @@ make_dirs(char *dir)
 		if (*cp == '\0' || *cp == '/') {
 			c = *cp;
 			*cp = '\0';
-			if (lstat64(dir, &st) < 0)
+			if (lstat(dir, &st) < 0)
 				if (mkdir(dir, 0777) < 0) {
 					NDMP_LOG(LOG_DEBUG, "Error %d"
 					    " creating directory %s",
@@ -1136,7 +1141,7 @@ mkbasedir(char *path)
 	cp = strrchr(path, '/');
 	if (cp)
 		*cp = '\0';
-	rv = lstat64(path, &st);
+	rv = lstat(path, &st);
 	if (rv < 0)	/* need new directories */
 		rv = make_dirs(path);
 	if (cp)
@@ -1377,7 +1382,7 @@ get_read_one_buf(char *rec, int actual_size, int size, int *error,
 	return (rec);
 }
 
-
+#ifdef notyet
 /*
  * read the extended attribute header and write
  * it to the file
@@ -1518,7 +1523,7 @@ restore_xattr_hdr(int *fp,
 	}
 	return (0);
 }
-
+#endif
 /*
  * Match the name with the list
  */
@@ -2019,6 +2024,7 @@ load_acl_info(int lib,
 	return (file_size - nread);
 }
 
+#if 0
 static int
 ndmp_set_eprivs_least(void)
 {
@@ -2074,6 +2080,7 @@ ndmp_set_eprivs_all(void)
 	priv_freeset(priv_set);
 	return (0);
 }
+#endif
 
 /*
  * Set the standard attributes of the file
@@ -2126,12 +2133,14 @@ set_attr(char *name, tlm_acls_t *acls)
 		 * change setuid bit for 'root' owned files. If fails, just
 		 * send error to log file and proceed.
 		 */
+#ifdef notyet		
 		if (ndmp_set_eprivs_all()) {
 			NDMP_LOG(LOG_ERR,
 			    "Could not set effective privileges to 'all'.");
 		} else {
 			priv_all = TRUE;
 		}
+#endif		
 	}
 
 	if (!S_ISLNK(st->st_mode)) {
@@ -2147,6 +2156,7 @@ set_attr(char *name, tlm_acls_t *acls)
 		(void) utime(name, &tbuf);
 	}
 
+#ifdef notyet	
 	if (priv_all == TRUE) {
 		/*
 		 * Give up the 'all' privileges for effective sets and go back
@@ -2157,7 +2167,7 @@ set_attr(char *name, tlm_acls_t *acls)
 			NDMP_LOG(LOG_ERR,
 			    "Could not set least required privileges.");
 	}
-
+#endif
 	return (erc);
 }
 
@@ -2187,13 +2197,13 @@ set_acl(char *name, tlm_acls_t *acls)
 		return (erc);
 	}
 
-	erc = acl_fromtext(acls->acl_info.attr_info, &aclp);
-	if (erc != 0) {
+	aclp = acl_from_text(acls->acl_info.attr_info);
+	if (aclp == NULL) {
 		NDMP_LOG(LOG_DEBUG,
-		    "TAPE RESTORE> acl_fromtext errno %d", erc);
+		    "TAPE RESTORE> acl_fromtext errno %d", errno);
 	}
 	if (aclp) {
-		erc = acl_set(name, aclp);
+		erc = acl_set_file(name, ACL_TYPE_DEFAULT, aclp);
 		if (erc < 0) {
 			erc = errno;
 			NDMP_LOG(LOG_DEBUG,

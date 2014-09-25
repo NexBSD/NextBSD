@@ -50,14 +50,20 @@
 #include <sys/mnttab.h>
 #include <sys/mntent.h>
 #include <sys/statvfs.h>
+#ifdef notyet
 #include <sys/scsi/impl/uscsi.h>
 #include <sys/scsi/scsi.h>
 #include <sys/mtio.h>
+#endif
 #include <thread.h>
 #include <synch.h>
 #include <sys/mutex.h>
 #include <sys/sysmacros.h>
+#if 0
 #include <sys/mkdev.h>
+#endif
+#undef mutex_init
+#define mutex_init(mp, b, c)         zmutex_init((kmutex_t *)(mp))
 
 /*
  * Tar archiving ops vector
@@ -343,7 +349,7 @@ tlm_vfy_tar_checksum(tlm_tar_hdr_t *tar_hdr)
 
 	return ((sum == chksum) ? 1 : -1);
 }
-
+#ifdef notyet
 /*
  * get internal scsi_sasd entry for this tape drive
  */
@@ -403,7 +409,7 @@ tlm_get_tape_name(int lib, int drv)
 
 	return ("");
 }
-
+#endif /* notyet */
 /*
  * create the IPC area between the reader and writer
  */
@@ -1234,32 +1240,20 @@ chkpnt_creationtime_bypattern(char *volname, char *pattern, time_t *tp)
 int
 get_zfsvolname(char *volname, int len, char *path)
 {
-	struct stat64 stbuf;
-	struct extmnttab ent;
+	struct statfs stbuf;
 	FILE *mntfp;
 	int rv;
 
 	*volname = '\0';
-	if (stat64(path, &stbuf) != 0) {
+	if (statfs(path, &stbuf) != 0) {
 		return (-1);
 	}
 
-	if ((mntfp = fopen(MNTTAB, "r")) == NULL) {
-		return (-1);
-	}
-	while ((rv = getextmntent(mntfp, &ent, 0)) == 0) {
-		if (makedevice(ent.mnt_major, ent.mnt_minor) ==
-		    stbuf.st_dev)
-			break;
-	}
-
-	if (rv == 0 &&
-	    strcmp(ent.mnt_fstype, MNTTYPE_ZFS) == 0)
-		(void) strlcpy(volname, ent.mnt_special, len);
+	if (strcmp(stbuf.f_fstypename, MNTTYPE_ZFS) == 0)
+		(void) strlcpy(volname, stbuf.f_mntfromname, len);
 	else
 		rv = -1;
 
-	(void) fclose(mntfp);
 	return (rv);
 }
 

@@ -544,7 +544,11 @@ ndmpd_api_read_v3(void *client_data, char *data, ulong_t length)
 	 * Read the data from the data connection if the mover is remote.
 	 */
 	if (session->ns_data.dd_data_addr.addr_type == NDMP_ADDR_LOCAL)
+#ifdef notyet		
 		return (ndmpd_local_read_v3(session, data, length));
+#else
+	return (ENOTSUP);
+#endif
 	else
 		return (ndmpd_remote_read_v3(session, data, length));
 }
@@ -859,7 +863,7 @@ ndmpd_api_find_env(void *cookie, char *name)
 
 	envp = session->ns_data.dd_env;
 	for (i = 0; envp && i < session->ns_data.dd_env_len; envp++, i++)
-		if (strcmp(name, envp->name) == NULL)
+		if (strcmp(name, envp->name) == 0)
 			return (envp);
 
 	return (NULL);

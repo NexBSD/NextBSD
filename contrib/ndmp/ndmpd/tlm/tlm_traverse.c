@@ -202,7 +202,7 @@ new_tsp(char *path)
 int
 fs_getstat(char *path, fs_fhandle_t *fh, struct stat64 *st)
 {
-	if (lstat64(path, st) == -1)
+	if (lstat(path, st) == -1)
 		return (errno);
 
 	fh->fh_fid = st->st_ino;
@@ -227,13 +227,14 @@ fs_getdents(int fildes, struct dirent *buf, size_t *nbyte,
 	char file_path[PATH_MAX + 1];
 	fs_fhandle_t fh;
 	struct stat64 st;
+	long basep;
 	char *p;
 	int len;
 	int rv;
 
 	if (*nbyte == 0) {
 		(void) memset((char *)buf, 0, MAX_DENT_BUF_SIZE);
-		*nbyte = rv = getdents(fildes, buf, darg->da_size);
+		*nbyte = rv = getdirentries(fildes, (char *)buf, darg->da_size, &basep);
 		*cookie = 0LL;
 
 		if (rv <= 0)
@@ -245,7 +246,7 @@ fs_getdents(int fildes, struct dirent *buf, size_t *nbyte,
 	do {
 		/* LINTED improper alignment */
 		ptr = (struct dirent *)p;
-		*dpos =  ptr->d_off;
+		*dpos =  basep;
 
 		if (rootfs_dot_or_dotdot(ptr->d_name))
 			goto skip_entry;
@@ -254,7 +255,7 @@ fs_getdents(int fildes, struct dirent *buf, size_t *nbyte,
 		(void) strlcat(file_path, ptr->d_name, PATH_MAX + 1);
 		(void) memset(&fh, 0, sizeof (fs_fhandle_t));
 
-		if (lstat64(file_path, &st) != 0) {
+		if (lstat(file_path, &st) != 0) {
 			rv = -1;
 			break;
 		}

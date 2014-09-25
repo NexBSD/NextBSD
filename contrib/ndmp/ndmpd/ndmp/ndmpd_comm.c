@@ -50,7 +50,9 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
 #include <libinetutil.h>
+
 #include "ndmpd.h"
 #include "ndmpd_common.h"
 
@@ -91,10 +93,10 @@ static ndmpd_file_handler_func_t connection_file_handler;
 extern ndmp_handler_t ndmp_msghdl_tab[];
 
 static int ndmp_readit(void *connection_handle,
-    caddr_t buf,
+    void *buf,
     int len);
 static int ndmp_writeit(void *connection_handle,
-    caddr_t buf,
+    void *buf,
     int len);
 static int ndmp_recv_msg(ndmp_connection_t *connection);
 static int ndmp_process_messages(ndmp_connection_t *connection,
@@ -344,6 +346,7 @@ ndmpd_worker(void *ptarg)
 		exit(1);
 	}
 
+#ifdef notyet	
 	/* initialize auditing session */
 	if (adt_start_session(&connection->conn_ah, NULL, 0) != 0) {
 		free(argp);
@@ -355,7 +358,7 @@ ndmpd_worker(void *ptarg)
 	(void) adt_end_session(connection->conn_ah);
 	ndmp_destroy_connection(connection);
 	NS_DEC(trun);
-
+#endif
 	free(argp);
 	return (NULL);
 }
@@ -960,7 +963,7 @@ connection_file_handler(void *cookie, int fd, ulong_t mode)
  *   -1 - error.
  */
 static int
-ndmp_readit(void *connection_handle, caddr_t buf, int len)
+ndmp_readit(void *connection_handle, void *buf, int len)
 {
 	ndmp_connection_t *connection = (ndmp_connection_t *)connection_handle;
 
@@ -988,7 +991,7 @@ ndmp_readit(void *connection_handle, caddr_t buf, int len)
  *   -1 - error.
  */
 static int
-ndmp_writeit(void *connection_handle, caddr_t buf, int len)
+ndmp_writeit(void *connection_handle, void *buf, int len)
 {
 	ndmp_connection_t *connection = (ndmp_connection_t *)connection_handle;
 	register int n;
@@ -1485,6 +1488,7 @@ gethostaddr(void)
 char *
 get_default_nic_addr(void)
 {
+#ifdef notyet
 	struct ifaddrlist *al = NULL;
 	char errmsg[ERRBUFSIZE];
 	struct in_addr addr;
@@ -1499,6 +1503,9 @@ get_default_nic_addr(void)
 	free(al);
 
 	return (inet_ntoa(IN_ADDR(addr.s_addr)));
+#endif
+	abort();
+	return (NULL);
 }
 
 
@@ -1512,6 +1519,7 @@ void
 ndmpd_audit_backup(ndmp_connection_t *conn,
     char *path, int dest, char *local_path, int result)
 {
+#ifdef notyet
 	adt_event_data_t *event;
 
 	if ((event = adt_alloc_event(conn->conn_ah, ADT_ndmp_backup)) == NULL) {
@@ -1535,6 +1543,7 @@ ndmpd_audit_backup(ndmp_connection_t *conn,
 	}
 
 	adt_free_event(event);
+#endif
 }
 
 
@@ -1548,6 +1557,7 @@ void
 ndmpd_audit_restore(ndmp_connection_t *conn,
     char *path, int dest, char *local_path, int result)
 {
+#ifdef notyet
 	adt_event_data_t *event;
 
 	if ((event = adt_alloc_event(conn->conn_ah,
@@ -1572,6 +1582,7 @@ ndmpd_audit_restore(ndmp_connection_t *conn,
 	}
 
 	adt_free_event(event);
+#endif	
 }
 
 
@@ -1584,6 +1595,7 @@ ndmpd_audit_restore(ndmp_connection_t *conn,
 void
 ndmpd_audit_connect(ndmp_connection_t *conn, int result)
 {
+#if 0
 	adt_event_data_t *event;
 	adt_termid_t *termid;
 
@@ -1615,6 +1627,7 @@ ndmpd_audit_connect(ndmp_connection_t *conn, int result)
 	}
 
 	adt_free_event(event);
+#endif	
 }
 
 
@@ -1627,6 +1640,7 @@ ndmpd_audit_connect(ndmp_connection_t *conn, int result)
 void
 ndmpd_audit_disconnect(ndmp_connection_t *conn)
 {
+#if 0
 	adt_event_data_t *event;
 
 	if ((event = adt_alloc_event(conn->conn_ah,
@@ -1638,7 +1652,9 @@ ndmpd_audit_disconnect(ndmp_connection_t *conn)
 		NDMP_LOG(LOG_ERR, "Audit failure: %m.");
 
 	adt_free_event(event);
+#endif
 }
+
 
 void *
 ndmp_malloc(size_t size)

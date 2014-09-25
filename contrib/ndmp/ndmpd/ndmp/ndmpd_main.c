@@ -45,7 +45,9 @@
 #include <libintl.h>
 #include <sys/wait.h>
 #include <zone.h>
+#if 0
 #include <tsol/label.h>
+#endif
 #include <dlfcn.h>
 #include "ndmpd.h"
 #include "ndmpd_common.h"
@@ -63,7 +65,7 @@ typedef struct ndmpd {
 } ndmpd_t;
 
 ndmpd_t	ndmpd;
-
+ndmp_stat_t ndstat;
 
 /*
  * Load and initialize the plug-in module
@@ -121,6 +123,7 @@ mod_fini()
 static void
 set_privileges(void)
 {
+#if 0
 	priv_set_t *pset = priv_allocset();
 
 	/*
@@ -144,12 +147,12 @@ set_privileges(void)
 		(void) priv_addset(pset, PRIV_SYS_MOUNT);
 		(void) priv_addset(pset, PRIV_SYS_CONFIG);
 	}
-
 	if (pset == NULL || setppriv(PRIV_SET, PRIV_EFFECTIVE, pset) != 0) {
 		(void) fprintf(stderr,
 		    "Failed to set least required privileges to the service\n");
 	}
 	priv_freeset(pset);
+#endif
 }
 
 static void
@@ -204,29 +207,31 @@ main(int argc, char *argv[])
 	void *arg = NULL;
 	boolean_t run_in_foreground = B_FALSE;
 	boolean_t override_debug = B_FALSE;
+	pthread_t thread;
 
 	/*
 	 * Check for existing ndmpd door server (make sure ndmpd is not already
 	 * running)
 	 */
+#if 0	
 	if (ndmp_door_check()) {
 		/* ndmpd is already running, exit. */
 		(void) fprintf(stderr, "ndmpd is already running.\n");
 		return (0);
 	}
-
+#endif
 	/* Global zone check */
 	if (getzoneid() != GLOBAL_ZONEID) {
 		(void) fprintf(stderr, "Non-global zone not supported.\n");
 		exit(SMF_EXIT_ERR_FATAL);
 	}
-
+#if 0
 	/* Trusted Solaris check */
 	if (is_system_labeled()) {
 		(void) fprintf(stderr, "Trusted Solaris not supported.\n");
 		exit(SMF_EXIT_ERR_FATAL);
 	}
-
+#endif
 	/* load SMF configuration */
 	if (ndmpd_load_prop()) {
 		(void) fprintf(stderr,
@@ -295,7 +300,7 @@ main(int argc, char *argv[])
 		NDMP_LOG(LOG_ERR, "Failed to initialize ZFS library.");
 		exit(SMF_EXIT_ERR_CONFIG);
 	}
-
+#ifdef notyet
 	/* initialize and start the door server */
 	if (ndmp_door_init()) {
 		NDMP_LOG(LOG_ERR, "Can not start ndmpd door server.");
@@ -306,13 +311,16 @@ main(int argc, char *argv[])
 		NDMP_LOG(LOG_ERR, "Failed to initialize tape manager.");
 		exit(SMF_EXIT_ERR_CONFIG);
 	}
-
+#endif
 	/*
 	 * Prior to this point, we are single-threaded. We will be
 	 * multi-threaded from this point on.
 	 */
-	(void) pthread_create(NULL, NULL, (funct_t)ndmpd_main,
-	    (void *)&arg);
+	if (pthread_create(&thread, NULL, (funct_t)ndmpd_main,
+					   (void *)&arg)) {
+		printf("pthread_create failed %s\n", strerror(errno));
+	}
+		
 
 	while (!ndmpd.s_shutdown_flag) {
 		(void) sigsuspend(&set);
@@ -346,7 +354,9 @@ main(int argc, char *argv[])
 	(void) mutex_destroy(&ndmpd_zfs_fd_lock);
 	libzfs_fini(zlibh);
 	mod_fini();
+#ifdef notyet	
 	ndmp_door_fini();
+#endif	
 	ndmp_log_close_file();
 
 	return (SMF_EXIT_OK);

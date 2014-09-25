@@ -48,11 +48,13 @@
 #include <sys/queue.h>
 #include <arpa/inet.h>
 #include <md5.h>
+#if 0
 #include <shadow.h>
 #include <crypt.h>
+#endif
 #include <alloca.h>
-#include "ndmpd_common.h"
 #include "ndmpd.h"
+#include "ndmpd_common.h"
 #include <libndmp.h>
 #include <ndmpd_door.h>
 #include <security/pam_appl.h>
@@ -110,7 +112,7 @@ LIST_HEAD(cl_head, conn_list);
  */
 static struct cl_head cl_head;
 
-mutex_t cl_mutex = DEFAULTMUTEX;
+mutex_t cl_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 /*

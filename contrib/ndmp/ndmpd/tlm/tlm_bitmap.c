@@ -38,7 +38,7 @@
  */
 #include <sys/types.h>
 #include <sys/queue.h>
-#include <bitmap.h>
+#include <tlm_bitmap.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
