@@ -33,8 +33,9 @@
 #ifdef	__cplusplus
 extern "C" {
 #endif
-
+#if 0
 #include <netinet/inetutil.h>
+#endif
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>

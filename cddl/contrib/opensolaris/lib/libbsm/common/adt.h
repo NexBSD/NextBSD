@@ -34,12 +34,19 @@
 #include <bsm/libbsm.h>
 #include <bsm/audit_record.h>
 #include <bsm/audit_uevents.h>
+#if 0
 #include <door.h>
-
+#endif
 #ifdef	__cplusplus
 extern "C" {
 #endif
 
+/* XXX temporary compile fix */
+typedef void * m_label_t;
+typedef void * priv_set_t;
+	
+
+	
 #define	ADT_STRING_MAX	511		/* max non-null characters */
 #define	ADT_NO_ATTRIB	(uid_t)-1	/* unattributed user */
 #define	ADT_NO_CHANGE	(uid_t)-2	/* no update for this parameter */
