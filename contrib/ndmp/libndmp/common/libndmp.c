@@ -41,7 +41,6 @@
 #include <strings.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <door.h>
 #include <thread.h>
 #include <ndmpd_door.h>
 #include <libndmp.h>
@@ -50,8 +49,8 @@ static int ndmp_door_fildes = -1;
 static char *buf;
 static ndmp_door_ctx_t *dec_ctx;
 static ndmp_door_ctx_t *enc_ctx;
-static door_arg_t arg;
-static mutex_t ndmp_lock = DEFAULTMUTEX;
+static json_door_arg_t arg;
+static mutex_t ndmp_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int ndmp_door_setup(int opcode);
 static int ndmp_door_call(void);
@@ -440,7 +439,7 @@ ndmp_door_setup(int opcode)
 		return (-1);
 	}
 
-	enc_ctx = ndmp_door_encode_start(buf, NDMP_DOOR_SIZE);
+	enc_ctx = ndmp_door_encode_start();
 	if (enc_ctx == 0) {
 		free(buf);
 		ndmp_errno = ENDMP_DOOR_ENCODE_START;
@@ -464,12 +463,10 @@ ndmp_door_call(void)
 
 	arg.data_ptr = buf;
 	arg.data_size = used;
-	arg.desc_ptr = NULL;
-	arg.desc_num = 0;
 	arg.rbuf = buf;
 	arg.rsize = NDMP_DOOR_SIZE;
 
-	if (door_call(ndmp_door_fildes, &arg) < 0) {
+	if (json_door_call(ndmp_door_fildes, &arg) < 0) {
 		free(buf);
 		ndmp_errno = ENDMP_DOOR_SRV_TIMEOUT;
 		(void) close(ndmp_door_fildes);

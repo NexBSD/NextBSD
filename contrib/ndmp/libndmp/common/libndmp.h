@@ -41,8 +41,9 @@
 #define	_LIBNDMP_H
 
 #include <rpc/types.h>
-#include <libscf.h>
 #include <libnvpair.h>
+
+#include <jansson.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -61,6 +62,15 @@ extern int ndmp_errno;
 
 /* NDMP plugin module API */
 #define	NDMP_PLUGIN_VERSION	1
+
+typedef struct json_door_arg {
+	caddr_t data_ptr;
+	uint32_t data_size;
+	caddr_t rbuf;
+	uint32_t rsize;
+} json_door_arg_t;
+
+int json_door_call(int fd, json_door_arg_t *arg);
 
 typedef struct ndmp_context {
 	char *nc_plname;
@@ -331,9 +341,10 @@ typedef struct ndmp_stat {
 
 /* Common encode/decode functions used by door clients/servers.  */
 typedef struct ndmp_door_ctx {
+	json_t *root;
 	char *ptr;
-	char *start_ptr;
-	char *end_ptr;
+	int count;
+	int idx;
 	int status;
 } ndmp_door_ctx_t;
 
@@ -352,9 +363,9 @@ extern int ndmp_set_prop(char *, char *);
 extern int ndmp_service_refresh(void);
 extern char *ndmp_base64_encode(char *);
 extern char *ndmp_base64_decode(char *);
-extern ndmp_door_ctx_t *ndmp_door_decode_start(char *, int);
+extern ndmp_door_ctx_t *ndmp_door_decode_start(char *ptr, int size);
 extern int ndmp_door_decode_finish(ndmp_door_ctx_t *);
-extern ndmp_door_ctx_t *ndmp_door_encode_start(char *, int);
+extern ndmp_door_ctx_t *ndmp_door_encode_start(void);
 extern int ndmp_door_encode_finish(ndmp_door_ctx_t *, unsigned int *);
 extern int32_t ndmp_door_get_int32(ndmp_door_ctx_t *);
 extern uint32_t ndmp_door_get_uint32(ndmp_door_ctx_t *);

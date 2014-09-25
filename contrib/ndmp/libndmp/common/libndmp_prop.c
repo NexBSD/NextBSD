@@ -44,7 +44,6 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
-#include <synch.h>
 #include <libintl.h>
 #include <strings.h>
 #include <libndmp.h>
