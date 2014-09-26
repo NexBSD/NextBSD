@@ -300,13 +300,13 @@ main(int argc, char *argv[])
 		NDMP_LOG(LOG_ERR, "Failed to initialize ZFS library.");
 		exit(SMF_EXIT_ERR_CONFIG);
 	}
-#ifdef notyet
+
 	/* initialize and start the door server */
 	if (ndmp_door_init()) {
 		NDMP_LOG(LOG_ERR, "Can not start ndmpd door server.");
 		exit(SMF_EXIT_ERR_CONFIG);
 	}
-
+#ifdef notyet
 	if (tlm_init() == -1) {
 		NDMP_LOG(LOG_ERR, "Failed to initialize tape manager.");
 		exit(SMF_EXIT_ERR_CONFIG);

@@ -39,7 +39,6 @@
 
 /* This file contains all the door server code */
 
-#include <door.h>
 #include <alloca.h>
 #include <errno.h>
 #include <note.h>
@@ -52,8 +51,7 @@ static int 	ndmp_door_fildes = -1;
 static mutex_t	ndmp_doorsrv_mutex;
 
 /* static routines */
-static void ndmp_door_server(void *cookie, char *ptr, size_t size,
-    door_desc_t *dp, uint_t n_desc);
+static void ndmp_door_server(char *ptr, size_t size);
 
 /*
  * Statistics used in ndmpstat command
@@ -104,7 +102,7 @@ ndmp_door_init(void)
 		return (-1);
 	}
 #endif
-	if (json_door_create(ndmpd_door_server, NDMP_DOOR_PORT) != 0)
+	if (json_door_create(ndmp_door_server, NDMP_DOOR_PORT) != 0)
 		return (errno);
 
 	NDMP_LOG(LOG_DEBUG, "ndmp_door_init: Door server successfully started");
@@ -118,8 +116,11 @@ ndmp_door_fini(void)
 	(void) mutex_lock(&ndmp_doorsrv_mutex);
 
 	if (ndmp_door_fildes != -1) {
+#if 0		
 		(void) fdetach(NDMP_DOOR_SVC);
 		(void) door_revoke(ndmp_door_fildes);
+#endif
+		close(ndmp_door_fildes);
 		ndmp_door_fildes = -1;
 	}
 
@@ -129,6 +130,7 @@ ndmp_door_fini(void)
 boolean_t
 ndmp_door_check(void)
 {
+#if 0
 	door_info_t info;
 	int door;
 
@@ -148,6 +150,7 @@ ndmp_door_check(void)
 	}
 
 	(void) close(door);
+#endif	
 	return (0);
 }
 
