@@ -39,6 +39,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <locale.h>
+#include <libintl.h>
 #include <libndmp.h>
 #include "ndmpadm.h"
 
@@ -104,7 +105,7 @@ ndmp_print_env(ndmp_session_info_t *si)
 	for (i = 0; ep && i < n; i++, ep++) {
 		(void) fprintf(stdout, gettext("\tdata.env[%d]:\t%s: "),
 		    i, ep->np_name);
-		if ((ep->np_value != NULL) && (*ep->np_value != NULL))
+		if ((ep->np_value != NULL) && (*ep->np_value != 0))
 			(void) fprintf(stdout, "\"%s\"\n", ep->np_value);
 	}
 }
@@ -524,10 +525,10 @@ ndmp_connect_print_mover_v3(ndmp_session_info_t *si)
 	(void) fprintf(stdout, gettext("\tmover.record number:\t%d\n"),
 	    (int)si->nsi_mover.nm_rec_num);
 	(void) fprintf(stdout, gettext("\tmover.pos:\t\t%lld\n"),
-	    si->nsi_mover.nm_mov_pos, si->nsi_mover.nm_mov_pos);
+	    si->nsi_mover.nm_mov_pos);
 
 	(void) fprintf(stdout, gettext("\tmover.win len:\t\t%lld\n"),
-	    si->nsi_mover.nm_window_length, si->nsi_mover.nm_window_length);
+	    si->nsi_mover.nm_window_length);
 
 	(void) fprintf(stdout, gettext("\tmover.win off:\t\t%lld\n"),
 	    si->nsi_mover.nm_window_offset);
@@ -751,7 +752,7 @@ ndmp_session_all_print(int cat, ndmp_session_info_t *si, size_t num)
 	if (num == 0) {
 		(void) fprintf(stdout, gettext("No active session.\n"));
 	} else {
-		(void) fprintf(stdout, gettext("%d active sessions.\n"), num);
+		(void) fprintf(stdout, gettext("%zu active sessions.\n"), num);
 	}
 }
 
