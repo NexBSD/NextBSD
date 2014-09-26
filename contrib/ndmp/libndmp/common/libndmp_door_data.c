@@ -85,7 +85,7 @@ int
 ndmp_door_decode_finish(ndmp_door_ctx_t *ctx)
 {
 	int status = ctx->status;
-	if ((status == 0) && (ctx->idx != ctx->count)) {
+	if ((status == 0) && (ctx->idx != ctx->count + 1)) {
 		status = ENOTEMPTY;
 	}
 	free(ctx);
@@ -93,7 +93,7 @@ ndmp_door_decode_finish(ndmp_door_ctx_t *ctx)
 }
 
 ndmp_door_ctx_t *
-ndmp_door_encode_start(void)
+ndmp_door_encode_start(char *buf __unused, int len __unused)
 {
 	ndmp_door_ctx_t *ctx = malloc(sizeof (ndmp_door_ctx_t));
 	if (ctx) {
@@ -364,9 +364,15 @@ json_door_request(void *arg)
 	struct json_door_request_arg *jdra = arg;
 
 	doorfd = jdra->fd;
-	jdra->func(jdra->buf, jdra->size);
-	free(jdra);
-	pthread_exit(NULL);
+	while (1) {
+		if ((jdra->size = read(doorfd, jdra->buf, NDMP_DOOR_SIZE)) <= 0) {
+			free(jdra);
+			close(doorfd);
+			pthread_exit(NULL);
+		}
+		jdra->func(jdra->buf, jdra->size);
+	}
+
 }
 
 static void *
@@ -384,11 +390,6 @@ json_door_server(void *arg)
 			perror("json_door_server failed to allocate request");
 		jdra->fd = newfd;
 		jdra->func = jdsa->func;
-		if ((jdra->size = read(newfd, jdra->buf, NDMP_DOOR_SIZE)) <= 0) {
-			free(jdra);
-			close(newfd);
-			continue;
-		}
 
 		if (pthread_create(&thread, NULL, json_door_request, jdra))
 			perror("json_door_server failed to create a thread:\n");
@@ -402,7 +403,7 @@ json_door_open(int port)
 	int fd;
 	struct sockaddr_in lsin;
 
-	lsin.sin_port = port;
+	lsin.sin_port = htons(port);
 	lsin.sin_family = AF_INET;
 	lsin.sin_addr.s_addr = htonl((u_long)INADDR_LOOPBACK);
 	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) <= 0)
@@ -415,23 +416,30 @@ json_door_open(int port)
 int
 json_door_create(void (*server_procedure) (char *argp, size_t arg_size), int port)
 {
-	int fd;
+	int fd, rc;
 	struct sockaddr_in lsin;
 	struct json_door_server_arg *jdsa;
 	pthread_t thread;
 
 	jdsa = malloc(sizeof(*jdsa));
-	lsin.sin_port = port;
+	bzero(&lsin, sizeof(lsin));
+	lsin.sin_port = htons(port);
 	lsin.sin_family = AF_INET;
 	lsin.sin_addr.s_addr = htonl((u_long)INADDR_LOOPBACK);
 	if (jdsa == NULL)
 		return (ENOMEM);
 	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) <= 0)
 		return (errno);
-	if (bind(fd, (struct sockaddr *)&lsin, sizeof(lsin)) >= 0)
+	rc = 1;
+	setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &rc, sizeof(rc));
+	if (bind(fd, (struct sockaddr *)&lsin, sizeof(lsin)) < 0) {
+		perror("bind failed");
 		return (errno);
-
+	}
 	jdsa->fd = fd;
 	jdsa->func = server_procedure;
-	return (pthread_create(&thread, NULL, json_door_server, jdsa));
+	rc = pthread_create(&thread, NULL, json_door_server, jdsa);
+	if (rc)
+		printf("pthread_create failed %s\n", strerror(rc));
+	return (rc);
 }

@@ -439,7 +439,7 @@ ndmp_door_setup(int opcode)
 		return (-1);
 	}
 
-	enc_ctx = ndmp_door_encode_start();
+	enc_ctx = ndmp_door_encode_start(buf, NDMP_DOOR_SIZE);
 	if (enc_ctx == 0) {
 		free(buf);
 		ndmp_errno = ENDMP_DOOR_ENCODE_START;

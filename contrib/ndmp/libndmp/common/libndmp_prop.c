@@ -63,6 +63,7 @@ static char *ndmp_pg[] = {
 #define	NDMP_SCH_STATE_INITIALIZING	1
 #define	NDMP_SCH_STATE_INIT		2
 
+#ifdef notyet
 /* NDMP scf handle structure */
 typedef struct ndmp_scfhandle {
 	scf_handle_t *scf_handle;
@@ -83,7 +84,7 @@ static int ndmp_smf_get_property(ndmp_scfhandle_t *, char *, char *, size_t);
 static int ndmp_smf_create_service_pgroup(ndmp_scfhandle_t *, char *);
 static int ndmp_smf_delete_property(ndmp_scfhandle_t *, char *);
 static int ndmp_smf_get_pg_name(ndmp_scfhandle_t *, char *, char **);
-
+#endif
 /*
  * This routine send a refresh signal to ndmpd service which cause ndmpd
  * property table to be refeshed with current ndmpd properties value from SMF.
@@ -91,11 +92,14 @@ static int ndmp_smf_get_pg_name(ndmp_scfhandle_t *, char *, char **);
 int
 ndmp_service_refresh(void)
 {
+#if 0
 	if ((smf_get_state(NDMP_INST)) != NULL)
 		return (smf_refresh_instance(NDMP_INST));
 
 	ndmp_errno = ENDMP_SMF_INTERNAL;
 	return (-1);
+#endif	
+return (0);
 }
 
 /*
@@ -106,6 +110,7 @@ ndmp_service_refresh(void)
 int
 ndmp_get_prop(char *prop, char **value)
 {
+#ifdef notyet
 	ndmp_scfhandle_t *handle = NULL;
 	char *lval = (char *)malloc(NDMP_PROP_LEN);
 	char *pgname;
@@ -136,12 +141,15 @@ ndmp_get_prop(char *prop, char **value)
 	}
 	*value = lval;
 	ndmp_smf_scf_fini(handle);
+#endif
+	*value = "notyet";
 	return (0);
 }
 
 int
 ndmp_set_prop(char *env, char *env_val)
 {
+#ifdef notyet
 	ndmp_scfhandle_t *handle = NULL;
 	char *pgname;
 
@@ -170,10 +178,10 @@ ndmp_set_prop(char *env, char *env_val)
 
 	if (ndmp_config_saveenv(handle) != 0)
 		return (-1);
-
+#endif
 	return (0);
 }
-
+#if 0
 static int
 ndmp_smf_get_pg_name(ndmp_scfhandle_t *h, char *pname, char **pgname)
 {
@@ -573,3 +581,4 @@ ndmp_smf_get_property(ndmp_scfhandle_t *handle, char *propname,
 	scf_property_destroy(prop);
 	return (ret);
 }
+#endif

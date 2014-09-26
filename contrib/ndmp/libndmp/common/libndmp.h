@@ -369,7 +369,7 @@ extern char *ndmp_base64_encode(char *);
 extern char *ndmp_base64_decode(char *);
 extern ndmp_door_ctx_t *ndmp_door_decode_start(char *ptr, int size);
 extern int ndmp_door_decode_finish(ndmp_door_ctx_t *);
-extern ndmp_door_ctx_t *ndmp_door_encode_start(void);
+extern ndmp_door_ctx_t *ndmp_door_encode_start(char *, int size);
 extern int ndmp_door_encode_finish(ndmp_door_ctx_t *, unsigned int *);
 extern int32_t ndmp_door_get_int32(ndmp_door_ctx_t *);
 extern uint32_t ndmp_door_get_uint32(ndmp_door_ctx_t *);
