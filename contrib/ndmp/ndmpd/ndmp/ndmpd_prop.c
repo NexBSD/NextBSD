@@ -107,13 +107,11 @@ ndmpd_load_prop(void)
 
 	for (id = 0; id < NDMP_MAXALL; id++) {
 		cfg = &ndmpd_cfg_table[id];
-#ifdef notyet
 		if ((ndmp_get_prop(cfg->sc_name, &value)) == -1) {
 			syslog(LOG_DEBUG, "%s %s",
 			    cfg->sc_name, ndmp_strerror(ndmp_errno));
 			continue;
 		}
-#endif		
 		/*
 		 * enval == 0 could mean two things, either the
 		 * config param is not defined, or it has been
