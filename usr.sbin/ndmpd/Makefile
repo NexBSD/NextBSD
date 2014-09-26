@@ -1,4 +1,3 @@
-#	@(#)Makefile	8.8 (Berkeley) 3/28/97
 # $FreeBSD$
 
 .include <src.opts.mk>
@@ -24,9 +23,9 @@ PROG=	ndmpd
 #MAN=	ndmpd.1m
 #MLINKS+=sendmail.8 hoststat.8
 
-# ndmpd_doors.c ndmpd_tape.c ndmpd_scsi.c
+# ndmpd_tape.c ndmpd_scsi.c
 SRCS= ndmpd_callbacks.c ndmpd_chkpnt.c ndmpd_comm.c ndmpd_config.c \
-	ndmpd_connect.c ndmpd_data.c ndmpd_dtime.c ndmpd_fhistory.c \
+	ndmpd_connect.c ndmpd_data.c ndmpd_door.c ndmpd_dtime.c ndmpd_fhistory.c \
 	ndmpd_handler.c ndmpd_log.c ndmpd_main.c ndmpd_mark.c ndmpd_mover.c \
 	ndmpd_prop.c ndmpd_tar.c ndmpd_tar3.c \
 	ndmpd_util.c ndmpd_zfs.c ndmp_xdr.c

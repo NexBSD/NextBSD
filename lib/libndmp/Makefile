@@ -10,7 +10,7 @@ SHLIB_MAJOR=	1
 #MAN=
 .PATH:          ${.CURDIR}/../../contrib/ndmp/libndmp/common
 
-CFLAGS+= -DNEED_SOLARIS_BOOLEAN
+CFLAGS+= -DNEED_SOLARIS_BOOLEAN -g -O0
 CFLAGS+=	-I/usr/local/include 
 CFLAGS+= -I../../contrib/ndmp/libndmp/common
 CFLAGS+= -I../../cddl/contrib/opensolaris/lib/libnvpair
@@ -24,6 +24,6 @@ SRCS+= libndmp_door_data.c
 SRCS+= libndmp.c
 SRCS+= libndmp_base64.c
 SRCS+= libndmp_error.c
-#SRCS+= libndmp_prop.c
+SRCS+= libndmp_prop.c
 WARNS=0
 .include <bsd.lib.mk>
