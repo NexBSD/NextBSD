@@ -48,10 +48,6 @@
 #include <sys/queue.h>
 #include <arpa/inet.h>
 #include <md5.h>
-#if 0
-#include <shadow.h>
-#include <crypt.h>
-#endif
 #include <alloca.h>
 #include "ndmpd.h"
 #include "ndmpd_common.h"

@@ -49,9 +49,6 @@
 #include <sys/mntent.h>
 #include <sys/statvfs.h>
 #include <sys/utsname.h>
-#if 0
-#include <sys/scsi/scsi.h>
-#endif
 #include <unistd.h>
 #include <sys/systeminfo.h>
 #include "ndmpd.h"
@@ -121,7 +118,7 @@ ndmpd_config_get_host_info_v2(ndmp_connection_t *connection, void *body)
 	(void) uname(&uts);
 	reply.os_type = uts.sysname;
 	reply.os_vers = uts.release;
-#if 0
+#ifdef keepfornow
 	if (sysinfo(SI_HW_SERIAL, hostidstr, sizeof (hostidstr)) < 0) {
 		NDMP_LOG(LOG_DEBUG, "sysinfo error: %m.");
 		reply.error = NDMP_UNDEFINED_ERR;
@@ -307,7 +304,7 @@ ndmpd_config_get_host_info_v3(ndmp_connection_t *connection, void *body)
 	(void) uname(&uts);
 	reply.os_type = uts.sysname;
 	reply.os_vers = uts.release;
-#if 0
+#ifdef keepfornow
 	if (sysinfo(SI_HW_SERIAL, hostidstr, sizeof (hostidstr)) < 0) {
 
 		NDMP_LOG(LOG_DEBUG, "sysinfo error: %m.");
@@ -553,14 +550,6 @@ ndmpd_config_get_fs_info_v3(ndmp_connection_t *connection, void *body)
 		goto send_reply;
 	}
 
-#if 0	
-	/* nothing was found, send an empty reply */
-	if (ioctl(fd, MNTIOC_NMNTS, &nmnt) != 0 || nmnt <= 0) {
-		(void) close(fd);
-		NDMP_LOG(LOG_ERR, "No file system found.");
-		goto send_reply;
-	}
-#endif
 	if ((nmnt = getmntinfo(&mntbuf, MNT_WAIT)) == 0) {
 		(void) close(fd);
 		NDMP_LOG(LOG_ERR, "No file system found.");
