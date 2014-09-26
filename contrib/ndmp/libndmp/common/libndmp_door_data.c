@@ -49,6 +49,13 @@
 #include <unistd.h>
 #include <ndmpd_door.h>
 
+
+#include <netinet/in.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <pthread.h>
+
+
 static int
 ndmp_json_dump_callback(const char *buf __unused, size_t size, void *data)
 {
@@ -315,6 +322,8 @@ ndmp_door_get_buf(ndmp_door_ctx_t *ctx, unsigned char *buf, int bufsize)
 	return (len);
 }
 
+__thread int doorfd;
+
 int
 json_door_call(int fd, json_door_arg_t *arg)
 {
@@ -328,4 +337,85 @@ json_door_call(int fd, json_door_arg_t *arg)
 		return (errno);
 	arg->rsize = rc;
 	return (0);
+}
+
+int
+json_door_return(caddr_t buf, int size, void *arg0 __unused, int arg1 __unused)
+{
+
+	return (write(doorfd, buf, size));
+}
+
+struct json_door_request_arg {
+	int fd;
+	size_t size;
+	void (*func)(char *, size_t);
+	char buf[NDMP_DOOR_SIZE];
+};
+
+struct json_door_server_arg {
+	int fd;
+	void (*func)(char *, size_t);
+};
+
+static void *
+json_door_request(void *arg)
+{
+	struct json_door_request_arg *jdra = arg;
+
+	doorfd = jdra->fd;
+	jdra->func(jdra->buf, jdra->size);
+	free(jdra);
+	pthread_exit(NULL);
+}
+
+static void *
+json_door_server(void *arg)
+{
+	int newfd, fd;
+	pthread_t thread;
+	struct json_door_server_arg *jdsa = arg;
+	struct json_door_request_arg *jdra;
+	fd = jdsa->fd;
+
+	listen(fd, -1);
+	while ((newfd = accept(fd, NULL, 0)) > 0) {
+		if ((jdra = malloc(sizeof(struct json_door_request_arg))) == NULL)
+			perror("json_door_server failed to allocate request");
+		jdra->fd = newfd;
+		jdra->func = jdsa->func;
+		if ((jdra->size = read(newfd, jdra->buf, NDMP_DOOR_SIZE)) <= 0) {
+			free(jdra);
+			close(newfd);
+			continue;
+		}
+
+		if (pthread_create(&thread, NULL, json_door_request, jdra))
+			perror("json_door_server failed to create a thread:\n");
+	}
+	return (NULL);
+}
+
+int
+json_door_create(void (*server_procedure) (char *argp, size_t arg_size), int port)
+{
+	int fd;
+	struct sockaddr_in lsin;
+	struct json_door_server_arg *jdsa;
+	pthread_t thread;
+
+	jdsa = malloc(sizeof(*jdsa));
+	lsin.sin_port = port;
+	lsin.sin_family = AF_INET;
+	lsin.sin_addr.s_addr = htonl((u_long)INADDR_LOOPBACK);
+	if (jdsa == NULL)
+		return (ENOMEM);
+	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) <= 0)
+		return (errno);
+	if (bind(fd, (struct sockaddr *)&lsin, sizeof(lsin)) >= 0)
+		return (errno);
+
+	jdsa->fd = fd;
+	jdsa->func = server_procedure;
+	return (pthread_create(&thread, NULL, json_door_server, jdsa));
 }
