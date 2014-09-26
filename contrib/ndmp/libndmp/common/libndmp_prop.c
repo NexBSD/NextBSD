@@ -35,18 +35,23 @@
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 /*
  * NDMP configuration management
  */
+#define _WITH_GETLINE
 #include <stdio.h>
 #include <stdlib.h>
 #include <libintl.h>
 #include <strings.h>
 #include <libndmp.h>
+
+#include <sys/queue.h>
+#include <string.h>
+
 
 /* NDMP properties configuration */
 #define	NDMP_GROUP_FMRI_PREFIX	"system/ndmpd"
@@ -85,6 +90,10 @@ static int ndmp_smf_create_service_pgroup(ndmp_scfhandle_t *, char *);
 static int ndmp_smf_delete_property(ndmp_scfhandle_t *, char *);
 static int ndmp_smf_get_pg_name(ndmp_scfhandle_t *, char *, char **);
 #endif
+
+static int config_loaded;
+static void ndmp_read_config(void);
+static void ndmp_write_config(void);
 /*
  * This routine send a refresh signal to ndmpd service which cause ndmpd
  * property table to be refeshed with current ndmpd properties value from SMF.
@@ -92,14 +101,122 @@ static int ndmp_smf_get_pg_name(ndmp_scfhandle_t *, char *, char **);
 int
 ndmp_service_refresh(void)
 {
+	ndmp_read_config();
 #if 0
 	if ((smf_get_state(NDMP_INST)) != NULL)
 		return (smf_refresh_instance(NDMP_INST));
 
 	ndmp_errno = ENDMP_SMF_INTERNAL;
 	return (-1);
-#endif	
+#endif
 return (0);
+}
+
+typedef struct propnode {
+	char *prop;
+	char *value;
+	LIST_ENTRY(propnode) entry;
+} *propnode_t;
+
+LIST_HEAD(, propnode) proplist = LIST_HEAD_INITIALIZER(proplist);
+
+static int
+proplist_add_prop(char *prop, char *value)
+{
+	propnode_t pnode;
+
+	if ((pnode = malloc(sizeof(*pnode))) == NULL)
+		return (ENOMEM);
+
+	pnode->prop = strndup(prop, 512);
+	pnode->value = strndup(value, 512);
+	LIST_INSERT_HEAD(&proplist, pnode, entry);
+	return (0);
+}
+
+static void
+proplist_del_prop(char *prop)
+{
+	propnode_t pnode, pnodetmp;
+
+	LIST_FOREACH_SAFE(pnode, &proplist, entry, pnodetmp) {
+		if (strcmp(pnode->prop, prop) == 0) {
+			LIST_REMOVE(pnode, entry);
+			free(pnode->prop);
+			free(pnode->value);
+			free(pnode);
+			break;
+		}
+	}
+}
+
+static char *
+proplist_get_prop(char *prop)
+{
+	propnode_t pnode, pnodetmp;
+
+	LIST_FOREACH_SAFE(pnode, &proplist, entry, pnodetmp)
+		if (strcmp(pnode->prop, prop) == 0)
+			return (pnode->value);
+
+	return (NULL);
+}
+
+static void
+proplist_set_prop(char *prop, char *value)
+{
+	propnode_t pnode, pnodetmp;
+
+	LIST_FOREACH_SAFE(pnode, &proplist, entry, pnodetmp)
+		if (strcmp(pnode->prop, prop) == 0) {
+			free(pnode->value);
+			pnode->value = strndup(value, 512);
+			return;
+		}
+
+	proplist_add_prop(prop, value);
+}
+
+static void
+ndmp_write_config(void)
+{
+	FILE *fp;
+	propnode_t pnode;
+
+	ndmp_read_config();
+	truncate("/etc/ndmpd.config", 0);
+	fp = fopen("/etc/ndmpd.config", "w");
+	if (fp == NULL)
+		return;
+	LIST_FOREACH(pnode, &proplist, entry)
+		fprintf(fp, "%s=%s\n", pnode->prop, pnode->value);
+	fclose(fp);
+}
+
+static void
+ndmp_read_config(void)
+{
+	FILE *fp;
+	char line[1024], *linep;
+	size_t linecap = 1024;
+	ssize_t linelen;
+	char *key, *value, *nl;
+
+	fp = fopen("/etc/ndmpd.config", "r");
+	if (fp == NULL)
+		return;
+
+	linep = line;
+	while ((linelen = getline(&linep, &linecap, fp)) > 0) {
+		value = index(line, '=');
+		*value = '\0';
+		value++;
+		nl = index(value, '\n');
+		if (nl)
+			*nl = '\0';
+		key = line;
+		proplist_set_prop(key, value);
+	}
 }
 
 /*
@@ -110,6 +227,16 @@ return (0);
 int
 ndmp_get_prop(char *prop, char **value)
 {
+	if (config_loaded == FALSE) {
+		ndmp_read_config();
+		config_loaded = TRUE;
+	}
+
+	if ((*value = proplist_get_prop(prop)) == NULL) {
+		ndmp_errno = ENDMP_SMF_PROP;
+		return (-1);
+	}
+	return (0);
 #ifdef notyet
 	ndmp_scfhandle_t *handle = NULL;
 	char *lval = (char *)malloc(NDMP_PROP_LEN);
@@ -142,13 +269,14 @@ ndmp_get_prop(char *prop, char **value)
 	*value = lval;
 	ndmp_smf_scf_fini(handle);
 #endif
-	*value = "notyet";
-	return (0);
 }
 
 int
 ndmp_set_prop(char *env, char *env_val)
 {
+
+	proplist_set_prop(env, env_val);
+	ndmp_write_config();
 #ifdef notyet
 	ndmp_scfhandle_t *handle = NULL;
 	char *pgname;
