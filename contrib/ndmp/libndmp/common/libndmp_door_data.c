@@ -61,6 +61,7 @@ ndmp_json_dump_callback(const char *buf __unused, size_t size, void *data)
 {
 	int len = *(int *)data;
 
+	printf ("adding %zu to json dump \n", size);
 	*(int *)data = len + size;
 	return (0);
 }
@@ -85,7 +86,7 @@ int
 ndmp_door_decode_finish(ndmp_door_ctx_t *ctx)
 {
 	int status = ctx->status;
-	if ((status == 0) && (ctx->idx != ctx->count + 1)) {
+	if ((status == 0) && (ctx->idx < ctx->count)) {
 		status = ENOTEMPTY;
 	}
 	free(ctx);
@@ -93,7 +94,7 @@ ndmp_door_decode_finish(ndmp_door_ctx_t *ctx)
 }
 
 ndmp_door_ctx_t *
-ndmp_door_encode_start(char *buf __unused, int len __unused)
+ndmp_door_encode_start(char *buf, int len)
 {
 	ndmp_door_ctx_t *ctx = malloc(sizeof (ndmp_door_ctx_t));
 	if (ctx) {
@@ -101,7 +102,8 @@ ndmp_door_encode_start(char *buf __unused, int len __unused)
 			free(ctx);
 			return (NULL);
 		}
-		ctx->status = ctx->count = ctx->count = 0;
+		ctx->status = ctx->idx = ctx->count = 0;
+		ctx->ptr = buf;
 	}
 	return (ctx);
 }
@@ -110,10 +112,20 @@ int
 ndmp_door_encode_finish(ndmp_door_ctx_t *ctx, unsigned int *used)
 {
 	int status = ctx->status;
+	char *ptr;
 
 	*used = 0;
-	ctx->ptr = json_dumps(ctx->root, 0);
+#if 0
+	/*
+	 * XXX we need a _working_ means of determing the length of
+	 * the string returned without calling strlen
+	 */
 	json_dump_callback(ctx->root, ndmp_json_dump_callback, used, 0);
+#endif
+	ptr = json_dumps(ctx->root, 0);
+	*used = strlen(ptr);
+	memcpy(ctx->ptr, ptr, *used);
+	free(ptr);
 	json_decref(ctx->root);
 	free(ctx);
 	return (status);
@@ -335,7 +347,7 @@ json_door_call(int fd, json_door_arg_t *arg)
 	rc = read(fd, arg->rbuf, NDMP_DOOR_SIZE);
 	if (rc < 0)
 		return (errno);
-	arg->rsize = rc;
+	arg->data_size = arg->rsize = rc;
 	return (0);
 }
 
@@ -350,6 +362,7 @@ struct json_door_request_arg {
 	int fd;
 	size_t size;
 	void (*func)(char *, size_t);
+	char *ptr;
 	char buf[NDMP_DOOR_SIZE];
 };
 
@@ -365,12 +378,12 @@ json_door_request(void *arg)
 
 	doorfd = jdra->fd;
 	while (1) {
-		if ((jdra->size = read(doorfd, jdra->buf, NDMP_DOOR_SIZE)) <= 0) {
+		if ((jdra->size = read(jdra->fd, jdra->ptr, NDMP_DOOR_SIZE)) <= 0) {
 			free(jdra);
 			close(doorfd);
 			pthread_exit(NULL);
 		}
-		jdra->func(jdra->buf, jdra->size);
+		jdra->func(jdra->ptr, jdra->size);
 	}
 
 }
@@ -390,7 +403,7 @@ json_door_server(void *arg)
 			perror("json_door_server failed to allocate request");
 		jdra->fd = newfd;
 		jdra->func = jdsa->func;
-
+		jdra->ptr = jdra->buf;
 		if (pthread_create(&thread, NULL, json_door_request, jdra))
 			perror("json_door_server failed to create a thread:\n");
 	}
