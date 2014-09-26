@@ -70,6 +70,7 @@ typedef struct json_door_arg {
 	uint32_t rsize;
 } json_door_arg_t;
 
+int json_door_open(int port);
 int json_door_call(int fd, json_door_arg_t *arg);
 int json_door_create(void (*server_procedure) (char *argp, size_t arg_size), int port);
 int json_door_return(caddr_t buf, int size, void *, int);

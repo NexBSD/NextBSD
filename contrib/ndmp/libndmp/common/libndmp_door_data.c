@@ -397,6 +397,22 @@ json_door_server(void *arg)
 }
 
 int
+json_door_open(int port)
+{
+	int fd;
+	struct sockaddr_in lsin;
+
+	lsin.sin_port = port;
+	lsin.sin_family = AF_INET;
+	lsin.sin_addr.s_addr = htonl((u_long)INADDR_LOOPBACK);
+	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) <= 0)
+		return (fd);
+	if (connect(fd, (struct sockaddr *)&lsin, sizeof(struct sockaddr)) < 0)
+		return (-1);
+	return (fd);
+}
+
+int
 json_door_create(void (*server_procedure) (char *argp, size_t arg_size), int port)
 {
 	int fd;

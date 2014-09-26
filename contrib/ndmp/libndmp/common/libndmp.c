@@ -428,7 +428,7 @@ ndmp_door_setup(int opcode)
 {
 	/* Open channel to NDMP service */
 	if ((ndmp_door_fildes == -1) &&
-	    (ndmp_door_fildes = open(NDMP_DOOR_SVC, O_RDONLY)) < 0) {
+	    (ndmp_door_fildes = json_door_open(NDMP_DOOR_PORT)) < 0) {
 		ndmp_errno = ENDMP_DOOR_OPEN;
 		return (-1);
 	}
