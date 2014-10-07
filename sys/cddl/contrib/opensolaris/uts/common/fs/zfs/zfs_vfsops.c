@@ -1980,6 +1980,10 @@ zfs_umount(vfs_t *vfsp, int fflag)
 	ret = vflush(vfsp, 1, (fflag & MS_FORCE) ? FORCECLOSE : 0, td);
 	if (ret != 0) {
 		if (!zfsvfs->z_issnap) {
+			/*
+			 * XXX is this really the right way to handle this?
+			 * Solaris has no equivalent
+			 */ 
 			zfsctl_create(zfsvfs);
 			ASSERT(zfsvfs->z_ctldir != NULL);
 		}
