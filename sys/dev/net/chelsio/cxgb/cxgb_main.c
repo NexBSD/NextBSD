@@ -100,9 +100,7 @@ static int cxgb_ifm_type(int);
 static void cxgb_build_medialist(struct port_info *);
 static void cxgb_if_media_status(if_shared_ctx_t, struct ifmediareq *);
 static int cxgb_async_intr(void *);
-#ifdef notyet
-static uint64_t cxgb_get_counter(struct ifnet *, ift_counter);
-#endif
+static uint64_t cxgb_if_get_counter(if_shared_ctx_t, ift_counter);
 static void cxgb_tick_handler(void *, int);
 static void cxgb_if_timer(if_shared_ctx_t, uint16_t);
 static void link_check_callout(void *);
@@ -199,7 +197,7 @@ static device_method_t cxgb_if_methods[] = {
 	DEVMETHOD(ifdi_timer, cxgb_if_timer),
 	DEVMETHOD(ifdi_qset_structures_free, cxgb_if_qset_structures_free),
 	DEVMETHOD(ifdi_queues_alloc, cxgb_if_queues_alloc),
-
+	DEVMETHOD(ifdi_get_counter, cxgb_if_get_counter),
 	DEVMETHOD_END
 };
 
@@ -1920,12 +1918,10 @@ cxgb_if_media_status(if_shared_ctx_t sctx, struct ifmediareq *ifmr)
 			    speed));
 }
 
-#ifdef notyet
-static uint64_t
-cxgb_get_counter(struct ifnet *ifp, ift_counter c)
+uint64_t
+cxgb_if_get_counter(if_shared_ctx_t sctx, ift_counter c)
 {
-	struct port_info *pi = ifp->if_softc;
-	struct adapter *sc = pi->adapter;
+	struct port_info *pi = DOWNCAST(sctx);
 	struct cmac *mac = &pi->mac;
 	struct mac_stats *mstats = &mac->stats;
 
@@ -1968,24 +1964,24 @@ cxgb_get_counter(struct ifnet *ifp, ift_counter c)
 		return (mstats->rx_cong_drops);
 
 	case IFCOUNTER_OQDROPS: {
+		uint64_t drops = 0;
+#ifdef notyet
+		struct adapter *sc = pi->adapter;
 		int i;
-		uint64_t drops;
-
-		drops = 0;
 		if (sc->flags & FULL_INIT_DONE) {
 			for (i = pi->first_qset; i < pi->first_qset + pi->nqsets; i++)
 				drops += sc->sge.qs[i].txq[TXQ_ETH].txq_mr->br_drops;
 		}
-
+#endif
 		return (drops);
 
 	}
 
 	default:
-		return (if_get_counter_default(ifp, c));
+		return (if_get_counter_default(sctx->isc_ifp, c));
 	}
 }
-#endif
+
 static int
 cxgb_async_intr(void *data)
 {
@@ -2001,7 +1997,7 @@ static void
 link_check_callout(void *arg)
 {
 	struct port_info *pi = arg;
-	struct adapter *sc = pi->adapter;
+	adapter_t *sc = pi->adapter;
 
 	if (!isset(&sc->open_device_map, pi->port_id))
 		return;
@@ -2042,10 +2038,6 @@ cxgb_if_timer(if_shared_ctx_t sctx, uint16_t qsidx)
 	struct adapter *sc = pi->adapter;
 	struct adapter_params *p = &sc->params;
 	struct cmac *mac = &pi->mac;
-#ifdef notyet
-	struct ifnet *ifp = pi->hwifp;
-	struct mac_stats *mstats = &mac->stats;
-#endif	
 	int status, reset, cause;
 	struct sge_qset *qs = &pi->qs[qsidx];
 	struct sge_txq *txq = &qs->txq[TXQ_ETH];
@@ -2084,33 +2076,6 @@ cxgb_if_timer(if_shared_ctx_t sctx, uint16_t qsidx)
 
 	t3_mac_update_stats(mac);
 
-#ifdef notyet
-	ifp->if_opackets = mstats->tx_frames;
-	ifp->if_ipackets = mstats->rx_frames;
-	ifp->if_obytes = mstats->tx_octets;
-	ifp->if_ibytes = mstats->rx_octets;
-	ifp->if_omcasts = mstats->tx_mcast_frames;
-	ifp->if_imcasts = mstats->rx_mcast_frames;
-	ifp->if_collisions = mstats->tx_total_collisions;
-	ifp->if_iqdrops = mstats->rx_cong_drops;
-
-	ifp->if_oerrors =
-		mstats->tx_excess_collisions +
-		mstats->tx_underrun +
-		mstats->tx_len_errs +
-		mstats->tx_mac_internal_errs +
-		mstats->tx_excess_deferral +
-		mstats->tx_fcs_errs;
-	ifp->if_ierrors =
-		mstats->rx_jabber +
-		mstats->rx_data_errs +
-		mstats->rx_sequence_errs +
-		mstats->rx_runt +
-		mstats->rx_too_long +
-		mstats->rx_mac_internal_errs +
-		mstats->rx_short +
-		mstats->rx_fcs_errs;
-#endif
 	if (mac->multiport)
 		return;
 

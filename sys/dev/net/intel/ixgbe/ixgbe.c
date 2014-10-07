@@ -110,9 +110,7 @@ static void	ixgbe_if_init(if_shared_ctx_t);
 static void     ixgbe_if_stop(if_shared_ctx_t);
 static void     ixgbe_if_media_status(if_shared_ctx_t, struct ifmediareq *);
 static int      ixgbe_if_media_change(if_shared_ctx_t);
-#ifdef notyet
-static uint64_t	ixgbe_get_counter(struct ifnet *, ift_counter);
-#endif
+static uint64_t	ixgbe_if_get_counter(if_shared_ctx_t, ift_counter);
 static void     ixgbe_identify_hardware(struct adapter *);
 static int      ixgbe_allocate_pci_resources(struct adapter *);
 static void	ixgbe_get_slot_info(struct ixgbe_hw *);
@@ -250,6 +248,7 @@ static device_method_t ixgbe_if_methods[] = {
 	DEVMETHOD(ifdi_txq_setup, ixgbe_if_txq_setup),
 	DEVMETHOD(ifdi_rxq_setup, ixgbe_if_rxq_setup),
 	DEVMETHOD(ifdi_qset_structures_free, ixgbe_if_qset_structures_free),
+	DEVMETHOD(ifdi_get_counter, ixgbe_if_get_counter),
 	DEVMETHOD_END
 };
 
@@ -3868,12 +3867,10 @@ ixgbe_update_stats_counters(struct adapter *adapter)
 }
 
 static uint64_t
-ixgbe_get_counter(struct ifnet *ifp, ift_counter cnt)
+ixgbe_if_get_counter(if_shared_ctx_t sctx, ift_counter cnt)
 {
-	struct adapter *adapter;
+	struct adapter *adapter = DOWNCAST(sctx);
 	uint64_t rv;
-
-	adapter = if_getsoftc(ifp);
 
 	switch (cnt) {
 	case IFCOUNTER_IPACKETS:
@@ -3898,7 +3895,7 @@ ixgbe_get_counter(struct ifnet *ifp, ift_counter cnt)
 	case IFCOUNTER_IERRORS:
 		return (adapter->stats.crcerrs + adapter->stats.rlec);
 	default:
-		return (if_get_counter_default(ifp, cnt));
+		return (if_get_counter_default(sctx->isc_ifp, cnt));
 	}
 }
 

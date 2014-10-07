@@ -189,13 +189,13 @@ void iflib_link_state_change(if_shared_ctx_t sctx, uint64_t baudrate, int linkst
 int iflib_tx_cidx_get(if_shared_ctx_t sctx, int txqid);
 void iflib_tx_credits_update(if_shared_ctx_t sctx, int txqid, int credits);
 
-
-void iflib_stats_update(if_shared_ctx_t);
 void iflib_add_int_delay_sysctl(if_shared_ctx_t, const char *, const char *,
 								if_int_delay_info_t, int, int);
 void iflib_taskqgroup_attach(struct grouptask *gtask, void *uniq, char *name);
 
 struct mtx *iflib_sctx_lock_get(if_shared_ctx_t);
 struct mtx *iflib_qset_lock_get(if_shared_ctx_t, uint16_t);
+
+uint64_t iflib_get_counter_default(if_shared_ctx_t, ift_counter);
 
 #endif /*  __IFLIB_H_ */

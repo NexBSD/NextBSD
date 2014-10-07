@@ -253,9 +253,6 @@ static void em_isc_rxd_flush(if_shared_ctx_t, uint16_t, uint8_t, uint32_t);
 static int em_isc_rxd_available(if_shared_ctx_t, uint16_t, uint32_t);
 
 
-#ifdef notyet
-static uint64_t	em_get_counter(if_t, ift_counter);
-#endif
 static void	em_identify_hardware(struct adapter *);
 static int	em_allocate_pci_resources(struct adapter *);
 static int	em_allocate_legacy(struct adapter *);
@@ -3459,34 +3456,7 @@ em_update_stats_counters(struct adapter *adapter)
 		adapter->stats.roc + adapter->stats.mpc + adapter->stats.cexterr;
 	adapter->common_stats.ics_oerrs = adapter->stats.ecol +
 		adapter->stats.latecol + adapter->watchdog_events;
-
-	iflib_stats_update(UPCAST(adapter));
 }
-
-#ifdef notyet
-static uint64_t
-em_get_counter(if_t ifp, ift_counter cnt)
-{
-	struct adapter *adapter;
-
-	adapter = if_getsoftc(ifp);
-
-	switch (cnt) {
-	case IFCOUNTER_COLLISIONS:
-		return (adapter->stats.colc);
-	case IFCOUNTER_IERRORS:
-		return (adapter->dropped_pkts + adapter->stats.rxerrc +
-		    adapter->stats.crcerrs + adapter->stats.algnerrc +
-		    adapter->stats.ruc + adapter->stats.roc +
-		    adapter->stats.mpc + adapter->stats.cexterr);
-	case IFCOUNTER_OERRORS:
-		return (adapter->stats.ecol + adapter->stats.latecol +
-		    adapter->watchdog_events);
-	default:
-		return (if_get_counter_default(ifp, cnt));
-	}
-}
-#endif
 
 /* Export a single 32-bit register via a read-only sysctl. */
 static int

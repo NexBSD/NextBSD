@@ -180,8 +180,6 @@ struct iflib_txq {
 	uint32_t	ift_db_pending;
 	uint32_t	ift_npending;
 	uint32_t	ift_tqid;
-	uint64_t	ift_tx_bytes;
-	uint64_t	ift_tx_packets;
 	uint64_t	ift_tx_direct_packets;
 	uint64_t	ift_tx_direct_bytes;
 	uint64_t	ift_no_tx_dma_setup;
@@ -236,8 +234,6 @@ struct iflib_rxq {
 	uint32_t	ifr_size;
 	uint32_t	ifr_cidx;
 	uint32_t	ifr_pidx;
-	uint64_t	ifr_rx_bytes;
-	uint64_t	ifr_rx_packets;
 	uint64_t	ifr_rx_irq;
 	uint16_t	ifr_id;
 	int			ifr_lro_enabled;
@@ -1110,8 +1106,8 @@ iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 	M_HASHTYPE_SET(m, ri->iri_hash_type);
 	m->m_pkthdr.csum_flags = ri->iri_csum_flags;
 	m->m_pkthdr.csum_data = ri->iri_csum_data;
-	fl->ifl_rxq->ifr_rx_packets++;
-	fl->ifl_rxq->ifr_rx_bytes += m->m_pkthdr.len;
+	if_inc_counter(ri->iri_ifp, IFCOUNTER_IBYTES, m->m_pkthdr.len);
+	if_inc_counter(ri->iri_ifp, IFCOUNTER_IPACKETS, 1);
 	return (m);
 }
 
@@ -1501,8 +1497,8 @@ iflib_txq_start(iflib_txq_t txq)
 			drbr_advance(ifp, txq->ift_br[bridx]);
 			enq++;
 
-			txq->ift_tx_bytes += next->m_pkthdr.len;
-			txq->ift_tx_packets++;
+			if_inc_counter(ifp, IFCOUNTER_OBYTES, next->m_pkthdr.len);
+			if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 			if (next->m_flags & M_MCAST)
 				if_inc_counter(ifp, IFCOUNTER_OMCASTS, 1);
 			if_etherbpfmtap(ifp, next);
@@ -1746,7 +1742,6 @@ iflib_if_qflush(if_t ifp)
 static int
 iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 {
-
 	iflib_ctx_t ctx = if_getsoftc(ifp);
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	struct ifreq	*ifr = (struct ifreq *)data;
@@ -1907,6 +1902,31 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	}
 
 	return (err);
+}
+
+static uint64_t
+iflib_if_get_counter(if_t ifp, ift_counter cnt)
+{
+	iflib_ctx_t ctx = if_getsoftc(ifp);
+
+	return (IFDI_GET_COUNTER(ctx->ifc_sctx, cnt));
+}
+
+uint64_t
+iflib_get_counter_default(if_shared_ctx_t sctx, ift_counter cnt)
+{
+	struct if_common_stats *stats = &sctx->isc_common_stats;
+
+	switch (cnt) {
+	case IFCOUNTER_COLLISIONS:
+		return (stats->ics_colls);
+	case IFCOUNTER_IERRORS:
+		return (stats->ics_ierrs);
+	case IFCOUNTER_OERRORS:
+		return (stats->ics_ierrs);
+	default:
+		return (if_get_counter_default(sctx->isc_ifp, cnt));
+	}
 }
 
 /*********************************************************************
@@ -2126,6 +2146,7 @@ iflib_register(device_t dev, driver_t *driver, uint8_t addr[ETH_ADDR_LEN])
 	if_setioctlfn(ifp, iflib_if_ioctl);
 	if_settransmitfn(ifp, iflib_if_transmit);
 	if_setqflushfn(ifp, iflib_if_qflush);
+	if_setgetcounterfn(ifp, iflib_if_get_counter);
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
 	ether_ifattach(ifp, addr);
 
@@ -2564,33 +2585,6 @@ iflib_tx_credits_update(if_shared_ctx_t sctx, int txqid, int credits)
 {
 	iflib_ctx_t ctx = sctx->isc_ctx;
 	ctx->ifc_txqs[txqid].ift_processed += credits;
-}
-
-void
-iflib_stats_update(if_shared_ctx_t sctx)
-{
-	struct if_common_stats *stats = &sctx->isc_common_stats;
-	if_t ifp = sctx->isc_ifp;
-	iflib_ctx_t ctx = sctx->isc_ctx;
-	uint64_t bytes, packets;
-	int i;
-
-	for (packets = bytes = 0, i = 0; i < sctx->isc_nqsets; i++) {
-		bytes += ctx->ifc_txqs[i].ift_tx_bytes;
-		packets += ctx->ifc_txqs[i].ift_tx_packets;
-	}
-	*ifp->if_counters[IFCOUNTER_OBYTES] = bytes;
-	*ifp->if_counters[IFCOUNTER_OPACKETS] = packets;
-	for (packets = bytes = 0, i = 0; i < sctx->isc_nqsets; i++) {
-		bytes += ctx->ifc_rxqs[i].ifr_rx_bytes;
-		packets += ctx->ifc_rxqs[i].ifr_rx_packets;
-	}
-
-	*ifp->if_counters[IFCOUNTER_IBYTES] = bytes;
-	*ifp->if_counters[IFCOUNTER_IPACKETS] = packets;
-	*ifp->if_counters[IFCOUNTER_COLLISIONS] = stats->ics_colls;
-	*ifp->if_counters[IFCOUNTER_IERRORS] = stats->ics_ierrs;
-	*ifp->if_counters[IFCOUNTER_OERRORS] = stats->ics_oerrs;
 }
 
 void

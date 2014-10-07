@@ -89,6 +89,7 @@ CODE {
 	{
 		return (0);
 	}
+
 };
 
 #
@@ -240,3 +241,8 @@ METHOD int sysctl_int_delay {
 	if_shared_ctx_t _sctx;
 	if_int_delay_info_t _iidi;
 } DEFAULT null_sysctl_int_delay;
+
+METHOD uint64_t get_counter {
+	if_shared_ctx_t _sctx;
+	ift_counter cnt;
+} DEFAULT iflib_get_counter_default;
