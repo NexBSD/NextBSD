@@ -525,7 +525,19 @@ void	if_register_com_alloc(u_char type, if_com_alloc_t *a, if_com_free_t *f);
 void	if_deregister_com_alloc(u_char type);
 void	if_data_copy(struct ifnet *, struct if_data *);
 uint64_t if_get_counter_default(struct ifnet *, ift_counter);
-void	if_inc_counter(struct ifnet *, ift_counter, int64_t);
+
+/*
+ * Increase an ifnet counter. Usually used for counters shared
+ * between the stack and a driver, but function supports them all.
+ */
+static __inline void
+if_inc_counter(struct ifnet *ifp, ift_counter cnt, int64_t inc)
+{
+
+	KASSERT(cnt < IFCOUNTERS, ("%s: invalid cnt %d", __func__, cnt));
+
+	counter_u64_add(ifp->if_counters[cnt], inc);
+}
 
 #define IF_LLADDR(ifp)							\
     LLADDR((struct sockaddr_dl *)((ifp)->if_addr->ifa_addr))

@@ -1480,19 +1480,6 @@ if_get_counter_default(struct ifnet *ifp, ift_counter cnt)
 }
 
 /*
- * Increase an ifnet counter. Usually used for counters shared
- * between the stack and a driver, but function supports them all.
- */
-void
-if_inc_counter(struct ifnet *ifp, ift_counter cnt, int64_t inc)
-{
-
-	KASSERT(cnt < IFCOUNTERS, ("%s: invalid cnt %d", __func__, cnt));
-
-	counter_u64_add(ifp->if_counters[cnt], inc);
-}
-
-/*
  * Copy data from ifnet to userland API structure if_data.
  */
 void
