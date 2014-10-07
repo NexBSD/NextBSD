@@ -2579,18 +2579,18 @@ iflib_stats_update(if_shared_ctx_t sctx)
 		bytes += ctx->ifc_txqs[i].ift_tx_bytes;
 		packets += ctx->ifc_txqs[i].ift_tx_packets;
 	}
-	ifp->if_counters[IFCOUNTER_OBYTES] = bytes;
-	ifp->if_counters[IFCOUNTER_OPACKETS] = packets;
+	*ifp->if_counters[IFCOUNTER_OBYTES] = bytes;
+	*ifp->if_counters[IFCOUNTER_OPACKETS] = packets;
 	for (packets = bytes = 0, i = 0; i < sctx->isc_nqsets; i++) {
 		bytes += ctx->ifc_rxqs[i].ifr_rx_bytes;
 		packets += ctx->ifc_rxqs[i].ifr_rx_packets;
 	}
 
-	ifp->if_counters[IFCOUNTER_IBYTES] = bytes;
-	ifp->if_counters[IFCOUNTER_IPACKETS] = packets;
-	ifp->if_counters[IFCOUNTER_COLLISIONS] = stats->ics_colls;
-	ifp->if_counters[IFCOUNTER_IERRORS] = stats->ics_ierrs;
-	ifp->if_counters[IFCOUNTER_OERRORS] = stats->ics_oerrs;
+	*ifp->if_counters[IFCOUNTER_IBYTES] = bytes;
+	*ifp->if_counters[IFCOUNTER_IPACKETS] = packets;
+	*ifp->if_counters[IFCOUNTER_COLLISIONS] = stats->ics_colls;
+	*ifp->if_counters[IFCOUNTER_IERRORS] = stats->ics_ierrs;
+	*ifp->if_counters[IFCOUNTER_OERRORS] = stats->ics_oerrs;
 }
 
 void
