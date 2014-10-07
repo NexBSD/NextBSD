@@ -169,17 +169,12 @@ create_directory(const char *path)
 		if (component == NULL)
 			break;
 		concat(&partial, &component);
-		//log_debugx("checking \"%s\" for existence", partial);
-		error = access(partial, F_OK);
-		if (error == 0)
-			continue;
-		if (errno != ENOENT)
-			log_err(1, "cannot access %s", partial);
-		log_debugx("directory %s does not exist, creating",
-		    partial);
+		//log_debugx("creating \"%s\"", partial);
 		error = mkdir(partial, 0755);
-		if (error != 0)
-			log_err(1, "cannot create %s", partial);
+		if (error != 0 && errno != EEXIST) {
+			log_warn("cannot create %s", partial);
+			return;
+		}
 	}
 
 	free(tofree);
@@ -673,11 +668,21 @@ node_find(struct node *node, const char *path)
 {
 	struct node *child, *found;
 	char *tmp;
+	size_t tmplen;
 
 	//log_debugx("looking up %s in %s", path, node->n_key);
 
 	tmp = node_path(node);
-	if (strncmp(tmp, path, strlen(tmp)) != 0) {
+	tmplen = strlen(tmp);
+	if (strncmp(tmp, path, tmplen) != 0) {
+		free(tmp);
+		return (NULL);
+	}
+	if (path[tmplen] != '/' && path[tmplen] != '\0') {
+		/*
+		 * If we have two map entries like 'foo' and 'foobar', make
+		 * sure the search for 'foobar' won't match 'foo' instead.
+		 */
 		free(tmp);
 		return (NULL);
 	}

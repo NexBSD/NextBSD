@@ -797,7 +797,6 @@ static int
 em_if_detach(if_shared_ctx_t sctx)
 {
 	struct adapter	*adapter = DOWNCAST(sctx);
-
 	INIT_DEBUGOUT("em_if_detach: begin");
 
 	e1000_phy_hw_reset(&adapter->hw);

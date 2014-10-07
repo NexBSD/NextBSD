@@ -110,6 +110,9 @@ static void	ixgbe_if_init(if_shared_ctx_t);
 static void     ixgbe_if_stop(if_shared_ctx_t);
 static void     ixgbe_if_media_status(if_shared_ctx_t, struct ifmediareq *);
 static int      ixgbe_if_media_change(if_shared_ctx_t);
+#ifdef notyet
+static uint64_t	ixgbe_get_counter(struct ifnet *, ift_counter);
+#endif
 static void     ixgbe_identify_hardware(struct adapter *);
 static int      ixgbe_allocate_pci_resources(struct adapter *);
 static void	ixgbe_get_slot_info(struct ixgbe_hw *);
@@ -3733,10 +3736,8 @@ ixgbe_reinit_fdir(void *context, int pending)
 static void
 ixgbe_update_stats_counters(struct adapter *adapter)
 {
-	struct ifnet   *ifp = adapter->hwifp;
 	struct ixgbe_hw *hw = &adapter->hw;
 	u32  missed_rx = 0, bprc, lxon, lxoff, total;
-	u64  total_missed_rx = 0;
 
 	adapter->stats.crcerrs += IXGBE_READ_REG(hw, IXGBE_CRCERRS);
 	adapter->stats.illerrc += IXGBE_READ_REG(hw, IXGBE_ILLERRC);
@@ -3755,8 +3756,6 @@ ixgbe_update_stats_counters(struct adapter *adapter)
 		missed_rx += mp;
 		/* global total per queue */
         	adapter->stats.mpc[i] += mp;
-		/* Running comprehensive total for stats display */
-		total_missed_rx += adapter->stats.mpc[i];
 		if (hw->mac.type == ixgbe_mac_82598EB) {
 			adapter->stats.rnbc[i] +=
 			    IXGBE_READ_REG(hw, IXGBE_RNBC(i));
@@ -3866,19 +3865,41 @@ ixgbe_update_stats_counters(struct adapter *adapter)
 		adapter->stats.fcoedwrc += IXGBE_READ_REG(hw, IXGBE_FCOEDWRC);
 		adapter->stats.fcoedwtc += IXGBE_READ_REG(hw, IXGBE_FCOEDWTC);
 	}
+}
 
-	/* Fill out the OS statistics structure */
-	ifp->if_ipackets = adapter->stats.gprc;
-	ifp->if_opackets = adapter->stats.gptc;
-	ifp->if_ibytes = adapter->stats.gorc;
-	ifp->if_obytes = adapter->stats.gotc;
-	ifp->if_imcasts = adapter->stats.mprc;
-	ifp->if_omcasts = adapter->stats.mptc;
-	ifp->if_collisions = 0;
+static uint64_t
+ixgbe_get_counter(struct ifnet *ifp, ift_counter cnt)
+{
+	struct adapter *adapter;
+	uint64_t rv;
 
-	/* Rx Errors */
-	ifp->if_iqdrops = total_missed_rx;
-	ifp->if_ierrors = adapter->stats.crcerrs + adapter->stats.rlec;
+	adapter = if_getsoftc(ifp);
+
+	switch (cnt) {
+	case IFCOUNTER_IPACKETS:
+		return (adapter->stats.gprc);
+	case IFCOUNTER_OPACKETS:
+		return (adapter->stats.gptc);
+	case IFCOUNTER_IBYTES:
+		return (adapter->stats.gorc);
+	case IFCOUNTER_OBYTES:
+		return (adapter->stats.gotc);
+	case IFCOUNTER_IMCASTS:
+		return (adapter->stats.mprc);
+	case IFCOUNTER_OMCASTS:
+		return (adapter->stats.mptc);
+	case IFCOUNTER_COLLISIONS:
+		return (0);
+	case IFCOUNTER_IQDROPS:
+		rv = 0;
+		for (int i = 0; i < 8; i++)
+			rv += adapter->stats.mpc[i];
+		return (rv);
+	case IFCOUNTER_IERRORS:
+		return (adapter->stats.crcerrs + adapter->stats.rlec);
+	default:
+		return (if_get_counter_default(ifp, cnt));
+	}
 }
 
 /** ixgbe_sysctl_tdh_handler - Handler function

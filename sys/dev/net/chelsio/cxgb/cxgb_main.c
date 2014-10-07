@@ -100,6 +100,9 @@ static int cxgb_ifm_type(int);
 static void cxgb_build_medialist(struct port_info *);
 static void cxgb_if_media_status(if_shared_ctx_t, struct ifmediareq *);
 static int cxgb_async_intr(void *);
+#ifdef notyet
+static uint64_t cxgb_get_counter(struct ifnet *, ift_counter);
+#endif
 static void cxgb_tick_handler(void *, int);
 static void cxgb_if_timer(if_shared_ctx_t, uint16_t);
 static void link_check_callout(void *);
@@ -1917,6 +1920,72 @@ cxgb_if_media_status(if_shared_ctx_t sctx, struct ifmediareq *ifmr)
 			    speed));
 }
 
+#ifdef notyet
+static uint64_t
+cxgb_get_counter(struct ifnet *ifp, ift_counter c)
+{
+	struct port_info *pi = ifp->if_softc;
+	struct adapter *sc = pi->adapter;
+	struct cmac *mac = &pi->mac;
+	struct mac_stats *mstats = &mac->stats;
+
+	cxgb_refresh_stats(pi);
+
+	switch (c) {
+	case IFCOUNTER_IPACKETS:
+		return (mstats->rx_frames);
+
+	case IFCOUNTER_IERRORS:
+		return (mstats->rx_jabber + mstats->rx_data_errs +
+		    mstats->rx_sequence_errs + mstats->rx_runt +
+		    mstats->rx_too_long + mstats->rx_mac_internal_errs +
+		    mstats->rx_short + mstats->rx_fcs_errs);
+
+	case IFCOUNTER_OPACKETS:
+		return (mstats->tx_frames);
+
+	case IFCOUNTER_OERRORS:
+		return (mstats->tx_excess_collisions + mstats->tx_underrun +
+		    mstats->tx_len_errs + mstats->tx_mac_internal_errs +
+		    mstats->tx_excess_deferral + mstats->tx_fcs_errs);
+
+	case IFCOUNTER_COLLISIONS:
+		return (mstats->tx_total_collisions);
+
+	case IFCOUNTER_IBYTES:
+		return (mstats->rx_octets);
+
+	case IFCOUNTER_OBYTES:
+		return (mstats->tx_octets);
+
+	case IFCOUNTER_IMCASTS:
+		return (mstats->rx_mcast_frames);
+
+	case IFCOUNTER_OMCASTS:
+		return (mstats->tx_mcast_frames);
+
+	case IFCOUNTER_IQDROPS:
+		return (mstats->rx_cong_drops);
+
+	case IFCOUNTER_OQDROPS: {
+		int i;
+		uint64_t drops;
+
+		drops = 0;
+		if (sc->flags & FULL_INIT_DONE) {
+			for (i = pi->first_qset; i < pi->first_qset + pi->nqsets; i++)
+				drops += sc->sge.qs[i].txq[TXQ_ETH].txq_mr->br_drops;
+		}
+
+		return (drops);
+
+	}
+
+	default:
+		return (if_get_counter_default(ifp, c));
+	}
+}
+#endif
 static int
 cxgb_async_intr(void *data)
 {
@@ -1972,9 +2041,11 @@ cxgb_if_timer(if_shared_ctx_t sctx, uint16_t qsidx)
 	struct port_info *pi = DOWNCAST(sctx);
 	struct adapter *sc = pi->adapter;
 	struct adapter_params *p = &sc->params;
-	struct ifnet *ifp = pi->hwifp;
 	struct cmac *mac = &pi->mac;
+#ifdef notyet
+	struct ifnet *ifp = pi->hwifp;
 	struct mac_stats *mstats = &mac->stats;
+#endif	
 	int status, reset, cause;
 	struct sge_qset *qs = &pi->qs[qsidx];
 	struct sge_txq *txq = &qs->txq[TXQ_ETH];
@@ -2013,6 +2084,7 @@ cxgb_if_timer(if_shared_ctx_t sctx, uint16_t qsidx)
 
 	t3_mac_update_stats(mac);
 
+#ifdef notyet
 	ifp->if_opackets = mstats->tx_frames;
 	ifp->if_ipackets = mstats->rx_frames;
 	ifp->if_obytes = mstats->tx_octets;
@@ -2038,7 +2110,7 @@ cxgb_if_timer(if_shared_ctx_t sctx, uint16_t qsidx)
 		mstats->rx_mac_internal_errs +
 		mstats->rx_short +
 		mstats->rx_fcs_errs;
-
+#endif
 	if (mac->multiport)
 		return;
 
@@ -2050,6 +2122,23 @@ cxgb_if_timer(if_shared_ctx_t sctx, uint16_t qsidx)
 		reset |= F_RXFIFO_OVERFLOW;
 	}
 	t3_write_reg(sc, A_XGM_INT_CAUSE + mac->offset, reset);
+}
+
+void
+cxgb_refresh_stats(struct port_info *pi)
+{
+	struct timeval tv;
+	const struct timeval interval = {0, 250000};    /* 250ms */
+
+	getmicrotime(&tv);
+	timevalsub(&tv, &interval);
+	if (timevalcmp(&tv, &pi->last_refreshed, <))
+		return;
+
+	PORT_LOCK(pi);
+	t3_mac_update_stats(&pi->mac);
+	PORT_UNLOCK(pi);
+	getmicrotime(&pi->last_refreshed);
 }
 
 static void

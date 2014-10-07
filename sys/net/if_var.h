@@ -120,6 +120,12 @@ typedef void (*if_qflush_fn_t)(if_t);
 typedef int (*if_transmit_fn_t)(if_t, struct mbuf *);
 typedef	uint64_t (*if_get_counter_t)(if_t, ift_counter);
 
+struct ifnet_hw_tsomax {
+	u_int	tsomaxbytes;	/* TSO total burst length limit in bytes */
+	u_int	tsomaxsegcount;	/* TSO maximum segment count */
+	u_int	tsomaxsegsize;	/* TSO maximum segment size in bytes */
+};
+
 /*
  * Structure defining a network interface.
  *
@@ -224,18 +230,24 @@ struct ifnet {
 
 	/* Statistics. */
 	counter_u64_t	if_counters[IFCOUNTERS];
+
 	/* Stuff that's only temporary and doesn't belong here. */
-	u_int	if_hw_tsomax;		/* tso burst length limit, the minimum
-					 * is (IP_MAXPACKET / 8).
-					 * XXXAO: Have to find a better place
-					 * for it eventually. */
+	u_int	if_hw_tsomax;		/* TSO total burst length
+					 * limit in bytes. A value of
+					 * zero means no limit. Have
+					 * to find a better place for
+					 * it eventually. */
+
+	/* TSO fields for segment limits. If a field is zero below, there is no limit. */
+	u_int		if_hw_tsomaxsegcount;	/* TSO maximum segment count */
+	u_int		if_hw_tsomaxsegsize;	/* TSO maximum segment size in bytes */
+
 	/*
 	 * Spare fields to be added before branching a stable branch, so
 	 * that structure can be enhanced without changing the kernel
 	 * binary interface.
 	 */
 };
-
 
 /* for compatibility with other BSDs */
 #define	if_addrlist	if_addrhead
@@ -581,6 +593,20 @@ struct mbuf* drbr_dequeue_drv(if_t ifp, struct buf_ring *br);
 int drbr_needs_enqueue_drv(if_t ifp, struct buf_ring *br);
 int drbr_enqueue_drv(if_t ifp, struct buf_ring *br, struct mbuf *m);
 
+/* TSO */
+void if_hw_tsomax_common(if_t ifp, struct ifnet_hw_tsomax *);
+int if_hw_tsomax_update(if_t ifp, struct ifnet_hw_tsomax *);
+
+#ifdef DEVICE_POLLING
+enum poll_cmd { POLL_ONLY, POLL_AND_CHECK_STATUS };
+
+typedef	int poll_handler_t(if_t ifp, enum poll_cmd cmd, int count);
+int    ether_poll_register(poll_handler_t *h, if_t ifp);
+int    ether_poll_deregister(if_t ifp);
+#endif /* DEVICE_POLLING */
+
 #endif /* _KERNEL */
+
 #include <net/ifq.h>	/* XXXAO: temporary unconditional include */
+
 #endif /* !_NET_IF_VAR_H_ */
