@@ -2569,7 +2569,6 @@ iflib_tx_credits_update(if_shared_ctx_t sctx, int txqid, int credits)
 void
 iflib_stats_update(if_shared_ctx_t sctx)
 {
-#ifdef notyet
 	struct if_common_stats *stats = &sctx->isc_common_stats;
 	if_t ifp = sctx->isc_ifp;
 	iflib_ctx_t ctx = sctx->isc_ctx;
@@ -2580,19 +2579,18 @@ iflib_stats_update(if_shared_ctx_t sctx)
 		bytes += ctx->ifc_txqs[i].ift_tx_bytes;
 		packets += ctx->ifc_txqs[i].ift_tx_packets;
 	}
-	if_setobytes(ifp, bytes);
-	if_setopackets(ifp, packets);
+	ifp->if_counters[IFCOUNTER_OBYTES] = bytes;
+	ifp->if_counters[IFCOUNTER_OPACKETS] = packets;
 	for (packets = bytes = 0, i = 0; i < sctx->isc_nqsets; i++) {
 		bytes += ctx->ifc_rxqs[i].ifr_rx_bytes;
 		packets += ctx->ifc_rxqs[i].ifr_rx_packets;
 	}
 
-	if_setibytes(ifp, bytes);
-	if_setipackets(ifp, packets);
-	if_setcollisions(ifp, stats->ics_colls);
-	if_setierrors(ifp, stats->ics_ierrs);
-	if_setoerrors(ifp, stats->ics_oerrs);
-#endif
+	ifp->if_counters[IFCOUNTER_IBYTES] = bytes;
+	ifp->if_counters[IFCOUNTER_IPACKETS] = packets;
+	ifp->if_counters[IFCOUNTER_COLLISIONS] = stats->ics_colls;
+	ifp->if_counters[IFCOUNTER_IERRORS] = stats->ics_ierrs;
+	ifp->if_counters[IFCOUNTER_OERRORS] = stats->ics_oerrs;
 }
 
 void
