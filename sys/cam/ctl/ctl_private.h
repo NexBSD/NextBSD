@@ -115,7 +115,9 @@ struct ctl_ioctl_info {
 
 typedef enum {
 	CTL_SER_BLOCK,
+	CTL_SER_BLOCKOPT,
 	CTL_SER_EXTENT,
+	CTL_SER_EXTENTOPT,
 	CTL_SER_PASS,
 	CTL_SER_SKIP
 } ctl_serialize_action;
@@ -441,9 +443,9 @@ struct ctl_softc {
 	struct ctl_io_pool *othersc_pool;
 	struct proc *ctl_proc;
 	int targ_online;
-	uint32_t ctl_lun_mask[CTL_MAX_LUNS >> 5];
+	uint32_t ctl_lun_mask[(CTL_MAX_LUNS + 31) / 32];
 	struct ctl_lun *ctl_luns[CTL_MAX_LUNS];
-	uint32_t ctl_port_mask;
+	uint32_t ctl_port_mask[(CTL_MAX_PORTS + 31) / 32];
 	uint64_t aps_locked_lun;
 	STAILQ_HEAD(, ctl_lun) lun_list;
 	STAILQ_HEAD(, ctl_be_lun) pending_lun_queue;

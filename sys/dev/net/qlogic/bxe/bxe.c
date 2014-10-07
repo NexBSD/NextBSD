@@ -3126,7 +3126,7 @@ bxe_tpa_stop(struct bxe_softc          *sc,
         m->m_flags |= M_FLOWID;
 #endif
 
-        if_incipackets(ifp, 1);
+        if_inc_counter(ifp, IFCOUNTER_IPACKETS, 1);
         fp->eth_q_stats.rx_tpa_pkts++;
 
         /* pass the frame to the stack */
@@ -12622,6 +12622,7 @@ bxe_init_ifnet(struct bxe_softc *sc)
     if_setflags(ifp, (IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST));
     if_setioctlfn(ifp, bxe_ioctl);
     if_setstartfn(ifp, bxe_tx_start);
+    if_setgetcounterfn(ifp, bxe_get_counter);
 #if __FreeBSD_version >= 800000
     if_settransmitfn(ifp, bxe_tx_mq_start);
     if_setqflushfn(ifp, bxe_mq_flush);

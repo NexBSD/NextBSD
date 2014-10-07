@@ -851,11 +851,18 @@ acpi_child_location_str_method(device_t cbdev, device_t child, char *buf,
     size_t buflen)
 {
     struct acpi_device *dinfo = device_get_ivars(child);
+    char buf2[32];
+    int pxm;
 
-    if (dinfo->ad_handle)
-	snprintf(buf, buflen, "handle=%s", acpi_name(dinfo->ad_handle));
-    else
-	snprintf(buf, buflen, "unknown");
+    if (dinfo->ad_handle) {
+        snprintf(buf, buflen, "handle=%s", acpi_name(dinfo->ad_handle));
+        if (ACPI_SUCCESS(acpi_GetInteger(dinfo->ad_handle, "_PXM", &pxm))) {
+                snprintf(buf2, 32, " _PXM=%d", pxm);
+                strlcat(buf, buf2, buflen);
+        }
+    } else {
+        snprintf(buf, buflen, "unknown");
+    }
     return (0);
 }
 
@@ -1211,11 +1218,6 @@ acpi_set_resource(device_t dev, device_t child, int type, int rid,
 		if (!(type == SYS_RES_IOPORT && start == CONF1_ADDR_PORT))
 #endif
 		{
-		    if (bootverbose)
-			device_printf(dev,
-			    "Ignoring %s range %#lx-%#lx for %s\n",
-			    type == SYS_RES_MEMORY ? "memory" : "I/O",
-			    start, start + count - 1, acpi_name(ad->ad_handle));
 		    AcpiOsFree(devinfo);
 		    return (0);
 		}

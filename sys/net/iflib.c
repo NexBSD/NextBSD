@@ -1504,7 +1504,7 @@ iflib_txq_start(iflib_txq_t txq)
 			txq->ift_tx_bytes += next->m_pkthdr.len;
 			txq->ift_tx_packets++;
 			if (next->m_flags & M_MCAST)
-				if_incomcasts(ifp, 1);
+				if_inc_counter(ifp, IFCOUNTER_OMCASTS, 1);
 			if_etherbpfmtap(ifp, next);
 		}
 	} while (resid);
@@ -2569,6 +2569,7 @@ iflib_tx_credits_update(if_shared_ctx_t sctx, int txqid, int credits)
 void
 iflib_stats_update(if_shared_ctx_t sctx)
 {
+#ifdef notyet
 	struct if_common_stats *stats = &sctx->isc_common_stats;
 	if_t ifp = sctx->isc_ifp;
 	iflib_ctx_t ctx = sctx->isc_ctx;
@@ -2585,11 +2586,13 @@ iflib_stats_update(if_shared_ctx_t sctx)
 		bytes += ctx->ifc_rxqs[i].ifr_rx_bytes;
 		packets += ctx->ifc_rxqs[i].ifr_rx_packets;
 	}
+
 	if_setibytes(ifp, bytes);
 	if_setipackets(ifp, packets);
 	if_setcollisions(ifp, stats->ics_colls);
 	if_setierrors(ifp, stats->ics_ierrs);
 	if_setoerrors(ifp, stats->ics_oerrs);
+#endif
 }
 
 void

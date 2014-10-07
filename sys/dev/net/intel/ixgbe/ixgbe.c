@@ -2829,7 +2829,6 @@ ixgbe_if_rxq_setup(if_shared_ctx_t sctx, uint32_t rxqid)
 	rxr->next_to_refresh = 0;
 	rxr->rx_copies = 0;
 	rxr->rx_bytes = 0;
-	rxr->discard = FALSE;
 	rxr->vtag_strip = FALSE;
 
 	/*
@@ -3074,7 +3073,7 @@ ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 	u16		len;
 	u16		vtag = 0;
 	bool		eop;
- 
+
 	cur = &rxr->rx_base[ri->iri_cidx];
 	staterr = le32toh(cur->wb.upper.status_error);
 	pkt_info = le16toh(cur->wb.lower.lo_dword.hs_rss.pkt_info);
@@ -3089,26 +3088,21 @@ ixgbe_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 	eop = ((staterr & IXGBE_RXD_STAT_EOP) != 0);
 
 	/* Make sure bad packets are discarded
-   * Do addresses get overwritten?
-   **/
-	if (((staterr & IXGBE_RXDADV_ERR_FRAME_ERR_MASK) != 0) ||
-		(rxr->discard)) {
+	 * Do addresses get overwritten?
+	 **/
+	if (((staterr & IXGBE_RXDADV_ERR_FRAME_ERR_MASK) != 0)) {
 		rxr->rx_discarded++;
-		if (eop)
-			rxr->discard = FALSE;
-		else
-			rxr->discard = TRUE;
 		return (EBADMSG);
 	}
 	ri->iri_qidx = 0;
 	/*
-	 ** On 82599 which supports a hardware
-	 ** LRO (called HW RSC), packets need
-	 ** not be fragmented across sequential
-	 ** descriptors, rather the next descriptor
-	 ** is indicated in bits of the descriptor.
-	 ** We pass the offset to iflib.
-	 */
+	** On 82599 which supports a hardware
+	** LRO (called HW RSC), packets need
+	** not be fragmented across sequential
+	** descriptors, rather the next descriptor
+	** is indicated in bits of the descriptor.
+	** We pass the offset to iflib.
+	*/
 
 	if (!eop) {
 			/*

@@ -305,7 +305,6 @@ struct rx_ring {
 	union ixgbe_adv_rx_desc	*rx_base;
 	uint64_t		rx_paddr;
 	bool			hw_rsc;
-	bool			discard;
 	bool			vtag_strip;
         u16			next_to_refresh;
         u16 			next_to_check;
