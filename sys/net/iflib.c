@@ -31,6 +31,8 @@
 #include <sys/eventhandler.h>
 #include <sys/sockio.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
 #include <sys/module.h>
 #include <sys/kobj.h>
 #include <sys/rman.h>
@@ -256,26 +258,26 @@ struct iflib_rxq {
 
 #define CTX_LOCK_INIT(_sc, _name)  mtx_init(&(_sc)->ifc_mtx, _name, "iflib ctx lock", MTX_DEF)
 
-#define CTX_LOCK(ctx) (mtx_lock(&(ctx)->ifc_mtx))
-#define CTX_UNLOCK(ctx) (mtx_unlock(&(ctx)->ifc_mtx))
-#define CTX_LOCK_DESTROY(ctx) (mtx_destroy(&(ctx)->ifc_mtx))
+#define CTX_LOCK(ctx) mtx_lock(&(ctx)->ifc_mtx)
+#define CTX_UNLOCK(ctx) mtx_unlock(&(ctx)->ifc_mtx)
+#define CTX_LOCK_DESTROY(ctx) mtx_destroy(&(ctx)->ifc_mtx)
 
 #define SCTX_LOCK(sctx) CTX_LOCK((sctx)->isc_ctx)
 #define SCTX_UNLOCK(sctx) CTX_UNLOCK((sctx)->isc_ctx)
 
 
-#define TXQ_LOCK(txq) (mtx_lock(&(txq)->ift_mtx))
-#define TXQ_LOCK_HELD(txq) (mtx_held(&(txq)->ift_mtx))
-#define TXQ_LOCK_ASSERT(txq) (mtx_assert(&(txq)->ift_mtx, MA_OWNED))
-#define TXQ_TRYLOCK(txq) (mtx_trylock(&(txq)->ift_mtx))
-#define TXQ_UNLOCK(txq) (mtx_unlock(&(txq)->ift_mtx))
-#define TXQ_LOCK_DESTROY(txq) (mtx_destroy(&(txq)->ift_mtx))
+#define TXQ_LOCK(txq) mtx_lock(&(txq)->ift_mtx)
+#define TXQ_LOCK_HELD(txq) mtx_held(&(txq)->ift_mtx)
+#define TXQ_LOCK_ASSERT(txq) mtx_assert(&(txq)->ift_mtx, MA_OWNED)
+#define TXQ_TRYLOCK(txq) mtx_trylock(&(txq)->ift_mtx)
+#define TXQ_UNLOCK(txq) mtx_unlock(&(txq)->ift_mtx)
+#define TXQ_LOCK_DESTROY(txq) mtx_destroy(&(txq)->ift_mtx)
 
-#define RXQ_LOCK(rxq) (mtx_lock(&(rxq)->ifr_mtx))
-#define RXQ_LOCK_ASSERT(rxq) (mtx_assert(&(rxq)->ifr_mtx), MA_OWNED)
-#define RXQ_TRYLOCK(rxq) (mtx_trylock(&(rxq)->ifr_mtx))
-#define RXQ_UNLOCK(rxq) (mtx_unlock(&(rxq)->ifr_mtx))
-#define RXQ_LOCK_DESTROY(rxq) (mtx_destroy(&(rxq)->ifr_mtx))
+#define RXQ_LOCK(rxq) mtx_lock(&(rxq)->ifr_mtx)
+#define RXQ_LOCK_ASSERT(rxq) mtx_assert(&(rxq)->ifr_mtx), MA_OWNED)
+#define RXQ_TRYLOCK(rxq) mtx_trylock(&(rxq)->ifr_mtx)
+#define RXQ_UNLOCK(rxq) mtx_unlock(&(rxq)->ifr_mtx)
+#define RXQ_LOCK_DESTROY(rxq) mtx_destroy(&(rxq)->ifr_mtx)
 
 static int iflib_recycle_enable;
 
