@@ -219,6 +219,8 @@ struct iflib_fl {
 	iflib_rxq_t	ifl_rxq;
 	uint8_t		ifl_id;
 	iflib_dma_info_t	ifl_ifdi;
+	uint64_t	ifl_phys_addrs[256];
+	caddr_t		ifl_vm_addrs[256];
 };
 
 /* XXX check this */
@@ -703,12 +705,15 @@ static void
 _iflib_fl_refill(iflib_ctx_t ctx, iflib_fl_t fl, int n)
 {
 	struct mbuf *m;
-	iflib_sd_t rxsd = &fl->ifl_sds[fl->ifl_pidx];
+	int pidx = fl->ifl_pidx;
+	iflib_sd_t rxsd = &fl->ifl_sds[pidx];
 	caddr_t cl;
-	int err;
+	int i, err;
 	uint64_t phys_addr;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 
+batch_start:
+	i = 0;
 	while (n--) {
 		/*
 		 * We allocate an uninitialized mbuf + cluster, mbuf is
@@ -752,15 +757,23 @@ _iflib_fl_refill(iflib_ctx_t ctx, iflib_fl_t fl, int n)
 		rxsd->ifsd_flags |= RX_SW_DESC_INUSE;
 		rxsd->ifsd_cl = cl;
 		rxsd->ifsd_m = m;
-		sctx->isc_rxd_refill(sctx, fl->ifl_rxq->ifr_id, 0, fl->ifl_pidx, &phys_addr, &cl, 1);
-
-		if (++fl->ifl_pidx == fl->ifl_size) {
-			fl->ifl_pidx = 0;
+		fl->ifl_phys_addrs[i] = phys_addr;
+		fl->ifl_vm_addrs[i] = cl;
+		pidx++;
+		rxsd++;
+		if (pidx == fl->ifl_size) {
+			pidx = 0;
 			rxsd = fl->ifl_sds;
 		}
-		fl->ifl_credits++;
+		if (++i == 256)
+			break;
 	}
-
+	sctx->isc_rxd_refill(sctx, fl->ifl_rxq->ifr_id, fl->ifl_id, pidx,
+						 fl->ifl_phys_addrs, fl->ifl_vm_addrs, i);
+	fl->ifl_credits += i;
+	fl->ifl_pidx = pidx;
+	if (n)
+		goto batch_start;
 done:
 	sctx->isc_rxd_flush(sctx, fl->ifl_rxq->ifr_id, fl->ifl_id, fl->ifl_pidx);
 }
@@ -1118,7 +1131,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 {
 	iflib_ctx_t ctx = rxq->ifr_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
-	int fl_cidx, cidx = rxq->ifr_cidx;
+	int avail, fl_cidx, cidx = rxq->ifr_cidx;
 	struct if_rxd_info ri;
 	iflib_dma_info_t di;
 	int qsid, err, budget_left = budget;
@@ -1150,14 +1163,14 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 
 	ri.iri_qsidx = rxq->ifr_id;
 	mh = mt = NULL;
-	while (__predict_true(budget_left--)) {
+	if ((avail = sctx->isc_rxd_available(sctx, rxq->ifr_id, cidx)) == 0)
+		return (false);
+	while (__predict_true(budget_left-- && avail--)) {
 		if (__predict_false(!CTX_ACTIVE(ctx)))
 			break;
 		di = rxq->ifr_ifdi;
 		bus_dmamap_sync(di->idi_tag, di->idi_map,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-		if (__predict_false(!sctx->isc_rxd_available(sctx, rxq->ifr_id, cidx)))
-			return (false);
 
 		ri.iri_cidx = cidx;
 		/*
@@ -1202,6 +1215,9 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 			fl_cidx = 0;
 		fl->ifl_cidx = fl_cidx;
 		__iflib_fl_refill_lt(ctx, fl, /* XXX em value */ 8);
+
+		if (avail == 0)
+			avail = sctx->isc_rxd_available(sctx, rxq->ifr_id, cidx);
 
 		if (m == NULL)
 			continue;
