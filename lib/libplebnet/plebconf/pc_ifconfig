@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+pid=$1
+export TARGET_PID=$pid
+export LD_PRELOAD=`/bin/pwd`/libplebconf.so
+
+/sbin/ifconfig $2 $3 $4 $5 $6
