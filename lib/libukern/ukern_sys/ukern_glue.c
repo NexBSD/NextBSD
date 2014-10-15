@@ -90,7 +90,7 @@ MALLOC_DEFINE(M_IP6NDP, "ip6ndp", "IPv6 Neighbor Discovery");
 
 extern void abort(void);
 
-int	ticks;
+volatile int	ticks;
 int	cpu_disable_deep_sleep;
 
 /* This is used in modules that need to work in both SMP and UP. */

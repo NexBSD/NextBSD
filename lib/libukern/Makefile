@@ -135,24 +135,24 @@ PN_OTHER_COMMON_OBJS =		\
 
 # pn_init.o needs to be first
 PN_SYS_COMMON_OBJS = 		\
-	pn_compat.o		\
-	pn_glue.o		\
-	pn_init.o		\
-	pn_init_main.o		\
-	pn_kern_condvar.o	\
-	pn_kern_intr.o		\
-	pn_kern_subr.o		\
-	pn_kern_synch.o		\
-	pn_kern_timeout.o	\
-	pn_lock.o		\
-	pn_private.o		\
-	pn_server_syscalls.o	\
-	pn_subr_prf.o		\
-	pn_syscall_wrapper.o	\
-	pn_user_sysctl.o	\
-	pn_veth.o		\
-	pn_vfs_aio.o		\
-	pn_vfs_ops.o
+	ukern_compat.o		\
+	ukern_glue.o		\
+	ukern_init.o		\
+	ukern_init_main.o		\
+	ukern_kern_condvar.o	\
+	ukern_kern_intr.o		\
+	ukern_kern_subr.o		\
+	ukern_kern_synch.o		\
+	ukern_kern_timeout.o	\
+	ukern_lock.o		\
+	ukern_private.o		\
+	ukern_server_syscalls.o	\
+	ukern_subr_prf.o		\
+	ukern_syscall_wrapper.o	\
+	ukern_user_sysctl.o	\
+	ukern_veth.o		\
+	ukern_vfs_aio.o		\
+	ukern_vfs_ops.o
 
 
 PN_MFILES = 			\
@@ -228,7 +228,7 @@ PREFIX= ${SYSDIR}
 .PATH: ${PREFIX}/vm
 .PATH: ${PREFIX}/libkern
 .PATH: ${PREFIX}/dev/random
-.PATH: plebnet_sys
+.PATH: ukern_sys
 
 PN_COMMON_OBJS =			\
 	${PN_SYS_COMMON_OBJS}		\

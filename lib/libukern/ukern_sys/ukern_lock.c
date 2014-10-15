@@ -94,7 +94,7 @@ struct lock_class lock_class_mtx_sleep = {
 };
 
 void
-mtx_init(struct mtx *m, const char *name, const char *type, int opts)
+mtx_init(volatile uintptr_t *m, const char *name, const char *type, int opts)
 {
 	pthread_mutexattr_t attr;
 

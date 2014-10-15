@@ -1,6 +1,4 @@
-
 - kld support (load kernel modules)		IN PROGRESS
-- netmap support				
-- ubpf (running unprivileged)			needs filter templates 
-- robust descriptor handling 
-  (avoid collisions between user and kernel)
+- virtual CPUs as pinned threads multiplexed by the ULE
+  scheduler
+- true critical sections for UMA, callouts, pcpu data access
