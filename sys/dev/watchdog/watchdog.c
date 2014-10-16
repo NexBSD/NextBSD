@@ -43,6 +43,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/syslog.h>
 #include <sys/watchdog.h>
 #include <sys/bus.h>
+#include <sys/kdb.h>
 #include <machine/bus.h>
 
 #include <sys/syscallsubr.h> /* kern_clock_gettime() */
