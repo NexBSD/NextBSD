@@ -34,8 +34,9 @@ void	clock_init(void);
 
 void	startrtclock(void);
 void	init_TSC(void);
-
+#ifndef PLEBNET
 #define	HAS_TIMER_SPKR 1
+#endif
 int	timer_spkr_acquire(void);
 int	timer_spkr_release(void);
 void	timer_spkr_setfreq(int freq);
