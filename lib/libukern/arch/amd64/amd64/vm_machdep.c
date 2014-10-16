@@ -149,7 +149,138 @@ cpu_fork(td1, p2, td2, flags)
 	struct thread *td2;
 	int flags;
 {
-	panic("no forking way!");
+	register struct proc *p1;
+	struct pcb *pcb2;
+	struct mdproc *mdp2;
+	pmap_t pmap2;
+#if 0
+	struct mdproc *mdp1;
+	struct proc_ldt *pldt;
+#endif
+	p1 = td1->td_proc;
+
+	if ((flags & RFPROC) == 0) {
+#if 0
+		if ((flags & RFMEM) == 0) {
+			/* unshare user LDT */
+			mdp1 = &p1->p_md;
+			mtx_lock(&dt_lock);
+			if ((pldt = mdp1->md_ldt) != NULL &&
+			    pldt->ldt_refcnt > 1 &&
+			    user_ldt_alloc(p1, 1) == NULL)
+				panic("could not copy LDT");
+			mtx_unlock(&dt_lock);
+		}
+#endif
+		return;
+	}
+
+	/* Ensure that td1's pcb is up to date. */
+	fpuexit(td1);
+
+	/* Point the pcb to the top of the stack */
+	pcb2 = get_pcb_td(td2);
+	td2->td_pcb = pcb2;
+
+	/* Copy td1's pcb */
+	bcopy(td1->td_pcb, pcb2, sizeof(*pcb2));
+
+	/* Properly initialize pcb_save */
+	pcb2->pcb_save = get_pcb_user_save_pcb(pcb2);
+	bcopy(get_pcb_user_save_td(td1), get_pcb_user_save_pcb(pcb2),
+	    cpu_max_ext_state_size);
+
+	/* Point mdproc and then copy over td1's contents */
+	mdp2 = &p2->p_md;
+	bcopy(&p1->p_md, mdp2, sizeof(*mdp2));
+
+	/*
+	 * Create a new fresh stack for the new process.
+	 * Copy the trap frame for the return to user mode as if from a
+	 * syscall.  This copies most of the user mode register values.
+	 */
+	td2->td_frame = (struct trapframe *)td2->td_pcb - 1;
+	bcopy(td1->td_frame, td2->td_frame, sizeof(struct trapframe));
+
+	td2->td_frame->tf_rax = 0;		/* Child returns zero */
+	td2->td_frame->tf_rflags &= ~PSL_C;	/* success */
+	td2->td_frame->tf_rdx = 1;
+
+	/*
+	 * If the parent process has the trap bit set (i.e. a debugger had
+	 * single stepped the process to the system call), we need to clear
+	 * the trap flag from the new frame unless the debugger had set PF_FORK
+	 * on the parent.  Otherwise, the child will receive a (likely
+	 * unexpected) SIGTRAP when it executes the first instruction after
+	 * returning  to userland.
+	 */
+	if ((p1->p_pfsflags & PF_FORK) == 0)
+		td2->td_frame->tf_rflags &= ~PSL_T;
+
+	/*
+	 * Set registers for trampoline to user mode.  Leave space for the
+	 * return address on stack.  These are the kernel mode register values.
+	 */
+	pmap2 = vmspace_pmap(p2->p_vmspace);
+	pcb2->pcb_cr3 = pmap2->pm_cr3;
+	pcb2->pcb_r12 = (register_t)fork_return;	/* fork_trampoline argument */
+	pcb2->pcb_rbp = 0;
+	pcb2->pcb_rsp = (register_t)td2->td_frame - sizeof(void *);
+	pcb2->pcb_rbx = (register_t)td2;		/* fork_trampoline argument */
+	pcb2->pcb_rip = (register_t)fork_trampoline;
+	/*-
+	 * pcb2->pcb_dr*:	cloned above.
+	 * pcb2->pcb_savefpu:	cloned above.
+	 * pcb2->pcb_flags:	cloned above.
+	 * pcb2->pcb_onfault:	cloned above (always NULL here?).
+	 * pcb2->pcb_[fg]sbase:	cloned above
+	 */
+
+	/* Setup to release spin count in fork_exit(). */
+	td2->td_md.md_spinlock_count = 1;
+	td2->td_md.md_saved_flags = PSL_KERNEL | PSL_I;
+
+	/* As an i386, do not copy io permission bitmap. */
+	pcb2->pcb_tssp = NULL;
+
+	/* New segment registers. */
+	set_pcb_flags(pcb2, PCB_FULL_IRET);
+#if 0
+	/* Copy the LDT, if necessary. */
+	mdp1 = &td1->td_proc->p_md;
+	mdp2 = &p2->p_md;
+	mtx_lock(&dt_lock);
+	if (mdp1->md_ldt != NULL) {
+		if (flags & RFMEM) {
+			mdp1->md_ldt->ldt_refcnt++;
+			mdp2->md_ldt = mdp1->md_ldt;
+			bcopy(&mdp1->md_ldt_sd, &mdp2->md_ldt_sd, sizeof(struct
+			    system_segment_descriptor));
+		} else {
+			mdp2->md_ldt = NULL;
+			mdp2->md_ldt = user_ldt_alloc(p2, 0);
+			if (mdp2->md_ldt == NULL)
+				panic("could not copy LDT");
+			amd64_set_ldt_data(td2, 0, max_ldt_segment,
+			    (struct user_segment_descriptor *)
+			    mdp1->md_ldt->ldt_base);
+		}
+	} else
+		mdp2->md_ldt = NULL;
+	mtx_unlock(&dt_lock);
+#else
+	mdp2->md_ldt = NULL;
+#endif
+
+	/*
+	 * Now, cpu_switch() can schedule the new process.
+	 * pcb_rsp is loaded pointing to the cpu_switch() stack frame
+	 * containing the return address when exiting cpu_switch.
+	 * This will normally be to fork_trampoline(), which will have
+	 * %ebx loaded with the new proc's pointer.  fork_trampoline()
+	 * will set up a stack to call fork_return(p, frame); to complete
+	 * the return to user-mode.
+	 */
 }
 
 /*
@@ -491,8 +622,9 @@ is_physical_memory(vm_paddr_t addr)
  * be held on return.  This function is passed in to fork_exit() as the
  * first parameter and is called when returning to a new userland process.
  */
+
 void
-fork_return(struct thread *td, struct trapframe *frame)
+userret(struct thread *td, struct trapframe *frame)
 {
 	panic("no user space to return to!");
 }
