@@ -73,6 +73,25 @@ __FBSDID("$FreeBSD$");
 
 #define MAXSEGS 4
 
+#ifndef PLEBNET
+void *
+ukern_get_dynamic(void)
+{
+
+	return ((Elf_Dyn *)&_DYNAMIC);
+}
+
+void *
+ukern_get_address(void)
+{
+
+	return (NULL);
+}
+#else
+void *ukern_get_dynamic(void);
+void *ukern_get_address(void);
+#endif
+
 typedef struct elf_file {
 	struct linker_file lf;		/* Common fields */
 	int		preloaded;	/* Was file pre-loaded */
@@ -373,7 +392,7 @@ link_elf_init(void* arg)
 
 	linker_add_class(&link_elf_class);
 
-	dp = (Elf_Dyn *)&_DYNAMIC;
+	dp = ukern_get_dynamic();
 	modname = NULL;
 	modptr = preload_search_by_type("elf" __XSTRING(__ELF_WORD_SIZE) " kernel");
 	if (modptr == NULL)
@@ -389,7 +408,7 @@ link_elf_init(void* arg)
 
 	ef = (elf_file_t) linker_kernel_file;
 	ef->preloaded = 1;
-	ef->address = 0;
+	ef->address = ukern_get_address();
 #ifdef SPARSE_MAPPING
 	ef->object = 0;
 #endif
@@ -397,7 +416,9 @@ link_elf_init(void* arg)
 
 	if (dp != NULL)
 		parse_dynamic(ef);
+#ifndef PLEBNET
 	linker_kernel_file->address = (caddr_t) KERNBASE;
+#endif
 	linker_kernel_file->size = -(intptr_t)linker_kernel_file->address;
 
 	if (modptr != NULL) {

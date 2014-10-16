@@ -328,3 +328,30 @@ casuword32(volatile uint32_t *addr, uint32_t old, uint32_t new)
 
 	return (atomic_cmpset_int(addr, old, new));
 }
+
+#include <link.h>
+#include <dlfcn.h>
+
+const void *
+ukern_get_dynamic(void)
+{
+	struct link_map *map;
+	int err;
+
+	if ((err = dlinfo(RTLD_SELF, RTLD_DI_LINKMAP, (void *)&map)))
+		return (NULL);
+
+	return (map->l_ld);
+}
+
+const void *
+ukern_get_address(void)
+{
+	struct link_map *map;
+	int err;
+
+	if ((err = dlinfo(RTLD_SELF, RTLD_DI_LINKMAP, (void *)&map)))
+		return (NULL);
+
+	return (map->l_addr);
+}
