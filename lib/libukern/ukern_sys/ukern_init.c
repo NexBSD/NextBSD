@@ -63,7 +63,6 @@ extern void pmap_bootstrap(void *firstaddr);
 static int pn_init(void) __attribute__((constructor));
 pthread_mutex_t init_lock;
 pthread_cond_t init_cond;
-void *__malloc(int size);
 extern uint64_t phys_avail[];
 early_putc_t * early_putc = (early_putc_t *)putchar;
 u_int64_t hammer_time(u_int64_t modulep, u_int64_t physfree);
@@ -72,7 +71,7 @@ static int
 pn_init(void)
 {
 	struct thread *td;
-	int needconfig, error;
+	int i, needconfig, error;
 	char *plebconf, *rcconf;
 	char buf[512];
 	char *envp[3];
@@ -105,11 +104,13 @@ pn_init(void)
 	/* XXX fix this magic 64 to something a bit more dynamic & sensible */
 	uma_page_slab_hash = __malloc(sizeof(struct uma_page)*64);
 	uma_page_mask = 64-1;
+	for (i = 0; i < 64; i++)
+		LIST_INIT(&uma_page_slab_hash[i]);
+
 	mutex_init();
 	phys_avail[0] = (uint64_t)__malloc(4);
 	phys_avail[1] = phys_avail[0] + 100*1024*1024;
 	mi_startup();
-	sx_init(&proctree_lock, "proctree");
 	td = curthread;
 	fdused_range(td->td_proc->p_fd, 16);
 	start_server_syscalls();
