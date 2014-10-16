@@ -158,8 +158,9 @@ vm_mem_init(dummy)
 	    /* On non-superpage architectures want large import sizes. */
 	    PAGE_SIZE * 1024);
 #endif
-
+#ifndef PLEBNET
 	kmem_init_zero_region();
+#endif
 	pmap_init();
 	vm_pager_init();
 }

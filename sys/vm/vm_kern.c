@@ -105,6 +105,10 @@ SYSCTL_ULONG(_vm, OID_AUTO, max_kernel_address, CTLFLAG_RD,
 #endif
     "Max kernel address");
 
+#ifdef PLEBNET
+extern void *__malloc(size_t);
+#endif
+
 /*
  *	kva_alloc:
  *
@@ -121,6 +125,9 @@ kva_alloc(size)
 	vm_offset_t addr;
 
 	size = round_page(size);
+#ifdef PLEBNET
+	return ((vm_offset_t)__malloc(size));
+#endif
 	if (vmem_alloc(kernel_arena, size, M_BESTFIT | M_NOWAIT, &addr))
 		return (0);
 
@@ -310,8 +317,12 @@ kmem_malloc(struct vmem *vmem, vm_size_t size, int flags)
 {
 	vm_offset_t addr;
 	int rv;
+	volatile void *value;
 
 	size = round_page(size);
+#ifdef PLEBNET
+	return ((vm_offset_t) __malloc(size));
+#endif
 	if (vmem_alloc(vmem, size, flags | M_BESTFIT, &addr))
 		return (0);
 

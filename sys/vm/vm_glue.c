@@ -325,9 +325,11 @@ vm_thread_new(struct thread *td, int pages)
 {
 	vm_object_t ksobj;
 	vm_offset_t ks;
-	vm_page_t m, ma[KSTACK_MAX_PAGES];
 	struct kstack_cache_entry *ks_ce;
+#ifndef PLEBNET
+	vm_page_t m, ma[KSTACK_MAX_PAGES];
 	int i;
+#endif
 
 	/* Bounds check */
 	if (pages <= 1)
@@ -393,6 +395,7 @@ vm_thread_new(struct thread *td, int pages)
 	 * For the length of the stack, link in a real page of ram for each
 	 * page of stack.
 	 */
+#ifndef PLEBNET
 	VM_OBJECT_WLOCK(ksobj);
 	for (i = 0; i < pages; i++) {
 		/*
@@ -405,6 +408,7 @@ vm_thread_new(struct thread *td, int pages)
 	}
 	VM_OBJECT_WUNLOCK(ksobj);
 	pmap_qenter(ks, ma, pages);
+#endif
 	return (1);
 }
 
