@@ -116,7 +116,7 @@ static void
 g_dev_init(struct g_class *mp)
 {
 
-	dumpdev = getenv("dumpdev");
+	dumpdev = kern_getenv("dumpdev");
 }
 
 static void
