@@ -541,9 +541,3 @@ SYSCTL_INT(_debug_sizeof, OID_AUTO, buf, CTLFLAG_RD,
 SYSCTL_INT(_debug_sizeof, OID_AUTO, kinfo_proc, CTLFLAG_RD,
     0, sizeof(struct kinfo_proc), "sizeof(struct kinfo_proc)");
 
-/* XXX compatibility, remove for 6.0 */
-#include <sys/imgact.h>
-#include <sys/imgact_elf.h>
-SYSCTL_INT(_kern, OID_AUTO, fallback_elf_brand, CTLFLAG_RW,
-    &__elfN(fallback_brand), sizeof(__elfN(fallback_brand)),
-    "compatibility for kern.fallback_elf_brand");
