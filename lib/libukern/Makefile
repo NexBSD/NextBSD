@@ -328,6 +328,7 @@ PN_MD_COMMON_OBJS = 		\
 	fpu.o					\
 	initcpu.o				\
 	machdep.o				\
+	mp_machdep.o				\
 	pmap.o					\
 	vm_machdep.o
 
@@ -410,6 +411,7 @@ PN_OPT_FILES = 			\
 	opt_sched.h		\
 	opt_sctp.h		\
 	opt_sleepqueue_profiling.h		\
+	opt_smp.h		\
 	opt_stack.h		\
 	opt_swap.h		\
 	opt_syscons.h		\
@@ -502,16 +504,16 @@ CFLAGS+=	-DEARLY_PRINTF
 CFLAGS+=	-DMAXUSERS=32
 CFLAGS+=	-DKDB
 CFLAGS+=	-DDDB
+CFLAGS+=	-DSMP
 CFLAGS+=	-DVERBOSE_SYSINIT
+CFLAGS+=	-DVM_KMEM_SIZE=100*1024*1024
 #CFLAGS+=	-DINET=1
 #CFLAGS+=	-DINET6=1
 CFLAGS+=	-fformat-extensions
 CFLAGS+=	-fno-builtin
 CFLAGS+=	-fPIC
-CFLAGS+=	-O0
 CFLAGS+=	-g
 CFLAGS+=	-nostdinc
-LDFLAGS+=	-fPIC
 NO_WERROR=	1
 WARNS=2
 CSTD="c99"
@@ -521,7 +523,7 @@ WFORMAT=0
 
 AWK ?= awk
 
-_ILINKS=@ machine
+_ILINKS=@ machine 
 MACHINE_CPUARCH ?= ${MACHINE}
 .if ${MACHINE} != ${MACHINE_CPUARCH}
 _ILINKS+=${MACHINE_CPUARCH}

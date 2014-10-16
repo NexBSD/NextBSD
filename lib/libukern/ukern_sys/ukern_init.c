@@ -66,6 +66,7 @@ pthread_cond_t init_cond;
 void *__malloc(int size);
 extern uint64_t phys_avail[];
 early_putc_t * early_putc = (early_putc_t *)putchar;
+u_int64_t hammer_time(u_int64_t modulep, u_int64_t physfree);
 
 static int
 pn_init(void)
@@ -96,6 +97,7 @@ pn_init(void)
 #endif		
 	pn_init_thread0();
 	pmap_bootstrap(__malloc(40*4096));
+	hammer_time(0, (uint64_t)__malloc(40*4096));
 #if 0	
 	uma_startup(__malloc(40*4096), 40);
 	uma_startup2();

@@ -1556,7 +1556,7 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	struct xstate_hdr *xhdr;
 #endif
 
-	thread0.td_kstack = physfree + KERNBASE;
+	thread0.td_kstack = physfree;
 	thread0.td_kstack_pages = KSTACK_PAGES;
 	kstack0_sz = thread0.td_kstack_pages * PAGE_SIZE;
 	bzero((void *)thread0.td_kstack, kstack0_sz);
@@ -1577,7 +1577,9 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 
 	pc = &__pcpu[0];
 	pcpu_init(pc, 0, sizeof(struct pcpu));
+#ifdef notyet	
 	dpcpu_init((void *)(physfree + KERNBASE), 0);
+#endif	
 	physfree += DPCPU_SIZE;
 	PCPU_SET(prvspace, pc);
 	PCPU_SET(curthread, &thread0);
@@ -1663,15 +1665,16 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 #endif	
 	initializecpu();	/* Initialize CPU registers */
 	initializecpucache();
-#if 0
+#ifdef notyet
 	getmemsize(kmdp, physfree);
 #endif	
 	init_param2(physmem);
 
 	/* now running on new page tables, configured,and u/iom is accessible */
-
+#ifdef notyet
 	msgbufinit(msgbufp, msgbufsize);
 	fpuinit();
+#endif
 
 	/*
 	 * Set up thread0 pcb after fpuinit calculated pcb + fpu save
