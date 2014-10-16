@@ -72,7 +72,6 @@ extern pthread_cond_t init_cond;
 
 static int target_fd;
 struct thread;
-struct	filedesc *fdinit(struct filedesc *fdp);
 struct ucred	*crget(void);
 struct ucred	*crhold(struct ucred *cr);
 extern struct proc proc0;
@@ -90,6 +89,18 @@ static int dispatch_kldhandler(struct thread *td, int fd, int size, int id);
 
 static struct proc server_proc;
 dispatch_func dispatch_table[SYS_MAXSYSCALL];
+
+void fdused(struct filedesc *fdp, int fd);
+struct filedesc *fdinit(struct filedesc *fdp);
+
+void
+fdused_range(struct filedesc *fdp, int max)
+{
+       int i;
+
+       for (i = 0; i < max; i++)
+		   fdused(fdp, i);
+}
 
 static void
 cleanup(void)
@@ -247,7 +258,6 @@ dispatch_server(void *arg)
 	td->td_ucred = crhold(server_proc.p_ucred);
 	td->td_proc->p_fd = fdinit(NULL);
 	td->td_proc->p_fdtol = NULL;
-
 	while (dispatch(td, fd) == 0)
 			;
 
@@ -683,9 +693,11 @@ dispatch_kldhandler(struct thread *td, int fd, int size, int id)
 	case SYS_kldload:
 		err = kern_kldload(td, file, &fileid);
 		break;
+#ifdef notyet		
 	case SYS_kldfind:
 		err = kern_kldfind(td, file);
 		break;
+#endif		
 	case SYS_kldunload:
 		err = kern_kldunload(td, fileid, 0);
 		break;
@@ -712,10 +724,12 @@ dispatch_kldhandler(struct thread *td, int fd, int size, int id)
 		err = sys_modfnext(td, &fileid);
 		fileid = td->td_retval[0];
 		break;
+#ifdef notyet
 	case SYS_modstat:
 		err = kern_modstat(fileid, &mstat);
 		size = sizeof(mstat);
 		break;
+#endif		
 	default:
 		break;
 	}

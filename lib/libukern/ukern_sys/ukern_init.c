@@ -24,6 +24,8 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#define	_SYS_LIBKERN_H_
+
 #include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/pcpu.h>
@@ -43,28 +45,27 @@ char *     getenv(const char *name);
 pid_t     getpid(void);
 char *strndup(const char *str, size_t len);
 unsigned int     sleep(unsigned int seconds);
+size_t strlen(const char *s);
 
-
+int putchar(int c);
 
 extern void mi_startup(void);
 extern void uma_startup(void *, int);
 extern void uma_startup2(void);
 
-
-extern int ncallout;
-
-
 struct sx proctree_lock;
 struct pcpu *pcpup;
 
-extern caddr_t kern_timeout_callwheel_alloc(caddr_t v);
-extern void kern_timeout_callwheel_init(void);
 extern void pn_init_thread0(void);
 extern void mutex_init(void);
+extern void pmap_bootstrap(void *firstaddr);
 
 static int pn_init(void) __attribute__((constructor));
 pthread_mutex_t init_lock;
 pthread_cond_t init_cond;
+void *__malloc(int size);
+extern uint64_t phys_avail[];
+early_putc_t * early_putc = (early_putc_t *)putchar;
 
 static int
 pn_init(void)
@@ -76,8 +77,6 @@ pn_init(void)
 	char *envp[3];
 	char *argv[3];
 
-        /* vm_init bits */
-        ncallout = 64;
 	plebconf = getenv("PLEBCONF_PATH");
 	rcconf = getenv("RC_CONF");
 	
@@ -88,20 +87,26 @@ pn_init(void)
 		    "to be set to configure the virtual interface automatically\n");
 		needconfig = 0;
 	}
-        pcpup = malloc(sizeof(struct pcpu), M_DEVBUF, M_ZERO);
-        pcpu_init(pcpup, 0, sizeof(struct pcpu));
-        kern_timeout_callwheel_alloc(malloc(512*1024, M_DEVBUF, M_ZERO));
-        kern_timeout_callwheel_init();
+	pcpup = __malloc(sizeof(struct pcpu));
+	pcpu_init(pcpup, 0, sizeof(struct pcpu));
+
+#if 0		
+	kern_timeout_callwheel_alloc(__malloc(512*1024, M_DEVBUF, M_ZERO));
+	kern_timeout_callwheel_init();
+#endif		
 	pn_init_thread0();
-        uma_startup(malloc(40*4096, M_DEVBUF, M_ZERO), 40);
+	pmap_bootstrap(__malloc(40*4096));
+#if 0	
+	uma_startup(__malloc(40*4096), 40);
 	uma_startup2();
+#endif	
 	/* XXX fix this magic 64 to something a bit more dynamic & sensible */
-	uma_page_slab_hash = malloc(sizeof(struct uma_page)*64, M_DEVBUF, M_ZERO);
+	uma_page_slab_hash = __malloc(sizeof(struct uma_page)*64);
 	uma_page_mask = 64-1;
-	pthread_mutex_init(&init_lock, NULL);
-	pthread_cond_init(&init_cond, NULL);
 	mutex_init();
-        mi_startup();
+	phys_avail[0] = (uint64_t)__malloc(4);
+	phys_avail[1] = phys_avail[0] + 100*1024*1024;
+	mi_startup();
 	sx_init(&proctree_lock, "proctree");
 	td = curthread;
 	fdused_range(td->td_proc->p_fd, 16);

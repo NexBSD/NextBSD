@@ -46,12 +46,14 @@
 #undef _KERNEL
 #include <signal.h>
 #include <unistd.h>
-#include <string.h>
+
 #include <stdio.h>
 #include <pthread.h>
 
 #include <machine/elf.h>
 #include <machine/md_var.h>
+
+void	bzero(void *buf, size_t len) __nonnull(1);
 
 struct malloc_type;
 __thread struct thread *pcurthread;
@@ -71,15 +73,12 @@ int async_io_version;
 
 #define	M_ZERO		0x0100		/* bzero the allocation */
 
-int vttoif_tab[10] = {
-	0, S_IFREG, S_IFDIR, S_IFBLK, S_IFCHR, S_IFLNK,
-	S_IFSOCK, S_IFIFO, S_IFMT, S_IFMT
-};
 
 int
 _pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 	       void *(*start_routine)(void *), void *arg);
 
+#if 0
 vm_offset_t kmem_malloc(void * map, int bytes, int wait);
 void kmem_free(void *map, vm_offset_t addr, vm_size_t size);
 
@@ -97,6 +96,7 @@ kmem_free(void *map, vm_offset_t addr, vm_size_t size)
 
 	munmap((void *)addr, size);
 }
+#endif
 
 void *
 plebnet_malloc(unsigned long size, struct malloc_type *type, int flags)
@@ -116,6 +116,7 @@ plebnet_free(void *addr, struct malloc_type *type)
 	free(addr);
 }
 
+#if 0
 void
 panic(const char *fmt, ...)
 {
@@ -123,7 +124,7 @@ panic(const char *fmt, ...)
 	abort();
 }
 
-#if 0
+
 void
 nanotime(struct timespec *ts)
 {
@@ -165,115 +166,14 @@ pthread_start_routine(void *arg)
 
 	return (NULL);
 }
-
-/*
- * N.B. This doesn't actually create the proc if it doesn't exist. It 
- * just uses proc0. 
- */
-int
-kproc_kthread_add(void (*start_routine)(void *), void *arg,
-    struct proc **p,  struct thread **tdp,
-    int flags, int pages,
-    char * procname, const char *str, ...)
-{
-	int error;
-	pthread_t thread;
-	struct thread *td;
-	pthread_attr_t attr;
-	struct pthread_start_args *psa;
-	struct mtx *lock;
-	pthread_cond_t *cond; 
-
-	*tdp = td = malloc(sizeof(struct thread));
-	psa = malloc(sizeof(struct pthread_start_args));
-	lock = malloc(sizeof(struct mtx));
-	cond = malloc(sizeof(pthread_cond_t));
-	pthread_cond_init(cond, NULL);
-	mtx_init(lock, "thread_lock", NULL, MTX_DEF);
-	td->td_lock = lock;
-	td->td_sleepqueue = (void *)cond;
-	psa->psa_start_routine = start_routine;
-	psa->psa_arg = arg;
-	psa->psa_td = td;
-	
-	pthread_attr_init(&attr); 
-	error = _pthread_create(&thread, &attr, pthread_start_routine, psa);
-	td->td_wchan = thread;
-	return (error);
-}
-
-int
-kthread_add(void (*start_routine)(void *), void *arg, struct proc *p,  
-    struct thread **tdp, int flags, int pages,
-    const char *str, ...)
-{
-	int error;
-	pthread_t thread;
-	pthread_attr_t attr;
-	struct pthread_start_args *psa;
-	struct thread *td;
-	struct mtx *lock;
-	pthread_cond_t *cond; 
-
-	*tdp = td = malloc(sizeof(struct thread));
-	psa = malloc(sizeof(struct pthread_start_args));
-	lock = malloc(sizeof(struct mtx));
-	cond = malloc(sizeof(pthread_cond_t));
-	pthread_cond_init(cond, NULL);
-	mtx_init(lock, "thread_lock", NULL, MTX_DEF);
-	td->td_lock = lock;
-	td->td_sleepqueue = (void *)cond;
-
-	psa->psa_start_routine = start_routine;
-	psa->psa_arg = arg;
-	psa->psa_td = td;
-	
-	pthread_attr_init(&attr); 
-	error = _pthread_create(&thread, &attr, pthread_start_routine, psa);
-	td->td_wchan = thread;
-	return (error);
-}
-
-void
-kthread_exit(void)
-{
-	/* nothing to do */;
-}
-
-void
-tdsignal(struct thread *td, int sig)
-{
-
-	pthread_kill(td->td_wchan, sig);
-}
-
+#if 0
 dev_t
 tty_udev(struct tty *tp)
 {
 
 	return (NODEV);
 }
-
-struct pgrp *
-pgfind(pid_t pgid)
-{
-
-	return (NULL);
-}
-
-int
-p_candebug(struct thread *td, struct proc *p)
-{
-	
-	return (0);
-}
-
-const char *
-devtoname(struct cdev *dev)
-{
-
-	return (NULL);
-}
+#endif
 
 uint64_t
 racct_get_limit(struct proc *p, int resource)
@@ -282,20 +182,6 @@ racct_get_limit(struct proc *p, int resource)
 	return (UINT64_MAX);
 }
 
-
-int	
-kern_open(struct thread *td, char *path, enum uio_seg pathseg,
-	    int flags, int mode)
-{
-	
-	return (-1);
-}
-
-void
-devfs_fpdrop(struct file *fp)
-{
-	;
-}
 
 /* Process one elf relocation with addend. */
 static int
@@ -335,7 +221,8 @@ elf_reloc_internal(linker_file_t lf, Elf_Addr relocbase, const void *data,
 		symidx = ELF_R_SYM(rela->r_info);
 		break;
 	default:
-		panic("unknown reloc type %d\n", type);
+		printf("unknown reloc type %d\n", type);
+		abort();
 	}
 
 	switch (rtype) {
@@ -433,4 +320,11 @@ elf_cpu_unload_file(linker_file_t lf __unused)
 {
 
 	return (0);
+}
+
+int
+casuword32(volatile uint32_t *addr, uint32_t old, uint32_t new)
+{
+
+	return (atomic_cmpset_int(addr, old, new));
 }
