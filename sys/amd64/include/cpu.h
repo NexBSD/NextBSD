@@ -66,7 +66,12 @@ struct cpu_ops {
 };
 
 extern struct	cpu_ops cpu_ops;
+#ifdef PLEBNET
+#define btext _init
+extern char _init[];
+#else
 extern char	btext[];
+#endif
 extern char	etext[];
 
 /* Resume hook for VMM. */
