@@ -401,6 +401,7 @@ hash_sfind(struct uma_hash *hash, uint8_t *data)
         return (NULL);
 }
 
+#ifndef PLEBNET
 static __inline uma_slab_t
 vtoslab(vm_offset_t va)
 {
@@ -418,6 +419,7 @@ vsetslab(vm_offset_t va, uma_slab_t slab)
 	p = PHYS_TO_VM_PAGE(pmap_kextract(va));
 	p->plinks.s.pv = slab;
 }
+#endif
 
 /*
  * The following two functions may be defined by architecture specific code

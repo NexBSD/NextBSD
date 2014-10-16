@@ -348,8 +348,8 @@ vm_page_startup(vm_offset_t vaddr)
 	bzero((void *)mapped, end - new_end);
 	uma_startup((void *)mapped, boot_pages);
 
-#if defined(__amd64__) || defined(__i386__) || defined(__arm__) || \
-    defined(__mips__)
+#if !defined(PLEBNET) && (defined(__amd64__) || defined(__i386__) || defined(__arm__) || \
+						  defined(__mips__))
 	/*
 	 * Allocate a bitmap to indicate that a random physical page
 	 * needs to be included in a minidump.
@@ -372,7 +372,7 @@ vm_page_startup(vm_offset_t vaddr)
 	    new_end + vm_page_dump_size, VM_PROT_READ | VM_PROT_WRITE);
 	bzero((void *)vm_page_dump, vm_page_dump_size);
 #endif
-#ifdef __amd64__
+#if defined(__amd64__) && !defined(PLEBNET)
 	/*
 	 * Request that the physical pages underlying the message buffer be
 	 * included in a crash dump.  Since the message buffer is accessed

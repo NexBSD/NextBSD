@@ -226,8 +226,9 @@ struct uma_bucket_zone bucket_zones[] = {
 enum zfreeskip { SKIP_NONE = 0, SKIP_DTOR, SKIP_FINI };
 
 /* Prototypes.. */
-
+#ifndef PLEBNET
 static void *noobj_alloc(uma_zone_t, int, uint8_t *, int);
+#endif
 static void *page_alloc(uma_zone_t, int, uint8_t *, int);
 static void *startup_alloc(uma_zone_t, int, uint8_t *, int);
 static void page_free(void *, int, uint8_t);
@@ -1116,6 +1117,7 @@ page_alloc(uma_zone_t zone, int bytes, uint8_t *pflag, int wait)
  *	A pointer to the alloced memory or possibly
  *	NULL if M_NOWAIT is set.
  */
+#ifndef PLEBNET
 static void *
 noobj_alloc(uma_zone_t zone, int bytes, uint8_t *flags, int wait)
 {
@@ -1167,6 +1169,7 @@ noobj_alloc(uma_zone_t zone, int bytes, uint8_t *flags, int wait)
 
 	return ((void *)retkva);
 }
+#endif /* !PLEBNET */
 
 /*
  * Frees a number of pages to the system
@@ -3076,6 +3079,7 @@ uma_zone_reserve(uma_zone_t zone, int items)
 	return;
 }
 
+#ifndef PLEBNET
 /* See uma.h */
 int
 uma_zone_reserve_kva(uma_zone_t zone, int count)
@@ -3116,6 +3120,7 @@ uma_zone_reserve_kva(uma_zone_t zone, int count)
 
 	return (1);
 }
+#endif /* !PLEBNET */
 
 /* See uma.h */
 void
