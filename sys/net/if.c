@@ -1620,77 +1620,6 @@ ifa_free(struct ifaddr *ifa)
 	}
 }
 
-int
-ifa_add_loopback_route(struct ifaddr *ifa, struct sockaddr *ia)
-{
-	int error = 0;
-	struct rtentry *rt = NULL;
-	struct rt_addrinfo info;
-	static struct sockaddr_dl null_sdl = {sizeof(null_sdl), AF_LINK};
-
-	bzero(&info, sizeof(info));
-	info.rti_ifp = V_loif;
-	info.rti_flags = ifa->ifa_flags | RTF_HOST | RTF_STATIC;
-	info.rti_info[RTAX_DST] = ia;
-	info.rti_info[RTAX_GATEWAY] = (struct sockaddr *)&null_sdl;
-	error = rtrequest1_fib(RTM_ADD, &info, &rt, ifa->ifa_ifp->if_fib);
-
-	if (error == 0 && rt != NULL) {
-		RT_LOCK(rt);
-		((struct sockaddr_dl *)rt->rt_gateway)->sdl_type  =
-			ifa->ifa_ifp->if_type;
-		((struct sockaddr_dl *)rt->rt_gateway)->sdl_index =
-			ifa->ifa_ifp->if_index;
-		RT_REMREF(rt);
-		RT_UNLOCK(rt);
-	} else if (error != 0)
-		log(LOG_DEBUG, "%s: insertion failed: %u\n", __func__, error);
-
-	return (error);
-}
-
-int
-ifa_del_loopback_route(struct ifaddr *ifa, struct sockaddr *ia)
-{
-	int error = 0;
-	struct rt_addrinfo info;
-	struct sockaddr_dl null_sdl;
-
-	bzero(&null_sdl, sizeof(null_sdl));
-	null_sdl.sdl_len = sizeof(null_sdl);
-	null_sdl.sdl_family = AF_LINK;
-	null_sdl.sdl_type = ifa->ifa_ifp->if_type;
-	null_sdl.sdl_index = ifa->ifa_ifp->if_index;
-	bzero(&info, sizeof(info));
-	info.rti_flags = ifa->ifa_flags | RTF_HOST | RTF_STATIC;
-	info.rti_info[RTAX_DST] = ia;
-	info.rti_info[RTAX_GATEWAY] = (struct sockaddr *)&null_sdl;
-	error = rtrequest1_fib(RTM_DELETE, &info, NULL, ifa->ifa_ifp->if_fib);
-
-	if (error != 0)
-		log(LOG_DEBUG, "%s: deletion failed: %u\n", __func__, error);
-
-	return (error);
-}
-
-int
-ifa_switch_loopback_route(struct ifaddr *ifa, struct sockaddr *sa, int fib)
-{
-	struct rtentry *rt;
-
-	rt = rtalloc1_fib(sa, 0, 0, fib);
-	if (rt == NULL) {
-		log(LOG_DEBUG, "%s: fail", __func__);
-		return (EHOSTUNREACH);
-	}
-	((struct sockaddr_dl *)rt->rt_gateway)->sdl_type =
-	    ifa->ifa_ifp->if_type;
-	((struct sockaddr_dl *)rt->rt_gateway)->sdl_index =
-	    ifa->ifa_ifp->if_index;
-	RTFREE_LOCKED(rt);
-
-	return (0);
-}
 
 /*
  * XXX: Because sockaddr_dl has deeper structure than the sockaddr
@@ -3942,14 +3871,6 @@ if_bpfmtap(if_t ifh, struct mbuf *m)
 	struct ifnet *ifp = (struct ifnet *)ifh;
 
 	BPF_MTAP(ifp, m);
-}
-
-void
-if_etherbpfmtap(if_t ifh, struct mbuf *m)
-{
-	struct ifnet *ifp = (struct ifnet *)ifh;
-
-	ETHER_BPF_MTAP(ifp, m);
 }
 
 void
