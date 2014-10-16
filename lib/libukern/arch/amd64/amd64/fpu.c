@@ -315,7 +315,8 @@ fpuinitstate(void *arg __unused)
 	int cp[4], i, max_ext_n;
 #endif
 	fpu_initialstate = malloc(cpu_max_ext_state_size, M_DEVBUF,
-	    M_WAITOK | M_ZERO);
+							  M_WAITOK | M_ZERO);
+	return;
 	saveintr = intr_disable();
 	stop_emulating();
 
