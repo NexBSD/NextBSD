@@ -1959,6 +1959,9 @@ pmap_qremove(vm_offset_t sva, int count)
 {
 	vm_offset_t va;
 
+#ifndef notyet
+	return;
+#endif
 	va = sva;
 	while (count-- > 0) {
 		KASSERT(va >= VM_MIN_KERNEL_ADDRESS, ("usermode va %lx", va));
