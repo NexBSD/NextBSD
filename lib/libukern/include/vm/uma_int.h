@@ -41,20 +41,18 @@
 
 #include <pn_private.h>
 
-static pthread_mutex_t bucket_lock;
+extern void *__malloc(size_t);
 
 static __inline void
 thread_bucket_lock(void)
 {
 
-        pn_mutex_lock(&bucket_lock);
 }
 
 static __inline void
 thread_bucket_unlock(void)
 {
 
-        pn_mutex_unlock(&bucket_lock);
 }
 
 #define critical_enter()        thread_bucket_lock()
@@ -102,7 +100,7 @@ vsetslab(vm_offset_t va, uma_slab_t slab)
                 return;
         }
 
-        up = pn_malloc(sizeof(*up));
+        up = __malloc(sizeof(*up));
         up->up_va = va;
         up->up_slab = slab;
         LIST_INSERT_HEAD(hash_list, up, list_entry);
