@@ -817,7 +817,7 @@ void
 pmap_bootstrap(vm_paddr_t *firstaddr)
 {
 	virtual_avail = (vm_offset_t)firstaddr;
-	virtual_end = VM_MAXUSER_ADDRESS - PAGE_SIZE;
+	virtual_end =  - PAGE_SIZE;
 
 	/*
 	 * Initialize the kernel pmap (which is statically allocated).
@@ -940,6 +940,7 @@ pmap_page_init(vm_page_t m)
 void
 pmap_init(void)
 {
+#ifdef notyet
 	vm_page_t mpte;
 	vm_size_t s;
 	int i, pv_npg;
@@ -1013,6 +1014,7 @@ pmap_init(void)
 	mtx_init(&cpage_lock, "cpage", NULL, MTX_DEF);
 	cpage_a = kva_alloc(PAGE_SIZE);
 	cpage_b = kva_alloc(PAGE_SIZE);
+#endif	
 }
 
 static SYSCTL_NODE(_vm_pmap, OID_AUTO, pde, CTLFLAG_RD, 0,
@@ -1905,11 +1907,11 @@ pmap_kremove(vm_offset_t va)
  *	update '*virt' with the first usable address after the mapped
  *	region.
  */
-extern void *__malloc(int size);
+extern void *__malloc(size_t size);
 vm_offset_t
 pmap_map(vm_offset_t *virt, vm_paddr_t start, vm_paddr_t end, int prot)
 {
-	return (vm_offset_t)__malloc(100*1024*1024);
+	return (vm_offset_t)__malloc(end - start);
 }
 
 
@@ -2518,6 +2520,7 @@ pmap_growkernel(vm_offset_t addr)
 	pd_entry_t *pde, newpdir;
 	pdp_entry_t *pdpe;
 
+	return;
 	mtx_assert(&kernel_map->system_mtx, MA_OWNED);
 
 	/*
