@@ -1667,7 +1667,9 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	initializecpucache();
 #ifdef notyet
 	getmemsize(kmdp, physfree);
-#endif	
+#endif
+	/* XXX make dynamic !!!! */
+	physmem = (100<< 20);
 	init_param2(physmem);
 
 	/* now running on new page tables, configured,and u/iom is accessible */
