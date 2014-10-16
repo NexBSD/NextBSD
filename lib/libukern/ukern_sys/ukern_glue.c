@@ -64,7 +64,6 @@ static MALLOC_DEFINE(M_PLIMIT, "plimit", "plimit structures");
 MALLOC_DEFINE(M_PARGS, "proc-args", "Process arguments");
 
 extern void abort(void);
-int	nprocs = 1;		/* process 0 */
 volatile int	ticks;
 int	cpu_disable_deep_sleep;
 u_long ps_arg_cache_limit = PAGE_SIZE / 16;
@@ -848,15 +847,6 @@ kick_proc0(void)
 	;
 }
 #endif
-struct proc;
-int
-fork1(struct thread *td, int flags, int pages, struct proc **procp,
-    int *procdescp, int pdflags)
-{
-	panic("notyet!");
-	return (0);
-}
-
 #if 0
 /*
  * Exit: deallocate address space and other resources, change proc state to
@@ -920,6 +910,10 @@ knote(struct knlist *list, long hint, int lockflags)
 
 void
 knote_fdclose(struct thread *td, int fd)
+{}
+
+void
+knote_fork(struct knlist *list, int pid)
 {}
 
 int 
