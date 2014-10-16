@@ -108,7 +108,7 @@ static int	fd_last_used(struct filedesc *fdp, int size);
 static void	fdgrowtable(struct filedesc *fdp, int nfd);
 static void	fdgrowtable_exp(struct filedesc *fdp, int nfd);
 static void	fdunused(struct filedesc *fdp, int fd);
-static void	fdused(struct filedesc *fdp, int fd);
+void	fdused(struct filedesc *fdp, int fd);
 static int	getmaxfd(struct proc *p);
 
 /* Flags for do_dup() */
@@ -242,7 +242,7 @@ fdisused(struct filedesc *fdp, int fd)
 /*
  * Mark a file descriptor as used.
  */
-static void
+void
 fdused(struct filedesc *fdp, int fd)
 {
 
