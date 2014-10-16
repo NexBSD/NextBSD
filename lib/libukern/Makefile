@@ -20,6 +20,7 @@ PN_KERN_COMMON_OBJS +=	\
 	kern_et.o			\
 	kern_exit.o			\
 	kern_fail.o			\
+	kern_fork.o			\
 	kern_hhook.o		\
 	kern_intr.o			\
 	kern_jail.o			\
@@ -512,7 +513,7 @@ CFLAGS+=	-DVM_KMEM_SIZE=100*1024*1024
 CFLAGS+=	-fformat-extensions
 CFLAGS+=	-fno-builtin
 CFLAGS+=	-fPIC
-CFLAGS+=	-g
+CFLAGS+=	-g -O0
 CFLAGS+=	-nostdinc
 NO_WERROR=	1
 WARNS=2
