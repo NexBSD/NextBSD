@@ -317,7 +317,6 @@ kmem_malloc(struct vmem *vmem, vm_size_t size, int flags)
 {
 	vm_offset_t addr;
 	int rv;
-	volatile void *value;
 
 	size = round_page(size);
 #ifdef PLEBNET
