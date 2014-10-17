@@ -57,7 +57,6 @@ struct sx proctree_lock;
 struct pcpu *pcpup;
 
 extern void pn_init_thread0(void);
-extern void mutex_init(void);
 extern void pmap_bootstrap(void *firstaddr);
 
 static int pn_init(void) __attribute__((constructor));
@@ -107,7 +106,6 @@ pn_init(void)
 	for (i = 0; i < 64; i++)
 		LIST_INIT(&uma_page_slab_hash[i]);
 
-	mutex_init();
 	phys_avail[0] = (uint64_t)__malloc(4);
 	phys_avail[1] = phys_avail[0] + 100*1024*1024;
 	mi_startup();
