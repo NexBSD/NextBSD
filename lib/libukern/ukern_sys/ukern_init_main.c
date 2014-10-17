@@ -647,8 +647,210 @@ random_init(void *dummy __unused)
 }
 SYSINIT(random, SI_SUB_RANDOM, SI_ORDER_FIRST, random_init, NULL);
 
-/**************************************************
+/*
+ ***************************************************************************
+ ****
+ **** The following code probably belongs in another file, like
+ **** kern/init_init.c.
+ ****
+ ***************************************************************************
+ */
 
- We don't have a user-land to start up by way of init.
- We're already in it.
-***************************************************/
+/*
+ * List of paths to try when searching for "init".
+ */
+static char init_path[MAXPATHLEN] =
+#ifdef	INIT_PATH
+    __XSTRING(INIT_PATH);
+#else
+    "/sbin/init:/sbin/oinit:/sbin/init.bak:/rescue/init";
+#endif
+SYSCTL_STRING(_kern, OID_AUTO, init_path, CTLFLAG_RD, init_path, 0,
+	"Path used to search the init process");
+
+/*
+ * Shutdown timeout of init(8).
+ * Unused within kernel, but used to control init(8), hence do not remove.
+ */
+#ifndef INIT_SHUTDOWN_TIMEOUT
+#define INIT_SHUTDOWN_TIMEOUT 120
+#endif
+static int init_shutdown_timeout = INIT_SHUTDOWN_TIMEOUT;
+SYSCTL_INT(_kern, OID_AUTO, init_shutdown_timeout,
+	CTLFLAG_RW, &init_shutdown_timeout, 0, "Shutdown timeout of init(8). "
+	"Unused within kernel, but used to control init(8)");
+
+/*
+ * Start the initial user process; try exec'ing each pathname in init_path.
+ * The program is invoked with one argument containing the boot flags.
+ */
+static void
+start_init(void *dummy)
+{
+	vm_offset_t addr;
+	struct execve_args args;
+	int options, error;
+	char *var, *path, *next, *s;
+	char *ucp, **uap, *arg0, *arg1;
+	struct thread *td;
+	struct proc *p;
+
+	mtx_lock(&Giant);
+
+	GIANT_REQUIRED;
+
+	td = curthread;
+	p = td->td_proc;
+
+	vfs_mountroot();
+
+	/*
+	 * Need just enough stack to hold the faked-up "execve()" arguments.
+	 */
+	addr = p->p_sysent->sv_usrstack - PAGE_SIZE;
+	if (vm_map_find(&p->p_vmspace->vm_map, NULL, 0, &addr, PAGE_SIZE, 0,
+	    VMFS_NO_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0) != 0)
+		panic("init: couldn't allocate argument space");
+	p->p_vmspace->vm_maxsaddr = (caddr_t)addr;
+	p->p_vmspace->vm_ssize = 1;
+
+	if ((var = kern_getenv("init_path")) != NULL) {
+		strlcpy(init_path, var, sizeof(init_path));
+		freeenv(var);
+	}
+	
+	for (path = init_path; *path != '\0'; path = next) {
+		while (*path == ':')
+			path++;
+		if (*path == '\0')
+			break;
+		for (next = path; *next != '\0' && *next != ':'; next++)
+			/* nothing */ ;
+		if (bootverbose)
+			printf("start_init: trying %.*s\n", (int)(next - path),
+			    path);
+			
+		/*
+		 * Move out the boot flag argument.
+		 */
+		options = 0;
+		ucp = (char *)p->p_sysent->sv_usrstack;
+		(void)subyte(--ucp, 0);		/* trailing zero */
+		if (boothowto & RB_SINGLE) {
+			(void)subyte(--ucp, 's');
+			options = 1;
+		}
+#ifdef notyet
+                if (boothowto & RB_FASTBOOT) {
+			(void)subyte(--ucp, 'f');
+			options = 1;
+		}
+#endif
+
+#ifdef BOOTCDROM
+		(void)subyte(--ucp, 'C');
+		options = 1;
+#endif
+
+		if (options == 0)
+			(void)subyte(--ucp, '-');
+		(void)subyte(--ucp, '-');		/* leading hyphen */
+		arg1 = ucp;
+
+		/*
+		 * Move out the file name (also arg 0).
+		 */
+		(void)subyte(--ucp, 0);
+		for (s = next - 1; s >= path; s--)
+			(void)subyte(--ucp, *s);
+		arg0 = ucp;
+
+		/*
+		 * Move out the arg pointers.
+		 */
+		uap = (char **)((intptr_t)ucp & ~(sizeof(intptr_t)-1));
+		(void)suword((caddr_t)--uap, (long)0);	/* terminator */
+		(void)suword((caddr_t)--uap, (long)(intptr_t)arg1);
+		(void)suword((caddr_t)--uap, (long)(intptr_t)arg0);
+
+		/*
+		 * Point at the arguments.
+		 */
+		args.fname = arg0;
+		args.argv = uap;
+		args.envv = NULL;
+
+		/*
+		 * Now try to exec the program.  If can't for any reason
+		 * other than it doesn't exist, complain.
+		 *
+		 * Otherwise, return via fork_trampoline() all the way
+		 * to user mode as init!
+		 */
+#ifdef notyet		
+		if ((error = sys_execve(td, &args)) == 0) {
+			mtx_unlock(&Giant);
+			return;
+		}
+#endif		
+		if (error != ENOENT)
+			printf("exec %.*s: error %d\n", (int)(next - path), 
+			    path, error);
+	}
+	printf("init: not found in path %s\n", init_path);
+	panic("no init");
+}
+
+/*
+ * Like kproc_create(), but runs in it's own address space.
+ * We do this early to reserve pid 1.
+ *
+ * Note special case - do not make it runnable yet.  Other work
+ * in progress will change this more.
+ */
+static void
+create_init(const void *udata __unused)
+{
+	struct ucred *newcred, *oldcred;
+	int error;
+
+	error = fork1(&thread0, RFFDG | RFPROC | RFSTOPPED, 0, &initproc,
+	    NULL, 0);
+	if (error)
+		panic("cannot fork init: %d\n", error);
+	KASSERT(initproc->p_pid == 1, ("create_init: initproc->p_pid != 1"));
+	/* divorce init's credentials from the kernel's */
+	newcred = crget();
+	PROC_LOCK(initproc);
+	initproc->p_flag |= P_SYSTEM | P_INMEM;
+	oldcred = initproc->p_ucred;
+	crcopy(newcred, oldcred);
+#ifdef MAC
+	mac_cred_create_init(newcred);
+#endif
+#ifdef AUDIT
+	audit_cred_proc1(newcred);
+#endif
+	initproc->p_ucred = newcred;
+	PROC_UNLOCK(initproc);
+	crfree(oldcred);
+	cred_update_thread(FIRST_THREAD_IN_PROC(initproc));
+	cpu_set_fork_handler(FIRST_THREAD_IN_PROC(initproc), start_init, NULL);
+}
+SYSINIT(init, SI_SUB_CREATE_INIT, SI_ORDER_FIRST, create_init, NULL);
+
+/*
+ * Make it runnable now.
+ */
+static void
+kick_init(const void *udata __unused)
+{
+	struct thread *td;
+
+	td = FIRST_THREAD_IN_PROC(initproc);
+	thread_lock(td);
+	TD_SET_CAN_RUN(td);
+	sched_add(td, SRQ_BORING);
+	thread_unlock(td);
+}
+SYSINIT(kickinit, SI_SUB_KTHREAD_INIT, SI_ORDER_FIRST, kick_init, NULL);
