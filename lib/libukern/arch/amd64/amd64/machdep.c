@@ -1574,6 +1574,7 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 #endif
 	/* Init basic tunables, hz etc */
 	init_param1();
+	hz = 100;
 
 	pc = &__pcpu[0];
 	pcpu_init(pc, 0, sizeof(struct pcpu));
