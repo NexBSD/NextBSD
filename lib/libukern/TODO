@@ -1,5 +1,9 @@
-- Add PCI passthrough and some sort of software IOMMU to support to kernel and interface
-  to user to allow ukern processes to support privileged access to hardware
+- finish file disk device
+- update BPF/veth device
+- export process' page tables R/O for vtophys
+- add mmap that explicitly requests physically contiguous memory
+  (Jumbo clusters and hw queues)
+- Add PCI passthrough 
 - Build em and aac drivers in proving direct access
 
 
