@@ -85,8 +85,9 @@ PN_KERN_COMMON_OBJS +=	\
 	subr_param.o		\
 	subr_pcpu.o			\
 	subr_pctrie.o		\
-	subr_power.o			\
+	subr_power.o		\
 	subr_prf.o			\
+	subr_rtc.o			\
 	subr_rman.o			\
 	subr_sbuf.o			\
 	subr_sglist.o		\
@@ -127,6 +128,7 @@ PN_KERN_COMMON_OBJS +=	\
 	vfs_init.o			\
 	vfs_lookup.o		\
 	vfs_mount.o			\
+	vfs_mountroot.o		\
 	vfs_subr.o			\
 	vfs_syscalls.o		\
 	vfs_vnops.o	
@@ -295,6 +297,7 @@ PN_OTHER_COMMON_OBJS =		\
 	in_cksum.o		\
 	uma_core.o		\
 	bus_if.o		\
+	clock_if.o		\
 	device_if.o		\
 	linker_if.o		\
 	vnode_if.o		\
@@ -338,12 +341,40 @@ PN_MD_ASM_OBJS = 		\
 	support.o			\
 	cpu_switch.o		
 
-PN_MFILES = 			\
+PN_MFILES = 		\
 	bus_if.h 		\
+	clock_if.h		\
 	cpufreq_if.h	\
 	device_if.h		\
 	linker_if.h		\
 	vnode_if.h
+
+PN_PCI_MFILES = 	\
+	isa_if.h		\
+	pci_if.h		\
+	pcib_if.h
+
+PN_MFILES += ${PN_PCI_MFILES}
+
+PN_PCI_OBJS	= 		\
+	pci_if.o		\
+	pcib_if.o		\
+	fixup_pci.o		\
+	hostb_pci.o		\
+	ignore_pci.o	\
+	pci.o			\
+	pci_pci.o		\
+	pci_subr.o		\
+	pci_user.o		\
+	pcib_support.o
+
+PN_X86_PCI_OBJS =	\
+	isa_if.o		\
+	msi.o			\
+	nexus.o			\
+	pci_bus.o		\
+	pci_cfgreg.o	\
+	qpi.o
 
 PN_OPT_FILES = 			\
 	opt_adaptive_lockmgrs.h		\
@@ -379,6 +410,7 @@ PN_OPT_FILES = 			\
 	opt_ipsec.h		\
 	opt_ipstealth.h		\
 	opt_ipx.h		\
+	opt_isa.h		\
 	opt_kdb.h		\
 	opt_kdtrace.h		\
 	opt_kld.h		\
@@ -401,12 +433,13 @@ PN_OPT_FILES = 			\
 	opt_ofed.h		\
 	opt_param.h		\
 	opt_panic.h		\
-	opt_pcbgroup.h		\
+	opt_pcbgroup.h	\
 	opt_posix.h		\
 	opt_pf.h		\
 	opt_printf.h	\
-	opt_procdesc.h		\
-	opt_random.h		\
+	opt_procdesc.h	\
+	opt_random.h	\
+	opt_rootdevname.h	\
 	opt_route.h		\
 	opt_rss.h		\
 	opt_sched.h		\
@@ -449,7 +482,10 @@ PREFIX= ${SYSDIR}
 .if ${MACHINE_CPUARCH} == "amd64"
 .PATH: arch/amd64/amd64
 .PATH: ${PREFIX}/amd64/amd64
+.PATH: ${PREFIX}/amd64/pci
 .PATH: ${PREFIX}/x86/x86
+.PATH: ${PREFIX}/x86/pci
+PN_PCI_OBJS += ${PN_X86_PCI_OBJS}
 CFLAGS+=	-DHAMMER
 .endif
 
@@ -466,6 +502,7 @@ CFLAGS+=	-DHAMMER
 .PATH: ${PREFIX}/dev/random
 .PATH: ${PREFIX}/dev/watchdog
 .PATH: ${PREFIX}/dev/led
+.PATH: ${PREFIX}/dev/pci
 .PATH: ukern_sys
 
 PN_COMMON_OBJS =				\
@@ -477,6 +514,7 @@ PN_COMMON_OBJS =				\
 	${PN_NET_COMMON_OBJS}		\
 	${PN_VM_COMMON_OBJS}		\
 	${PN_MD_COMMON_OBJS}		\
+	${PN_PCI_OBJS}				\
 	${PN_OTHER_COMMON_OBJS}
 
 #	${PN_NETINET_COMMON_OBJS}	\
@@ -592,7 +630,8 @@ vnode_if.c: @/tools/vnode_if.awk @/kern/vnode_if.src
 vnode_if.h vnode_if_newproto.h vnode_if_typedef.h: @/tools/vnode_if.awk \
     @/kern/vnode_if.src
 
-MFILES= kern/bus_if.m kern/device_if.m kern/linker_if.m kern/cpufreq_if.m
+MFILES= kern/bus_if.m kern/device_if.m kern/linker_if.m kern/cpufreq_if.m \
+	kern/clock_if.m dev/pci/pci_if.m dev/pci/pcib_if.m isa/isa_if.m
 
 GEN_CFILES= ${MFILES:T:S/.m$/.c/}
 
