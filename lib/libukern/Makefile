@@ -9,12 +9,14 @@ LIB=	ukern
 
 PN_KERN_COMMON_OBJS +=	\
 	kern_acct.o			\
-	kern_condvar.o		\
-	kern_cons.o			\
 	kern_clock.o		\
 	kern_clocksource.o	\
+	kern_condvar.o		\
+	kern_cons.o			\
+	kern_cpu.o			\
 	kern_cpuset.o		\
 	kern_conf.o			\
+	kern_context.o		\
 	kern_descrip.o		\
 	kern_environment.o	\
 	kern_et.o			\
@@ -22,6 +24,7 @@ PN_KERN_COMMON_OBJS +=	\
 	kern_fail.o			\
 	kern_fork.o			\
 	kern_hhook.o		\
+	kern_idle.o			\
 	kern_intr.o			\
 	kern_jail.o			\
 	kern_khelp.o		\
@@ -52,11 +55,11 @@ PN_KERN_COMMON_OBJS +=	\
 	kern_synch.o		\
 	kern_sysctl.o		\
 	kern_tc.o			\
-	kern_time.o			\
 	kern_thread.o		\
+	kern_time.o			\
 	kern_timeout.o		\
-	kern_umtx.o		\
-	kern_uuid.o		\
+	kern_umtx.o			\
+	kern_uuid.o			\
 	link_elf.o			\
 	link_elf_obj.o		\
 	md5c.o				\
@@ -66,10 +69,10 @@ PN_KERN_COMMON_OBJS +=	\
 	subr_autoconf.o		\
 	subr_blist.o		\
 	subr_bus.o			\
-	subr_bus_dma.o			\
-	subr_bufring.o			\
-	subr_capability.o			\
-	subr_clock.o			\
+	subr_bus_dma.o		\
+	subr_bufring.o		\
+	subr_capability.o	\
+	subr_clock.o		\
 	subr_counter.o		\
 	subr_devstat.o		\
 	subr_disk.o			\
@@ -101,8 +104,8 @@ PN_KERN_COMMON_OBJS +=	\
 	subr_vmem.o			\
 	sys_capability.o	\
 	sys_generic.o		\
-	sys_process.o		\
 	sys_procdesc.o		\
+	sys_process.o		\
 	sys_socket.o		\
 	tty.o				\
 	tty_info.c			\
@@ -134,13 +137,14 @@ PN_KERN_COMMON_OBJS +=	\
 	vfs_vnops.o	
 
 
-
 PN_VM_COMMON_OBJS +=	\
 	default_pager.o		\
 	device_pager.o		\
 	phys_pager.o		\
 	sg_pager.o			\
 	swap_pager.o		\
+	uma_dbg.o			\
+	uma_core.o			\
 	vm_fault.o			\
 	vm_glue.o			\
 	vm_init.o			\
@@ -295,7 +299,6 @@ PN_OTHER_COMMON_OBJS =		\
 	harvest.o		\
 	sha1.o			\
 	in_cksum.o		\
-	uma_core.o		\
 	bus_if.o		\
 	clock_if.o		\
 	device_if.o		\
@@ -320,6 +323,7 @@ PN_SYS_COMMON_OBJS = 		\
 
 
 PN_MD_COMMON_OBJS = 		\
+	autoconf.o				\
 	db_disasm.o				\
 	db_interface.o			\
 	db_trace.o				\
@@ -546,6 +550,8 @@ CFLAGS+=	-DDDB
 CFLAGS+=	-DSMP
 CFLAGS+=	-DVERBOSE_SYSINIT
 CFLAGS+=	-DVM_KMEM_SIZE=100*1024*1024
+CFLAGS+=	-DINVARIANT_SUPPORT
+CFLAGS+=	-DINVARIANTS
 #CFLAGS+=	-DINET=1
 #CFLAGS+=	-DINET6=1
 CFLAGS+=	-fformat-extensions
