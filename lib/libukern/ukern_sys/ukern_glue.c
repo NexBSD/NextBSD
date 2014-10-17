@@ -549,43 +549,7 @@ copyiniov(const struct iovec *iovp, u_int iovcnt, struct iovec **iov, int error)
 	}
 	return (error);
 }
-#endif
-int
-subyte(void *base, int byte)
-{
 
-	*(char *)base = (uint8_t)byte;
-	return (0);
-}
-
-int
-suword32(void *base, int32_t word)
-{
-
-	*(int32_t *)base = word;
-	return (0);
-}
-
-long
-fuword(const void *base)
-{
-
-	return *(long *)base;
-}
-
-int32_t
-fuword32(const void *base)
-{
-	return *(int32_t *)base;
-}
-
-int
-fubyte(const void *base)
-{
-
-	return *(int8_t *)base;
-}
-#if 0
 /*
  * Change the total socket buffer size a user has used.
  */
@@ -1104,3 +1068,10 @@ uiomove_fromphys(vm_page_t ma[], vm_offset_t offset, int n, struct uio *uio)
 int	clkintr_pending;
 int hintmode;
 char static_hints[1];
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/bus.h>
+#include <machine/intr_machdep.h>
+#include <x86/apicreg.h>
+#include <x86/apicvar.h>
+struct apic_ops apic_ops;

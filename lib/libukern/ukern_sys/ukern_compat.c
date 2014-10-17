@@ -134,12 +134,6 @@ nanotime(struct timespec *ts)
 #endif
 
 void
-resettodr(void)
-{
-	
-}
-
-void
 pn_init_thread0(void)
 {
 
@@ -320,6 +314,50 @@ elf_cpu_unload_file(linker_file_t lf __unused)
 {
 
 	return (0);
+}
+
+int
+subyte(void *base, int byte)
+{
+
+	*(char *)base = (uint8_t)byte;
+	return (0);
+}
+
+int
+suword32(void *base, int32_t word)
+{
+
+	*(int32_t *)base = word;
+	return (0);
+}
+
+long
+suword(void *base, long word)
+{
+
+	*(long *)base = word;
+	return (0);
+}
+
+long
+fuword(const void *base)
+{
+
+	return *(long *)base;
+}
+
+int32_t
+fuword32(const void *base)
+{
+	return *(int32_t *)base;
+}
+
+int
+fubyte(const void *base)
+{
+
+	return *(int8_t *)base;
 }
 
 int
