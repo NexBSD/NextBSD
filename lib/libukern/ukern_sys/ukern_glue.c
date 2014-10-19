@@ -54,7 +54,7 @@
 #include <time.h>
 
 int bootverbose;
-
+vm_paddr_t lapic_paddr;
 
 SYSCTL_STRING(_kern, OID_AUTO, compiler_version, CTLFLAG_RD|CTLFLAG_MPSAFE,
     compiler_version, 0, "Version of compiler used to compile kernel");
@@ -1075,3 +1075,15 @@ char static_hints[1];
 #include <x86/apicreg.h>
 #include <x86/apicvar.h>
 struct apic_ops apic_ops;
+
+void
+mca_resume(void)
+{
+
+}
+
+int
+acpi_table_quirks(int *quirks)
+{
+	return (0);
+}
