@@ -1661,10 +1661,10 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 		kdb_enter(KDB_WHY_BOOTFLAGS,
 		    "Boot flags requested debugger");
 #endif
-#if 0
 	identify_cpu();		/* Final stage of CPU initialization */
-#endif	
+#if 0	
 	initializecpu();	/* Initialize CPU registers */
+#endif	
 	initializecpucache();
 #ifdef notyet
 	getmemsize(kmdp, physfree);

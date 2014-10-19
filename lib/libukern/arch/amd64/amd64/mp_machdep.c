@@ -1502,9 +1502,9 @@ cpususpend_handler(void)
 		cpu_ops.cpu_resume();
 	if (vmm_resume_p)
 		vmm_resume_p();
-#if 0
 	/* Resume MCA and local APIC */
 	mca_resume();
+#if 0
 	lapic_setup(0);
 #endif
 	CPU_CLR_ATOMIC(cpu, &started_cpus);
