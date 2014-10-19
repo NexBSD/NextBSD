@@ -76,3 +76,23 @@ vtimer_module_event_handler(module_t mod, int what, void *arg)
 
 	return (0);
 }
+
+int
+timer_spkr_acquire(void)
+{
+
+	return (0);
+}
+
+int
+timer_spkr_release(void)
+{
+
+	return (0);
+}
+
+void
+timer_spkr_setfreq(int freq)
+{
+
+}
