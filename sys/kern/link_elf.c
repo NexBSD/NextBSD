@@ -73,15 +73,21 @@ __FBSDID("$FreeBSD$");
 
 #define MAXSEGS 4
 
+/*
+ * The kernel symbol table starts here.
+ */
+extern struct _dynamic _DYNAMIC;
+
+
 #ifndef PLEBNET
-void *
+static void *
 ukern_get_dynamic(void)
 {
 
 	return ((Elf_Dyn *)&_DYNAMIC);
 }
 
-void *
+static void *
 ukern_get_address(void)
 {
 
@@ -335,11 +341,6 @@ link_elf_delete_gdb(struct link_map *l)
 	}
 }
 #endif /* GDB */
-
-/*
- * The kernel symbol table starts here.
- */
-extern struct _dynamic _DYNAMIC;
 
 static void
 link_elf_error(const char *filename, const char *s)
