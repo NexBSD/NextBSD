@@ -1,0 +1,2 @@
+export LD_LIBRARY_PATH=`pwd`/..
+export UKERN_DEVLIST="00:02:05:00,00:02:06:00"
