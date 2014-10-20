@@ -194,24 +194,6 @@ halt(void)
 	__asm __volatile("hlt");
 }
 
-static __inline u_char
-inb(u_int port)
-{
-	u_char	data;
-
-	__asm __volatile("inb %w1, %0" : "=a" (data) : "Nd" (port));
-	return (data);
-}
-
-static __inline u_int
-inl(u_int port)
-{
-	u_int	data;
-
-	__asm __volatile("inl %w1, %0" : "=a" (data) : "Nd" (port));
-	return (data);
-}
-
 static __inline void
 insb(u_int port, void *addr, size_t count)
 {
@@ -245,27 +227,6 @@ invd(void)
 	__asm __volatile("invd");
 }
 
-static __inline u_short
-inw(u_int port)
-{
-	u_short	data;
-
-	__asm __volatile("inw %w1, %0" : "=a" (data) : "Nd" (port));
-	return (data);
-}
-
-static __inline void
-outb(u_int port, u_char data)
-{
-	__asm __volatile("outb %0, %w1" : : "a" (data), "Nd" (port));
-}
-
-static __inline void
-outl(u_int port, u_int data)
-{
-	__asm __volatile("outl %0, %w1" : : "a" (data), "Nd" (port));
-}
-
 static __inline void
 outsb(u_int port, const void *addr, size_t count)
 {
@@ -288,12 +249,6 @@ outsl(u_int port, const void *addr, size_t count)
 	__asm __volatile("cld; rep; outsl"
 			 : "+S" (addr), "+c" (count)
 			 : "d" (port));
-}
-
-static __inline void
-outw(u_int port, u_short data)
-{
-	__asm __volatile("outw %0, %w1" : : "a" (data), "Nd" (port));
 }
 
 static __inline u_long
@@ -775,6 +730,14 @@ intr_restore(register_t rflags)
 	write_rflags(rflags);
 }
 
+u_char	inb(u_int port);
+u_short	inw(u_int port);
+u_int	inl(u_int port);
+void	outb(u_int port, u_char data);
+void	outw(u_int port, u_short data);
+void	outl(u_int port, u_int data);
+
+
 #else /* !(__GNUCLIKE_ASM && __CC_SUPPORTS___INLINE) */
 
 int	breakpoint(void);
@@ -788,8 +751,6 @@ void	do_cpuid(u_int ax, u_int *p);
 void	enable_intr(void);
 void	halt(void);
 void	ia32_pause(void);
-u_char	inb(u_int port);
-u_int	inl(u_int port);
 void	insb(u_int port, void *addr, size_t count);
 void	insl(u_int port, void *addr, size_t count);
 void	insw(u_int port, void *addr, size_t count);
@@ -798,7 +759,6 @@ void	intr_restore(register_t rf);
 void	invd(void);
 void	invlpg(u_int addr);
 void	invltlb(void);
-u_short	inw(u_int port);
 void	lidt(struct region_descriptor *addr);
 void	lldt(u_short sel);
 void	load_cr0(u_long cr0);
@@ -815,12 +775,9 @@ void	load_dr7(uint64_t dr7);
 void	load_fs(u_short sel);
 void	load_gs(u_short sel);
 void	ltr(u_short sel);
-void	outb(u_int port, u_char data);
-void	outl(u_int port, u_int data);
 void	outsb(u_int port, const void *addr, size_t count);
 void	outsl(u_int port, const void *addr, size_t count);
 void	outsw(u_int port, const void *addr, size_t count);
-void	outw(u_int port, u_short data);
 u_long	rcr0(void);
 u_long	rcr2(void);
 u_long	rcr3(void);
