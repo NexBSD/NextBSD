@@ -1,10 +1,21 @@
+- Add PCI passthrough										WIP
+  	  - reserve devices									DONE
+	  - mmap device memory								DONE
+	  - export process' page tables R/O for vtophys		DONE
+	  - export device interrupts to user threads	IN PROGRESS
+
+
+- Build em and aac drivers in proving direct access			WIP
+  	  - em     	   		   	  		  DONE
+	  - pci resource allocation		  DONE
+	  - interrupt setup				  IN PROGRESS
+
 - finish file disk device
 - update BPF/veth device
-- export process' page tables R/O for vtophys
 - add mmap that explicitly requests physically contiguous memory
   (Jumbo clusters and hw queues)
-- Add PCI passthrough 
-- Build em and aac drivers in proving direct access
+
+
 
 
 Generality of use:
