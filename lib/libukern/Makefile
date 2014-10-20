@@ -356,202 +356,11 @@ PN_MFILES = 		\
 	vnode_if.h
 
 PN_PCI_MFILES = 	\
-	acpi_if.h		\
-	acpi_wmi_if.h	\
 	isa_if.h		\
 	pci_if.h		\
 	pcib_if.h
 
 PN_MFILES += ${PN_PCI_MFILES}
-
-PN_ACPICA_OBJS +=	\
-	OsdDebug.o		\
-	OsdHardware.o	\
-	OsdInterrupt.o	\
-	OsdMemory.o		\
-	OsdSchedule.o	\
-	OsdStream.o		\
-	OsdSynch.o		\
-	OsdTable.o		\
-	acpi.o			\
-	acpi_acad.o		\
-	acpi_battery.o	\
-	acpi_cmbat.o	\
-	acpi_cpu.o		\
-	acpi_ec.o		\
-	acpi_hpet.o		\
-	acpi_lid.o		\
-	acpi_package.o	\
-	acpi_pci.o		\
-	acpi_pci_link.o	\
-	acpi_pcib.o		\
-	acpi_pcib_acpi.o\
-	acpi_pcib_pci.o	\
-	acpi_perf.o		\
-	acpi_powerres.o	\
-	acpi_resource.o	\
-	acpi_smbat.o	\
-	acpi_thermal.o	\
-	acpi_throttle.o	\
-	acpi_timer.o	\
-	dsargs.o		\
-	dscontrol.o		\
-	dsfield.o		\
-	dsinit.o		\
-	dsmethod.o		\
-	dsmthdat.o		\
-	dsobject.o		\
-	dsopcode.o		\
-	dsutils.o		\
-	dswexec.o		\
-	dswload.o		\
-	dswload2.o		\
-	dswscope.o		\
-	dswstate.o		\
-	evevent.o		\
-	evglock.o		\
-	evgpe.o			\
-	evgpeblk.o		\
-	evgpeinit.o		\
-	evgpeutil.o		\
-	evhandler.o		\
-	evmisc.o		\
-	evregion.o		\
-	evrgnini.o		\
-	evsci.o			\
-	evxface.o		\
-	evxfevnt.o		\
-	evxfgpe.o		\
-	evxfregn.o		\
-	exconfig.o		\
-	exconvrt.o		\
-	excreate.o		\
-	exdebug.o		\
-	exdump.o		\
-	exfield.o		\
-	exfldio.o		\
-	exmisc.o		\
-	exmutex.o		\
-	exnames.o		\
-	exoparg1.o		\
-	exoparg2.o		\
-	exoparg3.o		\
-	exoparg6.o		\
-	exprep.o		\
-	exregion.o		\
-	exresnte.o		\
-	exresolv.o		\
-	exresop.o		\
-	exstore.o		\
-	exstoren.o		\
-	exstorob.o		\
-	exsystem.o		\
-	exutils.o		\
-	hwacpi.o		\
-	hwesleep.o		\
-	hwgpe.o			\
-	hwpci.o			\
-	hwregs.o		\
-	hwregs.o		\
-	hwsleep.o		\
-	hwtimer.o		\
-	hwvalid.o		\
-	hwxface.o		\
-	hwxfsleep.o		\
-	nsaccess.o		\
-	nsalloc.o		\
-	nsarguments.o	\
-	nsconvert.o		\
-	nsdump.o		\
-	nseval.o		\
-	nsinit.o		\
-	nsload.o		\
-	nsnames.o		\
-	nsobject.o		\
-	nsparse.o		\
-	nspredef.o		\
-	nsprepkg.o		\
-	nsrepair.o		\
-	nsrepair2.o		\
-	nssearch.o		\
-	nsutils.o		\
-	nswalk.o		\
-	nsxfeval.o		\
-	nsxfname.o		\
-	nsxfobj.o		\
-	psargs.o		\
-	psloop.o		\
-	psobject.o		\
-	psopcode.o		\
-	psopinfo.o		\
-	psparse.o		\
-	psscope.o		\
-	pstree.o		\
-	psutils.o		\
-	pswalk.o		\
-	psxface.o		\
-	rsaddr.o		\
-	rscalc.o		\
-	rscreate.o		\
-	rsdump.o		\
-	rsdumpinfo.o	\
-	rsinfo.o		\
-	rsio.o			\
-	rsirq.o			\
-	rslist.o		\
-	rsmemory.o		\
-	rsmisc.o		\
-	rsserial.o		\
-	rsutils.o		\
-	rsxface.o		\
-	tbdata.o		\
-	tbfadt.o		\
-	tbfind.o		\
-	tbinstal.o		\
-	tbprint.o		\
-	tbutils.o		\
-	tbxface.o		\
-	tbxfload.o		\
-	tbxfroot.o		\
-	utaddress.o		\
-	utalloc.o		\
-	utbuffer.o		\
-	utcache.o		\
-	utcopy.o		\
-	utdebug.o		\
-	utdecode.o		\
-	utdelete.o		\
-	uterror.o		\
-	uteval.o		\
-	utexcep.o		\
-	utglobal.o		\
-	uthex.o			\
-	utids.o			\
-	utinit.o		\
-	utlock.o		\
-	utmath.o		\
-	utmisc.o		\
-	utmutex.o		\
-	utobject.o		\
-	utosi.o			\
-	utownerid.o		\
-	utpredef.o		\
-	utresrc.o		\
-	utstate.o		\
-	utstring.o		\
-	utxface.o		\
-	utxferror.o		\
-	utxfinit.o
-
-PN_X86_ACPICA_OBJS =	\
-	acpi_if.o			\
-	acpi_wmi_if.o		\
-	OsdEnvironment.o	\
-	acpi_apm.o			\
-	acpi_machdep.o		\
-	acpi_wakeup.o		\
-	madt.o				\
-	srat.o
 
 PN_PCI_OBJS	= 		\
 	pci_if.o		\
@@ -594,7 +403,6 @@ PN_EM_OBJS = 			\
 	e1000_osdep.o
 
 PN_OPT_FILES = 			\
-	opt_acpi.h		\
 	opt_adaptive_lockmgrs.h		\
 	opt_adaptive_mutexes.h		\
 	opt_atalk.h		\
@@ -645,6 +453,7 @@ PN_OPT_FILES = 			\
 	opt_mrouting.h		\
 	opt_msgbuf.h		\
 	opt_netgraph.h		\
+	opt_nfs.h		\
 	opt_no_adaptive_rwlocks.h		\
 	opt_no_adaptive_sx.h		\
 	opt_ntp.h		\
@@ -692,6 +501,8 @@ PREFIX= ${SYSDIR}
 .PATH: ${PREFIX}/crypto
 .PATH: ${PREFIX}/kern
 
+M=${MACHINE_CPUARCH}
+
 .if ${MACHINE_CPUARCH} == "i386" 
 .PATH: arch/x86/x86
 .PATH: ${PREFIX}/i386/i386
@@ -703,13 +514,10 @@ PREFIX= ${SYSDIR}
 .PATH: arch/amd64/pci
 .PATH: arch/x86/x86
 .PATH: ${PREFIX}/amd64/amd64
-.PATH: ${PREFIX}/amd64/acpica
 .PATH: ${PREFIX}/amd64/pci
 .PATH: ${PREFIX}/x86/x86
 .PATH: ${PREFIX}/x86/pci
-.PATH: ${PREFIX}/x86/acpica
 PN_PCI_OBJS += ${PN_X86_PCI_OBJS}
-PN_ACPICA_OBJS += ${PN_X86_ACPICA_OBJS}
 CFLAGS+=	-DHAMMER
 .endif
 
@@ -729,17 +537,6 @@ CFLAGS+=	-DHAMMER
 .PATH: dev/pci
 .PATH: ${PREFIX}/dev/pci
 .PATH: ${PREFIX}/dev/e1000
-.PATH: ${PREFIX}/contrib/dev/acpica/components/dispatcher
-.PATH: ${PREFIX}/contrib/dev/acpica/components/events
-.PATH: ${PREFIX}/contrib/dev/acpica/components/executer
-.PATH: ${PREFIX}/contrib/dev/acpica/components/hardware
-.PATH: ${PREFIX}/contrib/dev/acpica/components/namespace
-.PATH: ${PREFIX}/contrib/dev/acpica/components/parser
-.PATH: ${PREFIX}/contrib/dev/acpica/components/resources
-.PATH: ${PREFIX}/contrib/dev/acpica/components/tables
-.PATH: ${PREFIX}/contrib/dev/acpica/components/utilities
-.PATH: ${PREFIX}/dev/acpica
-.PATH: ${PREFIX}/dev/acpica/Osd
 .PATH: drivers
 .PATH: ukern_sys
 
@@ -756,7 +553,6 @@ PN_COMMON_OBJS =				\
 	${PN_EM_OBJS}				\
 	${PN_OTHER_COMMON_OBJS}
 
-#	${PN_ACPICA_OBJS}			\
 #	${PN_NETINET_COMMON_OBJS}	\
 #	${PN_NETINET6_COMMON_OBJS}	\
 
@@ -772,8 +568,8 @@ SRCS+=	${GEN_CFILES}
 
 CFLAGS+=	-I./include
 CFLAGS+=	-I./include/opt
-CFLAGS+=	-I${PREFIX}
 CFLAGS+=	-I.
+CFLAGS+=	-I${PREFIX}
 CFLAGS+=	-I${PREFIX}/contrib/altq
 CFLAGS+=	-I${PREFIX}/contrib/pf
 CFLAGS+=	-I/usr/include
@@ -874,8 +670,21 @@ vnode_if.h vnode_if_newproto.h vnode_if_typedef.h: @/tools/vnode_if.awk \
     @/kern/vnode_if.src
 
 MFILES= kern/bus_if.m kern/device_if.m kern/linker_if.m kern/cpufreq_if.m	\
-	kern/clock_if.m dev/pci/pci_if.m dev/pci/pcib_if.m isa/isa_if.m 		\
-	dev/acpica/acpi_if.m dev/acpi_support/acpi_wmi_if.m
+	kern/clock_if.m dev/pci/pci_if.m dev/pci/pcib_if.m isa/isa_if.m 
+
+.if !exists(${.OBJDIR}/.depend)
+${PN_KERN_COMMON_OBJS}: ${PN_OPT_FILES} assym.s vnode_if.h ${BEFORE_DEPEND:M*.h} ${MFILES:T:S/.m$/.h/}
+.endif
+
+# This rule stops ./assym.s in .depend from causing problems.
+./assym.s: assym.s
+assym.s: ${SYSDIR}/kern/genassym.sh genassym.o
+	NM='${NM}' sh ${SYSDIR}/kern/genassym.sh genassym.o > ${.TARGET}
+
+genassym.o: genassym.c
+	${CC} -c ${CFLAGS:N-fno-common} ${SYSDIR}/${M}/${M}/genassym.c
+
+${SYSTEM_OBJS} genassym.o vers.o: opt_global.h
 
 GEN_CFILES= ${MFILES:T:S/.m$/.c/}
 
