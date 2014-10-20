@@ -2953,7 +2953,7 @@ pci_ata_maps(device_t bus, device_t dev, struct resource_list *rl, int force,
 {
 	struct resource *r;
 	int rid, type, progif;
-#if 0
+
 	/* if this device supports PCI native addressing use it */
 	progif = pci_read_config(dev, PCIR_PROGIF, 1);
 	if ((progif & 0x8a) == 0x8a) {
@@ -2963,7 +2963,7 @@ pci_ata_maps(device_t bus, device_t dev, struct resource_list *rl, int force,
 			pci_write_config(dev, PCIR_PROGIF, progif | 0x05, 1);
 		}
 	}
-#endif
+
 	progif = pci_read_config(dev, PCIR_PROGIF, 1);
 	type = SYS_RES_IOPORT;
 	if (progif & PCIP_STORAGE_IDE_MODEPRIM) {
@@ -3589,9 +3589,7 @@ pci_add_child(device_t bus, struct pci_devinfo *dinfo)
 	device_set_ivars(dinfo->cfg.dev, dinfo);
 	resource_list_init(&dinfo->resources);
 	pci_cfg_save(dinfo->cfg.dev, dinfo, 0);
-#if 0	
 	pci_cfg_restore(dinfo->cfg.dev, dinfo);
-#endif	
 	pci_print_verbose(dinfo);
 	pci_add_resources(bus, dinfo->cfg.dev, 0, 0);
 	pci_child_added(dinfo->cfg.dev);
@@ -4594,9 +4592,7 @@ pci_reserve_map(device_t dev, device_t child, int type, int *rid,
 		    "Lazy allocation of %#lx bytes rid %#x type %d at %#lx\n",
 		    count, *rid, type, rman_get_start(res));
 	map = rman_get_start(res);
-#if 0	
 	pci_write_bar(child, pm, map);
-#endif	
 out:
 	return (res);
 }
