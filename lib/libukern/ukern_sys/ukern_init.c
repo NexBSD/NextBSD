@@ -41,12 +41,14 @@
 #include <pthread.h>
 #include <spawn.h>
 
+#include <fcntl.h>
 char *     getenv(const char *name);
 pid_t     getpid(void);
 char *strndup(const char *str, size_t len);
 unsigned int     sleep(unsigned int seconds);
 size_t strlen(const char *s);
-
+int open(const char *path, int flags, ...);
+void exit(int status);
 int putchar(int c);
 
 extern void mi_startup(void);
@@ -65,6 +67,8 @@ pthread_cond_t init_cond;
 extern uint64_t phys_avail[];
 early_putc_t * early_putc = (early_putc_t *)putchar;
 u_int64_t hammer_time(u_int64_t modulep, u_int64_t physfree);
+int io_fd;
+int *	__error(void);
 
 static int
 pn_init(void)
@@ -85,6 +89,10 @@ pn_init(void)
 		printf("WARNING: PLEBCONF_PATH and RC_CONF need "
 		    "to be set to configure the virtual interface automatically\n");
 		needconfig = 0;
+	}
+	if ((io_fd = open("/dev/io", O_RDWR)) < 0) {
+		printf("failed to open /dev/io - check permissions %d", *__error());
+		exit(1);
 	}
 	pcpup = __malloc(sizeof(struct pcpu));
 	pcpu_init(pcpup, 0, sizeof(struct pcpu));

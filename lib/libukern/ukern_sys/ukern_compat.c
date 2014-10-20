@@ -393,3 +393,86 @@ ukern_get_address(void)
 
 	return (map->l_addr);
 }
+
+#include <sys/types.h>
+#include <sys/ioctl.h>
+#include <dev/io/iodev.h>
+#include <machine/iodev.h>
+
+extern int io_fd;
+
+static int
+io_in(u_int port, u_int width)
+{
+	struct iodev_pio_req ipr;
+
+	ipr.access = IODEV_PIO_READ;
+	ipr.port = port;
+	ipr.width = width;
+	if (ioctl(io_fd, IODEV_PIO, &ipr) == 0)
+		return (ipr.val);
+	return (-1);
+}
+
+static void
+io_out(u_int port, u_int width, u_int val)
+{
+	struct iodev_pio_req ipr;
+
+	ipr.access = IODEV_PIO_WRITE;
+	ipr.port = port;
+	ipr.width = width;
+	ipr.val = val;
+	ioctl(io_fd, IODEV_PIO, &ipr);
+}
+
+u_char
+inb(u_int port)
+{
+	u_char data;
+
+	if ((data = io_in(port, 1)) < 0)
+		return (0);
+	return (data);
+}
+
+u_short
+inw(u_int port)
+{
+	u_short	data;
+
+	if ((data = io_in(port, 2)) < 0)
+		return (0);
+	return (data);
+}
+
+u_int
+inl(u_int port)
+{
+	u_int	data;
+
+	if ((data = io_in(port, 4)) < 0)
+		return (0);
+	return (data);
+}
+
+void
+outb(u_int port, u_char data)
+{
+
+	io_out(port, 1, data);
+}
+
+void
+outw(u_int port, u_short data)
+{
+
+	io_out(port, 2, data);
+}
+
+void
+outl(u_int port, u_int data)
+{
+
+	io_out(port, 4, data);
+}
