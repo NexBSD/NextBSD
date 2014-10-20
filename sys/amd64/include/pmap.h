@@ -176,7 +176,7 @@
  */
 #define NKPML4E		4
 
-#define	NUPML4E		(NPML4EPG/2)	/* number of userland PML4 pages */
+#define	NUPML4E		((NPML4EPG/2)-1)	/* number of userland PML4 pages */
 #define	NUPDPE		(NUPML4E*NPDPEPG)/* number of userland PDP pages */
 #define	NUPDE		(NUPDPE*NPDEPG)	/* number of userland PD entries */
 
@@ -299,6 +299,7 @@ enum pmap_type {
 struct pmap {
 	struct mtx		pm_mtx;
 	pml4_entry_t		*pm_pml4;	/* KVA of level 4 page table */
+	pml4_entry_t		*pm_shadow_pml4;	/* KVA of shadow level 4 page table */
 	uint64_t		pm_cr3;
 	TAILQ_HEAD(,pv_chunk)	pm_pvchunk;	/* list of mappings in pmap */
 	cpuset_t		pm_active;	/* active on cpus */

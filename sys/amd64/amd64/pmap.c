@@ -841,6 +841,7 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 	 */
 	PMAP_LOCK_INIT(kernel_pmap);
 	kernel_pmap->pm_pml4 = (pdp_entry_t *)PHYS_TO_DMAP(KPML4phys);
+	kernel_pmap->pm_shadow_pml4 = NULL;
 	kernel_pmap->pm_cr3 = KPML4phys;
 	CPU_FILL(&kernel_pmap->pm_active);	/* don't allow deactivation */
 	CPU_FILL(&kernel_pmap->pm_save);	/* always superset of pm_active */
@@ -2182,6 +2183,7 @@ pmap_pinit0(pmap_t pmap)
 
 	PMAP_LOCK_INIT(pmap);
 	pmap->pm_pml4 = (pml4_entry_t *)PHYS_TO_DMAP(KPML4phys);
+	pmap->pm_shadow_pml4 = NULL;
 	pmap->pm_cr3 = KPML4phys;
 	pmap->pm_root.rt_root = 0;
 	CPU_ZERO(&pmap->pm_active);
@@ -2200,8 +2202,8 @@ pmap_pinit0(pmap_t pmap)
 int
 pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags)
 {
-	vm_page_t pml4pg;
-	vm_paddr_t pml4phys;
+	vm_page_t pml4pg, pmlu4pg;
+	vm_paddr_t pml4phys, pmlu4phys;
 	int i;
 
 	/*
@@ -2219,7 +2221,17 @@ pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags)
 	if ((pml4pg->flags & PG_ZERO) == 0)
 		pagezero(pmap->pm_pml4);
 
-	/*
+/* XXXXX */
+	while ((pmlu4pg = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL |
+			VM_ALLOC_NOOBJ | VM_ALLOC_WIRED | VM_ALLOC_ZERO)) == NULL)
+		VM_WAIT;
+
+	pmlu4phys = VM_PAGE_TO_PHYS(pmlu4pg);
+	pmap->pm_shadow_pml4 = (pml4_entry_t *)PHYS_TO_DMAP(pmlu4phys);
+	if ((pmlu4pg->flags & PG_ZERO) == 0)
+		pagezero(pmap->pm_shadow_pml4);
+/* XXXXX */
+    /*
 	 * Do not install the host kernel mappings in the nested page
 	 * tables. These mappings are meaningless in the guest physical
 	 * address space.
@@ -2238,8 +2250,17 @@ pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags)
 		}
 
 		/* install self-referential address mapping entry(s) */
+		/* R/W mapping of full address space */
 		pmap->pm_pml4[PML4PML4I] = VM_PAGE_TO_PHYS(pml4pg) |
 		    X86_PG_V | X86_PG_RW | X86_PG_A | X86_PG_M;
+
+		/* self-referential address mapping entry in user */
+		pmap->pm_shadow_pml4[PML4PML4I-1] = VM_PAGE_TO_PHYS(pmlu4pg) |
+		    X86_PG_V | X86_PG_A | X86_PG_M | X86_PG_U;
+
+		/* R/O mapping of user address space */
+		pmap->pm_pml4[PML4PML4I-1] = VM_PAGE_TO_PHYS(pmlu4pg) |
+		    X86_PG_V | X86_PG_RW | X86_PG_A | X86_PG_M | X86_PG_U;
 
 		if (pmap_pcid_enabled) {
 			pmap->pm_pcid = alloc_unr(&pcid_unr);
@@ -2324,6 +2345,8 @@ _pmap_allocpte(pmap_t pmap, vm_pindex_t ptepindex, struct rwlock **lockp)
 
 		/* Wire up a new PDPE page */
 		pml4index = ptepindex - (NUPDE + NUPDPE);
+		pml4 = &pmap->pm_shadow_pml4[pml4index];
+		*pml4 = VM_PAGE_TO_PHYS(m) | PG_U | PG_V | PG_A | PG_M;
 		pml4 = &pmap->pm_pml4[pml4index];
 		*pml4 = VM_PAGE_TO_PHYS(m) | PG_U | PG_RW | PG_V | PG_A | PG_M;
 
@@ -2504,7 +2527,7 @@ retry:
 void
 pmap_release(pmap_t pmap)
 {
-	vm_page_t m;
+	vm_page_t m, m_shadow;
 	int i;
 
 	KASSERT(pmap->pm_stats.resident_count == 0,
@@ -2522,16 +2545,20 @@ pmap_release(pmap_t pmap)
 	}
 
 	m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)pmap->pm_pml4));
-
+	m_shadow  = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)pmap->pm_shadow_pml4));
 	for (i = 0; i < NKPML4E; i++)	/* KVA */
 		pmap->pm_pml4[KPML4BASE + i] = 0;
 	for (i = 0; i < ndmpdpphys; i++)/* Direct Map */
 		pmap->pm_pml4[DMPML4I + i] = 0;
 	pmap->pm_pml4[PML4PML4I] = 0;	/* Recursive Mapping */
+	pmap->pm_pml4[PML4PML4I-1] = 0;	/* Shadow Mapping */
 
 	m->wire_count--;
-	atomic_subtract_int(&vm_cnt.v_wire_count, 1);
+	m_shadow->wire_count--;
+	atomic_subtract_int(&vm_cnt.v_wire_count, 2);
 	vm_page_free_zero(m);
+	vm_page_free(m_shadow);
+
 	if (pmap->pm_pcid != -1)
 		free_unr(&pcid_unr, pmap->pm_pcid);
 }
