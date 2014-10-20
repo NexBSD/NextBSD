@@ -627,8 +627,6 @@ vtopte(vm_offset_t va)
 {
 	u_int64_t mask = ((1ul << (NPTEPGSHIFT + NPDEPGSHIFT + NPDPEPGSHIFT + NPML4EPGSHIFT)) - 1);
 
-	KASSERT(va >= VM_MAXUSER_ADDRESS, ("vtopte on a uva/gpa 0x%0lx", va));
-
 	return (PTmap + ((va >> PAGE_SHIFT) & mask));
 }
 
@@ -637,7 +635,6 @@ vtopde(vm_offset_t va)
 {
 	u_int64_t mask = ((1ul << (NPDEPGSHIFT + NPDPEPGSHIFT + NPML4EPGSHIFT)) - 1);
 
-	KASSERT(va >= VM_MAXUSER_ADDRESS, ("vtopde on a uva/gpa 0x%0lx", va));
 
 	return (PDmap + ((va >> PDRSHIFT) & mask));
 }
@@ -1852,7 +1849,7 @@ pmap_kextract(vm_offset_t va)
 			 * because the page table page is preserved by the
 			 * promotion.
 			 */
-			pa = *pmap_pde_to_pte(&pde, va);
+			pa = *vtopte(va);  /* pmap_pde_to_pte(&pde, va); */
 			pa = (pa & PG_FRAME) | (va & PAGE_MASK);
 		}
 	}
