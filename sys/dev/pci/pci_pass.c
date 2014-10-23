@@ -1,7 +1,31 @@
-/*
- * 'filter' driver - like ignore - eats up devices, but in this case
- * ones that are specified as tunables to permit FreeBSD to serve as
- * a ukern host
+
+/*-
+ * Copyright (c) 2014, Matthew Macy <kmacy@FreeBSD.ORG>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice unmodified, this list of conditions, and the following
+ *    disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ *	$FreeBSD$
+ *
  */
 
 #include <sys/types.h>
@@ -15,7 +39,7 @@
 #include <sys/lock.h>
 #include <sys/rwlock.h>
 #include <dev/pci/pcivar.h>
-
+#include <dev/pci/pci_pass.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -24,6 +48,8 @@
 #include <vm/vm_object.h>
 #include <vm/vm_page.h>
 #include <vm/vm_pager.h>
+
+#include <machine/intr_machdep.h>
 
 static int	unit;
 static int	pci_pass_probe(device_t dev);
@@ -73,6 +99,7 @@ pci_pass_probe(device_t dev)
 
 static d_close_t pci_pass_close;
 static d_open_t pci_pass_open;
+static d_ioctl_t pci_pass_ioctl;
 static d_mmap_single_t pci_pass_mmap_single;
 
 static struct cdevsw pci_pass_cdevsw = {
@@ -80,6 +107,7 @@ static struct cdevsw pci_pass_cdevsw = {
        .d_flags =      0,
        .d_open =       pci_pass_open,
        .d_close =      pci_pass_close,
+	   .d_ioctl =	   pci_pass_ioctl,
        .d_mmap_single =      pci_pass_mmap_single,
        .d_name =       "pcipass",
 };
@@ -175,11 +203,6 @@ pci_pass_dev_pager_fault(vm_object_t object, vm_ooffset_t offset,
 		 * Replace the passed in reqpage page with our own fake page and
 		 * free up the all of the original pages.
 		 */
-#ifndef VM_OBJECT_WUNLOCK	/* FreeBSD < 10.x */
-#define VM_OBJECT_WUNLOCK VM_OBJECT_UNLOCK
-#define VM_OBJECT_WLOCK	VM_OBJECT_LOCK
-#endif /* VM_OBJECT_WUNLOCK */
-
 		VM_OBJECT_WUNLOCK(object);
 		page = vm_page_getfake(paddr, memattr);
 		VM_OBJECT_WLOCK(object);
@@ -228,4 +251,22 @@ pci_pass_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 	}
 	*objp = obj;
 	return (0);
+}
+static int
+pci_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag, struct thread *td)
+{
+	int vector;
+	switch (cmd) {
+	case PCIPASSIOCGETIRQ:
+		vector = *(int *)data;
+		if (vector >= NUM_IO_INTS)
+			return (EINVAL);
+		if (intr_lookup_source(vector) != NULL)
+			return (0);
+		else
+			return (ENXIO);
+		break;
+	default:
+		return (EOPNOTSUPP);
+	}
 }
