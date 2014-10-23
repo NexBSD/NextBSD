@@ -36,9 +36,9 @@
 
 #include "opt_inet.h"
 #include "opt_inet6.h"
-
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/syslog.h>
 #include <sys/kernel.h>
 #include <sys/mbuf.h>
 #include <sys/module.h>
@@ -51,6 +51,7 @@
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/if_clone.h>
+#include <net/if_dl.h>
 #include <net/if_types.h>
 #include <net/netisr.h>
 #include <net/route.h>
