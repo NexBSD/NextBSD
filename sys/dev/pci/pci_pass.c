@@ -72,13 +72,18 @@
 
 static int	unit;
 struct dev_pass_softc;
+struct pci_pass_driver_context;
+
 static void _dev_pass_softc_free(struct dev_pass_softc *dp);
 static struct dev_pass_softc *_dev_pass_softc_find(pid_t pid);
 static struct thread_link *_tl_find(struct thread *td, int alloc);
 
 static void _unmap_va(void *kva);
 static void *_map_user_va(struct thread *td, caddr_t uva, size_t size);
+static void _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx);
+
 static void _thread_exit_cleanup(void *arg, struct thread *td);
+
 
 static int	pci_pass_probe(device_t dev);
 static int	pci_pass_attach(device_t dev);
@@ -114,8 +119,17 @@ LIST_HEAD(, dev_pass_softc) dp_softc_list;
 LIST_HEAD(, thread_link) thread_ctx_list;
 struct mtx sclist_mtx;
 
+struct dev_pass_tdvcpumap {
+	uint8_t	dpt_vcpuid;
+	uint8_t	dpt_cpuid;
+	lwpid_t dpt_tid;
+	struct thread *dpt_td;
+};
+
 struct dev_pass_softc {
 	void *dp_status_page;
+	struct dev_pass_tdvcpumap *dp_vcpumap;
+	int dp_nvcpus;
 	pid_t dp_pid;
 	volatile int dp_refcnt;
 	LIST_ENTRY(dev_pass_softc) link;
@@ -124,11 +138,10 @@ struct dev_pass_softc {
 struct pci_pass_driver_context {
 	device_t ppdc_dev;
 	struct resource *ppdc_irq;
-	struct thread *ppdc_td;
 	void *ppdc_tag;
 	vm_offset_t ppdc_ustack;
 	vm_offset_t ppdc_trap_handler;
-	void *ppdc_kstack;
+	caddr_t ppdc_kstack;
 	struct pci_pass_softc *ppdc_parent;
 	int ppdc_vector;
 	int ppdc_vcpuid;
@@ -335,20 +348,6 @@ static struct cdev_pager_ops pci_pass_cdev_pager_ops = {
 #define IDX_SHIFT 6
 #define IDX_MASK  (64-1)
 
-static void
-_set_intr_pending(struct shared_info *si, struct vcpu_info *vi,
-				  int vector)
-{
-	int arridx = vector >> IDX_SHIFT;
-	int bitidx = vector & IDX_MASK;
-	int orpendval = 1 << bitidx;
-	int orselval = 1 << arridx;
-
-	atomic_set_long(&si->evtchn_pending[arridx], orpendval);
-	atomic_set_long(&vi->evtchn_pending_sel, orselval);
-	vi->evtchn_upcall_pending = 1;
-}
-
 static int
 _intr_masked(struct shared_info *si, int vector)
 {
@@ -357,6 +356,25 @@ _intr_masked(struct shared_info *si, int vector)
 	int orpendval = 1 << bitidx;
 
 	return (si->evtchn_mask[arridx] & orpendval);
+}
+
+static int
+_set_intr_pending(struct shared_info *si, struct vcpu_info *vi,
+				  int vector)
+{
+	int arridx = vector >> IDX_SHIFT;
+	int bitidx = vector & IDX_MASK;
+	int orpendval = 1 << bitidx;
+	int orselval = 1 << arridx;
+	int masked;
+
+	atomic_set_long(&si->evtchn_pending[arridx], orpendval);
+	atomic_set_long(&vi->evtchn_pending_sel, orselval);
+	vi->evtchn_upcall_pending = 1;
+	masked = _intr_masked(si, vector);
+	if (masked == 0)
+		masked = atomic_swap_char(&vi->evtchn_upcall_mask, 1);
+	return (masked);
 }
 
 /*
@@ -408,28 +426,29 @@ static int
 _pci_pass_driver_filter(void *arg)
 {
 	struct pci_pass_driver_context *ctx = arg;
-	struct thread *td = ctx->ppdc_td;
+	struct thread *td;
 	struct shared_info *si;
 	struct vcpu_info *vi;
-	int needwakeup = 0;
+	int masked, needwakeup = 0;
 
 	if (ctx->ppdc_flags & PPDC_DOOMED)
 		return (FILTER_STRAY);
 
 	si = ctx->ppdc_dp->dp_status_page;
 	vi = &si->vcpu_info[ctx->ppdc_vcpuid];
-	_set_intr_pending(si, vi, ctx->ppdc_vector);
-
-	if (vi->evtchn_upcall_mask || _intr_masked(si, ctx->ppdc_vector))
+	masked = _set_intr_pending(si, vi, ctx->ppdc_vector);
+	if (masked)
 		return (FILTER_HANDLED);
 
+	td = ctx->ppdc_dp->dp_vcpumap[ctx->ppdc_vcpuid].dpt_td;
 	thread_lock(td);
-	if ((td != curthread) && TD_IS_RUNNING(td)){
+	if ((td == curthread && TD_IS_RUNNING(td)) || TD_ON_RUNQ(td)) {
+		/* fast path */
+		_setup_trapframe(td, ctx);
+	} else if ((td != curthread) && TD_IS_RUNNING(td)){
 		/* running on another cpu - send signal - overloading SIGVTALRM */
 		td->td_flags |= (TDF_ASTPENDING|TDF_ALRMPEND);
 		ipi_cpu(td->td_oncpu, IPI_AST);
-	} else if ((td == curthread && TD_IS_RUNNING(td)) || TD_ON_RUNQ(td)) {
-		_setup_trapframe(ctx);
 	} else {
 		td->td_flags |= (TDF_ASTPENDING|TDF_ALRMPEND);
 		needwakeup = 1;
@@ -485,28 +504,39 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 		struct thread_link *tl;
 		struct dev_pass_softc *dpsc;
 		void *kstack;
-		int refcnt, rc, rid = ppsi->ppsi_vector;
+		lwpid_t tid;
+		int cpuid, refcnt, rc, rid = ppsi->ppsi_vector;
 
-		if (ppsi->ppsi_vcpuid > PCI_PASS_MAX_VCPUS)
-			return (EINVAL);
-		if ((itd = tdfind(ppsi->ppsi_tid, td->td_proc->p_pid)) == NULL)
-			return (EINVAL);
-		if ((kstack = _map_user_va(itd, ppsi->ppsi_stk, PAGE_SIZE)) == NULL)
-			return (EFAULT);
 		if ((dpsc = _dev_pass_softc_find(td->td_proc->p_pid)) == NULL ||
 			dpsc->dp_status_page == NULL)
 			return (ENXIO);
-		tl = _tl_find(itd, TRUE);
+
 		ctx = malloc(sizeof(*ctx), M_DEVBUF, M_WAITOK|M_ZERO);
+		tid = dpsc->dp_vcpumap[ppsi->ppsi_vcpuid].dpt_tid;
+		if ((itd = tdfind(tid, curproc->p_pid)) == NULL) {
+			rc = EINVAL;
+			goto dpfail;
+		}
+		tl = _tl_find(itd, TRUE);
+		if ((dpsc->dp_nvcpus == 0) || (dpsc->dp_vcpumap == NULL) ||
+			(ppsi->ppsi_vcpuid > dpsc->dp_nvcpus + 1)) {
+			rc = EINVAL;
+			goto tlfail;
+		}
+		cpuid = dpsc->dp_vcpumap[ppsi->ppsi_vcpuid].dpt_cpuid;
+		if ((kstack = _map_user_va(itd, ppsi->ppsi_stk, PAGE_SIZE)) == NULL) {
+			rc = EFAULT;
+			goto mapfail;
+		}
 
 		if ((r = bus_alloc_resource_any(dev, SYS_RES_IRQ, &rid, RF_ACTIVE)) == NULL) {
 			rc = ENOMEM;
-			goto tlfail;
+			goto mapfail;
 		}
 		if ((rc = bus_setup_intr(dev, r, INTR_TYPE_NET, _pci_pass_driver_filter,
 								 NULL, ctx, &ctx->ppdc_tag)) != 0) {
 			bus_release_resource(dev, SYS_RES_IRQ, rid, r);
-			goto tlfail;
+			goto mapfail;
 		}
 
 		/* we need the APIC disabled until the user can re-enable */
@@ -516,6 +546,8 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 		isrc->is_event->ie_post_filter = isrc->is_event->ie_pre_ithread;
 		ctx->ppdc_dev = dev;
 		ctx->ppdc_irq = r;
+
+		intr_bind(rid, cpuid);
 		ctx->ppdc_vector = rid;
 		ctx->ppdc_ustack = (vm_offset_t)ppsi->ppsi_stk;
 		ctx->ppdc_kstack = kstack;
@@ -540,8 +572,9 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 		 */
 		ppsi->ppsi_cookie = isrc;
 		return (0);
-		tlfail:
+		mapfail:
 		_unmap_va(kstack);
+		tlfail:
 		mtx_lock(&sclist_mtx);
 		if ((refcnt = atomic_fetchadd_int(&tl->tl_refcnt, -1)) == 1) {
 			LIST_REMOVE(tl, link);
@@ -550,6 +583,8 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 		} else
 			mtx_unlock(&sclist_mtx);
 		KASSERT(refcnt > 0, ("bad refcnt"));
+		dpfail:
+		_dev_pass_softc_free(dpsc);
 		free(ctx, M_DEVBUF);
 		return (rc);
 		break;
@@ -579,6 +614,7 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 
 		isrc = intr_lookup_source(ctx->ppdc_vector);
 		isrc->is_event->ie_post_filter = ctx->ppdc_post_filter;
+		intr_bind(ctx->ppdc_vector, NOCPU);
 		bus_teardown_intr(ctx->ppdc_dev, ctx->ppdc_irq, ctx->ppdc_tag);
 		bus_release_resource(ctx->ppdc_dev, SYS_RES_IRQ, ctx->ppdc_vector,
 							 ctx->ppdc_irq);
@@ -732,10 +768,9 @@ _unmap_va(void *kva)
 
 
 static void
-_setup_trapframe(struct pci_pass_driver_context *ctx)
+_setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx)
 {
-	struct thread *td = ctx->ppdc_td;
-	uint64_t *sp = ctx->ppdc_kstack;
+	uint64_t *sp;
 	struct trapframe *fp;
 
 	if (td == curthread) {
@@ -745,16 +780,21 @@ _setup_trapframe(struct pci_pass_driver_context *ctx)
 			fp = td->td_frame;
 	} else
 		fp = td->td_frame;
-	sp--;
-	*(sp--) = fp->tf_rip;
-	*sp = fp->tf_rsp;
+
 	fp->tf_rip = (register_t)ctx->ppdc_trap_handler;
 	/* Is this a nested interrupt */
 	if (fp->tf_rsp < ctx->ppdc_ustack &&
 		fp->tf_rsp > ctx->ppdc_ustack - PAGE_SIZE) {
-		fp->tf_rsp -= 16;
-	} else
-		fp->tf_rsp = ctx->ppdc_ustack-16;
+		sp = (uint64_t *)ctx->ppdc_kstack - (ctx->ppdc_ustack - fp->tf_rsp);
+
+	} else {
+		sp = (uint64_t *)ctx->ppdc_kstack;
+		fp->tf_rsp = ctx->ppdc_ustack;
+	}
+	sp--;
+	*(sp--) = fp->tf_rip;
+	*sp = fp->tf_rsp;
+	fp->tf_rsp -= 16;
 }
 
 #else
@@ -875,6 +915,37 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 	case DEVPASSIOCAPICENABLESYS:
 		*(int *)data = apic_enable_syscall;
 		break;
+	case DEVPASSIOCVCPUMAP: {
+		struct dev_pass_vcpumap *dpv = (void *)data;
+		struct dev_pass_tidvcpumap *dpviter;
+		struct thread *vcputd;
+		int i, ncpus = dpv->dpv_nvcpus;
+
+		if (ncpus > PCI_PASS_MAX_VCPUS)
+			return (E2BIG);
+		for (dpviter = dpv->dpv_map, i = 0; i < ncpus; i++, dpviter++) {
+			if (dpviter->dpt_cpuid > mp_ncpus)
+				return (ERANGE);
+			if (tdfind(dpviter->dpt_tid, curproc->p_pid) == NULL)
+				return (EINVAL);
+		}
+		sc = _dev_pass_softc_find(curproc->p_pid);
+		sc->dp_nvcpus = ncpus;
+		if (sc->dp_vcpumap != NULL)
+			free(sc->dp_vcpumap, M_DEVBUF);
+		sc->dp_vcpumap = malloc(sizeof(struct dev_pass_tdvcpumap)*ncpus,
+								M_DEVBUF, M_WAITOK);
+
+		for (dpviter = dpv->dpv_map, i = 0; i < ncpus; i++, dpviter++) {
+			sc->dp_vcpumap[i].dpt_cpuid = dpviter->dpt_cpuid;
+			sc->dp_vcpumap[i].dpt_tid = dpviter->dpt_tid;
+			if ((vcputd = tdfind(dpviter->dpt_tid, curproc->p_pid)) == NULL)
+				return (EINVAL);
+			sc->dp_vcpumap[i].dpt_td = vcputd;
+			sched_bind(vcputd, dpviter->dpt_cpuid);
+		}
+
+	}
 	default:
 		return (EOPNOTSUPP);
 	}

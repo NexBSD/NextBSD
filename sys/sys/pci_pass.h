@@ -33,16 +33,35 @@
 #include <sys/ioccom.h>
 
 
+#define PCI_PASS_INTR_STK_SIZE	3*PAGE_SIZE
+#define PCI_PASS_MAX_VCPUS 32
+
+struct dev_pass_tidvcpumap {
+	uint8_t	dpt_cpuid;
+	lwpid_t	dpt_tid;
+};
+
+struct dev_pass_vcpumap {
+	int dpv_nvcpus;
+	struct dev_pass_tidvcpumap dpv_map[PCI_PASS_MAX_VCPUS];
+};
+
 /* check for presence of an IRQ vector */
-#define DEVPASSIOCCHKIRQ	 _IOWR('y', 1, int)
-#define DEVPASSIOCSTATUSPAGE _IOWR('y', 2, void *)
-#define DEVPASSIOCAPICENABLESYS _IOWR('y', 3, void *)
+#define	DEVPASSIOCCHKIRQ		_IOWR('y', 1, int)
+/* Map a kernel irq status page */
+#define	DEVPASSIOCSTATUSPAGE	_IOWR('y', 2, void *)
+/* get system call number for re-enabling the apic */
+#define	DEVPASSIOCAPICENABLESYS	_IOWR('y', 3, int)
+/* bind the corresponding threads to the listed physical cores
+ * and track the mapping for interrupt scheduling
+ */
+#define	DEVPASSIOCVCPUMAP		_IOWR('y', 4, struct dev_pass_vcpumap *)
 
 struct pci_pass_setup_intr {
 	void	*ppsi_stk;
 	void	*ppsi_trap_handler;
-	int		ppsi_tid;
 	int		ppsi_vcpuid;
+
 	int		ppsi_vector;
 	void	*ppsi_tag;
 	void	*ppsi_cookie;
@@ -57,9 +76,6 @@ struct pci_pass_post_filter {
 	int pppf_write_val;
 };
 
-
-#define PCI_PASS_INTR_STK_SIZE	3*PAGE_SIZE
-#define PCI_PASS_MAX_VCPUS 32
 
 #define PCIPASSIOCSETUPINTR    _IOWR('y', 11, struct pci_pass_setup_intr)
 #define PCIPASSIOCTEARDOWNINTR _IOWR('y', 12, void *)
