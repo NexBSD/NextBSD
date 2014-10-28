@@ -32,7 +32,120 @@
 #define	_SYS_PCI_PASS_H_
 #include <sys/ioccom.h>
 
-/* check for presence of an IRQ vector */
-#define PCIPASSIOCGETIRQ	_IOWR('y', 1, int)
 
+/* check for presence of an IRQ vector */
+#define DEVPASSIOCCHKIRQ	 _IOWR('y', 1, int)
+#define DEVPASSIOCSTATUSPAGE _IOWR('y', 2, void *)
+#define DEVPASSIOCAPICENABLESYS _IOWR('y', 3, void *)
+
+struct pci_pass_setup_intr {
+	void	*ppsi_stk;
+	void	*ppsi_trap_handler;
+	int		ppsi_tid;
+	int		ppsi_vcpuid;
+	int		ppsi_vector;
+	void	*ppsi_tag;
+	void	*ppsi_cookie;
+};
+
+struct pci_pass_teardown_intr {
+	void	*ppti_tag;
+};
+
+struct pci_pass_post_filter {
+	int pppf_write_reg;
+	int pppf_write_val;
+};
+
+
+#define PCI_PASS_INTR_STK_SIZE	3*PAGE_SIZE
+#define PCI_PASS_MAX_VCPUS 32
+
+#define PCIPASSIOCSETUPINTR    _IOWR('y', 11, struct pci_pass_setup_intr)
+#define PCIPASSIOCTEARDOWNINTR _IOWR('y', 12, void *)
+#define PCIPASSIOCPOSTFILTER   _IOWR('y', 13, struct pci_pass_post_filter)
+
+
+struct ppae_args {
+	void *cookie;
+	int vector;
+};
+
+#ifdef notyet
+/* The interrupt handling / masking problem has already been tackled by Xen.
+ * Here we (mostly) re-use their structures. The time is already updated in
+ * the system-wide shared page and the architecture specific information
+ * doesn't apply.
+ */
+struct vcpu_info {
+    /*
+     * 'evtchn_upcall_pending' is written non-zero by Xen to indicate
+     * a pending notification for a particular VCPU. It is then cleared
+     * by the guest OS /before/ checking for pending work, thus avoiding
+     * a set-and-check race. Note that the mask is only accessed by Xen
+     * on the CPU that is currently hosting the VCPU. This means that the
+     * pending and mask flags can be updated by the guest without special
+     * synchronisation (i.e., no need for the x86 LOCK prefix).
+     * This may seem suboptimal because if the pending flag is set by
+     * a different CPU then an IPI may be scheduled even when the mask
+     * is set. However, note:
+     *  1. The task of 'interrupt holdoff' is covered by the per-event-
+     *     channel mask bits. A 'noisy' event that is continually being
+     *     triggered can be masked at source at this very precise
+     *     granularity.
+     *  2. The main purpose of the per-VCPU mask is therefore to restrict
+     *     reentrant execution: whether for concurrency control, or to
+     *     prevent unbounded stack usage. Whatever the purpose, we expect
+     *     that the mask will be asserted only for short periods at a time,
+     *     and so the likelihood of a 'spurious' IPI is suitably small.
+     * The mask is read before making an event upcall to the guest: a
+     * non-zero mask therefore guarantees that the VCPU will not receive
+     * an upcall activation. The mask is cleared when the VCPU requests
+     * to block: this avoids wakeup-waiting races.
+     */
+    uint8_t evtchn_upcall_pending;
+    uint8_t evtchn_upcall_mask;
+	/* The bits set are indices in to the global evtchn_pending */
+    unsigned long evtchn_pending_sel;
+}; /* 64 bytes (x86) */
+
+
+struct shared_info {
+    struct vcpu_info vcpu_info[PCI_PASS_MAX_VCPUS];
+
+    /*
+     * A domain can create "event channels" on which it can send and receive
+     * asynchronous event notifications. There are three classes of event that
+     * are delivered by this mechanism:
+     *  1. Bi-directional inter- and intra-domain connections. Domains must
+     *     arrange out-of-band to set up a connection (usually by allocating
+     *     an unbound 'listener' port and avertising that via a storage service
+     *     such as xenstore).
+     *  2. Physical interrupts. A domain with suitable hardware-access
+     *     privileges can bind an event-channel port to a physical interrupt
+     *     source.
+     *  3. Virtual interrupts ('events'). A domain can bind an event-channel
+     *     port to a virtual interrupt source, such as the virtual-timer
+     *     device or the emergency console.
+     *
+     * Event channels are addressed by a "port index". Each channel is
+     * associated with two bits of information:
+     *  1. PENDING -- notifies the domain that there is a pending notification
+     *     to be processed. This bit is cleared by the guest.
+     *  2. MASK -- if this bit is clear then a 0->1 transition of PENDING
+     *     will cause an asynchronous upcall to be scheduled. This bit is only
+     *     updated by the guest. It is read-only within Xen. If a channel
+     *     becomes pending while the channel is masked then the 'edge' is lost
+     *     (i.e., when the channel is unmasked, the guest must manually handle
+     *     pending notifications as no upcall will be scheduled by Xen).
+     *
+     * To expedite scanning of pending notifications, any 0->1 pending
+     * transition on an unmasked channel causes a corresponding bit in a
+     * per-vcpu selector word to be set. Each bit in the selector covers a
+     * 'C long' in the PENDING bitfield array.
+     */
+    unsigned long evtchn_pending[sizeof(unsigned long) * 8];
+    unsigned long evtchn_mask[sizeof(unsigned long) * 8];
+};
+#endif
 #endif
