@@ -1,4 +1,3 @@
-
 /*-
  * Copyright (c) 2014, Matthew Macy <kmacy@FreeBSD.ORG>
  * All rights reserved.
@@ -971,7 +970,7 @@ pci_pass_apic_enable(struct thread *td, void *args)
 static int
 dev_pass_init(void)
 {
-	struct sysent *new_sysent, *old_sysent = NULL;
+	struct sysent old_sysent, new_sysent;
 
 	LIST_INIT(&dp_softc_list);
 	LIST_INIT(&thread_ctx_list);
@@ -980,12 +979,11 @@ dev_pass_init(void)
 	EVENTHANDLER_REGISTER(thread_dtor, _thread_exit_cleanup, NULL,
 						  EVENTHANDLER_PRI_ANY);
 
-	new_sysent = malloc(sizeof(struct sysent), M_DEVBUF, M_WAITOK|M_ZERO);
-	new_sysent->sy_narg = 2;
-	new_sysent->sy_call = pci_pass_apic_enable;
-	syscall_register(&apic_enable_syscall, new_sysent, old_sysent);
+	new_sysent.sy_narg = 2;
+	new_sysent.sy_call = pci_pass_apic_enable;
+	syscall_register(&apic_enable_syscall, &new_sysent, &old_sysent);
 	/* GREAT EVIL in the name of great performance */
-	new_sysent->sy_thrcnt = SY_THR_STATIC;
+	sysent[apic_enable_syscall].sy_thrcnt = SY_THR_STATIC;
 	return (0);
 }
 
