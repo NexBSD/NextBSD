@@ -621,11 +621,12 @@ cpu_mp_announce(void)
 	}
 }
 
+extern void *__malloc(size_t);
 /*
  * AP CPU's call this to initialize themselves.
  */
-void
-init_secondary(void)
+void *
+ukern_init_secondary(void *arg)
 {
 	struct pcpu *pc;
 	struct nmi_pcpu *np;
@@ -636,10 +637,9 @@ init_secondary(void)
 	int x;
 #endif
 	u_int cpuid;
-	int cpu;
+	int cpu = (int) arg;
 
 	/* Set by the startup code for us to use */
-	cpu = bootAP;
 
 	/* Init tss */
 	common_tss[cpu] = common_tss[0];
@@ -671,6 +671,8 @@ init_secondary(void)
 
 	/* prime data page for it to use */
 	pcpu_init(pc, cpu, sizeof(struct pcpu));
+	dpcpu = __malloc(DPCPU_SIZE);
+	bzero(dpcpu, DPCPU_SIZE);
 	dpcpu_init(dpcpu, cpu);
 	pc->pc_apic_id = cpu_apic_ids[cpu];
 	pc->pc_prvspace = pc;
@@ -684,10 +686,10 @@ init_secondary(void)
 	pc->pc_gs32p = &gdt[NGDT * cpu + GUGS32_SEL];
 	pc->pc_ldt = (struct system_segment_descriptor *)&gdt[NGDT * cpu +
 	    GUSERLDT_SEL];
-
+#if 0
 	/* Save the per-cpu pointer for use by the NMI handler. */
 	np->np_pcpu = (register_t) pc;
-#if 0
+
 	wrmsr(MSR_FSBASE, 0);		/* User value */
 	wrmsr(MSR_GSBASE, (u_int64_t)pc);
 	wrmsr(MSR_KGSBASE, (u_int64_t)pc);	/* XXX User value while we're in the kernel */
@@ -808,6 +810,7 @@ init_secondary(void)
 
 	panic("scheduler returned us to %s", __func__);
 	/* NOTREACHED */
+	return (NULL);
 }
 
 /*******************************************************************
