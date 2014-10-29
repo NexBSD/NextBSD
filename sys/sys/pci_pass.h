@@ -39,10 +39,13 @@
 struct dev_pass_tidvcpumap {
 	uint8_t	dpt_cpuid;
 	lwpid_t	dpt_tid;
+	caddr_t dpt_stk;
 };
 
 struct dev_pass_vcpumap {
 	int dpv_nvcpus;
+	int dpv_hz;
+	caddr_t dpv_trap; /* default trap handler */
 	struct dev_pass_tidvcpumap dpv_map[PCI_PASS_MAX_VCPUS];
 };
 
@@ -59,8 +62,7 @@ struct dev_pass_vcpumap {
 
 
 struct pci_pass_setup_intr {
-	void	*ppsi_stk;
-	void	*ppsi_trap_handler;
+	void	*ppsi_trap;
 	int		ppsi_vcpuid;
 
 	int		ppsi_vector;
@@ -88,13 +90,40 @@ struct ppae_args {
 	int vector;
 };
 
-#ifdef notyet
 /* The interrupt handling / masking problem has already been tackled by Xen.
  * Here we (mostly) re-use their structures. The time is already updated in
  * the system-wide shared page and the architecture specific information
  * doesn't apply.
  */
-struct vcpu_info {
+
+
+/******************************************************************************
+ * xen.h
+ * 
+ * Guest OS interface to Xen.
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ *
+ * Copyright (c) 2004, K A Fraser
+ */
+
+struct pass_vcpu_info {
     /*
      * 'evtchn_upcall_pending' is written non-zero by Xen to indicate
      * a pending notification for a particular VCPU. It is then cleared
@@ -127,8 +156,8 @@ struct vcpu_info {
 }; /* 64 bytes (x86) */
 
 
-struct shared_info {
-    struct vcpu_info vcpu_info[PCI_PASS_MAX_VCPUS];
+struct pass_status_page {
+    struct pass_vcpu_info vcpu_info[PCI_PASS_MAX_VCPUS];
 
     /*
      * A domain can create "event channels" on which it can send and receive
@@ -164,5 +193,4 @@ struct shared_info {
     unsigned long evtchn_pending[sizeof(unsigned long) * 8];
     unsigned long evtchn_mask[sizeof(unsigned long) * 8];
 };
-#endif
 #endif

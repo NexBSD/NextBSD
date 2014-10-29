@@ -77,8 +77,8 @@ static void _dev_pass_softc_free(struct dev_pass_softc *dp);
 static struct dev_pass_softc *_dev_pass_softc_find(pid_t pid);
 static struct thread_link *_tl_find(struct thread *td, int alloc);
 
-static void _unmap_va(void *kva);
-static void *_map_user_va(struct thread *td, caddr_t uva, size_t size);
+static void _unmap_uva(void *kva);
+static void *_map_uva(caddr_t uva);
 static void _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx);
 
 static void _thread_exit_cleanup(void *arg, struct thread *td);
@@ -109,7 +109,6 @@ struct pci_pass_softc {
 
 struct thread_link {
 	struct thread *tl_td;
-	volatile int tl_refcnt;
 	LIST_ENTRY(thread_link) link;
 	LIST_HEAD(,pci_pass_driver_context) tl_ctx_list;
 };
@@ -122,13 +121,17 @@ struct dev_pass_tdvcpumap {
 	uint8_t	dpt_vcpuid;
 	uint8_t	dpt_cpuid;
 	lwpid_t dpt_tid;
+	caddr_t dpt_kstack;
+	vm_offset_t dpt_ustack;
 	struct thread *dpt_td;
+	struct callout dpt_c;
 };
 
 struct dev_pass_softc {
-	void *dp_status_page;
+	struct pass_status_page *dp_status_page;
 	struct dev_pass_tdvcpumap *dp_vcpumap;
 	int dp_nvcpus;
+	int dp_ticks;
 	pid_t dp_pid;
 	volatile int dp_refcnt;
 	LIST_ENTRY(dev_pass_softc) link;
@@ -138,14 +141,11 @@ struct pci_pass_driver_context {
 	device_t ppdc_dev;
 	struct resource *ppdc_irq;
 	void *ppdc_tag;
-	vm_offset_t ppdc_ustack;
-	vm_offset_t ppdc_trap_handler;
-	caddr_t ppdc_kstack;
 	struct pci_pass_softc *ppdc_parent;
 	int ppdc_vector;
 	int ppdc_vcpuid;
-	struct thread_link *ppdc_tl;
 	struct dev_pass_softc *ppdc_dp;
+	vm_offset_t ppdc_trap;
 	void (*ppdc_post_filter)(void *);
 	int ppdc_flags;
 	LIST_ENTRY(pci_pass_driver_context) pp_link;
@@ -248,17 +248,9 @@ pci_pass_close(struct cdev *cdev, int flags, int fmt, struct thread *td)
 		mtx_unlock(&sc->pp_ctx_mtx);
 		mtx_lock(&sclist_mtx);
 		LIST_REMOVE(ctx, tl_link);
-		if (atomic_fetchadd_int(&ctx->ppdc_tl->tl_refcnt, -1) == 1)
-			LIST_REMOVE(ctx->ppdc_tl, link);
-		else
-			ctx->ppdc_tl = NULL;
 		mtx_unlock(&sclist_mtx);
-		if (ctx->ppdc_tl != NULL)
-			free(ctx->ppdc_tl, M_DEVBUF);
-
 		_dev_pass_softc_free(ctx->ppdc_dp);
 		bus_teardown_intr(ctx->ppdc_dev, ctx->ppdc_irq, ctx->ppdc_tag);
-		_unmap_va(ctx->ppdc_kstack);
 		free(ctx, M_DEVBUF);
 		mtx_lock(&sc->pp_ctx_mtx);
 	}
@@ -348,7 +340,7 @@ static struct cdev_pager_ops pci_pass_cdev_pager_ops = {
 #define IDX_MASK  (64-1)
 
 static int
-_intr_masked(struct shared_info *si, int vector)
+_intr_masked(struct pass_status_page *si, int vector)
 {
 	int arridx = vector >> IDX_SHIFT;
 	int bitidx = vector & IDX_MASK;
@@ -358,8 +350,8 @@ _intr_masked(struct shared_info *si, int vector)
 }
 
 static int
-_set_intr_pending(struct shared_info *si, struct vcpu_info *vi,
-				  int vector)
+_set_intr_pending(struct pass_status_page *si,
+				  struct pass_vcpu_info *vi, int vector)
 {
 	int arridx = vector >> IDX_SHIFT;
 	int bitidx = vector & IDX_MASK;
@@ -426,8 +418,8 @@ _pci_pass_driver_filter(void *arg)
 {
 	struct pci_pass_driver_context *ctx = arg;
 	struct thread *td;
-	struct shared_info *si;
-	struct vcpu_info *vi;
+	struct pass_status_page *si;
+	struct pass_vcpu_info *vi;
 	int masked, needwakeup = 0;
 
 	if (ctx->ppdc_flags & PPDC_DOOMED)
@@ -458,6 +450,19 @@ _pci_pass_driver_filter(void *arg)
 	return (FILTER_HANDLED);
 }
 
+static void
+_vcpu_timer(void *arg)
+{
+	struct pci_pass_driver_context *ctx = arg;
+	int cpuid;
+	struct dev_pass_tdvcpumap *dpt;
+
+	(void)_pci_pass_driver_filter(ctx);
+	cpuid = ctx->ppdc_vcpuid;
+	dpt = &ctx->ppdc_dp->dp_vcpumap[cpuid];
+	callout_reset_curcpu(&dpt->dpt_c, ctx->ppdc_dp->dp_ticks, _vcpu_timer, arg);
+}
+
 static int
 pci_pass_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 		   vm_size_t size, struct vm_object **objp, int nprot)
@@ -485,6 +490,29 @@ pci_pass_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 	return (0);
 }
 
+static struct pci_pass_driver_context *
+_ctx_alloc(device_t dev, struct resource *irq,
+		   struct pci_pass_softc *sc, int vector, int vcpuid,
+		   struct dev_pass_softc *dp, void *trap)
+{
+	struct pci_pass_driver_context *ctx;
+
+	ctx = malloc(sizeof(*ctx), M_DEVBUF, M_WAITOK|M_ZERO);
+	ctx->ppdc_dev = dev;
+	ctx->ppdc_irq = irq;
+	ctx->ppdc_parent = sc;
+	ctx->ppdc_vector = vector;
+	ctx->ppdc_vcpuid = vcpuid;
+	ctx->ppdc_dp = dp;
+	ctx->ppdc_trap = (vm_offset_t)trap;
+	if (sc) {
+		mtx_lock(&sc->pp_ctx_mtx);
+		LIST_INSERT_HEAD(&sc->pp_ctx_list, ctx, pp_link);
+		mtx_unlock(&sc->pp_ctx_mtx);
+	}
+	return (ctx);
+}
+
 static int
 pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thread *td)
 {
@@ -502,66 +530,52 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 		struct thread *itd;
 		struct thread_link *tl;
 		struct dev_pass_softc *dpsc;
-		void *kstack;
 		lwpid_t tid;
-		int cpuid, refcnt, rc, rid = ppsi->ppsi_vector;
+		int cpuid, rc, rid = ppsi->ppsi_vector;
 
 		if ((dpsc = _dev_pass_softc_find(td->td_proc->p_pid)) == NULL ||
 			dpsc->dp_status_page == NULL)
 			return (ENXIO);
 
-		ctx = malloc(sizeof(*ctx), M_DEVBUF, M_WAITOK|M_ZERO);
 		tid = dpsc->dp_vcpumap[ppsi->ppsi_vcpuid].dpt_tid;
 		if ((itd = tdfind(tid, curproc->p_pid)) == NULL) {
 			rc = EINVAL;
-			goto dpfail;
+			goto fail;
 		}
 		PROC_UNLOCK(curproc);
 		tl = _tl_find(itd, TRUE);
 		if ((dpsc->dp_nvcpus == 0) || (dpsc->dp_vcpumap == NULL) ||
 			(ppsi->ppsi_vcpuid > dpsc->dp_nvcpus + 1)) {
 			rc = EINVAL;
-			goto tlfail;
-		}
-		cpuid = dpsc->dp_vcpumap[ppsi->ppsi_vcpuid].dpt_cpuid;
-		if ((kstack = _map_user_va(itd, ppsi->ppsi_stk, PAGE_SIZE)) == NULL) {
-			rc = EFAULT;
-			goto mapfail;
+			goto fail;
 		}
 
 		if ((r = bus_alloc_resource_any(dev, SYS_RES_IRQ, &rid, RF_ACTIVE)) == NULL) {
 			rc = ENOMEM;
-			goto mapfail;
+			goto fail;
 		}
+		ctx = _ctx_alloc(dev, r, sc, rid, ppsi->ppsi_vcpuid, dpsc, ppsi->ppsi_trap);
 		if ((rc = bus_setup_intr(dev, r, INTR_TYPE_NET, _pci_pass_driver_filter,
 								 NULL, ctx, &ctx->ppdc_tag)) != 0) {
+			free(ctx, M_DEVBUF);
 			bus_release_resource(dev, SYS_RES_IRQ, rid, r);
-			goto mapfail;
+			goto fail;
 		}
 
 		/* we need the APIC disabled until the user can re-enable */
 		isrc = intr_lookup_source(rid);
 		KASSERT(isrc, ("interrupt not registered!"));
+
+
 		ctx->ppdc_post_filter = isrc->is_event->ie_post_filter;
 		isrc->is_event->ie_post_filter = isrc->is_event->ie_pre_ithread;
-		ctx->ppdc_dev = dev;
-		ctx->ppdc_irq = r;
 
+		cpuid = dpsc->dp_vcpumap[ppsi->ppsi_vcpuid].dpt_cpuid;
 		intr_bind(rid, cpuid);
-		ctx->ppdc_vector = rid;
-		ctx->ppdc_ustack = (vm_offset_t)ppsi->ppsi_stk;
-		ctx->ppdc_kstack = kstack;
-		ctx->ppdc_parent = sc;
-		ctx->ppdc_tl = tl;
-		ctx->ppdc_dp = dpsc;
-		ctx->ppdc_vcpuid = ppsi->ppsi_vcpuid;
-		ctx->ppdc_trap_handler = (vm_offset_t)ppsi->ppsi_trap_handler;
+
 		mtx_lock(&sclist_mtx);
 		LIST_INSERT_HEAD(&tl->tl_ctx_list, ctx, tl_link);
 		mtx_unlock(&sclist_mtx);
-		mtx_lock(&sc->pp_ctx_mtx);
-		LIST_INSERT_HEAD(&sc->pp_ctx_list, ctx, pp_link);
-		mtx_unlock(&sc->pp_ctx_mtx);
 		/*
 		 * interrupt setup complete - pass back the results
 		 */
@@ -572,20 +586,8 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 		 */
 		ppsi->ppsi_cookie = isrc;
 		return (0);
-		mapfail:
-		_unmap_va(kstack);
-		tlfail:
-		mtx_lock(&sclist_mtx);
-		if ((refcnt = atomic_fetchadd_int(&tl->tl_refcnt, -1)) == 1) {
-			LIST_REMOVE(tl, link);
-			mtx_unlock(&sclist_mtx);
-			free(tl, M_DEVBUF);
-		} else
-			mtx_unlock(&sclist_mtx);
-		KASSERT(refcnt > 0, ("bad refcnt"));
-		dpfail:
+		fail:
 		_dev_pass_softc_free(dpsc);
-		free(ctx, M_DEVBUF);
 		return (rc);
 		break;
 	}
@@ -604,13 +606,8 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 			return (ENOENT);
 		ctx->ppdc_flags |= PPDC_DOOMED;
 		mtx_lock(&sclist_mtx);
-		if (atomic_fetchadd_int(&ctx->ppdc_tl->tl_refcnt, -1) == 1)
-			LIST_REMOVE(ctx->ppdc_tl, link);
-		else
-			ctx->ppdc_tl = NULL;
+		LIST_REMOVE(ctx, tl_link);
 		mtx_unlock(&sclist_mtx);
-		if (ctx->ppdc_tl != NULL)
-			free(ctx->ppdc_tl, M_DEVBUF);
 
 		isrc = intr_lookup_source(ctx->ppdc_vector);
 		isrc->is_event->ie_post_filter = ctx->ppdc_post_filter;
@@ -618,7 +615,6 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 		bus_teardown_intr(ctx->ppdc_dev, ctx->ppdc_irq, ctx->ppdc_tag);
 		bus_release_resource(ctx->ppdc_dev, SYS_RES_IRQ, ctx->ppdc_vector,
 							 ctx->ppdc_irq);
-		_unmap_va(ctx->ppdc_kstack);
 		free(ctx, M_DEVBUF);
 		break;
 	}
@@ -662,7 +658,7 @@ _dev_pass_softc_free(struct dev_pass_softc *sc)
 	LIST_REMOVE(sc, link);
 	mtx_unlock(&sclist_mtx);
 	if (sc->dp_status_page != NULL)
-		_unmap_va(sc->dp_status_page);
+		_unmap_uva(sc->dp_status_page);
 	free(sc, M_DEVBUF);
 
 	KASSERT(refcnt > 0, ("bad refcnt"));
@@ -691,17 +687,14 @@ _tl_find(struct thread *td, int alloc)
 
 	mtx_lock(&sclist_mtx);
 	LIST_FOREACH(tl, &thread_ctx_list, link) {
-		if (tl->tl_td == td) {
-			atomic_add_int(&tl->tl_refcnt, 1);
+		if (tl->tl_td == td)
 			break;
-		}
 	}
 	mtx_unlock(&sclist_mtx);
 	if (tl != NULL || alloc == 0)
 		return (tl);
 
 	tl = malloc(sizeof(*tl), M_DEVBUF, M_WAITOK|M_ZERO);
-	tl->tl_refcnt = 1;
 	tl->tl_td = td;
 	LIST_INIT(&tl->tl_ctx_list);
 	mtx_lock(&sclist_mtx);
@@ -727,25 +720,25 @@ _thread_exit_cleanup(void *arg, struct thread *td)
 		LIST_REMOVE(ctx, pp_link);
 		mtx_unlock(&ctx->ppdc_parent->pp_ctx_mtx);
 		bus_teardown_intr(ctx->ppdc_dev, ctx->ppdc_irq, ctx->ppdc_tag);
-		_unmap_va(ctx->ppdc_kstack);
 		free(ctx, M_DEVBUF);
+		/* XXX unmap thread's trap stack in vcpumap */
 	}
 }
 
 #if defined(__amd64__)
 static void *
-_map_user_va(struct thread *td, caddr_t uva, size_t size)
+_map_uva(caddr_t uva)
 {
 	vm_offset_t kva;
 	vm_paddr_t pa;
 	vm_page_t m;
 
-	if (useracc(uva, PAGE_SIZE, size >> PAGE_SHIFT) == FALSE)
+	if (useracc(uva, PAGE_SIZE, 1) == FALSE)
 		return (NULL);
 	/* XXX this breaks if uva is not physically contiguous
 	 * should be fine for our purposes
 	 */
-	pa = pmap_extract(&td->td_proc->p_vmspace->vm_pmap, (vm_offset_t)uva);
+	pa = pmap_extract(&curproc->p_vmspace->vm_pmap, (vm_offset_t)uva);
 	m = PHYS_TO_VM_PAGE(pa);
 	vm_page_lock(m);
 	vm_page_wire(m);
@@ -756,7 +749,7 @@ _map_user_va(struct thread *td, caddr_t uva, size_t size)
 }
 
 static void
-_unmap_va(void *kva)
+_unmap_uva(void *kva)
 {
 	vm_paddr_t pa = DMAP_TO_PHYS((vm_offset_t)kva);
 	vm_page_t m;
@@ -771,6 +764,10 @@ _unmap_va(void *kva)
 static void
 _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx)
 {
+	int cpuid = ctx->ppdc_vcpuid;
+	struct dev_pass_tdvcpumap *vcpumap = &ctx->ppdc_dp->dp_vcpumap[cpuid];
+	caddr_t kstack = vcpumap->dpt_kstack;
+	vm_offset_t ustack = vcpumap->dpt_ustack;
 	uint64_t *sp;
 	struct trapframe *fp;
 
@@ -782,15 +779,15 @@ _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx)
 	} else
 		fp = td->td_frame;
 
-	fp->tf_rip = (register_t)ctx->ppdc_trap_handler;
+	fp->tf_rip = (register_t)ctx->ppdc_trap;
 	/* Is this a nested interrupt */
-	if (fp->tf_rsp < ctx->ppdc_ustack &&
-		fp->tf_rsp > ctx->ppdc_ustack - PAGE_SIZE) {
-		sp = (uint64_t *)ctx->ppdc_kstack - (ctx->ppdc_ustack - fp->tf_rsp);
+	if (fp->tf_rsp < ustack &&
+		fp->tf_rsp > ustack - PAGE_SIZE) {
+		sp = (uint64_t *)kstack - (ustack - fp->tf_rsp);
 
 	} else {
-		sp = (uint64_t *)ctx->ppdc_kstack;
-		fp->tf_rsp = ctx->ppdc_ustack;
+		sp = (uint64_t *)kstack;
+		fp->tf_rsp = ustack;
 	}
 	sp--;
 	*(sp--) = fp->tf_rip;
@@ -822,7 +819,7 @@ _map_user_va(struct thread *td, caddr_t user_va)
 }
 
 static void
-_unmap_va(XXX)
+_unmap_uva(XXX)
 {
 	if (useracc(uva, PAGE_SIZE, 1) == TRUE) {
 		uap.addr = uva;
@@ -889,13 +886,13 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			rc = EINVAL;
 			goto done;
 		}
-		if ((va = _map_user_va(curthread, *uvap, PAGE_SIZE)) == NULL) {
+		if ((va = _map_uva(*uvap)) == NULL) {
 			rc = EFAULT;
 			goto done;
 		}
 		/* dirt bag user tried to get two status pages */
 		if (sc->dp_status_page != NULL) {
-			_unmap_va(va);
+			_unmap_uva(va);
 			rc = EINVAL;
 			goto done;
 		}
@@ -920,6 +917,9 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 	case DEVPASSIOCVCPUMAP: {
 		struct dev_pass_vcpumap *dpv = (void *)data;
 		struct dev_pass_tidvcpumap *dpviter;
+		struct dev_pass_tdvcpumap *dpt;
+		struct pci_pass_driver_context *ctx;
+		struct thread_link *tl;
 		cpuset_t mask;
 		struct thread *vcputd;
 		int ncpus = dpv->dpv_nvcpus;
@@ -939,23 +939,61 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 		sc->dp_nvcpus = ncpus;
 		if (sc->dp_vcpumap != NULL)
 			free(sc->dp_vcpumap, M_DEVBUF);
-		sc->dp_vcpumap = malloc(sizeof(struct dev_pass_tdvcpumap)*ncpus,
+		dpt = sc->dp_vcpumap = malloc(sizeof(*dpt)*ncpus,
 								M_DEVBUF, M_WAITOK|M_ZERO);
+		for (dpviter = dpv->dpv_map, i = 0; i < ncpus; i++, dpt++, dpviter++) {
+			dpt->dpt_cpuid = dpviter->dpt_cpuid;
+			dpt->dpt_tid = dpviter->dpt_tid;
+			if ((dpt->dpt_kstack = _map_uva(dpviter->dpt_stk)) == NULL)
+				break;
+			dpt->dpt_ustack = (vm_offset_t)dpviter->dpt_stk;
+		}
+		if (i != ncpus) {
+			int unmap_idx = i;
+
+			for (i = 0, dpt = sc->dp_vcpumap; i < unmap_idx; i++, dpt++)
+				_unmap_uva(dpt->dpt_kstack);
+			return (EFAULT);
+		}
+		if (dpv->dpv_hz >= hz) {
+			dpv->dpv_hz = hz;
+			sc->dp_ticks = 1;
+		} else {
+			sc->dp_ticks = hz/dpv->dpv_hz;
+		}
 		CPU_ZERO(&mask);
 		for (dpviter = dpv->dpv_map, i = 0; i < ncpus; i++, dpviter++) {
-			sc->dp_vcpumap[i].dpt_cpuid = dpviter->dpt_cpuid;
-			sc->dp_vcpumap[i].dpt_tid = dpviter->dpt_tid;
+
 			if ((vcputd = tdfind(dpviter->dpt_tid, curproc->p_pid)) == NULL) {
 				printf("failed to find tid: %d\n", dpviter->dpt_tid);
+				_dev_pass_softc_free(sc);
 				return (EINVAL);
 			}
 			PROC_UNLOCK(curproc);
 			sc->dp_vcpumap[i].dpt_td = vcputd;
+
+			/* block interrupts */
+			sc->dp_status_page->vcpu_info[i].evtchn_upcall_mask = 1;
+
+			ctx = _ctx_alloc(NULL, NULL, NULL, 256 + i, i, sc, dpv->dpv_trap);
+			tl = _tl_find(vcputd, TRUE);
+
+			/* add to thread list in case this thread goes away */
+			mtx_lock(&sclist_mtx);
+			LIST_INSERT_HEAD(&tl->tl_ctx_list, ctx, tl_link);
+			mtx_unlock(&sclist_mtx);
+
+			/* bind thread */
 			CPU_SET(dpviter->dpt_cpuid, &mask);
 			rc = cpuset_setthread(dpviter->dpt_tid, &mask);
 			CPU_CLR(dpviter->dpt_cpuid, &mask);
+
 			if (rc != 0)
 				printf("cpuset_setthread failed: %d\n", rc);
+			/* start hardclock timer */
+			callout_init(&sc->dp_vcpumap[i].dpt_c, TRUE);
+			callout_reset_on(&sc->dp_vcpumap[i].dpt_c, sc->dp_ticks, _vcpu_timer,
+							 ctx, dpviter->dpt_cpuid);
 		}
 		_dev_pass_softc_free(sc);
 		break;
