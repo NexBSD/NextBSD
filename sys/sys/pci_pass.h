@@ -36,6 +36,7 @@
 #define PCI_PASS_INTR_STK_SIZE	3*PAGE_SIZE
 #define PCI_PASS_MAX_VCPUS 32
 
+#define PCI_PASS_C_TRAPFRAME 0x1
 struct dev_pass_tidvcpumap {
 	uint8_t	dpt_cpuid;
 	lwpid_t	dpt_tid;
@@ -46,6 +47,7 @@ struct dev_pass_vcpumap {
 	uint32_t dpv_nvcpus;
 	uint32_t dpv_hz;
 	caddr_t dpv_trap; /* default trap handler */
+	int dpv_flags;
 	struct dev_pass_tidvcpumap dpv_map[PCI_PASS_MAX_VCPUS];
 };
 
@@ -54,12 +56,12 @@ struct dev_pass_vcpumap {
 /* Map a kernel irq status page */
 #define	DEVPASSIOCSTATUSPAGE	_IOWR('y', 2, caddr_t)
 /* get system call number for re-enabling the apic */
-#define	DEVPASSIOCAPICENABLESYS	_IOWR('y', 3, int)
+#define	DEVPASSIOCSYS			_IOWR('y', 3, int)
 /* bind the corresponding threads to the listed physical cores
  * and track the mapping for interrupt scheduling
  */
 #define	DEVPASSIOCVCPUMAP		_IOWR('y', 4, struct dev_pass_vcpumap)
-
+#define	DEVPASSIOCCODEPAGE		_IOWR('y', 6, caddr_t)
 
 struct pci_pass_setup_intr {
 	void	*ppsi_trap;

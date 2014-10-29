@@ -70,6 +70,8 @@
 #define PPDC_DOOMED  0x7
 
 static int	unit;
+extern int sztrapcode;
+extern caddr_t trapcode;
 struct dev_pass_softc;
 struct pci_pass_driver_context;
 
@@ -130,6 +132,8 @@ struct dev_pass_tdvcpumap {
 
 struct dev_pass_softc {
 	struct pass_status_page *dp_status_page;
+	caddr_t dp_code_page_kern;
+	vm_offset_t dp_code_page;
 	struct dev_pass_tdvcpumap *dp_vcpumap;
 	int dp_nvcpus;
 	int dp_ticks;
@@ -653,7 +657,7 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 	return (0);
 }
 
-static int apic_enable_syscall = NO_SYSCALL;
+static int dev_pass_syscall = NO_SYSCALL;
 
 static d_close_t dev_pass_close;
 static d_open_t dev_pass_open;
@@ -792,14 +796,28 @@ _unmap_uva(void *kva)
 	vm_page_unlock(m);
 }
 
-
+/*
+ * Initial frame:
+ *
+ * trap handler
+ * mask addr
+ * %rax
+ * %rbx
+ * %rsp
+ * %rip
+ */
+#define INIT_FRAME_SLOTS
+#define INIT_FRAME_SIZE INIT_FRAME_SLOTS*sizeof(register_t)
 static void
 _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx)
 {
 	int cpuid = ctx->ppdc_vcpuid;
-	struct dev_pass_tdvcpumap *vcpumap = &ctx->ppdc_dp->dp_vcpumap[cpuid];
+	struct dev_pass_softc *dp = ctx->ppdc_dp;
+	struct dev_pass_tdvcpumap *vcpumap = &dp->dp_vcpumap[cpuid];
+	vm_offset_t code_page = dp->dp_code_page;
 	caddr_t kstack = vcpumap->dpt_kstack;
-	vm_offset_t ustack = vcpumap->dpt_ustack;
+	vm_offset_t curustack, ustack = vcpumap->dpt_ustack;
+	struct pass_vcpu_info *vi;
 	uint64_t *sp;
 	struct trapframe *fp;
 
@@ -811,20 +829,37 @@ _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx)
 	} else
 		fp = td->td_frame;
 
-	fp->tf_rip = (register_t)ctx->ppdc_trap;
 	/* Is this a nested interrupt */
 	if (fp->tf_rsp < ustack &&
 		fp->tf_rsp > ustack - PAGE_SIZE) {
 		sp = (uint64_t *)kstack - (ustack - fp->tf_rsp);
-
+		curustack = fp->tf_rsp;
 	} else {
 		sp = (uint64_t *)kstack;
-		fp->tf_rsp = ustack;
+		curustack = ustack;
 	}
-	sp--;
-	*(sp--) = fp->tf_rip;
-	*sp = fp->tf_rsp;
-	fp->tf_rsp -= 16;
+
+	vi = &ctx->ppdc_dp->dp_status_page->vcpu_info[ctx->ppdc_vcpuid];
+	if (code_page && (fp->tf_rip >= code_page) &&
+		(fp->tf_rip < code_page + sztrapcode)) {
+		/* We've interrupted trap return - the values on the stack
+		 * are still correct
+		 */
+		fp->tf_rsp = ustack - INIT_FRAME_SIZE;
+	} else {
+		sp--;
+		*(sp--) = fp->tf_rip;
+		*(sp--) = fp->tf_rsp;
+		*(sp--) = fp->tf_rbx;
+		*(sp--) = fp->tf_rax;
+		*(sp--) = (register_t)&vi->evtchn_upcall_mask;
+		*sp = (register_t)ctx->ppdc_trap;
+		fp->tf_rsp = curustack - INIT_FRAME_SIZE;
+	}
+	if (code_page)
+		fp->tf_rip = code_page;
+	else
+		fp->tf_rip = (register_t)ctx->ppdc_trap;
 }
 
 #else
@@ -863,6 +898,12 @@ _unmap_uva(XXX)
 }
 #endif
 
+static void
+_setup_code_page(void *va)
+{
+
+	memcpy(va, trapcode, sztrapcode);
+}
 
 static int
 dev_pass_open(struct cdev *dev, int flags, int fmp, struct thread *td)
@@ -911,27 +952,49 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 	printf("dev_pass_ioctl(...) called\n");
 
 	switch (cmd) {
+	case DEVPASSIOCCODEPAGE: {
+		caddr_t *uvap = (caddr_t *)data;
+		sc = _dev_pass_softc_find(td->td_proc->p_pid);
+		if ((va = _map_uva(*uvap)) == NULL) {
+			rc = EFAULT;
+			goto codedone;
+		}
+		/* dirt bag user tried to get two status pages */
+		if (sc->dp_code_page != 0) {
+			_unmap_uva(va);
+			rc = EINVAL;
+			goto codedone;
+		}
+		sc->dp_code_page_kern = va;
+		sc->dp_code_page = (vm_offset_t)*uvap;
+		_setup_code_page(va);
+		rc = 0;
+	codedone:
+		_dev_pass_softc_free(sc);
+		return (rc);
+		break;
+	}
 	case DEVPASSIOCSTATUSPAGE: {
 		caddr_t *uvap = (caddr_t *)data;
 		sc = _dev_pass_softc_find(td->td_proc->p_pid);
 		/* Don't lose your status page - you don't get another */
 		if (sc->dp_status_page != NULL) {
 			rc = EINVAL;
-			goto done;
+			goto statusdone;
 		}
 		if ((va = _map_uva(*uvap)) == NULL) {
 			rc = EFAULT;
-			goto done;
+			goto statusdone;
 		}
 		/* dirt bag user tried to get two status pages */
 		if (sc->dp_status_page != NULL) {
 			_unmap_uva(va);
 			rc = EINVAL;
-			goto done;
+			goto statusdone;
 		}
-		sc->dp_status_page = (void *)va;
+		sc->dp_status_page = va;
 		rc = 0;
-	done:
+	statusdone:
 		_dev_pass_softc_free(sc);
 		return (rc);
 		break;
@@ -944,8 +1007,8 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			return (ENXIO);
 		return (0);
 		break;
-	case DEVPASSIOCAPICENABLESYS:
-		*(int *)data = apic_enable_syscall;
+	case DEVPASSIOCSYS:
+		*(int *)data = dev_pass_syscall;
 		break;
 	case DEVPASSIOCVCPUMAP: {
 		struct dev_pass_vcpumap *dpv = (void *)data;
@@ -972,6 +1035,11 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			PROC_UNLOCK(curproc);
 		}
 		sc = _dev_pass_softc_find(curproc->p_pid);
+		if ((dpv->dpv_flags & PCI_PASS_C_TRAPFRAME) &&
+			sc->dp_code_page_kern == NULL) {
+			printf("need to setup code page to setup C trapframe\n");
+			return (EINVAL);
+		}
 		sc->dp_nvcpus = ncpus;
 		if (sc->dp_vcpumap != NULL)
 			free(sc->dp_vcpumap, M_DEVBUF);
@@ -1047,13 +1115,26 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 }
 
 static int
-pci_pass_apic_enable(struct thread *td, void *args)
+pci_pass_sys(struct thread *td, void *args)
 {
 	struct ppae_args *uap = args;
 	void *cookie = uap->cookie;
 	int vector = uap->vector;
-	struct intsrc *isrc = intr_lookup_source(vector);
+	struct intsrc *isrc;
+	struct thread_link *tl;
+	struct pci_pass_driver_context *ctx;
 
+	if (vector == 0) {
+		/* the user just wants to force a trap */
+		if ((tl = _tl_find(td, FALSE)) == NULL)
+			return (ENOENT);
+		if ((ctx = LIST_FIRST(&tl->tl_ctx_list)) == NULL)
+			return (ENOENT);
+		(void)_pci_pass_driver_filter(ctx);
+		return (0);
+	}
+
+	isrc = intr_lookup_source(vector);
 	if (isrc == NULL)
 		return (ENOENT);
 	if (isrc != cookie)
@@ -1075,10 +1156,10 @@ dev_pass_init(void)
 						  EVENTHANDLER_PRI_ANY);
 
 	new_sysent.sy_narg = 2;
-	new_sysent.sy_call = pci_pass_apic_enable;
-	syscall_register(&apic_enable_syscall, &new_sysent, &old_sysent);
+	new_sysent.sy_call = pci_pass_sys;
+	syscall_register(&dev_pass_syscall, &new_sysent, &old_sysent);
 	/* GREAT EVIL in the name of great performance */
-	sysent[apic_enable_syscall].sy_thrcnt = SY_THR_STATIC;
+	sysent[dev_pass_syscall].sy_thrcnt = SY_THR_STATIC;
 	return (0);
 }
 
