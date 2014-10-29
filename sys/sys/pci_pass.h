@@ -43,8 +43,8 @@ struct dev_pass_tidvcpumap {
 };
 
 struct dev_pass_vcpumap {
-	int dpv_nvcpus;
-	int dpv_hz;
+	uint32_t dpv_nvcpus;
+	uint32_t dpv_hz;
 	caddr_t dpv_trap; /* default trap handler */
 	struct dev_pass_tidvcpumap dpv_map[PCI_PASS_MAX_VCPUS];
 };
