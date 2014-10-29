@@ -49,13 +49,14 @@ struct dev_pass_vcpumap {
 /* check for presence of an IRQ vector */
 #define	DEVPASSIOCCHKIRQ		_IOWR('y', 1, int)
 /* Map a kernel irq status page */
-#define	DEVPASSIOCSTATUSPAGE	_IOWR('y', 2, void *)
+#define	DEVPASSIOCSTATUSPAGE	_IOWR('y', 2, caddr_t)
 /* get system call number for re-enabling the apic */
 #define	DEVPASSIOCAPICENABLESYS	_IOWR('y', 3, int)
 /* bind the corresponding threads to the listed physical cores
  * and track the mapping for interrupt scheduling
  */
-#define	DEVPASSIOCVCPUMAP		_IOWR('y', 4, struct dev_pass_vcpumap *)
+#define	DEVPASSIOCVCPUMAP		_IOWR('y', 4, struct dev_pass_vcpumap)
+
 
 struct pci_pass_setup_intr {
 	void	*ppsi_stk;

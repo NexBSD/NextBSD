@@ -516,6 +516,7 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 			rc = EINVAL;
 			goto dpfail;
 		}
+		PROC_UNLOCK(curproc);
 		tl = _tl_find(itd, TRUE);
 		if ((dpsc->dp_nvcpus == 0) || (dpsc->dp_vcpumap == NULL) ||
 			(ppsi->ppsi_vcpuid > dpsc->dp_nvcpus + 1)) {
@@ -699,9 +700,10 @@ _tl_find(struct thread *td, int alloc)
 	if (tl != NULL || alloc == 0)
 		return (tl);
 
-	tl = malloc(sizeof(*tl), M_DEVBUF, M_WAITOK);
+	tl = malloc(sizeof(*tl), M_DEVBUF, M_WAITOK|M_ZERO);
 	tl->tl_refcnt = 1;
 	tl->tl_td = td;
+	LIST_INIT(&tl->tl_ctx_list);
 	mtx_lock(&sclist_mtx);
 	/* technically we should check for duplicates */
 	LIST_INSERT_HEAD(&thread_ctx_list, tl, link);
@@ -844,10 +846,9 @@ dev_pass_open(struct cdev *dev, int flags, int fmp, struct thread *td)
 	sc = _dev_pass_softc_find(curpid);
 	if (sc != NULL)
 		return (0);
-	if ((sc = malloc(sizeof(struct dev_pass_softc), M_DEVBUF, M_WAITOK)) == NULL)
+	if ((sc = malloc(sizeof(struct dev_pass_softc), M_DEVBUF, M_WAITOK|M_ZERO)) == NULL)
 		return (ENOMEM);
 	sc->dp_pid = curpid;
-	sc->dp_status_page = NULL;
 	sc->dp_refcnt = 1;
 	mtx_lock(&sclist_mtx);
 	LIST_INSERT_HEAD(&dp_softc_list, sc, link);
@@ -874,20 +875,21 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			   int flag, struct thread *td)
 {
 	struct dev_pass_softc *sc;
-	int rc, vector;
+	int i, rc, vector;
 	void *va;
 
 	printf("dev_pass_ioctl(...) called\n");
 
 	switch (cmd) {
-	case DEVPASSIOCSTATUSPAGE:
+	case DEVPASSIOCSTATUSPAGE: {
+		caddr_t *uvap = (caddr_t *)data;
 		sc = _dev_pass_softc_find(td->td_proc->p_pid);
 		/* Don't lose your status page - you don't get another */
 		if (sc->dp_status_page != NULL) {
 			rc = EINVAL;
 			goto done;
 		}
-		if ((va = _map_user_va(curthread, data, PAGE_SIZE)) == NULL) {
+		if ((va = _map_user_va(curthread, *uvap, PAGE_SIZE)) == NULL) {
 			rc = EFAULT;
 			goto done;
 		}
@@ -903,6 +905,7 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 		_dev_pass_softc_free(sc);
 		return (rc);
 		break;
+	}
 	case DEVPASSIOCCHKIRQ:
 		vector = *(int *)data;
 		if (vector >= NUM_IO_INTS)
@@ -917,33 +920,45 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 	case DEVPASSIOCVCPUMAP: {
 		struct dev_pass_vcpumap *dpv = (void *)data;
 		struct dev_pass_tidvcpumap *dpviter;
+		cpuset_t mask;
 		struct thread *vcputd;
-		int i, ncpus = dpv->dpv_nvcpus;
+		int ncpus = dpv->dpv_nvcpus;
 
 		if (ncpus > PCI_PASS_MAX_VCPUS)
 			return (E2BIG);
 		for (dpviter = dpv->dpv_map, i = 0; i < ncpus; i++, dpviter++) {
 			if (dpviter->dpt_cpuid > mp_ncpus)
 				return (ERANGE);
-			if (tdfind(dpviter->dpt_tid, curproc->p_pid) == NULL)
+			if (tdfind(dpviter->dpt_tid, curproc->p_pid) == NULL) {
+				printf("failed to find tid: %d\n", dpviter->dpt_tid);
 				return (EINVAL);
+			}
+			PROC_UNLOCK(curproc);
 		}
 		sc = _dev_pass_softc_find(curproc->p_pid);
 		sc->dp_nvcpus = ncpus;
 		if (sc->dp_vcpumap != NULL)
 			free(sc->dp_vcpumap, M_DEVBUF);
 		sc->dp_vcpumap = malloc(sizeof(struct dev_pass_tdvcpumap)*ncpus,
-								M_DEVBUF, M_WAITOK);
-
+								M_DEVBUF, M_WAITOK|M_ZERO);
+		CPU_ZERO(&mask);
 		for (dpviter = dpv->dpv_map, i = 0; i < ncpus; i++, dpviter++) {
 			sc->dp_vcpumap[i].dpt_cpuid = dpviter->dpt_cpuid;
 			sc->dp_vcpumap[i].dpt_tid = dpviter->dpt_tid;
-			if ((vcputd = tdfind(dpviter->dpt_tid, curproc->p_pid)) == NULL)
+			if ((vcputd = tdfind(dpviter->dpt_tid, curproc->p_pid)) == NULL) {
+				printf("failed to find tid: %d\n", dpviter->dpt_tid);
 				return (EINVAL);
+			}
+			PROC_UNLOCK(curproc);
 			sc->dp_vcpumap[i].dpt_td = vcputd;
-			sched_bind(vcputd, dpviter->dpt_cpuid);
+			CPU_SET(dpviter->dpt_cpuid, &mask);
+			rc = cpuset_setthread(dpviter->dpt_tid, &mask);
+			CPU_CLR(dpviter->dpt_cpuid, &mask);
+			if (rc != 0)
+				printf("cpuset_setthread failed: %d\n", rc);
 		}
-
+		_dev_pass_softc_free(sc);
+		break;
 	}
 	default:
 		return (EOPNOTSUPP);
