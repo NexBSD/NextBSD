@@ -904,6 +904,19 @@ _setup_code_page(void *va)
 	memcpy(va, trapcode, sztrapcode);
 }
 
+static void
+_setup_status_page(void *va)
+{
+	int i;
+	struct pass_status_page *s;
+
+	s = va;
+	for (i = 0; i < sizeof(unsigned long)*8; i++) {
+		s->evtchn_pending[i] = 0;
+		s->evtchn_mask[i] = (unsigned long)-1LL;
+	}
+}
+
 static int
 dev_pass_open(struct cdev *dev, int flags, int fmp, struct thread *td)
 {
@@ -1009,6 +1022,7 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			goto statusdone;
 		}
 		sc->dp_status_page = va;
+		_setup_status_page(va);
 		rc = 0;
 	statusdone:
 		_dev_pass_softc_free(sc);
@@ -1092,7 +1106,10 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			tl = _tl_find(vcputd, TRUE);
 			sc->dp_vcpumap[i].dpt_tl = tl;
 			tl->tl_dpt = &sc->dp_vcpumap[i];
-			/* block interrupts */
+
+			/* block interrupts and clear pending*/
+			sc->dp_status_page->vcpu_info[i].evtchn_upcall_pending = 0;
+			sc->dp_status_page->vcpu_info[i].evtchn_pending_sel = 0;
 			sc->dp_status_page->vcpu_info[i].evtchn_upcall_mask = 1;
 
 			ctx = _ctx_alloc(NULL, NULL, NULL, 0, i, sc, dpv->dpv_trap, NULL);
