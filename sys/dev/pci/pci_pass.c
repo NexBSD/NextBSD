@@ -126,6 +126,7 @@ struct dev_pass_tdvcpumap {
 	lwpid_t dpt_tid;
 	caddr_t dpt_kstack;
 	vm_offset_t dpt_ustack;
+	struct thread_link *dpt_tl;
 	struct thread *dpt_td;
 	struct callout dpt_c;
 };
@@ -404,16 +405,6 @@ _intr_tdsigwakeup(struct thread *td, int intrval)
 			sched_prio(td, PUSER);
 
 		sleepq_abort(td, intrval);
-	} else {
-		/*
-		 * Other states do nothing with the signal immediately,
-		 * other than kicking ourselves if we are running.
-		 * It will either never be noticed, or noticed very soon.
-		 */
-#ifdef SMP
-		if (TD_IS_RUNNING(td) && td != curthread)
-			forward_signal(td);
-#endif
 	}
 out:
 	PROC_SUNLOCK(p);
@@ -448,11 +439,11 @@ _pci_pass_driver_filter(void *arg)
 		/* fast path */
 		_setup_trapframe(td, ctx);
 	} else if ((td != curthread) && TD_IS_RUNNING(td)){
-		/* running on another cpu - send signal - overloading SIGVTALRM */
-		td->td_flags |= (TDF_ASTPENDING|TDF_ALRMPEND);
+		/* running on another cpu - send upcall */
+		td->td_flags |= (TDF_ASTPENDING|TDF_CALLBACK);
 		ipi_cpu(td->td_oncpu, IPI_AST);
 	} else {
-		td->td_flags |= (TDF_ASTPENDING|TDF_ALRMPEND);
+		td->td_flags |= (TDF_ASTPENDING|TDF_CALLBACK);
 		needwakeup = 1;
 	}
 	thread_unlock(td);
@@ -599,7 +590,8 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 		intr_bind(rid, cpuid);
 
 		mtx_lock(&sclist_mtx);
-		LIST_INSERT_HEAD(&tl->tl_ctx_list, ctx, tl_link);
+		/* keep the timer interrupt first */
+		LIST_INSERT_AFTER(LIST_FIRST(&tl->tl_ctx_list), ctx, tl_link);
 		mtx_unlock(&sclist_mtx);
 		/*
 		 * interrupt setup complete - pass back the results
@@ -806,7 +798,7 @@ _unmap_uva(void *kva)
  * %rsp
  * %rip
  */
-#define INIT_FRAME_SLOTS
+#define INIT_FRAME_SLOTS 6
 #define INIT_FRAME_SIZE INIT_FRAME_SLOTS*sizeof(register_t)
 static void
 _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx)
@@ -1080,6 +1072,7 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			PROC_UNLOCK(curproc);
 			sc->dp_vcpumap[i].dpt_td = vcputd;
 			tl = _tl_find(vcputd, TRUE);
+			sc->dp_vcpumap[i].dpt_tl = tl;
 			tl->tl_dpt = &sc->dp_vcpumap[i];
 			/* block interrupts */
 			sc->dp_status_page->vcpu_info[i].evtchn_upcall_mask = 1;
@@ -1087,6 +1080,7 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			ctx = _ctx_alloc(NULL, NULL, NULL, 256 + i, i, sc, dpv->dpv_trap);
 			/* add to thread list in case this thread goes away */
 			mtx_lock(&sclist_mtx);
+			/* timer interrupt is the first */
 			LIST_INSERT_HEAD(&tl->tl_ctx_list, ctx, tl_link);
 			mtx_unlock(&sclist_mtx);
 
@@ -1117,30 +1111,71 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 static int
 pci_pass_sys(struct thread *td, void *args)
 {
-	struct ppae_args *uap = args;
-	void *cookie = uap->cookie;
-	int vector = uap->vector;
-	struct intsrc *isrc;
+	struct dps_args *uap = args;
+	int vector;
 	struct thread_link *tl;
 	struct pci_pass_driver_context *ctx;
 
-	if (vector == 0) {
-		/* the user just wants to force a trap */
-		if ((tl = _tl_find(td, FALSE)) == NULL)
-			return (ENOENT);
-		if ((ctx = LIST_FIRST(&tl->tl_ctx_list)) == NULL)
-			return (ENOENT);
-		(void)_pci_pass_driver_filter(ctx);
-		return (0);
-	}
+	switch (uap->sycall) {
+	case PCI_PASS_APIC_ENABLE: {
+		void *cookie;
+		struct intsrc *isrc;
 
-	isrc = intr_lookup_source(vector);
-	if (isrc == NULL)
-		return (ENOENT);
-	if (isrc != cookie)
-		return (EINVAL);
-	isrc->is_pic->pic_enable_source(isrc);
+		cookie = uap->u.ppae.cookie;
+		vector = uap->u.ppae.vector;
+
+		if (vector == 0) {
+			/* the user just wants to force a trap */
+			if ((tl = _tl_find(td, FALSE)) == NULL)
+				return (ENOENT);
+			if ((ctx = LIST_FIRST(&tl->tl_ctx_list)) == NULL)
+				return (ENOENT);
+			(void)_pci_pass_driver_filter(ctx);
+			return (0);
+		}
+		isrc = intr_lookup_source(vector);
+		if (isrc == NULL)
+			return (ENOENT);
+		if (isrc != cookie)
+			return (EINVAL);
+		isrc->is_pic->pic_enable_source(isrc);
+		break;
+	}
+	case PCI_PASS_IPI: {
+		struct dev_pass_softc *dp;
+		int vcpuid;
+
+		vector = uap->u.ppi.vector;
+		vcpuid = uap->u.ppi.vcpuid;
+		if ((dp = _dev_pass_softc_find(curproc->p_pid)) == NULL)
+			return (EINVAL);
+		if (vcpuid > dp->dp_nvcpus)
+			return (EINVAL);
+		td = dp->dp_vcpumap[vcpuid].dpt_td;
+		if (td == NULL)
+			return (EINVAL);
+		if ((ctx = LIST_FIRST(&dp->dp_vcpumap[vcpuid].dpt_tl->tl_ctx_list)) == NULL)
+			return (EINVAL);
+		(void)_pci_pass_driver_filter(ctx);
+		break;
+	}
+	default:
+		return (EOPNOTSUPP);
+	}
 	return (0);
+}
+
+static void
+dev_pass_ast_callback(struct thread *td)
+{
+	struct thread_link *tl;
+	struct pci_pass_driver_context *ctx;
+
+	if ((tl = _tl_find(td, FALSE)) == NULL)
+		return;
+	if ((ctx = LIST_FIRST(&tl->tl_ctx_list)) == NULL)
+		return;
+	(void)_pci_pass_driver_filter(ctx);
 }
 
 static int
@@ -1154,7 +1189,11 @@ dev_pass_init(void)
 	make_dev(&dev_pass_cdevsw, unit, UID_ROOT, GID_WHEEL, 0660, "devpass");
 	EVENTHANDLER_REGISTER(thread_dtor, _thread_exit_cleanup, NULL,
 						  EVENTHANDLER_PRI_ANY);
-
+	if (ast_cb != NULL) {
+		printf("ast callback already registered\n");
+		return (EBUSY);
+	}
+	ast_cb = dev_pass_ast_callback;
 	new_sysent.sy_narg = 2;
 	new_sysent.sy_call = pci_pass_sys;
 	syscall_register(&dev_pass_syscall, &new_sysent, &old_sysent);
