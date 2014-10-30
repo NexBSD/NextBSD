@@ -369,7 +369,7 @@ do {									\
 #define	TDF_NEEDRESCHED	0x00010000 /* Thread needs to yield. */
 #define	TDF_NEEDSIGCHK	0x00020000 /* Thread may need signal delivery. */
 #define	TDF_NOLOAD	0x00040000 /* Ignore during load avg calculations. */
-#define	TDF_UNUSED19	0x00080000 /* --available-- */
+#define	TDF_CALLBACK	0x00080000 /* --available-- */
 #define	TDF_THRWAKEUP	0x00100000 /* Libthr thread must not suspend itself. */
 #define	TDF_UNUSED21	0x00200000 /* --available-- */
 #define	TDF_SWAPINREQ	0x00400000 /* Swapin request due to wakeup. */
@@ -858,8 +858,8 @@ struct	proc *zpfind(pid_t);		/* Find zombie process by id. */
 
 #define	PGET_WANTREAD	(PGET_HOLD | PGET_CANDEBUG | PGET_NOTWEXIT)
 
+extern void	(*ast_cb)(struct thread *td);
 int	pget(pid_t pid, int flags, struct proc **pp);
-
 void	ast(struct trapframe *framep);
 struct	thread *choosethread(void);
 int	cr_cansignal(struct ucred *cred, struct proc *proc, int signum);

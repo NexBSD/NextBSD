@@ -91,6 +91,7 @@ __FBSDID("$FreeBSD$");
 
 #include <security/mac/mac_framework.h>
 
+void (*ast_cb)(struct thread *);
 /*
  * Define the code needed before returning to user mode, for trap and
  * syscall.
@@ -233,6 +234,10 @@ ast(struct trapframe *framep)
 	if (PMC_IS_PENDING_CALLCHAIN(td))
 		PMC_CALL_HOOK_UNLOCKED(td, PMC_FN_USER_CALLCHAIN_SOFT, (void *) framep);
 #endif
+	if (flags & TDF_CALLBACK) {
+		if (ast_cb != NULL)
+			ast_cb(td);
+	}
 	if (flags & TDF_ALRMPEND) {
 		PROC_LOCK(p);
 		kern_psignal(p, SIGVTALRM);
