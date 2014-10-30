@@ -38,17 +38,37 @@
 
 #define PCI_PASS_C_TRAPFRAME 0x1
 struct dev_pass_tidvcpumap {
+	/* physical cpuid */
 	uint8_t	dpt_cpuid;
+	/* kernel thread id (thr_self()) */
 	lwpid_t	dpt_tid;
+	/* stack to handle traps on */
 	caddr_t dpt_stk;
 };
 
 struct dev_pass_vcpumap {
+	/* number of virtual CPUs, can be greater than physical
+	 * threads but performance will suffer greatly
+	 */
 	uint32_t dpv_nvcpus;
-	uint32_t dpv_hz;
-	caddr_t dpv_trap; /* default trap handler */
+	/* default trap handler */
+	caddr_t dpv_trap;
 	int dpv_flags;
+	/* vcpus are assumed to be contiguous */
 	struct dev_pass_tidvcpumap dpv_map[PCI_PASS_MAX_VCPUS];
+};
+
+
+struct dev_pass_timer {
+	/* if NULL will use the default */
+	caddr_t dpt_trap;
+	/* requested frequency - actual frequency is returned
+	 * cannot be higher than the frequency in the Ring 0
+	 * kernel
+	 */
+	uint32_t dpt_hz;
+	/* return result is the vector for the timer interrupt */
+	uint32_t dpt_vector;
 };
 
 /* check for presence of an IRQ vector */
@@ -61,6 +81,13 @@ struct dev_pass_vcpumap {
  * and track the mapping for interrupt scheduling
  */
 #define	DEVPASSIOCVCPUMAP		_IOWR('y', 4, struct dev_pass_vcpumap)
+/*
+ * Install timer at frequency hz
+ */
+#define DEVPASSIOCTIMER			_IOWR('y', 5, struct dev_pass_timer)
+/*
+ * Install executable page for trap handling glue
+ */
 #define	DEVPASSIOCCODEPAGE		_IOWR('y', 6, caddr_t)
 
 struct pci_pass_setup_intr {
