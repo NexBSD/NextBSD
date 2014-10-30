@@ -86,10 +86,25 @@ struct pci_pass_post_filter {
 #define PCIPASSIOCTEARDOWNINTR _IOWR('y', 12, void *)
 #define PCIPASSIOCPOSTFILTER   _IOWR('y', 13, struct pci_pass_post_filter)
 
+#define PCI_PASS_APIC_ENABLE 1
+#define PCI_PASS_IPI		 2
 
 struct ppae_args {
 	void *cookie;
 	int vector;
+};
+
+struct ppi_args {
+	int vcpuid;
+	int vector;
+};
+
+struct dps_args {
+	int sycall;
+	union {
+		struct ppae_args ppae;
+		struct ppi_args ppi;
+	} u;
 };
 
 /* The interrupt handling / masking problem has already been tackled by Xen.
