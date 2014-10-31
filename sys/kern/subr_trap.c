@@ -218,7 +218,8 @@ ast(struct trapframe *framep)
 	thread_lock(td);
 	flags = td->td_flags;
 	td->td_flags &= ~(TDF_ASTPENDING | TDF_NEEDSIGCHK | TDF_NEEDSUSPCHK |
-	    TDF_NEEDRESCHED | TDF_ALRMPEND | TDF_PROFPEND | TDF_MACPEND);
+					  TDF_NEEDRESCHED | TDF_ALRMPEND | TDF_PROFPEND |
+					  TDF_MACPEND | TDF_CALLBACK);
 	thread_unlock(td);
 	PCPU_INC(cnt.v_trap);
 
