@@ -301,6 +301,7 @@ cpu_set_fork_handler(td, func, arg)
 	 */
 	td->td_pcb->pcb_r12 = (long) func;	/* function */
 	td->td_pcb->pcb_rbx = (long) arg;	/* first arg */
+	td->td_pcb->pcb_r13 = (long) fork_exit;
 }
 
 void
@@ -625,12 +626,6 @@ is_physical_memory(vm_paddr_t addr)
 
 void
 userret(struct thread *td, struct trapframe *frame)
-{
-	panic("no user space to return to!");
-}
-
-void
-fork_trampoline(void)
 {
 	panic("no user space to return to!");
 }

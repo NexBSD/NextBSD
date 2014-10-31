@@ -48,6 +48,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/mutex.h>
 #include <sys/pcpu.h>
 #include <sys/proc.h>
+#include <sys/pci_pass.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
 #include <sys/sysctl.h>
@@ -622,14 +623,16 @@ cpu_mp_announce(void)
 }
 
 extern void *__malloc(size_t);
+extern int thr_self(long *);
 /*
  * AP CPU's call this to initialize themselves.
  */
 void *
-ukern_init_secondary(void *arg)
+ukern_init_secondary(volatile int *arg)
 {
 	struct pcpu *pc;
 	struct nmi_pcpu *np;
+	long tid; 
 #if 0
 	u_int64_t msr, cr0;
 	int gsel_tss;
@@ -637,8 +640,10 @@ ukern_init_secondary(void *arg)
 	int x;
 #endif
 	u_int cpuid;
-	int cpu = (int) arg;
-
+	int cpu = *arg;
+	thr_self(&tid);
+	*arg = tid;
+	
 	/* Set by the startup code for us to use */
 
 	/* Init tss */
@@ -668,6 +673,8 @@ ukern_init_secondary(void *arg)
 #endif
 	/* Get per-cpu data */
 	pc = &__pcpu[cpu];
+	/* Initialize TLS */
+	pcpup = pc;
 
 	/* prime data page for it to use */
 	pcpu_init(pc, cpu, sizeof(struct pcpu));

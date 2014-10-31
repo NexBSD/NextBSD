@@ -153,7 +153,11 @@ ctx_switch_xsave:
 
 	/* switch address space */
 	movq	PCB_CR3(%r8),%rcx
+#if 0	
 	movq	%cr3,%rax
+#else
+	movq	PCB_CR3(%r8),%rax
+#endif	
 	cmpq	%rcx,%rax			/* Same address space? */
 	jne	swinact
 	SETLK	%rdx, TD_LOCK(%rdi)		/* Release the old thread */
@@ -208,11 +212,15 @@ sw1:
 	 * At this point, we've switched address spaces and are ready
 	 * to load up the rest of the next context.
 	 */
-
+#if 0
 	/* Skip loading user fsbase/gsbase for kthreads */
 	testl	$TDP_KTHREAD,TD_PFLAGS(%rsi)
 	jnz	do_kthread
-
+#else
+	xorl	%eax,%eax
+	testl	$0,%eax
+	jz	do_kthread
+#endif	
 	/*
 	 * Load ldt register
 	 */
@@ -239,8 +247,9 @@ ld_ldt:	lldt	%ax
 	movb	%al,4(%rdx)
 	shrl	$8,%eax
 	movb	%al,7(%rdx)
-
 do_kthread:
+done_tss:
+#if 0
 	/* Do we need to reload tss ? */
 	movq	PCPU(TSSP),%rax
 	movq	PCB_TSSP(%r8),%rdx
@@ -253,6 +262,7 @@ done_tss:
 	movq	%r8,PCPU(CURPCB)
 	/* Update the TSS_RSP0 pointer for the next interrupt */
 	movq	%r8,COMMON_TSS_RSP0(%rdx)
+#endif	
 	movq	%rsi,PCPU(CURTHREAD)		/* into next thread */
 
 	/* Test if debug registers should be restored. */

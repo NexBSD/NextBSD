@@ -147,7 +147,6 @@ __FBSDID("$FreeBSD$");
 #include <stdio.h>
 #include <dev/pci/pcivar.h>
 #include "pci_if.h"
-char * getenv(const char *name);
 
 static __inline boolean_t
 pmap_emulate_ad_bits(pmap_t pmap)
@@ -6197,34 +6196,20 @@ pmap_mapdev(vm_paddr_t pa, vm_size_t size)
 }
 
 int *__error(void);
-char *strerror(int errnum);
+char *strerror(int);
+int device_get_fd(device_t);
 void *
 pmap_umapdev(device_t dev, vm_paddr_t pa, vm_size_t size)
 {
-	char devstr[24];
-	char *fdstr;
 	int fd;
 	void *va;
-#if 0
-	struct pci_devinfo *dinfo;
-	struct pci_conf *conf;
 
-	dinfo = device_get_ivars(dev);
-	conf = &dinfo->conf;
-#endif
-	snprintf(devstr, sizeof(devstr), "/dev/pci%02x:%02x:%02x:%02x",
-			 pci_get_domain(dev), pci_get_bus(dev), pci_get_slot(dev),
-			 pci_get_function(dev));
-
-	fdstr = kern_getenv(devstr);
-	fd = strtol(fdstr, NULL, 0);
+	if ((fd = device_get_fd(dev)) == -1)
+		return (NULL);
 	va = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, pa);
 	if (va == (void *)-1)
 		device_printf(dev, "mmap fail %d\n\n\n", *__error());
 	return (va == (void *)-1 ? NULL : va);
-#if 0			  
-	return (pmap_mapdev_attr(pa, size, PAT_UNCACHEABLE));
-#endif
 }
 
 void *

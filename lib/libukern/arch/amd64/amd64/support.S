@@ -733,3 +733,11 @@ msr_onfault:
 	movl	$EFAULT,%eax
 	ret
 #endif
+
+ENTRY(fork_trampoline)
+	movq	%r12,%rdi		/* function */
+	movq	%rbx,%rsi		/* arg1 */
+	movq	%rsp,%rdx		/* trapframe pointer */
+	call	*%r13			/* fork_exit */
+	MEXITCOUNT
+	cli			/* never called */

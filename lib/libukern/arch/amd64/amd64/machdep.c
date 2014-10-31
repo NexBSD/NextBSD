@@ -1556,6 +1556,9 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	struct xstate_hdr *xhdr;
 #endif
 
+	bufinit();
+	vm_pager_bufferinit();
+
 	thread0.td_kstack = physfree;
 	thread0.td_kstack_pages = KSTACK_PAGES;
 	kstack0_sz = thread0.td_kstack_pages * PAGE_SIZE;
