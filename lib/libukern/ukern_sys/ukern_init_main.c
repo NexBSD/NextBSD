@@ -814,7 +814,7 @@ create_init(const void *udata __unused)
 	struct ucred *newcred, *oldcred;
 	int error;
 
-	error = fork1(&thread0, RFFDG | RFPROC | RFSTOPPED, 0, &initproc,
+	error = fork1(&thread0, RFFDG | RFMEM | RFPROC | RFSTOPPED, 0, &initproc,
 	    NULL, 0);
 	if (error)
 		panic("cannot fork init: %d\n", error);

@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2010 Kip Macy
+ * Copyright (c) 2014 Matthew Macy <kmacy@freebsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -398,7 +398,7 @@ ukern_get_address(void)
 #include <sys/ioctl.h>
 #include <dev/io/iodev.h>
 #include <machine/iodev.h>
-
+int ioctl(int fd, unsigned long request, ...);
 extern int io_fd;
 
 static int

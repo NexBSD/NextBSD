@@ -1,4 +1,6 @@
 - kld support (load kernel modules)		IN PROGRESS
-- virtual CPUs as pinned threads multiplexed by the ULE
+- virtual CPUs as pinned threads multiplexed by the ULE			DONE
   scheduler
-- true critical sections for UMA, callouts, pcpu data access
+- true critical sections for UMA, callouts, pcpu data access	DONE
+- filter pcicfg and iomem operations for safety
+- iommu support to avoid DMA corruption

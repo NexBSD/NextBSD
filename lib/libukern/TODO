@@ -2,14 +2,15 @@
   	  - reserve devices									DONE
 	  - mmap device memory								DONE
 	  - export process' page tables R/O for vtophys		DONE
-	  - export device interrupts to user threads	IN PROGRESS
-
+	  - export device interrupts to user threads		DONE
+	  - finish hooking up interrupts in ukern_intr		WIP
 
 - Build em and aac drivers in proving direct access			WIP
   	  - em     	   		   	  		  DONE
 	  - pci resource allocation		  DONE
 	  - interrupt setup				  IN PROGRESS
 
+- add lightweight mechanism for pinning memory
 - finish file disk device
 - update BPF/veth device
 - add mmap that explicitly requests physically contiguous memory

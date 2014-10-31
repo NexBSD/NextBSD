@@ -1,18 +1,24 @@
 #include <sys/cdefs.h>
 #include <sys/param.h>
+#include <sys/bus.h>
+
 #include <sys/kernel.h>
 #include <sys/module.h>
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/time.h>
+#include <sys/pci_pass.h>
 
 #include <stdio.h>
 #include <signal.h>
 
+#include <ukern_intr.h>
+#include <machine/cpu.h>
 
-int	setitimer(int, const struct itimerval *, struct itimerval *);
+extern int ioctl(int fd, unsigned long request, ...);
+extern int devpass_fd;
 
-extern void *malloc(size_t);
+static void *timercookie;
 static int vtimer_module_event_handler(module_t mod, int what, void *arg);
 
 
@@ -25,36 +31,32 @@ static moduledata_t vtimer_mod = {
 
 DECLARE_MODULE(vtimer, vtimer_mod, SI_SUB_DRIVERS, SI_ORDER_ANY);
 
-static void
-timer_handler(int sig, siginfo_t *info, void *env)
+static int
+timer_intr(void *arg)
 {
-	hardclock(0, (uintfptr_t)info->si_addr);
+	struct trapframe *fp = arg;
+
+	hardclock(TRAPF_USERMODE(fp), TRAPF_PC(fp));
+	return (FILTER_HANDLED);
 }
 
 static int
 vtimer_module_init(void)
 {
-	struct sigaction vtsa;
-	stack_t sstk;
-	struct itimerval itv;
+	struct dev_pass_timer dpt;
 
-	sstk.ss_sp = malloc(SIGSTKSZ);
-	sstk.ss_size = SIGSTKSZ;
-	sstk.ss_flags = 0;
+	dpt.dpt_trap = NULL;
+	dpt.dpt_hz = hz;
+	dpt.dpt_vector = 0;
+	if (ioctl(devpass_fd, DEVPASSIOCTIMER, &dpt) ||
+		dpt.dpt_vector == 0) {
+		printf("timer setup failed!!!\n");
+		return (ENXIO);
+	}
+	ukern_intr_register(EVTCHN_TYPE_VIRQ, dpt.dpt_vector);
+	ukern_intr_bind("vtimer", dpt.dpt_vector, timer_intr, NULL, NULL,
+					INTR_TYPE_CLK|INTR_MPSAFE, &timercookie, curcpu);
 
-	if (sigaltstack(&sstk, NULL) < 0)
-		perror("sigaltstack");
-	
-	bzero(&vtsa, sizeof(vtsa));
-	vtsa.__sigaction_u.__sa_sigaction = timer_handler;
-	vtsa.sa_flags = SA_ONSTACK|SA_RESTART|SA_SIGINFO;
-	
-	sigaction(SIGALRM, &vtsa, NULL);
-	itv.it_interval.tv_sec = 0;
-	itv.it_interval.tv_usec = 10;
-	itv.it_value.tv_sec = 4;
-	itv.it_value.tv_usec = 0;
-	setitimer(ITIMER_REAL, &itv, NULL);
 	return (0);
 }
 

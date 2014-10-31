@@ -4,14 +4,16 @@
 #include <sys/pci_pass.h>
 #include <sys/libkern.h>
 #include <ukern_device.h>
+#include <ukern_intr.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
+#include <machine/intr_machdep.h>
 
 
 int *__error();
 extern int ioctl(int fd, unsigned long request, ...);
-
+extern int devpass_fd;
 
 int
 device_get_fd(device_t dev)
@@ -31,12 +33,10 @@ device_get_fd(device_t dev)
 int
 device_get_irq(device_t dev, int vector)
 {
-	int fd;
 
-	fd = device_get_fd(dev);
-	if (ioctl(fd, DEVPASSIOCCHKIRQ, &vector))
+	if (ioctl(devpass_fd, DEVPASSIOCCHKIRQ, &vector))
 		return (*__error());
-	/* XXX register intr source */
-	
+	ukern_intr_register(EVTCHN_TYPE_PIRQ, vector);
+	nexus_add_irq(vector);
 	return (0);
 }

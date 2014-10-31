@@ -311,16 +311,20 @@ PN_OTHER_COMMON_OBJS =		\
 # pn_init.o needs to be first
 PN_SYS_COMMON_OBJS = 		\
 	ukern_compat.o			\
+	ukern_device.o			\
 	ukern_glue.o			\
 	ukern_init.o			\
 	ukern_init_main.o		\
+	ukern_intr.o			\
 	ukern_other.o			\
 	ukern_private.o			\
-	ukern_server_syscalls.o	\
 	ukern_user_sysctl.o		\
 	ukern_uipc_syscalls.o	
 
+#	ukern_apic.o			\
 # 	ukern_veth.o		\
+#	XXX need to rework for changes to curthread handling
+#	ukern_server_syscalls.o	\
 
 
 PN_MD_COMMON_OBJS = 		\
@@ -507,6 +511,7 @@ M=${MACHINE_CPUARCH}
 .PATH: arch/x86/x86
 .PATH: ${PREFIX}/i386/i386
 .PATH: ${PREFIX}/x86/x86
+
 .endif 
 
 .if ${MACHINE_CPUARCH} == "amd64"
@@ -518,7 +523,9 @@ M=${MACHINE_CPUARCH}
 .PATH: ${PREFIX}/x86/x86
 .PATH: ${PREFIX}/x86/pci
 PN_PCI_OBJS += ${PN_X86_PCI_OBJS}
+CFLAGS= 	-O0 -g
 CFLAGS+=	-DHAMMER
+CFLAGS+=	-DMAXCPU=32
 .endif
 
 .PATH: ${PREFIX}/ddb
@@ -537,7 +544,7 @@ CFLAGS+=	-DHAMMER
 .PATH: dev/pci
 .PATH: ${PREFIX}/dev/pci
 .PATH: ${PREFIX}/dev/e1000
-.PATH: drivers
+.PATH: dev/ukern
 .PATH: ukern_sys
 
 PN_COMMON_OBJS =				\
@@ -575,6 +582,7 @@ CFLAGS+=	-I${PREFIX}/contrib/pf
 CFLAGS+=	-I/usr/include
 CFLAGS+=	-D_KERNEL
 CFLAGS+=	-DPLEBNET
+CFLAGS+=	-DUKERN
 CFLAGS+=	-DEARLY_PRINTF
 CFLAGS+=	-DMAXUSERS=32
 CFLAGS+=	-DKDB
@@ -590,7 +598,6 @@ CFLAGS+=	-DINVARIANTS
 CFLAGS+=	-fformat-extensions
 CFLAGS+=	-fno-builtin
 CFLAGS+=	-fPIC
-CFLAGS+=	-g -O0
 CFLAGS+=	-nostdinc
 NO_WERROR=	1
 WARNS=2

@@ -68,6 +68,8 @@ __FBSDID("$FreeBSD$");
 #include <dev/usb/controller/ohcireg.h>
 #include <dev/usb/controller/uhcireg.h>
 
+#include <ukern_intr.h>
+
 #include "pcib_if.h"
 #include "pci_if.h"
 
@@ -75,8 +77,8 @@ __FBSDID("$FreeBSD$");
 	(((cfg)->hdrtype == PCIM_HDRTYPE_NORMAL && reg == PCIR_BIOS) ||	\
 	 ((cfg)->hdrtype == PCIM_HDRTYPE_BRIDGE && reg == PCIR_BIOS_1))
 
-
-
+/* XXX move to header */
+int device_get_irq(device_t dev, int vector);
 extern  char *getenv(const char *name);
 
 static int		pci_has_quirk(uint32_t devid, int quirk);
@@ -3035,11 +3037,13 @@ pci_assign_interrupt(device_t bus, device_t dev, int force_route)
 		if (!PCI_INTERRUPT_VALID(irq))
 			irq = cfg->intline;
 	}
-
+		
 	/* If after all that we don't have an IRQ, just bail. */
 	if (!PCI_INTERRUPT_VALID(irq))
 		return;
-
+	else if (device_get_irq(dev, irq))
+		return;
+		
 	/* Update the config register if it changed. */
 	if (irq != cfg->intline) {
 		cfg->intline = irq;
@@ -3943,6 +3947,9 @@ pci_setup_intr(device_t dev, device_t child, struct resource *irq, int flags,
 		}
 	}
 	*cookiep = cookie;
+	ukern_intr_pirq_setup(child, rman_get_start(irq), &cookie);
+	if (cookie != *cookiep)
+		printf("cookie mismatch!!!! cookie=%p *cookiep=%p\n", cookie, *cookiep);
 	return (0);
 }
 

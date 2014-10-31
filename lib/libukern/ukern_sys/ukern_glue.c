@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2010 Kip Macy
+ * Copyright (c) 2014 Matthew Macy <kmacy@freebsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -1064,6 +1064,11 @@ uiomove_fromphys(vm_page_t ma[], vm_offset_t offset, int n, struct uio *uio)
 	panic("unimplemented!");
 }
 
+void
+force_ukern_intr(void)
+{
+	/* execute devpass syscall with vector == 0 */
+}
 /* XXX need clock */
 int	clkintr_pending;
 int hintmode;
