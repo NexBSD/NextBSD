@@ -27,6 +27,7 @@
 #ifndef	_PLEBNET_SYS_MALLOC_H_
 #define _PLEBNET_SYS_MALLOC_H_
 #define malloc	ukern_malloc
+#define free    ukern_free
 #include_next <sys/malloc.h>
 
 

@@ -24,14 +24,19 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef	_PLEBNET_SYS_PCPU_H_
-#define _PLEBNET_SYS_PCPU_H_
+#ifndef	_UKERN_SYS_PCPU_H_
+#define _UKERN_SYS_PCPU_H_
 
+#include <sys/param.h>
 #include_next <sys/pcpu.h>
-#undef	curcpu
+#undef curthread
+#undef __curthread
+#define curthread __ukern_curthread()
+static __inline struct thread *
+__ukern_curthread(void)
+{
 
-#define	curcpu	0
-#ifndef curthread
-#define curthread __curthread
-#endif
-#endif	/* _PLEBNET_SYS_PCPU_H_ */
+	return (pcpup->pc_curthread);
+}
+
+#endif	/* _UKERN_SYS_PCPU_H_ */

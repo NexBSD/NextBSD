@@ -29,15 +29,13 @@
 
 #include_next <machine/pcpu.h>
 
-#undef	__curthread
 #undef PCPU_GET
 #undef PCPU_ADD
 #undef PCPU_INC
 #undef PCPU_PTR
 #undef PCPU_SET
 
-extern __thread struct thread *pcurthread;
-extern struct pcpu *pcpup;
+extern __thread struct pcpu *pcpup;
 
 #define	PCPU_GET(member)	(pcpup->pc_ ## member)
 #define	PCPU_ADD(member, val)	(pcpup->pc_ ## member += (val))
@@ -45,16 +43,4 @@ extern struct pcpu *pcpup;
 #define	PCPU_PTR(member)	(&pcpup->pc_ ## member)
 #define	PCPU_SET(member, val)	(pcpup->pc_ ## member = (val))
 
-static __inline struct thread *
-__curthread_pleb(void)
-{
-
-	return (pcurthread);
-}
-
-#define __curthread __curthread_pleb
-
-#ifndef curthread
-#define curthread __curthread_pleb()
-#endif
 #endif	/* _PLEBNET_MACHINE_PCPU_H_ */

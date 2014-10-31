@@ -42,7 +42,15 @@
 #ifndef _SYS_CDEFS_H_
 #error this file needs sys/cdefs.h as a prerequisite
 #endif
+#include <sys/pci_pass.h>
+#include <sys/pcpu.h>
+extern __thread struct pcpu *pcpup;
+extern void force_ukern_intr(void);
+#ifndef curcpu
+#define curcpu pcpup->pc_cpuid
+#endif
 
+extern struct pass_status_page *status_page;
 struct region_descriptor;
 
 #define readb(va)	(*(volatile uint8_t *) (va))
@@ -116,7 +124,8 @@ clts(void)
 static __inline void
 disable_intr(void)
 {
-	__asm __volatile("nop" : : : "memory");
+	status_page->vcpu_info[curcpu].evtchn_upcall_mask = 1;
+	mb();
 }
 
 static __inline void
@@ -138,7 +147,13 @@ cpuid_count(u_int ax, u_int cx, u_int *p)
 static __inline void
 enable_intr(void)
 {
-	__asm __volatile("nop");
+	struct pass_vcpu_info *_vcpu;
+	mb();
+	_vcpu = &status_page->vcpu_info[curcpu];
+	_vcpu->evtchn_upcall_mask = 0;
+	mb();
+	if (__predict_false(_vcpu->evtchn_upcall_pending))
+                force_ukern_intr(); 
 }
 
 #ifdef _KERNEL
