@@ -73,7 +73,7 @@
 
 static int	unit;
 extern int sztrapcode;
-extern caddr_t trapcode;
+extern char trapcode[];
 struct dev_pass_softc;
 struct pci_pass_driver_context;
 
@@ -82,7 +82,7 @@ static struct dev_pass_softc *_dev_pass_softc_find(pid_t pid);
 static struct thread_link *_tl_find(struct thread *td, int alloc);
 
 static void _unmap_uva(void *kva);
-static void *_map_uva(caddr_t uva);
+static void *_map_uva(caddr_t uva, vm_prot_t prot);
 static void _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx);
 
 static void _thread_exit_cleanup(void *arg, struct thread *td);
@@ -762,21 +762,31 @@ _thread_exit_cleanup(void *arg, struct thread *td)
 
 #if defined(__amd64__)
 static void *
-_map_uva(caddr_t uva)
+_map_uva(caddr_t uva, vm_prot_t prot)
 {
 	vm_offset_t kva;
 	vm_paddr_t pa;
 	vm_page_t m;
+	int cnt;
 
-	if (useracc(uva, PAGE_SIZE, 1) == FALSE)
+	if (useracc(uva, PAGE_SIZE, prot & VM_PROT_WRITE) == FALSE)
 		return (NULL);
 	/* XXX this breaks if uva is not physically contiguous
 	 * should be fine for our purposes
 	 */
+	cnt = vm_fault_quick_hold_pages(&curproc->p_vmspace->vm_map,
+									(vm_offset_t)uva, PAGE_SIZE, prot, &m, 1);
+	if (cnt != 1)
+		return (NULL);
 	pa = pmap_extract(&curproc->p_vmspace->vm_pmap, (vm_offset_t)uva);
+	if (pa == 0) {
+		printf("failed to prefault page!\n");
+		return (NULL);
+	}
 	m = PHYS_TO_VM_PAGE(pa);
 	vm_page_lock(m);
 	vm_page_wire(m);
+	vm_page_unhold(m);
 	vm_page_unlock(m);
 	kva = PHYS_TO_DMAP(pa);
 
@@ -900,7 +910,6 @@ _unmap_uva(XXX)
 static void
 _setup_code_page(void *va)
 {
-
 	memcpy(va, trapcode, sztrapcode);
 }
 
@@ -984,7 +993,7 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 	case DEVPASSIOCCODEPAGE: {
 		caddr_t *uvap = (caddr_t *)data;
 		sc = _dev_pass_softc_find(td->td_proc->p_pid);
-		if ((va = _map_uva(*uvap)) == NULL) {
+		if ((va = _map_uva(*uvap, VM_PROT_READ|VM_PROT_EXECUTE)) == NULL) {
 			rc = EFAULT;
 			goto codedone;
 		}
@@ -1011,7 +1020,7 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			rc = EINVAL;
 			goto statusdone;
 		}
-		if ((va = _map_uva(*uvap)) == NULL) {
+		if ((va = _map_uva(*uvap, VM_PROT_READ|VM_PROT_WRITE)) == NULL) {
 			rc = EFAULT;
 			goto statusdone;
 		}
@@ -1052,6 +1061,8 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 
 		if (ncpus > PCI_PASS_MAX_VCPUS)
 			return (E2BIG);
+		if (ncpus <= 0)
+			return (EINVAL);
 		/* Also need the O(n^2) search to guarantee that the same thread
 		 * isn't used twice
 		 */
@@ -1080,8 +1091,11 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			dpt->dpt_cpuid = dpviter->dpt_cpuid;
 			dpt->dpt_tid = dpviter->dpt_tid;
 			dpviter->dpt_stk -= PAGE_SIZE;
-			if ((dpt->dpt_kstack = _map_uva(dpviter->dpt_stk)) == NULL)
+			if ((dpt->dpt_kstack = _map_uva(dpviter->dpt_stk, VM_PROT_READ|VM_PROT_WRITE)) == NULL) {
+				printf("failed to map user stack %p tid %d cpuid %d\n",
+					   dpviter->dpt_stk, dpviter->dpt_tid, dpviter->dpt_cpuid);
 				break;
+			}
 			dpviter->dpt_stk += PAGE_SIZE;
 			dpt->dpt_kstack += PAGE_SIZE;
 			dpt->dpt_ustack = (vm_offset_t)dpviter->dpt_stk;
@@ -1089,6 +1103,7 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 		if (i != ncpus) {
 			int unmap_idx = i;
 
+			printf("unmap_idx=%d\n", unmap_idx);
 			for (i = 0, dpt = sc->dp_vcpumap; i < unmap_idx; i++, dpt++)
 				_unmap_uva(dpt->dpt_kstack - PAGE_SIZE);
 			return (EFAULT);
