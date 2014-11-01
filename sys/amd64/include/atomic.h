@@ -334,6 +334,19 @@ ATOMIC_STORE(long);
 /* Read the current value and store a new value in the destination. */
 #ifdef __GNUCLIKE_ASM
 
+static __inline u_char
+atomic_swap_char(volatile u_char *p, u_char v)
+{
+
+	__asm __volatile(
+	"	xchgb	%1,%0 ;		"
+	"# atomic_swap_char"
+	: "+r" (v),			/* 0 */
+	  "+m" (*p));			/* 1 */
+	return (v);
+}
+
+
 static __inline u_int
 atomic_swap_int(volatile u_int *p, u_int v)
 {
