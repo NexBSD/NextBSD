@@ -1,14 +1,20 @@
-- Add PCI passthrough										WIP
+- add terminal driver									
+- add minimal root disk for test						
+
+
+- Add PCI passthrough									WIP
   	  - reserve devices									DONE
 	  - mmap device memory								DONE
 	  - export process' page tables R/O for vtophys		DONE
 	  - export device interrupts to user threads		DONE
-	  - finish hooking up interrupts in ukern_intr		WIP
+	  - finish hooking up interrupts in ukern_intr		DONE
 
-- Build em and aac drivers in proving direct access			WIP
+	  - fix cookie storage for interrupts
+
+- Build em and aac drivers in proving direct access			DONE
   	  - em     	   		   	  		  DONE
 	  - pci resource allocation		  DONE
-	  - interrupt setup				  IN PROGRESS
+	  - interrupt setup				  DONE
 
 - add lightweight mechanism for pinning memory
 - finish file disk device
