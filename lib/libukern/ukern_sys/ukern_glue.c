@@ -71,17 +71,13 @@ u_long ps_arg_cache_limit = PAGE_SIZE / 16;
 /* This is used in modules that need to work in both SMP and UP. */
 cpuset_t all_cpus;
 
-int mp_ncpus;
 int workaround_erratum383;
 
-volatile int smp_started;
 u_int mp_maxid;
 
 long first_page = 0;
 
 struct vmmeter cnt;
-vm_map_t kernel_map=0;
-vm_map_t kmem_map=0;
 
 struct vm_object kernel_object_store;
 struct vm_object kmem_object_store;
@@ -1064,11 +1060,6 @@ uiomove_fromphys(vm_page_t ma[], vm_offset_t offset, int n, struct uio *uio)
 	panic("unimplemented!");
 }
 
-void
-force_ukern_intr(void)
-{
-	/* execute devpass syscall with vector == 0 */
-}
 /* XXX need clock */
 int	clkintr_pending;
 int hintmode;
