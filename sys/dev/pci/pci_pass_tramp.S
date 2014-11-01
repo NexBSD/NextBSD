@@ -27,7 +27,7 @@
  *
  */
 #include <sys/syscall.h>
-
+#define UKERN
 #include <machine/asmacros.h>
 
 #include "assym.s"
@@ -46,18 +46,26 @@ NON_GPROF_ENTRY(trapcode)
 	popq	%rax			;		/* address of trap handler */
 	PUSH_FRAME				;
 	movq	%rsp,%rdi		;		/* pass trapframe */
-    call    *(%rax)			;       /* call trap handler */
+    call    *%rax			;       /* call trap handler */
 	POP_FRAME				;
 
-	movb	$0,(%rsp)		; 		/* enable interrupts 	*/
-	addq	8,%rsp			;		/* skip over mask addr  */
-	movq	16(%rsp),%rax	;		/* old stack pointer    */
-	movq	24(%rsp),%rbx	;		/* old ip				*/
-	movq	%rbx,8(%rax)	;		/* store old ip	on old sp */
+	popq	%rax			;		/* intr mask addr */
+	movb	$0,(%rax)		; 		/* enable interrupts 	*/
+	movq	0x10(%rsp),%rax	;		/* old stack pointer    */
+	movq	0x18(%rsp),%rbx	;		/* old ip				*/
+
+	pushq	%rcx				;   /* free up another temporary */
+	movq	%rsp,%rcx			;   /* save trapframe sp */
+	movq	%rax,%rsp			;	/* switch stack pointer */
+	pushq	%rbx				; 	/* make old ip the return address */
+
+	movq	%rsp,0x18(%rcx)		;	/* save updated return stack pointer */
+	movq	%rcx,%rsp			;   /* go back to trapframe */
+
+	popq	%rcx
 	popq	%rax			;		/* restore original rax */
-	popq	%rbx			;		/* restore original rbx */	
+	popq	%rbx			;		/* restore original rbx */
 	popq	%rsp			;   	/* restore original stack */
-	addq	-8,%rsp			;		/* make top of stack old ip */
 	retq					;		/* return to original ctx */
     ALIGN_TEXT
 etrapcode:
