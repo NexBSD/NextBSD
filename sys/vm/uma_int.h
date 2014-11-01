@@ -401,7 +401,7 @@ hash_sfind(struct uma_hash *hash, uint8_t *data)
         return (NULL);
 }
 
-#ifndef PLEBNET
+#ifndef UKERN
 static __inline uma_slab_t
 vtoslab(vm_offset_t va)
 {

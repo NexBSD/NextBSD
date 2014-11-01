@@ -348,7 +348,7 @@ vm_page_startup(vm_offset_t vaddr)
 	bzero((void *)mapped, end - new_end);
 	uma_startup((void *)mapped, boot_pages);
 
-#if !defined(PLEBNET) && (defined(__amd64__) || defined(__i386__) || defined(__arm__) || \
+#if !defined(UKERN) && (defined(__amd64__) || defined(__i386__) || defined(__arm__) || \
 						  defined(__mips__))
 	/*
 	 * Allocate a bitmap to indicate that a random physical page
@@ -372,7 +372,7 @@ vm_page_startup(vm_offset_t vaddr)
 	    new_end + vm_page_dump_size, VM_PROT_READ | VM_PROT_WRITE);
 	bzero((void *)vm_page_dump, vm_page_dump_size);
 #endif
-#if defined(__amd64__) && !defined(PLEBNET)
+#if defined(__amd64__) && !defined(UKERN)
 	/*
 	 * Request that the physical pages underlying the message buffer be
 	 * included in a crash dump.  Since the message buffer is accessed
