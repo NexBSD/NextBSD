@@ -248,7 +248,7 @@ ukern_intr_intrcnt_add(u_int cpu)
 	if (pcpu->evtchn_intrcnt != NULL)
 		return;
 
-	snprintf(buf, sizeof(buf), "cpu%d:xen", cpu);
+	snprintf(buf, sizeof(buf), "cpu%d:ukern", cpu);
 	intrcnt_add(buf, &pcpu->evtchn_intrcnt);
 }
 
@@ -495,7 +495,7 @@ ukern_intr(struct trapframe *trap_frame)
 	critical_enter();
 
 	cpu = PCPU_GET(cpuid);
-	pc  = DPCPU_PTR(ukern_intr_pcpu);
+	pc  = DPCPU_ID_PTR(cpu, ukern_intr_pcpu);
 	s   = status_page;
 	v   = DPCPU_GET(vcpu_info);
 
@@ -546,8 +546,10 @@ ukern_intr(struct trapframe *trap_frame)
 			/* process port */
 			port = (l1i * LONG_BIT) + l2i;
 			synch_clear_bit(port, &s->evtchn_pending[0]);
-
+#if 0
 			isrc = ukern_intr_port_to_isrc[port];
+#endif
+			isrc = (struct ukernisrc *)intr_lookup_source(port);
 			if (__predict_false(isrc == NULL))
 				continue;
 
@@ -601,7 +603,8 @@ ukern_intr_init(void *dummy __unused)
 		       sizeof(pcpu->evtchn_enabled));
 		ukern_intr_intrcnt_add(i);
 	}
-
+	/* CPU > 0? */
+	DPCPU_SET(vcpu_info, &status_page->vcpu_info[curcpu]);
 	for (i = 0; i < nitems(s->evtchn_mask); i++)
 		atomic_store_rel_long(&s->evtchn_mask[i], ~0);
 #if 0
@@ -1115,6 +1118,9 @@ ukern_intr_bind(const char *name, int vector, driver_filter_t filter,
 	if (cpu != -1 && cpu < mp_ncpus)
 		rc = intr_bind(vector, cpu);
 
+	/* Ensure the target CPU is ready to handle evtchn interrupts. */
+	ukern_intr_intrcnt_add(cpu != -1 ? cpu : 0);
+
 	evtchn_unmask_port(vector);
 	return (rc);
 }
@@ -1134,6 +1140,7 @@ ukern_intr_pirq_setup(device_t dev, int vector, void **tag)
 		return (*__error());
 	
 	*tag = ppsi.ppsi_tag;
+	evtchn_unmask_port(ppsi.ppsi_vector);
 	return (0);
 }
 #if 0
