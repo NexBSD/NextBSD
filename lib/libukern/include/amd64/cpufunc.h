@@ -46,7 +46,7 @@
 #include <sys/pcpu.h>
 #include <x86/psl.h>
 extern __thread struct pcpu *pcpup;
-extern void force_ukern_intr(void);
+extern void ukern_intr_force(void);
 #ifndef curcpu
 #define curcpu pcpup->pc_cpuid
 #endif
@@ -63,7 +63,7 @@ __restore_flags(int x)
 	if ((_vcpu->evtchn_upcall_mask = (x)) == 0) {
 		mb();
 		if (__predict_false(_vcpu->evtchn_upcall_pending))
-			force_ukern_intr();
+			ukern_intr_force();
 	}
 }
 
