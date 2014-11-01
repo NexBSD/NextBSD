@@ -115,9 +115,9 @@ struct pci_pass_post_filter {
 
 #define PCI_PASS_APIC_ENABLE 1
 #define PCI_PASS_IPI		 2
+#define PCI_PASS_TRAP        3
 
 struct ppae_args {
-	void *cookie;
 	int vector;
 };
 

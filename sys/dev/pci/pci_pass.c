@@ -670,10 +670,6 @@ pci_pass_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int flag, struct thr
 		 */
 		ppsi->ppsi_vector = rid;
 		ppsi->ppsi_tag = ctx->ppdc_tag;
-		/* here's your cookie - don't lose it
-		 * you won't be able to get your interrupt back without it
-		 */
-		ppsi->ppsi_cookie = isrc;
 		return (0);
 		fail:
 		_dev_pass_softc_free(dpsc);
@@ -1030,7 +1026,7 @@ dev_pass_close(struct cdev *dev, int flags, int fmt, struct thread *td)
 }
 
 static struct pci_pass_driver_context *
-_find_vector(struct thread *td, struct dev_pass_softc *sc, int vector)
+_find_vector(struct thread *td, int vector)
 {
 	struct thread_link *tl = _tl_find(td, FALSE);
 	struct pci_pass_driver_context *ctx = NULL;
@@ -1239,7 +1235,7 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 
 		trap = (dpt->dpt_trap != NULL) ? dpt->dpt_trap : (void *)sc->dp_trap;
 		dpt->dpt_vector = vector = FIRST_TIMER_VECTOR + curvcpuid;
-		if (_find_vector(td, sc, vector) == NULL) {
+		if (_find_vector(td, vector) == NULL) {
 			ctx = _ctx_alloc(NULL, NULL, NULL, vector, curvcpuid, sc, trap, td);
 			callout_reset_on(&dptv->dpt_c, sc->dp_ticks, _vcpu_timer, ctx,
 							 dptv->dpt_cpuid);
@@ -1262,31 +1258,23 @@ pci_pass_sys(struct thread *td, void *args)
 {
 	struct dps_args *uap = args;
 	int vector;
-	struct thread_link *tl;
 	struct pci_pass_driver_context *ctx;
 
 	switch (uap->sycall) {
+	case PCI_PASS_TRAP:
+		if ((ctx = _find_vector(td, 0)) == NULL)
+			return (ENOENT);
+		(void)_pci_pass_driver_filter(ctx);
+		break;
 	case PCI_PASS_APIC_ENABLE: {
-		void *cookie;
 		struct intsrc *isrc;
 
-		cookie = uap->u.ppae.cookie;
 		vector = uap->u.ppae.vector;
-
-		if (vector == 0) {
-			/* the user just wants to force a trap */
-			if ((tl = _tl_find(td, FALSE)) == NULL)
-				return (ENOENT);
-			if ((ctx = LIST_FIRST(&tl->tl_ctx_list)) == NULL)
-				return (ENOENT);
-			(void)_pci_pass_driver_filter(ctx);
-			return (0);
-		}
-		isrc = intr_lookup_source(vector);
-		if (isrc == NULL)
+		/* is this a vector actually owned by the user ? */
+		if (vector == 0 || ((ctx = _find_vector(td, vector)) == NULL))
 			return (ENOENT);
-		if (isrc != cookie)
-			return (EINVAL);
+		if ((isrc = intr_lookup_source(vector)) == NULL)
+			return (ENOENT);
 		isrc->is_pic->pic_enable_source(isrc);
 		break;
 	}
@@ -1301,10 +1289,8 @@ pci_pass_sys(struct thread *td, void *args)
 		if (vcpuid > dp->dp_nvcpus)
 			return (EINVAL);
 		td = dp->dp_vcpumap[vcpuid].dpt_td;
-		if (td == NULL)
-			return (EINVAL);
-		if ((ctx = LIST_FIRST(&dp->dp_vcpumap[vcpuid].dpt_tl->tl_ctx_list)) == NULL)
-			return (EINVAL);
+		if ((ctx = _find_vector(td, vector)) == NULL)
+			return (ENOENT);
 		(void)_pci_pass_driver_filter(ctx);
 		break;
 	}
