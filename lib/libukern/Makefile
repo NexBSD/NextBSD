@@ -123,6 +123,7 @@ PN_KERN_COMMON_OBJS +=	\
 	uipc_sockbuf.o		\
 	uipc_socket.o		\
 	uipc_usrreq.o		\
+	uipc_syscalls.o		\
 	vfs_bio.o			\
 	vfs_cache.o			\
 	vfs_cluster.o		\
@@ -317,9 +318,8 @@ PN_SYS_COMMON_OBJS = 		\
 	ukern_init_main.o		\
 	ukern_intr.o			\
 	ukern_other.o			\
-	ukern_private.o			\
-	ukern_user_sysctl.o		\
-	ukern_uipc_syscalls.o	
+	ukern_user_sysctl.o
+
 
 #	ukern_apic.o			\
 # 	ukern_veth.o		\
@@ -589,7 +589,7 @@ CFLAGS+=	-DKDB
 CFLAGS+=	-DDDB
 CFLAGS+=	-DSMP
 CFLAGS+=	-DVERBOSE_SYSINIT
-CFLAGS+=	-DBOOTVERBOSE
+#CFLAGS+=	-DBOOTVERBOSE
 CFLAGS+=	-DVM_KMEM_SIZE=100*1024*1024
 CFLAGS+=	-DINVARIANT_SUPPORT
 CFLAGS+=	-DINVARIANTS

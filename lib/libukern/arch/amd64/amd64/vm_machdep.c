@@ -629,7 +629,7 @@ userret(struct thread *td, struct trapframe *frame)
 {
 	panic("no user space to return to!");
 }
-
+#if 0
 void
 sf_ext_ref(void *arg1, void *arg2)
 {
@@ -641,3 +641,4 @@ sf_ext_free(void *arg1, void *arg2)
 {
 
 }
+#endif
