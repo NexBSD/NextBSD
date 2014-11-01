@@ -45,6 +45,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/interrupt.h>
 #include <sys/pcpu.h>
 #include <sys/smp.h>
+#include <sys/syscall.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -66,7 +67,10 @@ __FBSDID("$FreeBSD$");
 #endif
 
 int *__error();
+
+extern int syscall(int number, ...);
 extern int ioctl(int fd, unsigned long request, ...);
+extern int dev_pass_sys;
 
 static MALLOC_DEFINE(M_UKERNINTR, "ukern_intr", "Ukern Interrupt Services");
 
@@ -232,6 +236,39 @@ evtchn_cpu_unmask_port(u_int cpu, evtchn_port_t port)
 	pcpu = DPCPU_ID_PTR(cpu, ukern_intr_pcpu);
 	set_bit(port, pcpu->evtchn_enabled);
 }
+
+void
+ukern_intr_force(void)
+{
+	struct dps_args da;
+
+	da.sycall = PCI_PASS_TRAP;
+	(void)syscall(dev_pass_sys, &da);
+}
+
+static void
+ukern_intr_apic_enable(int vector)
+{
+	struct dps_args da;
+
+	da.sycall = PCI_PASS_APIC_ENABLE;
+	da.u.ppae.vector = vector;
+	syscall(dev_pass_sys, &da);
+}
+
+int
+ukern_intr_ipi(int vector, int vcpuid)
+{
+	struct dps_args da;
+
+	da.sycall = PCI_PASS_IPI;
+	da.u.ppi.vector = vector;
+	da.u.ppi.vcpuid = vcpuid;
+
+	return (syscall(dev_pass_sys, &da));
+}
+
+
 
 /**
  * Allocate and register a per-cpu ukern upcall interrupt counter.
@@ -995,6 +1032,9 @@ ukern_intr_pirq_eoi_source(struct intsrc *base_isrc)
 static void
 ukern_intr_pirq_enable_intr(struct intsrc *base_isrc)
 {
+	int vector = base_isrc->is_pic->pic_vector(base_isrc);
+
+	ukern_intr_apic_enable(vector);
 #if 0	
 	struct ukernisrc *isrc;
 	struct evtchn_bind_pirq bind_pirq;
