@@ -44,6 +44,7 @@
 #endif
 #include <sys/pci_pass.h>
 #include <sys/pcpu.h>
+#include <x86/psl.h>
 extern __thread struct pcpu *pcpup;
 extern void force_ukern_intr(void);
 #ifndef curcpu
@@ -51,6 +52,21 @@ extern void force_ukern_intr(void);
 #endif
 
 extern struct pass_status_page *status_page;
+
+static __inline void
+__restore_flags(int x)
+{
+	struct pass_vcpu_info *_vcpu;
+
+	mb();
+	_vcpu = &status_page->vcpu_info[curcpu];
+	if ((_vcpu->evtchn_upcall_mask = (x)) == 0) {
+		mb();
+		if (__predict_false(_vcpu->evtchn_upcall_pending))
+			force_ukern_intr();
+	}
+}
+
 struct region_descriptor;
 
 #define readb(va)	(*(volatile uint8_t *) (va))
@@ -147,13 +163,7 @@ cpuid_count(u_int ax, u_int cx, u_int *p)
 static __inline void
 enable_intr(void)
 {
-	struct pass_vcpu_info *_vcpu;
-	mb();
-	_vcpu = &status_page->vcpu_info[curcpu];
-	_vcpu->evtchn_upcall_mask = 0;
-	mb();
-	if (__predict_false(_vcpu->evtchn_upcall_pending))
-                force_ukern_intr(); 
+	__restore_flags(0);
 }
 
 #ifdef _KERNEL
@@ -349,6 +359,10 @@ wbinvd(void)
 static __inline void
 write_rflags(u_long rf)
 {
+	u_long intr;
+
+	intr = ((rf & PSL_I) == 0);
+	__restore_flags(intr);
 	__asm __volatile("pushq %0;  popfq" : : "r" (rf));
 }
 
