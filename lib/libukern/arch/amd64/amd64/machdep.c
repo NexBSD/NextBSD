@@ -1581,9 +1581,7 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 
 	pc = &__pcpu[0];
 	pcpu_init(pc, 0, sizeof(struct pcpu));
-#ifdef notyet	
-	dpcpu_init((void *)(physfree + KERNBASE), 0);
-#endif	
+	dpcpu_init((void *)physfree, 0);
 	physfree += DPCPU_SIZE;
 	PCPU_SET(prvspace, pc);
 	PCPU_SET(curthread, &thread0);
