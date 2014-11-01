@@ -139,14 +139,26 @@
 #define	IDTVEC(name)	ALIGN_TEXT; .globl __CONCAT(X,name); \
 			.type __CONCAT(X,name),@function; __CONCAT(X,name):
 
+#ifndef UKERN
+#define SWAPGS_COND \
+	testb	$SEL_RPL_MASK,TF_CS(%rsp) ; /* come from kernel? */	\
+	jz	1f ;		/* Yes, dont swapgs again */		\
+	swapgs ;
+#define SWAPGS_CLI_COND           \
+	testb	$SEL_RPL_MASK,TF_CS(%rsp) ; /* come from kernel? */	\
+	jz	1f ;		/* keep kernel GS.base */		\
+	cli ;								\
+	swapgs ;
+#else
+#define SWAPGS_COND           ;
+#define SWAPGS_CLI_COND           ;
+#endif
 /*
  * Macros to create and destroy a trap frame.
  */
 #define PUSH_FRAME							\
 	subq	$TF_RIP,%rsp ;	/* skip dummy tf_err and tf_trapno */	\
-	testb	$SEL_RPL_MASK,TF_CS(%rsp) ; /* come from kernel? */	\
-	jz	1f ;		/* Yes, dont swapgs again */		\
-	swapgs ;							\
+    SWAPGS_COND;                               \
 1:	movq	%rdi,TF_RDI(%rsp) ;					\
 	movq	%rsi,TF_RSI(%rsp) ;					\
 	movq	%rdx,TF_RDX(%rsp) ;					\
@@ -185,10 +197,7 @@
 	movq	TF_R13(%rsp),%r13 ;					\
 	movq	TF_R14(%rsp),%r14 ;					\
 	movq	TF_R15(%rsp),%r15 ;					\
-	testb	$SEL_RPL_MASK,TF_CS(%rsp) ; /* come from kernel? */	\
-	jz	1f ;		/* keep kernel GS.base */		\
-	cli ;								\
-	swapgs ;							\
+	SWAPGS_CLI_COND;							\
 1:	addq	$TF_RIP,%rsp	/* skip over tf_err, tf_trapno */
 
 /*
