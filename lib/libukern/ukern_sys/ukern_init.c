@@ -82,7 +82,7 @@ void ukern_intr(struct trapframe *trap_frame);
 
 int io_fd;
 int devpass_fd;
-int apic_enable_sys;
+int dev_pass_sys;
 struct pass_status_page *status_page;
 int nAPs = 0;
 #define STK_SIZE (PAGE_SIZE*3)
@@ -145,7 +145,7 @@ ukern_init(void)
 		printf("failed to enable code_page - check permissions %d", *__error());
 		exit(1);
 	}
-	if (ioctl(devpass_fd, DEVPASSIOCSYS, &apic_enable_sys) < 0) {
+	if (ioctl(devpass_fd, DEVPASSIOCSYS, &dev_pass_sys) < 0) {
 		printf("failed to obtain devpass syscall - %d", *__error());
 		exit(1);
 	}
@@ -156,7 +156,6 @@ ukern_init(void)
 		exit(1);
 	}
 
-	printf("apic_enable_sys: %d\n", apic_enable_sys);
 	dpv = __malloc(sizeof(struct dev_pass_vcpumap));
 	dpv->dpv_nvcpus = nAPs + 1;
 	dpv->dpv_trap = (void *)ukern_intr;
