@@ -47,6 +47,7 @@
 #include <sys/sleepqueue.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
+#include <sys/sysctl.h>
 #include <sys/sysent.h>
 
 #include <dev/pci/pcivar.h>
@@ -67,9 +68,41 @@
 #include <machine/resource.h>
 #include <x86/frame.h>
 
+#define DEBUG_STATS
+
 #define PPDC_DOOMED  0x7
 #define FIRST_TIMER_VECTOR 512
 
+#ifdef DEBUG_STATS
+static int timer_call_count;
+static int cpu_masked_count;
+static int intr_masked_count;
+static int intr_wakeup_count;
+static int intr_ipi_count;
+static int intr_trap_count;
+
+static int ast_callback_count;
+static int ast_callback_filter_count;
+
+SYSCTL_NODE(_hw, OID_AUTO, pci_pass, CTLFLAG_RD, 0, "pci passthrough stats");
+SYSCTL_INT(_hw_pci_pass, OID_AUTO, timer_call_count, CTLFLAG_RW, &timer_call_count, 0,
+    "number of callout timer calls");
+SYSCTL_INT(_hw_pci_pass, OID_AUTO, cpu_masked_count, CTLFLAG_RW, &cpu_masked_count, 0,
+    "number of times cpu was masked");
+SYSCTL_INT(_hw_pci_pass, OID_AUTO, intr_masked_count, CTLFLAG_RW, &intr_masked_count, 0,
+    "number of times the interrupt was masked");
+SYSCTL_INT(_hw_pci_pass, OID_AUTO, intr_wakeup_count, CTLFLAG_RW, &intr_wakeup_count, 0,
+    "number of times interrupt caused wakeup");
+SYSCTL_INT(_hw_pci_pass, OID_AUTO, intr_ipi_count, CTLFLAG_RW, &intr_ipi_count, 0,
+    "number of times interrupt sent ipi");
+SYSCTL_INT(_hw_pci_pass, OID_AUTO, intr_trap_count, CTLFLAG_RW, &intr_trap_count, 0,
+		   "number of times interrupt caused direct trap");
+SYSCTL_INT(_hw_pci_pass, OID_AUTO, ast_callback_count, CTLFLAG_RW, &ast_callback_count, 0,
+    "number of times interrupt sent ipi");
+SYSCTL_INT(_hw_pci_pass, OID_AUTO, ast_callback_filter_count, CTLFLAG_RW, &ast_callback_filter_count, 0,
+		   "number of times interrupt caused direct trap");
+
+#endif
 
 static int	unit;
 extern int sztrapcode;
@@ -135,6 +168,7 @@ struct dev_pass_tdvcpumap {
 
 struct dev_pass_softc {
 	struct pass_status_page *dp_status_page;
+	vm_offset_t dp_status_page_user;
 	caddr_t dp_code_page_kern;
 	vm_offset_t dp_code_page;
 	struct dev_pass_tdvcpumap *dp_vcpumap;
@@ -356,8 +390,16 @@ _intr_masked(struct pass_status_page *si, int vector)
 	int arridx = vector >> IDX_SHIFT;
 	int bitidx = vector & IDX_MASK;
 	int orpendval = 1 << bitidx;
+	int masked;
 
-	return (si->evtchn_mask[arridx] & orpendval);
+	if (vector == 0)
+		return (0);
+	masked = (si->evtchn_mask[arridx] & orpendval);
+#ifdef DEBUG_STATS
+	if (masked)
+		intr_masked_count++;
+#endif
+	return (masked);
 }
 
 static int
@@ -374,8 +416,13 @@ _set_intr_pending(struct pass_status_page *si,
 	atomic_set_long(&vi->evtchn_pending_sel, orselval);
 	vi->evtchn_upcall_pending = 1;
 	masked = _intr_masked(si, vector);
-	if (masked == 0)
+	if (masked == 0) {
 		masked = atomic_swap_char(&vi->evtchn_upcall_mask, 1);
+#ifdef DEBUG_STATS
+		if (masked)
+			cpu_masked_count++;
+#endif
+	}
 	return (masked);
 }
 
@@ -384,10 +431,11 @@ _set_intr_pending(struct pass_status_page *si,
  * thread.  We need to see what we can do about knocking it
  * out of any sleep it may be in etc.
  */
-static void
+static int
 _intr_tdsigwakeup(struct thread *td, int intrval)
 {
 	struct proc *p = td->td_proc;
+	int rc = 0;
 
 	PROC_SLOCK(p);
 	thread_lock(td);
@@ -408,10 +456,12 @@ _intr_tdsigwakeup(struct thread *td, int intrval)
 			sched_prio(td, PUSER);
 
 		sleepq_abort(td, intrval);
+		rc = 1;
 	}
 out:
 	PROC_SUNLOCK(p);
 	thread_unlock(td);
+	return (rc);
 }
 
 static int
@@ -433,21 +483,33 @@ _pci_pass_driver_filter(void *arg)
 
 	si = ctx->ppdc_dp->dp_status_page;
 	vi = &si->vcpu_info[ctx->ppdc_vcpuid];
-	masked = _set_intr_pending(si, vi, ctx->ppdc_vector);
-	if (masked)
-		return (FILTER_HANDLED);
-
+	if (ctx->ppdc_vector != 0) {
+		masked = _set_intr_pending(si, vi, ctx->ppdc_vector);
+		if (masked)
+			return (FILTER_HANDLED);
+	}
 	thread_lock(td);
 	if ((td == curthread && TD_IS_RUNNING(td)) || TD_ON_RUNQ(td)) {
 		/* fast path */
+#ifdef DEBUG_STATS
+		intr_trap_count++;
+#endif
 		_setup_trapframe(td, ctx);
 	} else if ((td != curthread) && TD_IS_RUNNING(td)){
 		/* running on another cpu - send upcall */
 		td->td_flags |= (TDF_ASTPENDING|TDF_CALLBACK);
-		ipi_cpu(td->td_oncpu, IPI_AST);
+		if (curcpu != td->td_oncpu) {
+			ipi_cpu(td->td_oncpu, IPI_AST);
+#ifdef DEBUG_STATS
+			intr_ipi_count++;
+#endif
+		}
 	} else {
-		td->td_flags |= (TDF_ASTPENDING|TDF_CALLBACK);
 		needwakeup = 1;
+		td->td_flags |= (TDF_ASTPENDING|TDF_CALLBACK);
+#ifdef DEBUG_STATS
+		intr_wakeup_count++;
+#endif
 	}
 	thread_unlock(td);
 	if (needwakeup)
@@ -462,6 +524,9 @@ _vcpu_timer(void *arg)
 	int cpuid;
 	struct dev_pass_tdvcpumap *dpt;
 
+#ifdef DEBUG_STATS
+	timer_call_count++;
+#endif
 	(void)_pci_pass_driver_filter(ctx);
 	cpuid = ctx->ppdc_vcpuid;
 	dpt = &ctx->ppdc_dp->dp_vcpumap[cpuid];
@@ -829,8 +894,9 @@ _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx)
 	struct pass_vcpu_info *vi;
 	uint64_t *sp;
 	struct trapframe *fp;
+	register_t upcall_mask_offset;
 
-	if (td == curthread) {
+	if (td == curthread && td->td_intr_frame) {
 		fp = td->td_intr_frame;
 		/* Was the thread in the kernel when it was interrupted */
 		if (!TRAPF_USERMODE(fp))
@@ -848,7 +914,8 @@ _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx)
 		curustack = ustack;
 	}
 
-	vi = &ctx->ppdc_dp->dp_status_page->vcpu_info[ctx->ppdc_vcpuid];
+	vi = &dp->dp_status_page->vcpu_info[ctx->ppdc_vcpuid];
+	upcall_mask_offset = ((register_t)&vi->evtchn_upcall_mask - (register_t)dp->dp_status_page);
 	if (code_page && (fp->tf_rip >= code_page) &&
 		(fp->tf_rip < code_page + sztrapcode)) {
 		/* We've interrupted trap return - the values on the stack
@@ -861,7 +928,7 @@ _setup_trapframe(struct thread *td, struct pci_pass_driver_context *ctx)
 		*(sp--) = fp->tf_rsp;
 		*(sp--) = fp->tf_rbx;
 		*(sp--) = fp->tf_rax;
-		*(sp--) = (register_t)&vi->evtchn_upcall_mask;
+		*(sp--) = dp->dp_status_page_user + upcall_mask_offset;
 		*sp = (register_t)ctx->ppdc_trap;
 		fp->tf_rsp = curustack - INIT_FRAME_SIZE;
 	}
@@ -1031,6 +1098,7 @@ dev_pass_ioctl(struct cdev *dev, u_long cmd, caddr_t data,
 			goto statusdone;
 		}
 		sc->dp_status_page = va;
+		sc->dp_status_page_user = (vm_offset_t)*uvap;
 		_setup_status_page(va);
 		rc = 0;
 	statusdone:
@@ -1252,10 +1320,12 @@ dev_pass_ast_callback(struct thread *td)
 	struct thread_link *tl;
 	struct pci_pass_driver_context *ctx;
 
+	ast_callback_count++;
 	if ((tl = _tl_find(td, FALSE)) == NULL)
 		return;
 	if ((ctx = LIST_FIRST(&tl->tl_ctx_list)) == NULL)
 		return;
+	ast_callback_filter_count++;
 	(void)_pci_pass_driver_filter(ctx);
 }
 
