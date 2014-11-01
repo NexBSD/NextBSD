@@ -147,10 +147,8 @@ extern u_int64_t hammer_time(u_int64_t, u_int64_t);
 #define	CS_SECURE(cs)		(ISPL(cs) == SEL_UPL)
 #define	EFL_SECURE(ef, oef)	((((ef) ^ (oef)) & ~PSL_USERCHANGE) == 0)
 
-#if 0
 static void cpu_startup(void *);
 SYSINIT(cpu, SI_SUB_CPU, SI_ORDER_FIRST, cpu_startup, NULL);
-#endif
 static void get_fpcontext(struct thread *td, mcontext_t *mcp,
     char *xfpusave, size_t xfpusave_len);
 static int  set_fpcontext(struct thread *td, const mcontext_t *mcp,
@@ -211,6 +209,14 @@ struct mtx dt_lock;	/* lock for GDT and LDT */
 
 void (*vmm_resume_p)(void);
 
+static void
+cpu_startup(void *dummy)
+{
+
+	vm_ksubmap_init(&kmi);
+	bufinit();
+	vm_pager_bufferinit();
+}
 /*
  * Send an interrupt to process.
  *
@@ -575,6 +581,7 @@ SYSCTL_INT(_machdep, OID_AUTO, idle_mwait, CTLFLAG_RWTUN, &idle_mwait,
 #define	STATE_MWAIT	0x1
 #define	STATE_SLEEPING	0x2
 
+unsigned int sleep(unsigned int);
 static void
 cpu_idle_acpi(sbintime_t sbt)
 {
@@ -589,8 +596,10 @@ cpu_idle_acpi(sbintime_t sbt)
 		enable_intr();
 	else if (cpu_idle_hook)
 		cpu_idle_hook(sbt);
-	else
-		__asm __volatile("sti; hlt");
+	else {
+		enable_intr();
+		sleep(1);
+	}
 	*state = STATE_RUNNING;
 }
 
@@ -1556,8 +1565,6 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	struct xstate_hdr *xhdr;
 #endif
 
-	bufinit();
-	vm_pager_bufferinit();
 
 	thread0.td_kstack = physfree;
 	thread0.td_kstack_pages = KSTACK_PAGES;
