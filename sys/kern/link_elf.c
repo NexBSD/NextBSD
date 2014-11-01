@@ -79,7 +79,7 @@ __FBSDID("$FreeBSD$");
 extern struct _dynamic _DYNAMIC;
 
 
-#ifndef PLEBNET
+#ifndef UKERN
 static void *
 ukern_get_dynamic(void)
 {
@@ -417,7 +417,7 @@ link_elf_init(void* arg)
 
 	if (dp != NULL)
 		parse_dynamic(ef);
-#ifndef PLEBNET
+#ifndef UKERN
 	linker_kernel_file->address = (caddr_t) KERNBASE;
 #endif
 	linker_kernel_file->size = -(intptr_t)linker_kernel_file->address;
