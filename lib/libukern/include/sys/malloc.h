@@ -24,11 +24,11 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef	_PLEBNET_SYS_MALLOC_H_
-#define _PLEBNET_SYS_MALLOC_H_
+#ifndef	_UKERN_SYS_MALLOC_H_
+#define _UKERN_SYS_MALLOC_H_
 #define malloc	ukern_malloc
 #define free    ukern_free
 #include_next <sys/malloc.h>
 
 
-#endif	/* _PLEBNET_SYS_MALLOC_H_ */
+#endif	/* _UKERN_SYS_MALLOC_H_ */

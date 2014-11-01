@@ -24,8 +24,8 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef	_PLEBNET_MACHINE_PCPU_H_
-#define _PLEBNET_MACHINE_PCPU_H_
+#ifndef	_UKERN_MACHINE_PCPU_H_
+#define _UKERN_MACHINE_PCPU_H_
 
 #include_next <machine/pcpu.h>
 
@@ -43,4 +43,4 @@ extern __thread struct pcpu *pcpup;
 #define	PCPU_PTR(member)	(&pcpup->pc_ ## member)
 #define	PCPU_SET(member, val)	(pcpup->pc_ ## member = (val))
 
-#endif	/* _PLEBNET_MACHINE_PCPU_H_ */
+#endif	/* _UKERN_MACHINE_PCPU_H_ */

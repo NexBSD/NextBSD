@@ -24,8 +24,8 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef	_PLEBNET_VM_UMA_INT_H_
-#define _PLEBNET_VM_UMA_INT_H_
+#ifndef	_UKERN_VM_UMA_INT_H_
+#define _UKERN_VM_UMA_INT_H_
 #define vtoslab		vtoslab_native
 #define vsetslab	vsetslab_native
 #define vsetobj		vsetobj_native
@@ -106,4 +106,4 @@ vsetslab(vm_offset_t va, uma_slab_t slab)
         LIST_INSERT_HEAD(hash_list, up, list_entry);
 }
 
-#endif	/* _PLEBNET_VM_UMA_INT_H_ */
+#endif	/* _UKERN_VM_UMA_INT_H_ */
