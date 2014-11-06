@@ -197,6 +197,7 @@ int
 uart_getenv(int devtype, struct uart_devinfo *di, struct uart_class *class)
 {
 	const char *spec;
+	char *cp;
 	bus_addr_t addr = ~0U;
 	int error;
 
@@ -232,7 +233,8 @@ uart_getenv(int devtype, struct uart_devinfo *di, struct uart_class *class)
 	di->parity = UART_PARITY_NONE;
 
 	/* Parse the attributes. */
-	while (1) {
+	spec = cp;
+	for (;;) {
 		switch (uart_parse_tag(&spec)) {
 		case UART_TAG_BR:
 			di->baudrate = uart_parse_long(&spec);
@@ -267,14 +269,18 @@ uart_getenv(int devtype, struct uart_devinfo *di, struct uart_class *class)
 			di->bas.rclk = uart_parse_long(&spec);
 			break;
 		default:
+			freeenv(cp);
 			return (EINVAL);
 		}
 		if (*spec == '\0')
 			break;
-		if (*spec != ',')
+		if (*spec != ',') {
+			freeenv(cp);
 			return (EINVAL);
+		}
 		spec++;
 	}
+	freeenv(cp);
 
 	/*
 	 * If we still have an invalid address, the specification must be

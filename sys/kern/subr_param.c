@@ -99,7 +99,11 @@ pid_t	pid_max = PID_MAX;
 long	maxswzone;			/* max swmeta KVA storage */
 long	maxbcache;			/* max buffer cache KVA storage */
 long	maxpipekva;			/* Limit on pipe KVA */
-int 	vm_guest;			/* Running as virtual machine guest? */
+#ifdef XEN
+int	vm_guest = VM_GUEST_XEN;
+#else
+int	vm_guest = VM_GUEST_NO;		/* Running as virtual machine guest? */
+#endif
 u_long	maxtsiz;			/* max text size */
 u_long	dfldsiz;			/* initial data size limit */
 u_long	maxdsiz;			/* max data size */
@@ -136,7 +140,7 @@ SYSCTL_ULONG(_kern, OID_AUTO, sgrowsiz, CTLFLAG_RWTUN | CTLFLAG_NOFETCH, &sgrows
     "Amount to grow stack on a stack fault");
 SYSCTL_PROC(_kern, OID_AUTO, vm_guest, CTLFLAG_RD | CTLTYPE_STRING,
     NULL, 0, sysctl_kern_vm_guest, "A",
-    "Virtual machine guest detected? (none|generic|xen)");
+    "Virtual machine guest detected?");
 
 /*
  * These have to be allocated somewhere; allocating
@@ -154,10 +158,10 @@ static const char *const vm_guest_sysctl_names[] = {
 	"generic",
 	"xen",
 	"hv",
+	"vmware",
 	NULL
 };
 CTASSERT(nitems(vm_guest_sysctl_names) - 1 == VM_LAST);
-
 #ifndef XEN
 static const char *const vm_bnames[] = {
 	"QEMU",				/* QEMU */
@@ -216,11 +220,7 @@ detect_virtual(void)
 void
 init_param1(void)
 {
-#ifndef XEN
-	vm_guest = detect_virtual();
-#else
-	vm_guest = VM_GUEST_XEN;
-#endif
+
 	hz = -1;
 	TUNABLE_INT_FETCH("kern.hz", &hz);
 	if (hz == -1)
