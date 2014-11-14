@@ -2496,6 +2496,12 @@ vm_page_free_toq(vm_page_t m)
 		if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
 			pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
 
+#ifdef VM_PERCPU_FREE
+		if (can_cache) {
+			vm_page_percpu_free(m);
+			return;
+		}
+#endif
 		/*
 		 * Insert the page into the physical memory allocator's
 		 * cache/free page queues.
@@ -2764,13 +2770,6 @@ vm_page_cache(vm_page_t m)
 	 */
 	if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
 		pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
-
-#ifdef VM_PERCPU_FREE
-		if (can_cache) {
-			vm_page_percpu_free(m);
-			return;
-		}
-#endif
 
 	/*
 	 * Insert the page into the object's collection of cached pages
