@@ -1712,8 +1712,6 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		panic("Found unexpected cached page.");
 #endif
 	} else {
-		KASSERT(VM_PAGE_IS_FREE(m),
-		    ("vm_page_alloc: page %p is not free", m));
 		KASSERT(m->valid == 0,
 		    ("vm_page_alloc: free page %p is valid", m));
 		vm_phys_freecnt_adj(m, -1);
