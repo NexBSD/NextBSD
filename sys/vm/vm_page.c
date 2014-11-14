@@ -170,6 +170,47 @@ CTASSERT(sizeof(u_long) >= 8);
 #endif
 #endif
 
+/* Begin Isilon */
+/*
+ * XXXBSDMERGE: This function should be renamed malloc2vm_dumpflags() and
+ * should deal only with M_* flags.
+ * Then, vm_fault code needs to make a small stub to convert the magic values
+ * from the sysctl into appropriate M_* flags, as they are just an
+ * implementative detail.
+ */
+int
+vm_get_pagedump_flags(int type, int value)
+{
+
+	switch (type) {
+		case PG_DUMP_SYSCTL:
+			switch (value) {
+			case 1:
+				return (VM_ALLOC_DUMP_PR_HIGH);
+			case 2:
+				return (VM_ALLOC_DUMP_PR_MEDIUM);
+			case 3:
+				return (VM_ALLOC_DUMP_PR_LOW);
+			default:
+				return (VM_ALLOC_NODUMP);
+			}
+		case PG_DUMP_MALLOC:
+			switch (value) {
+			case M_DUMP_PRI_HIGH:
+				return (VM_ALLOC_DUMP_PR_HIGH);
+			case M_DUMP_PRI_MED:
+				return (VM_ALLOC_DUMP_PR_MEDIUM);
+			case M_DUMP_PRI_LOW:
+				return (VM_ALLOC_DUMP_PR_LOW);
+			default:
+				return (VM_ALLOC_NODUMP);
+			}
+		default:
+			return (VM_ALLOC_NODUMP);
+	}
+}
+
+
 /*
  * Try to acquire a physical address lock while a pmap is locked.  If we
  * fail to trylock we unlock and lock the pmap directly and cache the

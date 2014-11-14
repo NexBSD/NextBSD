@@ -441,6 +441,7 @@ vm_phys_add_page(vm_paddr_t pa)
 	vm_cnt.v_page_count++;
 	m = vm_phys_paddr_to_vm_page(pa);
 	m->phys_addr = pa;
+	m->flags |= PG_DUMP_PRIO_IGNORE;
 	m->queue = PQ_NONE;
 	m->segind = vm_phys_paddr_to_segind(pa);
 	vmd = vm_phys_domain(m);
@@ -998,7 +999,7 @@ vm_phys_alloc_contig(u_long npages, vm_paddr_t low, vm_paddr_t high,
 	vm_paddr_t pa, pa_last, size;
 	vm_page_t m, m_ret;
 	u_long npages_end;
-	int dom, domain, flind, oind, order, pind;
+	int i, dom, domain, flind, oind, order, pind;
 
 	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
 	size = npages << PAGE_SHIFT;
@@ -1086,6 +1087,11 @@ done:
 	npages_end = roundup2(npages, 1 << imin(oind, order));
 	if (npages < npages_end)
 		vm_phys_free_contig(&m_ret[npages], npages_end - npages);
+	for (i = 0; i < npages; i++) {
+		m_ret[i].flags &= ~PG_DUMP_MASK;
+		/* is this what we want for the default? */
+		m_ret[i].flags |= PG_DUMP_PRIO_MEDIUM;
+	}
 	return (m_ret);
 }
 

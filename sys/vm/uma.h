@@ -271,14 +271,18 @@ uma_zone_t uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 					 * backend pages and can fail early.
 					 */
 #define	UMA_ZONE_VTOSLAB	0x2000	/* Zone uses vtoslab for lookup. */
-#define	UMA_ZONE_NODUMP		0x4000	/*
-					 * Zone's pages will not be included in
-					 * mini-dumps.
-					 */
+#define	UMA_ZONE_UNUSED14	0x4000
 #define	UMA_ZONE_PCPU		0x8000	/*
 					 * Allocates mp_ncpus slabs sized to
 					 * sizeof(struct pcpu).
 					 */
+#define	UMA_ZONE_NODUMP		0x10000	/* Don't dump contents on panic. */
+#define	UMA_ZONE_DUMP_PRI_HIGH	0x20000	/* Panic dump, priority high. */
+#define	UMA_ZONE_DUMP_PRI_MED	0x40000	/* Panic dump, priority medium. */
+#define	UMA_ZONE_DUMP_PRI_LOW	0x80000	/* Panic dump, priority low. */
+
+#define	UMA_ZONE_DUMP_MASK	(UMA_ZONE_NODUMP | UMA_ZONE_DUMP_PRI_HIGH | \
+				UMA_ZONE_DUMP_PRI_MED | UMA_ZONE_DUMP_PRI_LOW)
 
 /*
  * These flags are shared between the keg and zone.  In zones wishing to add
@@ -635,6 +639,7 @@ uint32_t *uma_find_refcnt(uma_zone_t zone, void *item);
 int uma_zone_exhausted(uma_zone_t zone);
 int uma_zone_exhausted_nolock(uma_zone_t zone);
 
+int uma_get_zonedump_flags(int value);
 /*
  * Common UMA_ZONE_PCPU zones.
  */

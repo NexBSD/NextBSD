@@ -284,6 +284,47 @@ static int zone_warnings = 1;
 SYSCTL_INT(_vm, OID_AUTO, zone_warnings, CTLFLAG_RWTUN, &zone_warnings, 0,
     "Warn when UMA zones becomes full");
 
+static int
+uma2malloc_dumpflags(int udflags)
+{
+
+	KASSERT((udflags & ~UMA_ZONE_DUMP_MASK) == 0,
+			("uma2malloc_dumpflags: invalid flags provided: 0x%x", udflags));
+
+	switch (udflags) {
+	case UMA_ZONE_DUMP_PRI_HIGH:
+		return (M_DUMP_PRI_HIGH);
+	case UMA_ZONE_DUMP_PRI_MED:
+		return (M_DUMP_PRI_MED);
+	case UMA_ZONE_DUMP_PRI_LOW:
+		return (M_DUMP_PRI_LOW);
+	case UMA_ZONE_NODUMP:
+		return (M_NODUMP);
+	default:
+		KASSERT((udflags & UMA_ZONE_DUMP_MASK) == 0,
+				("uma2malloc_dumpflags: inconsistent flags: 0x%x",
+				 udflags));
+		return (0);
+	}
+}
+
+/* Convert sysctl to uma zone dump flags. */
+/* XXXBSDMERGE: See comments on the prototype at uma.h. */
+int uma_get_zonedump_flags(int value)
+{
+	switch (value) {
+	case 1:
+		return (UMA_ZONE_DUMP_PRI_HIGH);
+	case 2:
+		return (UMA_ZONE_DUMP_PRI_MED);
+	case 3:
+		return (UMA_ZONE_DUMP_PRI_LOW);
+	default:
+		return (UMA_ZONE_NODUMP);
+	}
+}
+
+
 /*
  * This routine checks to see whether or not it's safe to enable buckets.
  */
@@ -968,10 +1009,9 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int wait)
 	if ((keg->uk_flags & UMA_ZONE_MALLOC) == 0)
 		wait |= M_ZERO;
 	else
-		wait &= ~M_ZERO;
+		wait &= ~M_ZERO; /* do we really mean to strip M_ZERO for non-malloc ? */
 
-	if (keg->uk_flags & UMA_ZONE_NODUMP)
-		wait |= M_NODUMP;
+	wait |= uma2malloc_dumpflags(keg->uk_flags & UMA_ZONE_DUMP_MASK);
 
 	/* zone is passed for legacy reasons. */
 	mem = allocf(zone, keg->uk_ppera * PAGE_SIZE, &flags, wait);
@@ -1044,6 +1084,7 @@ startup_alloc(uma_zone_t zone, int bytes, uint8_t *pflag, int wait)
 	keg = zone_first_keg(zone);
 	pages = howmany(bytes, PAGE_SIZE);
 	check_pages = pages - 1;
+	wait |= uma2malloc_dumpflags(keg->uk_flags & UMA_ZONE_DUMP_MASK);
 	KASSERT(pages > 0, ("startup_alloc can't reserve 0 pages\n"));
 
 	/*
@@ -1124,14 +1165,16 @@ noobj_alloc(uma_zone_t zone, int bytes, uint8_t *flags, int wait)
 	vm_offset_t retkva, zkva;
 	vm_page_t p, p_next;
 	uma_keg_t keg;
-
+	int dumpflags;
+ 
+	dumpflags = vm_get_pagedump_flags(PG_DUMP_MALLOC, wait & M_DUMP_MASK);
 	TAILQ_INIT(&alloctail);
 	keg = zone_first_keg(zone);
 
 	npages = howmany(bytes, PAGE_SIZE);
 	while (npages > 0) {
 		p = vm_page_alloc(NULL, 0, VM_ALLOC_INTERRUPT |
-		    VM_ALLOC_WIRED | VM_ALLOC_NOOBJ);
+		    VM_ALLOC_WIRED | VM_ALLOC_NOOBJ | dumpflags);
 		if (p != NULL) {
 			/*
 			 * Since the page does not belong to an object, its

@@ -330,6 +330,42 @@ extern struct mtx_padalign pa_lock[];
 #define	PG_UNHOLDFREE	0x0100		/* delayed free of a held page */
 
 /*
+ * Dump priorities.  dump_machdep.c assumes these are ordered.
+ * There are 8 different priority levels so 3 bits are needed to store them
+ * properly.
+ */
+/*
+ * XXXBSDMERGE: From the VM layer we can just get 4 different values, it would
+ * be good to double-check if we can trim 4 "unused" values and carve a further
+ * free bit here, simplifying the code.
+ */
+#define	PG_DUMP_BIT0	0x1000		/* dump priority bit0. */
+#define	PG_DUMP_BIT1	0x2000		/* dump priority bit1. */
+#define	PG_DUMP_BIT2	0x4000		/* dump priority bit2. */
+#define	PG_DUMP_MASK	(PG_DUMP_BIT0 | PG_DUMP_BIT1 | PG_DUMP_BIT2)
+#define	PG_DUMP_PRIO2IDX(_p) ((_p) >> 12)
+
+#define	PG_DUMP_PRIO_DUMPED	0x7000
+#define	PG_DUMP_PRIO_IGNORE	0x6000
+#define	PG_DUMP_PRIO_ESSENTIAL	0x5000
+#define	PG_DUMP_PRIO_HIGH	0x4000
+#define	PG_DUMP_PRIO_MEDIUM	0x3000
+#define	PG_DUMP_PRIO_LOW	0x2000
+#define	PG_DUMP_PRIO_LEAST	0x1000
+#define	PG_DUMP_PRIO_DEFAULT	0x0000
+#define	PG_DUMP_PRIO_FIRST	PG_DUMP_PRIO_ESSENTIAL
+#define	PG_DUMP_PRIO_LAST	PG_DUMP_PRIO_DEFAULT
+#define	PG_DUMP_PRIO_FINAL	PG_DUMP_PRIO_IGNORE
+
+
+/*
+ * Dump types.
+ */
+/* XXXBSDMERGE: These should be likely trimmed. */
+#define	PG_DUMP_SYSCTL	1
+#define	PG_DUMP_MALLOC	2
+
+/*
  * Misc constants.
  */
 #define ACT_DECLINE		1
@@ -342,6 +378,7 @@ extern struct mtx_padalign pa_lock[];
 #include <sys/systm.h>
 
 #include <machine/atomic.h>
+CTASSERT(PG_DUMP_PRIO_DUMPED == PG_DUMP_MASK);
 
 /*
  * Each pageable resident page falls into one of four lists:
@@ -389,10 +426,16 @@ vm_page_t PHYS_TO_VM_PAGE(vm_paddr_t pa);
 #define	VM_ALLOC_IFCACHED	0x0400	/* Fail if the page is not cached */
 #define	VM_ALLOC_IFNOTCACHED	0x0800	/* Fail if the page is cached */
 #define	VM_ALLOC_IGN_SBUSY	0x1000	/* vm_page_grab() only */
-#define	VM_ALLOC_NODUMP		0x2000	/* don't include in dump */
+#define	VM_ALLOC_UNUSED14	0x2000	/* unused */
 #define	VM_ALLOC_SBUSY		0x4000	/* Shared busy the page */
+#define	VM_ALLOC_NODUMP		0x10000	/* Don't dump at panic time */
+#define	VM_ALLOC_DUMP_PR_HIGH	0x20000	/* Dump priority high */
+#define	VM_ALLOC_DUMP_PR_MEDIUM	0x40000	/* Dump Priority Medium */
+#define	VM_ALLOC_DUMP_PR_LOW	0x80000	/* Dump Priority Low */
 
-#define	VM_ALLOC_COUNT_SHIFT	16
+#define	VM_ALLOC_DUMP_MASK	(VM_ALLOC_NODUMP | VM_ALLOC_DUMP_PR_HIGH | \
+				VM_ALLOC_DUMP_PR_MEDIUM | VM_ALLOC_DUMP_PR_LOW)
+#define	VM_ALLOC_COUNT_SHIFT	20
 #define	VM_ALLOC_COUNT(count)	((count) << VM_ALLOC_COUNT_SHIFT)
 
 #ifdef M_NOWAIT
@@ -413,6 +456,8 @@ malloc2vm_flags(int malloc_flags)
 	return (pflags);
 }
 #endif
+
+int vm_get_pagedump_flags(int type, int value);
 
 void vm_page_busy_downgrade(vm_page_t m);
 void vm_page_busy_sleep(vm_page_t m, const char *msg);

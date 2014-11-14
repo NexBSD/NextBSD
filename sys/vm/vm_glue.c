@@ -399,7 +399,7 @@ vm_thread_new(struct thread *td, int pages)
 		 * Get a kernel stack page.
 		 */
 		m = vm_page_grab(ksobj, i, VM_ALLOC_NOBUSY |
-		    VM_ALLOC_NORMAL | VM_ALLOC_WIRED);
+		    VM_ALLOC_NORMAL | VM_ALLOC_WIRED | VM_ALLOC_DUMP_PR_HIGH);
 		ma[i] = m;
 		m->valid = VM_PAGE_BITS_ALL;
 	}

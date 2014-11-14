@@ -105,6 +105,12 @@ __FBSDID("$FreeBSD$");
 #define PFBAK 4
 #define PFFOR 4
 
+static int fault_dump = 1;
+TUNABLE_INT("debug.dump_fault", &fault_dump);
+SYSCTL_INT(_debug, OID_AUTO, dump_fault, CTLFLAG_RD, &fault_dump, 0,
+    "Enable panic nodump for faults (set with tunable) \n \
+    0-don't dump 1-high priority 2-medium priority 3-low priority");
+
 static int vm_fault_additional_pages(vm_page_t, int, int, vm_page_t *, int *);
 
 #define	VM_FAULT_READ_BEHIND	8
@@ -231,7 +237,7 @@ vm_fault_hold(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 	long ahead, behind;
 	int alloc_req, era, faultcount, nera, reqpage, result;
 	boolean_t growstack, is_first_object_locked, wired;
-	int map_generation;
+	int map_generation, vmalloc_dump_flag;
 	vm_object_t next_object;
 	vm_page_t marray[VM_FAULT_READ_MAX];
 	int hardfault;
@@ -245,7 +251,7 @@ vm_fault_hold(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 	PCPU_INC(cnt.v_vm_faults);
 	fs.vp = NULL;
 	faultcount = reqpage = 0;
-
+	vmalloc_dump_flag = vm_get_pagedump_flags(PG_DUMP_SYSCTL, fault_dump);
 RetryFault:;
 
 	/*
@@ -474,7 +480,7 @@ fast_failed:
 				    fs.object->backing_object == NULL)
 					alloc_req |= VM_ALLOC_ZERO;
 				fs.m = vm_page_alloc(fs.object, fs.pindex,
-				    alloc_req);
+				    alloc_req | vmalloc_dump_flag);
 			}
 			if (fs.m == NULL) {
 				unlock_and_deallocate(&fs);
@@ -1228,11 +1234,13 @@ vm_fault_copy_entry(vm_map_t dst_map, vm_map_t src_map,
 	vm_page_t dst_m;
 	vm_page_t src_m;
 	boolean_t upgrade;
+	int vmalloc_dump_flag;
 
 #ifdef	lint
 	src_map++;
 #endif	/* lint */
 
+	vmalloc_dump_flag = vm_get_pagedump_flags(PG_DUMP_SYSCTL, fault_dump);
 	upgrade = src_entry == dst_entry;
 	access = prot = dst_entry->protection;
 
@@ -1340,7 +1348,7 @@ again:
 			 */
 			dst_m = vm_page_alloc(dst_object, (src_object ==
 			    dst_object ? src_pindex : 0) + dst_pindex,
-			    VM_ALLOC_NORMAL);
+			    VM_ALLOC_NORMAL | vmalloc_dump_flag);
 			if (dst_m == NULL) {
 				VM_OBJECT_WUNLOCK(dst_object);
 				VM_OBJECT_RUNLOCK(object);
@@ -1428,13 +1436,14 @@ vm_fault_additional_pages(m, rbehind, rahead, marray, reqpage)
 	vm_object_t object;
 	vm_pindex_t pindex, startpindex, endpindex, tpindex;
 	vm_page_t rtm;
-	int cbehind, cahead;
+	int cbehind, cahead, vmalloc_dump_flag;
 
 	VM_OBJECT_ASSERT_WLOCKED(m->object);
 
 	object = m->object;
 	pindex = m->pindex;
 	cbehind = cahead = 0;
+	vmalloc_dump_flag = vm_get_pagedump_flags(PG_DUMP_SYSCTL, fault_dump);
 
 	/*
 	 * if the requested page is not available, then give up now
@@ -1477,7 +1486,7 @@ vm_fault_additional_pages(m, rbehind, rahead, marray, reqpage)
 		    tpindex < pindex; i++, tpindex--) {
 
 			rtm = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL |
-			    VM_ALLOC_IFNOTCACHED);
+			    VM_ALLOC_IFNOTCACHED | vmalloc_dump_flag);
 			if (rtm == NULL) {
 				/*
 				 * Shift the allocated pages to the
@@ -1516,7 +1525,7 @@ vm_fault_additional_pages(m, rbehind, rahead, marray, reqpage)
 	for (; tpindex < endpindex; i++, tpindex++) {
 
 		rtm = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL |
-		    VM_ALLOC_IFNOTCACHED);
+		    VM_ALLOC_IFNOTCACHED | vmalloc_dump_flag);
 		if (rtm == NULL) {
 			break;
 		}

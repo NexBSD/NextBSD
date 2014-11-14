@@ -50,9 +50,16 @@
 #define	M_ZERO		0x0100		/* bzero the allocation */
 #define	M_NOVM		0x0200		/* don't ask VM for pages */
 #define	M_USE_RESERVE	0x0400		/* can alloc out of reserve memory */
-#define	M_NODUMP	0x0800		/* don't dump pages in this allocation */
+#define	M_UNUSED12	0x0800		/* unused */
 #define	M_FIRSTFIT	0x1000		/* Only for vmem, fast fit. */
 #define	M_BESTFIT	0x2000		/* Only for vmem, low fragmentation. */
+#define	M_NODUMP	0x4000		/* don't dump */
+#define	M_DUMP_PRI_LOW	0x08000		/* low priority dump */
+#define	M_DUMP_PRI_MED	0x10000		/* medium priority dump */
+#define	M_DUMP_PRI_HIGH	0x02000		/* high priority dump */
+
+#define M_DUMP_MASK (M_NODUMP | M_DUMP_PRI_LOW | M_DUMP_PRI_MED | M_DUMP_PRI_HIGH)
+
 
 #define	M_MAGIC		877983977	/* time when first defined :-) */
 
