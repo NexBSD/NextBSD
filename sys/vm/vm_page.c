@@ -119,15 +119,6 @@ __FBSDID("$FreeBSD$");
 #include <machine/md_var.h>
 
 /*
- * Isilon:  The per-cpu page cache only works when we do not require the
- * vm_page_queue_free_mtx to protect the object's cache queue.  The cache
- * queue gives us no real advantage and so it is disabled by default.
- */
-#ifndef VM_ENABLE_CACHE
-#define	VM_PERCPU_FREE	1
-#endif
-
-/*
  *	Associated with page of user-allocatable memory is a
  *	page structure.
  */
@@ -152,9 +143,6 @@ SYSCTL_INT(_vm, OID_AUTO, tryrelock_restart, CTLFLAG_RD,
 
 static uma_zone_t fakepg_zone;
 
-#ifdef VM_ENABLE_CACHE
-static void vm_page_cache_turn_free(vm_page_t m);
-#endif
 static struct vnode *vm_page_alloc_init(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(uint8_t queue, vm_page_t m);
@@ -221,7 +209,6 @@ vm_get_pagedump_flags(int type, int value)
 	}
 }
 
-#ifndef VM_ENABLE_CACHE
 
 struct vm_page_percpu {
 	struct mtx	vpp_lock;
@@ -319,9 +306,6 @@ vm_page_percpu_free(vm_page_t m)
 	}
 	mtx_unlock(&ppcpu->vpp_lock);
 }
-
-#endif
-
 
 /*
  * Try to acquire a physical address lock while a pmap is locked.  If we
@@ -627,9 +611,7 @@ vm_page_startup(vm_offset_t vaddr)
 	 */
 	vm_reserv_init();
 #endif
-#ifdef VM_PERCPU_FREE
 	vm_page_percpu_init();
-#endif
 	return (vaddr);
 }
 
@@ -1435,154 +1417,6 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 }
 
 /*
- *	Convert all of the given object's cached pages that have a
- *	pindex within the given range into free pages.  If the value
- *	zero is given for "end", then the range's upper bound is
- *	infinity.  If the given object is backed by a vnode and it
- *	transitions from having one or more cached pages to none, the
- *	vnode's hold count is reduced. 
- */
-void
-vm_page_cache_free(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
-{
-#ifdef VM_ENABLE_CACHE
-	vm_page_t m;
-	boolean_t empty;
-
-	mtx_lock(&vm_page_queue_free_mtx);
-	if (__predict_false(vm_radix_is_empty(&object->cache))) {
-		mtx_unlock(&vm_page_queue_free_mtx);
-		return;
-	}
-	while ((m = vm_radix_lookup_ge(&object->cache, start)) != NULL) {
-		if (end != 0 && m->pindex >= end)
-			break;
-		vm_radix_remove(&object->cache, m->pindex);
-		vm_page_cache_turn_free(m);
-	}
-	empty = vm_radix_is_empty(&object->cache);
-	mtx_unlock(&vm_page_queue_free_mtx);
-	if (object->type == OBJT_VNODE && empty)
-		vdrop(object->handle);
-#endif
-}
-
-/*
- *	Returns the cached page that is associated with the given
- *	object and offset.  If, however, none exists, returns NULL.
- *
- *	The free page queue must be locked.
- */
-#ifdef VM_ENABLE_CACHE
-static inline vm_page_t
-vm_page_cache_lookup(vm_object_t object, vm_pindex_t pindex)
-{
-
-	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-	return (vm_radix_lookup(&object->cache, pindex));
-}
-#endif
-/*
- *	Remove the given cached page from its containing object's
- *	collection of cached pages.
- *
- *	The free page queue must be locked.
- */
-static void
-vm_page_cache_remove(vm_page_t m)
-{
-
-	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-	KASSERT((m->flags & PG_CACHED) != 0,
-	    ("vm_page_cache_remove: page %p is not cached", m));
-	vm_radix_remove(&m->object->cache, m->pindex);
-	m->object = NULL;
-	vm_cnt.v_cache_count--;
-}
-
-/*
- *	Transfer all of the cached pages with offset greater than or
- *	equal to 'offidxstart' from the original object's cache to the
- *	new object's cache.  However, any cached pages with offset
- *	greater than or equal to the new object's size are kept in the
- *	original object.  Initially, the new object's cache must be
- *	empty.  Offset 'offidxstart' in the original object must
- *	correspond to offset zero in the new object.
- *
- *	The new object must be locked.
- */
-void
-vm_page_cache_transfer(vm_object_t orig_object, vm_pindex_t offidxstart,
-    vm_object_t new_object)
-{
-#ifdef VM_ENABLE_CACHE
-	vm_page_t m;
-
-	/*
-	 * Insertion into an object's collection of cached pages
-	 * requires the object to be locked.  In contrast, removal does
-	 * not.
-	 */
-	VM_OBJECT_ASSERT_WLOCKED(new_object);
-	KASSERT(vm_radix_is_empty(&new_object->cache),
-	    ("vm_page_cache_transfer: object %p has cached pages",
-	    new_object));
-	mtx_lock(&vm_page_queue_free_mtx);
-	while ((m = vm_radix_lookup_ge(&orig_object->cache,
-	    offidxstart)) != NULL) {
-		/*
-		 * Transfer all of the pages with offset greater than or
-		 * equal to 'offidxstart' from the original object's
-		 * cache to the new object's cache.
-		 */
-		if ((m->pindex - offidxstart) >= new_object->size)
-			break;
-		vm_radix_remove(&orig_object->cache, m->pindex);
-		/* Update the page's object and offset. */
-		m->object = new_object;
-		m->pindex -= offidxstart;
-		if (vm_radix_insert(&new_object->cache, m))
-			vm_page_cache_turn_free(m);
-	}
-	mtx_unlock(&vm_page_queue_free_mtx);
-#endif
-}
-
-/*
- *	Returns TRUE if a cached page is associated with the given object and
- *	offset, and FALSE otherwise.
- *
- *	The object must be locked.
- */
-boolean_t
-vm_page_is_cached(vm_object_t object, vm_pindex_t pindex)
-{
-#ifdef VM_ENABLE_CACHE
-	vm_page_t m;
-#endif
-
-	/*
-	 * Insertion into an object's collection of cached pages requires the
-	 * object to be locked.  Therefore, if the object is locked and the
-	 * object's collection is empty, there is no need to acquire the free
-	 * page queues lock in order to prove that the specified page doesn't
-	 * exist.
-	 */
-	VM_OBJECT_ASSERT_WLOCKED(object);
-	if (__predict_true(vm_object_cache_is_empty(object)))
-		return (FALSE);
-#ifdef VM_ENABLE_CACHE
-	mtx_lock(&vm_page_queue_free_mtx);
-	m = vm_page_cache_lookup(object, pindex);
-	mtx_unlock(&vm_page_queue_free_mtx);
-	return (m != NULL);
-#else
-	panic("Found unexpected cached page.");
-	return (FALSE);
-#endif
-}
-
-/*
  *	vm_page_alloc:
  *
  *	Allocate and return a page that is associated with the specified
@@ -1598,9 +1432,6 @@ vm_page_is_cached(vm_object_t object, vm_pindex_t pindex)
  *	optional allocation flags:
  *	VM_ALLOC_COUNT(number)	the number of additional pages that the caller
  *				intends to allocate
- *	VM_ALLOC_IFCACHED	return page only if it is cached
- *	VM_ALLOC_IFNOTCACHED	return NULL, do not reactivate if the page
- *				is cached
  *	VM_ALLOC_NOBUSY		do not exclusive busy the page
  *	VM_ALLOC_NODUMP		do not include the page in a kernel core dump
  *	VM_ALLOC_NOOBJ		page is not associated with an object and
@@ -1614,9 +1445,6 @@ vm_page_is_cached(vm_object_t object, vm_pindex_t pindex)
 vm_page_t
 vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 {
-#ifdef VM_ENABLE_CACHE
-	vm_object_t m_object;
-#endif
 	struct vnode *vp = NULL;
 	vm_page_t m, mpred;
 	int flags, req_class;
@@ -1645,16 +1473,13 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		   ("vm_page_alloc: pindex already allocated"));
 	}
 
-#ifdef VM_PERCPU_FREE
 	if ((m = vm_page_percpu_alloc(object)) != NULL) {
 		flags = 0;
 		goto gotit;
 	}
-#endif
 	/*
 	 * The page allocation request can came from consumers which already
-	 * hold the free page queue mutex, like vm_page_insert() in
-	 * vm_page_cache().
+	 * hold the free page queue mutex
 	 */
 	mtx_lock_flags(&vm_page_queue_free_mtx, MTX_RECURSE);
 	if (vm_cnt.v_free_count + vm_cnt.v_cache_count > vm_cnt.v_free_reserved ||
@@ -1662,33 +1487,8 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	    vm_cnt.v_free_count + vm_cnt.v_cache_count > vm_cnt.v_interrupt_free_min) ||
 	    (req_class == VM_ALLOC_INTERRUPT &&
 		 vm_cnt.v_free_count + vm_cnt.v_cache_count > 0)) {
-#ifdef VM_ENABLE_CACHE
-		/*
-		 * Allocate from the free queue if the number of free pages
-		 * exceeds the minimum for the request class.
-		 */
-		if (object != NULL &&
-		    (m = vm_page_cache_lookup(object, pindex)) != NULL) {
-			if ((req & VM_ALLOC_IFNOTCACHED) != 0) {
-				mtx_unlock(&vm_page_queue_free_mtx);
-				return (NULL);
-			}
-			if (vm_phys_unfree_page(m))
-				vm_phys_set_pool(VM_FREEPOOL_DEFAULT, m, 0);
 #if VM_NRESERVLEVEL > 0
-			else if (!vm_reserv_reactivate_page(m))
-#else
-			else
-#endif
-				panic("vm_page_alloc: cache page %p is missing"
-					  " from the free queue", m);
-		} else
-#endif
-			if ((req & VM_ALLOC_IFCACHED) != 0) {
-			mtx_unlock(&vm_page_queue_free_mtx);
-			return (NULL);
-#if VM_NRESERVLEVEL > 0
-		} else if (object == NULL || (object->flags & (OBJ_COLORED |
+		if (object == NULL || (object->flags & (OBJ_COLORED |
 		    OBJ_FICTITIOUS)) != OBJ_COLORED || (m =
 		    vm_reserv_alloc_page(object, pindex, mpred)) == NULL) {
 #else
@@ -1730,23 +1530,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	    ("vm_page_alloc: page %p has unexpected memattr %d", m,
 	    pmap_page_get_memattr(m)));
 	if ((m->flags & PG_CACHED) != 0) {
-#ifdef VM_ENABLE_CACHE
-		KASSERT((m->flags & PG_ZERO) == 0,
-		    ("vm_page_alloc: cached page %p is PG_ZERO", m));
-		KASSERT(m->valid != 0,
-		    ("vm_page_alloc: cached page %p is invalid", m));
-		if (m->object == object && m->pindex == pindex)
-			vm_cnt.v_reactivated++;
-		else
-			m->valid = 0;
-		m_object = m->object;
-		vm_page_cache_remove(m);
-		if (m_object->type == OBJT_VNODE &&
-		    vm_object_cache_is_empty(m_object))
-			vp = m_object->handle;
-#else
 		panic("Found unexpected cached page.");
-#endif
 	} else {
 		KASSERT(m->valid == 0,
 		    ("vm_page_alloc: free page %p is valid", m));
@@ -1763,9 +1547,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	if ((req & VM_ALLOC_ZERO) != 0)
 		flags = PG_ZERO;
 	flags &= m->flags;
-#ifdef VM_PERCPU_FREE
 gotit:
-#endif
 	if ((req & VM_ALLOC_NODUMP) != 0)
 		flags |= PG_DUMP_PRIO_IGNORE;
 	else if (req & VM_ALLOC_DUMP_PR_HIGH)
@@ -1776,19 +1558,7 @@ gotit:
 		flags |= PG_DUMP_PRIO_LEAST;
 	else
 		flags |= PG_DUMP_PRIO_LOW;
-#if 0
-	ASSERT_DEBUG((flags & PG_DUMP_MASK) != PG_DUMP_PRIO_DUMPED);
-#endif
-#ifdef notyet
-	/* XXX needed? */
-	if (m->valid == 0 && (m->oflags & VPO_PREFETCH) != 0)
-		isi_cache_stat_prefetch_miss((m->oflags & VPO_CACHEL1) ?
-									 CACHE_STAT_L1_DATA : CACHE_STAT_L2_DATA, 1);
-#endif
 	m->cacheage_ticks = ticks;
-#ifdef notyet
-	rpe_change(&m->rpe, (object != NULL) ? object->rpid : RP_ID_KMEM);
-#endif
 	m->flags = flags;
 	m->aflags = 0;
 	m->oflags = object == NULL || (object->flags & OBJ_UNMANAGED) != 0 ?
@@ -2082,7 +1852,6 @@ vm_page_alloc_init(vm_page_t m)
 		    ("vm_page_alloc_init: cached page %p is PG_ZERO", m));
 		m->valid = 0;
 		m_object = m->object;
-		vm_page_cache_remove(m);
 		if (m_object->type == OBJT_VNODE &&
 		    vm_object_cache_is_empty(m_object))
 			drop = m_object->handle;
@@ -2379,9 +2148,8 @@ vm_page_activate(vm_page_t m)
 /*
  *	vm_page_free_wakeup:
  *
- *	Helper routine for vm_page_free_toq() and vm_page_cache().  This
- *	routine is called when a page has been added to the cache or free
- *	queues.
+ *	Helper routine for vm_page_free_toq().  This routine is called
+ *	when a page has been added to the free queues.
  *
  *	The page queues must be locked.
  */
@@ -2410,34 +2178,6 @@ vm_page_free_wakeup(void)
 	}
 }
 
-#ifdef VM_ENABLE_CACHE
-/*
- *	Turn a cached page into a free page, by changing its attributes.
- *	Keep the statistics up-to-date.
- *
- *	The free page queue must be locked.
- */
-static void
-vm_page_cache_turn_free(vm_page_t m)
-{
-
-	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-
-	m->object = NULL;
-	m->valid = 0;
-	KASSERT((m->flags & PG_CACHED) != 0,
-	    ("vm_page_cache_turn_free: page %p is not cached", m));
-	m->flags &= ~PG_CACHED;
-	m->flags &= ~PG_DUMP_MASK;
-	m->flags |= PG_DUMP_PRIO_IGNORE;
-	KASSERT((m->flags & (PG_CACHED | PG_DUMP_MASK)) == PG_DUMP_PRIO_IGNORE,
-			("vm_page_cache_turn_free: page %p has inconsistent flags", m));
-	m->oflags &= ~(VPO_IDI | VPO_PREFETCH | VPO_CACHEL1);
-	vm_cnt.v_cache_count--;
-	vm_phys_freecnt_adj(m, 1);
-}
-#endif
-
 /*
  *	vm_page_free_toq:
  *
@@ -2449,9 +2189,7 @@ vm_page_cache_turn_free(vm_page_t m)
 void
 vm_page_free_toq(vm_page_t m)
 {
-#ifdef VM_PERCPU_FREE
 	int can_cache;
-#endif
 
 	if ((m->oflags & VPO_UNMANAGED) == 0) {
 		vm_page_lock_assert(m, MA_OWNED);
@@ -2465,13 +2203,12 @@ vm_page_free_toq(vm_page_t m)
 	if (vm_page_sbusied(m))
 		panic("vm_page_free: freeing busy page %p", m);
 
-#ifdef VM_PERCPU_FREE
 	can_cache = 0;
 	if (m->object != NULL) {
 		VM_OBJECT_ASSERT_LOCKED(m->object);
 		can_cache = ((m->object->flags & OBJ_COLORED) == 0);
 	}
-#endif
+
 	/*
 	 * Unqueue, then remove page.  Note that we cannot destroy
 	 * the page here because we do not want to call the pager's
@@ -2492,13 +2229,8 @@ vm_page_free_toq(vm_page_t m)
 	m->valid = 0;
 	vm_page_undirty(m);
 
-	if (m->oflags & VPO_PREFETCH) {
+	if (m->oflags & VPO_PREFETCH)
 		m->oflags &= ~VPO_PREFETCH;
-#ifdef notyet
-		isi_cache_stat_prefetch_miss((m->oflags & VPO_CACHEL1) ?
-									 CACHE_STAT_L1_DATA : CACHE_STAT_L2_DATA, 1);
-#endif
-	}
 	m->cacheage_ticks = 0;
 
 	if (m->wire_count != 0)
@@ -2517,12 +2249,10 @@ vm_page_free_toq(vm_page_t m)
 
 		m->flags &= ~PG_DUMP_MASK;
 		m->flags |= PG_DUMP_PRIO_IGNORE;
-#ifdef VM_PERCPU_FREE
 		if (can_cache) {
 			vm_page_percpu_free(m);
 			return;
 		}
-#endif
 		/*
 		 * Insert the page into the physical memory allocator's
 		 * cache/free page queues.
@@ -2691,27 +2421,6 @@ vm_page_deactivate(vm_page_t m)
 }
 
 /*
- * vm_page_try_to_cache:
- *
- * Returns 0 on failure, 1 on success
- */
-int
-vm_page_try_to_cache(vm_page_t m)
-{
-
-	vm_page_lock_assert(m, MA_OWNED);
-	VM_OBJECT_ASSERT_WLOCKED(m->object);
-	if (m->dirty || m->hold_count || m->wire_count ||
-	    (m->oflags & VPO_UNMANAGED) != 0 || vm_page_busied(m))
-		return (0);
-	pmap_remove_all(m);
-	if (m->dirty)
-		return (0);
-	vm_page_cache(m);
-	return (1);
-}
-
-/*
  * vm_page_try_to_free()
  *
  *	Attempt to free the page.  If we cannot free it, we do nothing.
@@ -2732,118 +2441,6 @@ vm_page_try_to_free(vm_page_t m)
 		return (0);
 	vm_page_free(m);
 	return (1);
-}
-
-/*
- * vm_page_cache
- *
- * Put the specified page onto the page cache queue (if appropriate).
- *
- * The object and page must be locked.
- */
-void
-vm_page_cache(vm_page_t m)
-{
-	vm_object_t object;
-#ifdef VM_ENABLE_CACHE
-	boolean_t cache_was_empty;
-#endif
-
-	vm_page_lock_assert(m, MA_OWNED);
-	object = m->object;
-	VM_OBJECT_ASSERT_WLOCKED(object);
-	if (vm_page_busied(m) || (m->oflags & VPO_UNMANAGED) ||
-	    m->hold_count || m->wire_count)
-		panic("vm_page_cache: attempting to cache busy page");
-	KASSERT(!pmap_page_is_mapped(m),
-	    ("vm_page_cache: page %p is mapped", m));
-	KASSERT(m->dirty == 0, ("vm_page_cache: page %p is dirty", m));
-	if (m->valid == 0 || object->type == OBJT_DEFAULT ||
-	    (object->type == OBJT_SWAP &&
-	    !vm_pager_has_page(object, m->pindex, NULL, NULL))) {
-		/*
-		 * Hypothesis: A cache-eligible page belonging to a
-		 * default object or swap object but without a backing
-		 * store must be zero filled.
-		 */
-		vm_page_free(m);
-		return;
-	}
-#ifdef VM_ENABLE_CACHE
-	KASSERT((m->flags & PG_CACHED) == 0,
-	    ("vm_page_cache: page %p is already cached", m));
-
-	/*
-	 * Remove the page from the paging queues.
-	 */
-	vm_page_remque(m);
-
-	/*
-	 * Remove the page from the object's collection of resident
-	 * pages. 
-	 */
-	vm_radix_remove(&object->rtree, m->pindex);
-	TAILQ_REMOVE(&object->memq, m, listq);
-	object->resident_page_count--;
-
-	/*
-	 * Restore the default memory attribute to the page.
-	 */
-	if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
-		pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
-
-	/*
-	 * Insert the page into the object's collection of cached pages
-	 * and the physical memory allocator's cache/free page queues.
-	 */
-	m->flags &= ~PG_ZERO;
-	mtx_lock(&vm_page_queue_free_mtx);
-	cache_was_empty = vm_radix_is_empty(&object->cache);
-	if (vm_radix_insert(&object->cache, m)) {
-		mtx_unlock(&vm_page_queue_free_mtx);
-		if (object->resident_page_count == 0)
-			vdrop(object->handle);
-		m->object = NULL;
-		vm_page_free(m);
-		return;
-	}
-
-	/*
-	 * The above call to vm_radix_insert() could reclaim the one pre-
-	 * existing cached page from this object, resulting in a call to
-	 * vdrop().
-	 */
-	if (!cache_was_empty)
-		cache_was_empty = vm_radix_is_singleton(&object->cache);
-
-	m->flags |= PG_CACHED;
-	vm_cnt.v_cache_count++;
-	PCPU_INC(cnt.v_tcached);
-#if VM_NRESERVLEVEL > 0
-	if (!vm_reserv_free_page(m)) {
-#else
-	if (TRUE) {
-#endif
-		vm_phys_set_pool(VM_FREEPOOL_CACHE, m, 0);
-		vm_phys_free_pages(m, 0);
-	}
-	vm_page_free_wakeup();
-	mtx_unlock(&vm_page_queue_free_mtx);
-
-	/*
-	 * Increment the vnode's hold count if this is the object's only
-	 * cached page.  Decrement the vnode's hold count if this was
-	 * the object's only resident page.
-	 */
-	if (object->type == OBJT_VNODE) {
-		if (cache_was_empty && object->resident_page_count != 0)
-			vhold(object->handle);
-		else if (!cache_was_empty && object->resident_page_count == 0)
-			vdrop(object->handle);
-	}
-#else /* !VM_ENABLE_CACHE */
-	vm_page_free(m);
-#endif
 }
 
 /*

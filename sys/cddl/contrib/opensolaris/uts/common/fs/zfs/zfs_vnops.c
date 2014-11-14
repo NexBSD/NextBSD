@@ -380,8 +380,7 @@ page_busy(vnode_t *vp, int64_t start, int64_t off, int64_t nbytes)
 			vm_page_sbusy(pp);
 		} else if (pp == NULL) {
 			pp = vm_page_alloc(obj, OFF_TO_IDX(start),
-			    VM_ALLOC_SYSTEM | VM_ALLOC_IFCACHED |
-			    VM_ALLOC_SBUSY);
+			    VM_ALLOC_SYSTEM | VM_ALLOC_SBUSY);
 		} else {
 			ASSERT(pp != NULL && !pp->valid);
 			pp = NULL;

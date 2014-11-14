@@ -1907,10 +1907,8 @@ vfs_vmio_release(struct buf *bp)
 		if ((bp->b_flags & B_ASYNC) == 0 && !m->valid) {
 			if (m->wire_count == 0 && !vm_page_busied(m))
 				vm_page_free(m);
-		} else if (bp->b_flags & B_DIRECT)
+		} else if ((bp->b_flags & B_DIRECT) || buf_vm_page_count_severe())
 			vm_page_try_to_free(m);
-		else if (buf_vm_page_count_severe())
-			vm_page_try_to_cache(m);
 		vm_page_unlock(m);
 	}
 	VM_OBJECT_WUNLOCK(bp->b_bufobj->bo_object);

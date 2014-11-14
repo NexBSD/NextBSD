@@ -1039,7 +1039,7 @@ vm_fault_cache_behind(const struct faultstate *fs, int distance)
 				if (m->dirty != 0)
 					vm_page_deactivate(m);
 				else
-					vm_page_cache(m);
+					vm_page_free(m);
 			}
 			vm_page_unlock(m);
 		}
@@ -1485,8 +1485,7 @@ vm_fault_additional_pages(m, rbehind, rahead, marray, reqpage)
 		for (i = 0, tpindex = pindex - 1; tpindex >= startpindex &&
 		    tpindex < pindex; i++, tpindex--) {
 
-			rtm = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL |
-			    VM_ALLOC_IFNOTCACHED | vmalloc_dump_flag);
+			rtm = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL | vmalloc_dump_flag);
 			if (rtm == NULL) {
 				/*
 				 * Shift the allocated pages to the
@@ -1524,8 +1523,7 @@ vm_fault_additional_pages(m, rbehind, rahead, marray, reqpage)
 
 	for (; tpindex < endpindex; i++, tpindex++) {
 
-		rtm = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL |
-		    VM_ALLOC_IFNOTCACHED | vmalloc_dump_flag);
+		rtm = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL | vmalloc_dump_flag);
 		if (rtm == NULL) {
 			break;
 		}
