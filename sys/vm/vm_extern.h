@@ -104,5 +104,15 @@ void vm_imgact_unmap_page(struct sf_buf *sf);
 void vm_thread_dispose(struct thread *td);
 int vm_thread_new(struct thread *td, int pages);
 int vm_mlock(struct proc *, struct ucred *, const void *, size_t);
+
+struct vmspace_swap_ctx {
+	struct vmspace *old_vmspace;
+	struct vmspace *new_vmspace;
+	bool did_swap;
+};
+
+void vmspace_swap(struct proc *, struct vmspace_swap_ctx *, bool);
+void vmspace_restore(struct vmspace_swap_ctx *);
+
 #endif				/* _KERNEL */
 #endif				/* !_VM_EXTERN_H_ */

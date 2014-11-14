@@ -4177,6 +4177,91 @@ vm_map_lookup_done(vm_map_t map, vm_map_entry_t entry)
 	vm_map_unlock_read(map);
 }
 
+/*
+ * Internal version of vmspace_acquire_ref().  Some uses of this are called
+ * with a spinlock held where it is not safe to call vmspace_free().
+ */
+static struct vmspace *
+vmspace_acquire_ref_internal(struct proc *p, bool locked)
+{
+	struct vmspace *vm;
+	int refcnt;
+
+	vm = p->p_vmspace;
+	if (vm == NULL)
+		goto out;
+	do {
+		refcnt = vm->vm_refcnt;
+		if (refcnt <= 0) { 	/* Avoid 0->1 transition */
+			vm = NULL;
+			goto out;
+		}
+	} while (!atomic_cmpset_int(&vm->vm_refcnt, refcnt, refcnt + 1));
+	if (locked) {
+		KASSERT(vm == p->p_vmspace,
+				("Should not be able to change %p while locked", p));
+	} else if (vm != p->p_vmspace) {
+		vmspace_free(vm);
+		vm = NULL;
+	}
+out:
+	return (vm);
+}
+
+/*
+ * Swap out the current thread's userspace pmap with the one for process @a
+ * userp.  Context is saved in @a sc for use later when restoring.
+ *
+ * This code is a modified version of what's in aio_daemon().
+ */
+void
+vmspace_swap(struct proc *userp, struct vmspace_swap_ctx *sc, bool locked)
+{
+
+	sc->old_vmspace = curthread->td_proc->p_vmspace;
+	sc->new_vmspace = NULL;
+	sc->did_swap = false;
+
+	/* Skip a swap if the vmspace is already set correctly. */
+	if (sc->old_vmspace == userp->p_vmspace) {
+		sc->new_vmspace = sc->old_vmspace;
+		goto out;
+	}
+
+	sc->new_vmspace = vmspace_acquire_ref_internal(userp, locked);
+	if (sc->new_vmspace == NULL)
+		goto out;
+
+	curproc->p_vmspace = sc->new_vmspace;
+	pmap_activate(curthread);
+	sc->did_swap = true;
+out:
+	return;
+}
+
+/*
+ * Restore the current thread's userspace pmap as it was when
+ * vmspace_swap() was called.
+ */
+void
+vmspace_restore(struct vmspace_swap_ctx *sc)
+{
+
+	if (!sc->did_swap) {
+		KASSERT(curproc->p_vmspace == sc->old_vmspace,
+				("No vmspace swap but proc %p mismatch %p", curproc, sc));
+		goto out;
+	}
+	KASSERT(sc->new_vmspace != sc->old_vmspace,
+			("Swapped vmspace but %p", sc));
+
+	curproc->p_vmspace = sc->old_vmspace;
+	pmap_activate(curthread);
+	vmspace_free(sc->new_vmspace);
+out:
+	return;
+}
+
 #include "opt_ddb.h"
 #ifdef DDB
 #include <sys/kernel.h>
