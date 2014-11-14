@@ -119,6 +119,15 @@ __FBSDID("$FreeBSD$");
 #include <machine/md_var.h>
 
 /*
+ * Isilon:  The per-cpu page cache only works when we do not require the
+ * vm_page_queue_free_mtx to protect the object's cache queue.  The cache
+ * queue gives us no real advantage and so it is disabled by default.
+ */
+#ifndef VM_ENABLE_CACHE
+#define	VM_PERCPU_FREE	1
+#endif
+
+/*
  *	Associated with page of user-allocatable memory is a
  *	page structure.
  */
@@ -143,8 +152,10 @@ SYSCTL_INT(_vm, OID_AUTO, tryrelock_restart, CTLFLAG_RD,
 
 static uma_zone_t fakepg_zone;
 
-static struct vnode *vm_page_alloc_init(vm_page_t m);
+#ifdef VM_ENABLE_CACHE
 static void vm_page_cache_turn_free(vm_page_t m);
+#endif
+static struct vnode *vm_page_alloc_init(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(uint8_t queue, vm_page_t m);
 static void vm_page_init_fakepg(void *dummy);
@@ -209,6 +220,107 @@ vm_get_pagedump_flags(int type, int value)
 			return (VM_ALLOC_NODUMP);
 	}
 }
+
+#ifndef VM_ENABLE_CACHE
+
+struct vm_page_percpu {
+	struct mtx	vpp_lock;
+	struct pglist	vpp_pages;
+	int		vpp_cnt;
+} __aligned(CACHE_LINE_SIZE);
+
+struct vm_page_percpu page_percpu[MAXCPU] __aligned(CACHE_LINE_SIZE);
+
+#define	VM_PERCPU_MIN		128
+#define	VM_PERCPU_TARGET	(VM_PERCPU_MIN * 2)
+#define	VM_PERCPU_MAX		(VM_PERCPU_MIN * 3)
+
+static void
+vm_page_percpu_init(void)
+{
+	int i;
+
+	for (i = 0; i < MAXCPU; i++) {
+		mtx_init(&page_percpu[i].vpp_lock, "per-cpu free mtx", NULL,
+				 MTX_DEF);
+		TAILQ_INIT(&page_percpu[i].vpp_pages);
+		page_percpu[i].vpp_cnt = 0;
+	}
+}
+
+static vm_page_t
+vm_page_percpu_alloc(vm_object_t object)
+{
+	struct vm_page_percpu *ppcpu = &page_percpu[PCPU_GET(cpuid)];
+	vm_page_t m;
+
+#if VM_NRESERVLEVEL > 0
+	/*
+	 * Skip the cache of free pages for objects that have reservations
+	 * so that they can still get superpages.  This will never be set
+	 * for objects populated via the filesystem buffercache.
+	 */
+	if (object != NULL && (object->flags & OBJ_COLORED) != 0)
+		return (NULL);
+#endif
+
+	mtx_lock(&ppcpu->vpp_lock);
+	if (ppcpu->vpp_cnt < VM_PERCPU_MIN) {
+		mtx_lock(&vm_page_queue_free_mtx);
+		while (!vm_page_count_min() &&
+			   ppcpu->vpp_cnt < VM_PERCPU_TARGET)  {
+			m = vm_phys_alloc_pages(object != NULL ?
+									VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT, 0);
+			if (m == NULL)
+				break;
+			vm_phys_freecnt_adj(m, -1);
+			ppcpu->vpp_cnt++;
+			TAILQ_INSERT_TAIL(&ppcpu->vpp_pages, m, plinks.q);
+		}
+		mtx_unlock(&vm_page_queue_free_mtx);
+	}
+	m = NULL;
+	if (ppcpu->vpp_cnt > 0) {
+		m = TAILQ_FIRST(&ppcpu->vpp_pages);
+		TAILQ_REMOVE(&ppcpu->vpp_pages, m, plinks.q);
+		ppcpu->vpp_cnt--;
+	}
+	mtx_unlock(&ppcpu->vpp_lock);
+
+	return (m);
+}
+
+static inline void vm_page_free_wakeup(void);
+
+static void
+vm_page_percpu_free(vm_page_t m)
+{
+	struct vm_page_percpu *ppcpu = &page_percpu[PCPU_GET(cpuid)];
+
+	mtx_lock(&ppcpu->vpp_lock);
+	TAILQ_INSERT_HEAD(&ppcpu->vpp_pages, m, plinks.q);
+	ppcpu->vpp_cnt++;
+	if (ppcpu->vpp_cnt > VM_PERCPU_MAX) {
+		mtx_lock(&vm_page_queue_free_mtx);
+		while (ppcpu->vpp_cnt > VM_PERCPU_TARGET) {
+			m = TAILQ_FIRST(&ppcpu->vpp_pages);
+			TAILQ_REMOVE(&ppcpu->vpp_pages, m, plinks.q);
+			ppcpu->vpp_cnt--;
+			vm_phys_freecnt_adj(m, 1);
+#if VM_NRESERVLEVEL > 0
+			if (!vm_reserv_free_page(m))
+#else
+				if (TRUE)
+#endif
+					vm_phys_free_pages(m, 0);
+		}
+		vm_page_free_wakeup();
+		mtx_unlock(&vm_page_queue_free_mtx);
+	}
+	mtx_unlock(&ppcpu->vpp_lock);
+}
+
+#endif
 
 
 /*
@@ -514,6 +626,9 @@ vm_page_startup(vm_offset_t vaddr)
 	 * Initialize the reservation management system.
 	 */
 	vm_reserv_init();
+#endif
+#ifdef VM_PERCPU_FREE
+	vm_page_percpu_init();
 #endif
 	return (vaddr);
 }
@@ -1330,6 +1445,7 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 void
 vm_page_cache_free(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
 {
+#ifdef VM_ENABLE_CACHE
 	vm_page_t m;
 	boolean_t empty;
 
@@ -1348,6 +1464,7 @@ vm_page_cache_free(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
 	mtx_unlock(&vm_page_queue_free_mtx);
 	if (object->type == OBJT_VNODE && empty)
 		vdrop(object->handle);
+#endif
 }
 
 /*
@@ -1356,6 +1473,7 @@ vm_page_cache_free(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
  *
  *	The free page queue must be locked.
  */
+#ifdef VM_ENABLE_CACHE
 static inline vm_page_t
 vm_page_cache_lookup(vm_object_t object, vm_pindex_t pindex)
 {
@@ -1363,7 +1481,7 @@ vm_page_cache_lookup(vm_object_t object, vm_pindex_t pindex)
 	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
 	return (vm_radix_lookup(&object->cache, pindex));
 }
-
+#endif
 /*
  *	Remove the given cached page from its containing object's
  *	collection of cached pages.
@@ -1397,6 +1515,7 @@ void
 vm_page_cache_transfer(vm_object_t orig_object, vm_pindex_t offidxstart,
     vm_object_t new_object)
 {
+#ifdef VM_ENABLE_CACHE
 	vm_page_t m;
 
 	/*
@@ -1426,6 +1545,7 @@ vm_page_cache_transfer(vm_object_t orig_object, vm_pindex_t offidxstart,
 			vm_page_cache_turn_free(m);
 	}
 	mtx_unlock(&vm_page_queue_free_mtx);
+#endif
 }
 
 /*
@@ -1437,7 +1557,9 @@ vm_page_cache_transfer(vm_object_t orig_object, vm_pindex_t offidxstart,
 boolean_t
 vm_page_is_cached(vm_object_t object, vm_pindex_t pindex)
 {
+#ifdef VM_ENABLE_CACHE
 	vm_page_t m;
+#endif
 
 	/*
 	 * Insertion into an object's collection of cached pages requires the
@@ -1449,10 +1571,15 @@ vm_page_is_cached(vm_object_t object, vm_pindex_t pindex)
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	if (__predict_true(vm_object_cache_is_empty(object)))
 		return (FALSE);
+#ifdef VM_ENABLE_CACHE
 	mtx_lock(&vm_page_queue_free_mtx);
 	m = vm_page_cache_lookup(object, pindex);
 	mtx_unlock(&vm_page_queue_free_mtx);
 	return (m != NULL);
+#else
+	panic("Found unexpected cached page.");
+	return (FALSE);
+#endif
 }
 
 /*
@@ -1487,8 +1614,10 @@ vm_page_is_cached(vm_object_t object, vm_pindex_t pindex)
 vm_page_t
 vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 {
-	struct vnode *vp = NULL;
+#ifdef VM_ENABLE_CACHE
 	vm_object_t m_object;
+#endif
+	struct vnode *vp = NULL;
 	vm_page_t m, mpred;
 	int flags, req_class;
 
@@ -1516,6 +1645,12 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		   ("vm_page_alloc: pindex already allocated"));
 	}
 
+#ifdef VM_PERCPU_FREE
+	if ((m = vm_page_percpu_alloc(object)) != NULL) {
+		flags = 0;
+		goto gotit;
+	}
+#endif
 	/*
 	 * The page allocation request can came from consumers which already
 	 * hold the free page queue mutex, like vm_page_insert() in
@@ -1526,7 +1661,8 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	    (req_class == VM_ALLOC_SYSTEM &&
 	    vm_cnt.v_free_count + vm_cnt.v_cache_count > vm_cnt.v_interrupt_free_min) ||
 	    (req_class == VM_ALLOC_INTERRUPT &&
-	    vm_cnt.v_free_count + vm_cnt.v_cache_count > 0)) {
+		 vm_cnt.v_free_count + vm_cnt.v_cache_count > 0)) {
+#ifdef VM_ENABLE_CACHE
 		/*
 		 * Allocate from the free queue if the number of free pages
 		 * exceeds the minimum for the request class.
@@ -1545,8 +1681,10 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 			else
 #endif
 				panic("vm_page_alloc: cache page %p is missing"
-				    " from the free queue", m);
-		} else if ((req & VM_ALLOC_IFCACHED) != 0) {
+					  " from the free queue", m);
+		} else
+#endif
+			if ((req & VM_ALLOC_IFCACHED) != 0) {
 			mtx_unlock(&vm_page_queue_free_mtx);
 			return (NULL);
 #if VM_NRESERVLEVEL > 0
@@ -1592,6 +1730,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	    ("vm_page_alloc: page %p has unexpected memattr %d", m,
 	    pmap_page_get_memattr(m)));
 	if ((m->flags & PG_CACHED) != 0) {
+#ifdef VM_ENABLE_CACHE
 		KASSERT((m->flags & PG_ZERO) == 0,
 		    ("vm_page_alloc: cached page %p is PG_ZERO", m));
 		KASSERT(m->valid != 0,
@@ -1605,6 +1744,9 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		if (m_object->type == OBJT_VNODE &&
 		    vm_object_cache_is_empty(m_object))
 			vp = m_object->handle;
+#else
+		panic("Found unexpected cached page.");
+#endif
 	} else {
 		KASSERT(m->valid == 0,
 		    ("vm_page_alloc: free page %p is valid", m));
@@ -1621,8 +1763,32 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	if ((req & VM_ALLOC_ZERO) != 0)
 		flags = PG_ZERO;
 	flags &= m->flags;
+#ifdef VM_PERCPU_FREE
+gotit:
+#endif
 	if ((req & VM_ALLOC_NODUMP) != 0)
-		flags |= PG_NODUMP;
+		flags |= PG_DUMP_PRIO_IGNORE;
+	else if (req & VM_ALLOC_DUMP_PR_HIGH)
+		flags |= PG_DUMP_PRIO_ESSENTIAL;
+	else if (req & VM_ALLOC_DUMP_PR_MEDIUM)
+		flags |= PG_DUMP_PRIO_HIGH;
+	else if (req & VM_ALLOC_DUMP_PR_LOW)
+		flags |= PG_DUMP_PRIO_LEAST;
+	else
+		flags |= PG_DUMP_PRIO_LOW;
+#if 0
+	ASSERT_DEBUG((flags & PG_DUMP_MASK) != PG_DUMP_PRIO_DUMPED);
+#endif
+#ifdef notyet
+	/* XXX needed? */
+	if (m->valid == 0 && (m->oflags & VPO_PREFETCH) != 0)
+		isi_cache_stat_prefetch_miss((m->oflags & VPO_CACHEL1) ?
+									 CACHE_STAT_L1_DATA : CACHE_STAT_L2_DATA, 1);
+#endif
+	m->cacheage_ticks = ticks;
+#ifdef notyet
+	rpe_change(&m->rpe, (object != NULL) ? object->rpid : RP_ID_KMEM);
+#endif
 	m->flags = flags;
 	m->aflags = 0;
 	m->oflags = object == NULL || (object->flags & OBJ_UNMANAGED) != 0 ?
@@ -2230,6 +2396,7 @@ vm_page_free_wakeup(void)
 	}
 }
 
+#ifdef VM_ENABLE_CACHE
 /*
  *	Turn a cached page into a free page, by changing its attributes.
  *	Keep the statistics up-to-date.
@@ -2250,6 +2417,7 @@ vm_page_cache_turn_free(vm_page_t m)
 	vm_cnt.v_cache_count--;
 	vm_phys_freecnt_adj(m, 1);
 }
+#endif
 
 /*
  *	vm_page_free_toq:
@@ -2262,6 +2430,9 @@ vm_page_cache_turn_free(vm_page_t m)
 void
 vm_page_free_toq(vm_page_t m)
 {
+#ifdef VM_PERCPU_FREE
+	int can_cache;
+#endif
 
 	if ((m->oflags & VPO_UNMANAGED) == 0) {
 		vm_page_lock_assert(m, MA_OWNED);
@@ -2275,6 +2446,13 @@ vm_page_free_toq(vm_page_t m)
 	if (vm_page_sbusied(m))
 		panic("vm_page_free: freeing busy page %p", m);
 
+#ifdef VM_PERCPU_FREE
+	can_cache = 0;
+	if (m->object != NULL) {
+		VM_OBJECT_ASSERT_LOCKED(m->object);
+		can_cache = ((m->object->flags & OBJ_COLORED) == 0);
+	}
+#endif
 	/*
 	 * Unqueue, then remove page.  Note that we cannot destroy
 	 * the page here because we do not want to call the pager's
@@ -2294,6 +2472,15 @@ vm_page_free_toq(vm_page_t m)
 
 	m->valid = 0;
 	vm_page_undirty(m);
+
+	if (m->oflags & VPO_PREFETCH) {
+		m->oflags &= ~VPO_PREFETCH;
+#ifdef notyet
+		isi_cache_stat_prefetch_miss((m->oflags & VPO_CACHEL1) ?
+									 CACHE_STAT_L1_DATA : CACHE_STAT_L2_DATA, 1);
+#endif
+	}
+	m->cacheage_ticks = 0;
 
 	if (m->wire_count != 0)
 		panic("vm_page_free: freeing wired page %p", m);
@@ -2403,8 +2590,10 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 			if ((m->oflags & VPO_UNMANAGED) != 0 ||
 			    m->object == NULL)
 				return;
-			if (queue == PQ_INACTIVE)
+			if (queue == PQ_INACTIVE) {
 				m->flags &= ~PG_WINATCFLS;
+				m->cacheage_ticks = ticks;
+			}
 			vm_page_enqueue(queue, m);
 		}
 	} else
@@ -2451,6 +2640,8 @@ _vm_page_deactivate(vm_page_t m, int athead)
 		pq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
 		vm_pagequeue_lock(pq);
 		m->queue = PQ_INACTIVE;
+
+		m->cacheage_ticks = (athead == 0) ? ticks : 0;
 		if (athead)
 			TAILQ_INSERT_HEAD(&pq->pq_pl, m, plinks.q);
 		else
@@ -2527,7 +2718,9 @@ void
 vm_page_cache(vm_page_t m)
 {
 	vm_object_t object;
+#ifdef VM_ENABLE_CACHE
 	boolean_t cache_was_empty;
+#endif
 
 	vm_page_lock_assert(m, MA_OWNED);
 	object = m->object;
@@ -2549,6 +2742,7 @@ vm_page_cache(vm_page_t m)
 		vm_page_free(m);
 		return;
 	}
+#ifdef VM_ENABLE_CACHE
 	KASSERT((m->flags & PG_CACHED) == 0,
 	    ("vm_page_cache: page %p is already cached", m));
 
@@ -2570,6 +2764,13 @@ vm_page_cache(vm_page_t m)
 	 */
 	if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
 		pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
+
+#ifdef VM_PERCPU_FREE
+		if (can_cache) {
+			vm_page_percpu_free(m);
+			return;
+		}
+#endif
 
 	/*
 	 * Insert the page into the object's collection of cached pages
@@ -2620,6 +2821,9 @@ vm_page_cache(vm_page_t m)
 		else if (!cache_was_empty && object->resident_page_count == 0)
 			vdrop(object->handle);
 	}
+#else /* !VM_ENABLE_CACHE */
+	vm_page_free(m);
+#endif
 }
 
 /*

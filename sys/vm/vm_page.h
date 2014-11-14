@@ -147,7 +147,8 @@ struct vm_page {
 	uint16_t hold_count;		/* page hold count (P) */
 	uint16_t flags;			/* page PG_* flags (P) */
 	uint8_t aflags;			/* access is atomic */
-	uint8_t oflags;			/* page VPO_* flags (O) */
+	uint8_t idict;
+#define	VM_IDICT_INVALID	29	/* IDI_CLASS_INVALID */kn
 	uint8_t	queue;			/* page queue index (P,Q) */
 	int8_t psind;			/* pagesizes[] index (O) */
 	int8_t segind;
@@ -158,6 +159,8 @@ struct vm_page {
 	/* so, on normal X86 kernels, they must be at least 8 bits wide */
 	vm_page_bits_t valid;		/* map of valid DEV_BSIZE chunks (O) */
 	vm_page_bits_t dirty;		/* map of dirty DEV_BSIZE chunks (M) */
+	uint16_t oflags;			/* page VPO_* flags (O) */
+	int cacheage_ticks;		/* time when last touched in cache */
 };
 
 /*
@@ -174,11 +177,17 @@ struct vm_page {
  * 	 mappings, and such pages are also not on any PQ queue.
  *
  */
-#define	VPO_UNUSED01	0x01		/* --available-- */
-#define	VPO_SWAPSLEEP	0x02		/* waiting for swap to finish */
-#define	VPO_UNMANAGED	0x04		/* no PV management for page */
-#define	VPO_SWAPINPROG	0x08		/* swap I/O in progress on page */
-#define	VPO_NOSYNC	0x10		/* do not collect for syncer */
+#define	VPO_L3_VALID	0x0001		/* page was fetched from L3 */
+#define	VPO_SWAPSLEEP	0x0002		/* waiting for swap to finish */
+#define	VPO_UNMANAGED	0x0004		/* no PV management for page */
+#define	VPO_SWAPINPROG	0x0008		/* swap I/O in progress on page */
+#define	VPO_NOSYNC	0x0010		/* do not collect for syncer */
+#define	VPO_CACHEL1	0x0020		/* page is in L1 cache (not L2) */
+#define	VPO_PREFETCH	0x0040		/* unused prefetch buffer */
+#define	VPO_IDI		0x0080		/* contents previously IDI verified */
+#define	VPO_INODE	0x0100		/* page hold inode data */
+
+#define	VPO_ISI_COPY_MASK		(VPO_CACHEL1 | VPO_PREFETCH)
 
 /*
  * Busy page implementation details.
