@@ -1905,7 +1905,7 @@ vm_page_alloc_contig(vm_object_t object, vm_pindex_t pindex, int req,
 	struct vnode *drop;
 	struct spglist deferred_vdrop_list;
 	vm_page_t m, m_tmp, m_ret;
-	u_int flags;
+	u_int flags, dflags;
 	int req_class;
 
 	KASSERT((object != NULL) == ((req & VM_ALLOC_NOOBJ) == 0) &&
@@ -1976,9 +1976,21 @@ retry:
 	/*
 	 * Initialize the pages.  Only the PG_ZERO flag is inherited.
 	 */
-	flags = 0;
+	dflags = flags = 0;
 	if ((req & VM_ALLOC_ZERO) != 0)
 		flags = PG_ZERO;
+	if ((req & VM_ALLOC_NODUMP) != 0)
+		dflags |= PG_DUMP_PRIO_IGNORE;
+	else if (req & VM_ALLOC_DUMP_PR_HIGH)
+		dflags |= PG_DUMP_PRIO_ESSENTIAL;
+	else if (req & VM_ALLOC_DUMP_PR_MEDIUM)
+		dflags |= PG_DUMP_PRIO_HIGH;
+	else if (req & VM_ALLOC_DUMP_PR_LOW)
+		dflags |= PG_DUMP_PRIO_LEAST;
+	else {
+		/* Defaults to PG_DUMP_PRIO_MEDIUM. */
+		dflags |= PG_DUMP_PRIO_MEDIUM;
+	}
 	if ((req & VM_ALLOC_NODUMP) != 0)
 		flags |= PG_NODUMP;
 	if ((req & VM_ALLOC_WIRED) != 0)
@@ -1989,8 +2001,10 @@ retry:
 			memattr = object->memattr;
 	}
 	for (m = m_ret; m < &m_ret[npages]; m++) {
+		m->flags &= flags;
+		m->flags &= ~PG_DUMP_MASK;
+		m->flags |= dflags;
 		m->aflags = 0;
-		m->flags = (m->flags | PG_NODUMP) & flags;
 		m->busy_lock = VPB_UNBUSIED;
 		if (object != NULL) {
 			if ((req & (VM_ALLOC_NOBUSY | VM_ALLOC_SBUSY)) == 0)
@@ -2414,6 +2428,11 @@ vm_page_cache_turn_free(vm_page_t m)
 	KASSERT((m->flags & PG_CACHED) != 0,
 	    ("vm_page_cache_turn_free: page %p is not cached", m));
 	m->flags &= ~PG_CACHED;
+	m->flags &= ~PG_DUMP_MASK;
+	m->flags |= PG_DUMP_PRIO_IGNORE;
+	KASSERT((m->flags & (PG_CACHED | PG_DUMP_MASK)) == PG_DUMP_PRIO_IGNORE,
+			("vm_page_cache_turn_free: page %p has inconsistent flags", m));
+	m->oflags &= ~(VPO_IDI | VPO_PREFETCH | VPO_CACHEL1);
 	vm_cnt.v_cache_count--;
 	vm_phys_freecnt_adj(m, 1);
 }
@@ -2496,6 +2515,8 @@ vm_page_free_toq(vm_page_t m)
 		if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
 			pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
 
+		m->flags &= ~PG_DUMP_MASK;
+		m->flags |= PG_DUMP_PRIO_IGNORE;
 #ifdef VM_PERCPU_FREE
 		if (can_cache) {
 			vm_page_percpu_free(m);
