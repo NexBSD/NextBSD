@@ -750,12 +750,6 @@ vm_pageout_count_pages(vm_page_t p_start, u_long npages, int level)
 			workpages++;
 			continue;
 		}
-		if (p->queue == PQ_ACTIVE) {
-			if (level < 2)
-				return (-1);
-			workpages++;
-			continue;
-		}
 		/*
 		 * Only count INACTIVE and reservations against level 0.
 		 */
