@@ -1698,6 +1698,7 @@ vm_page_alloc_contig(vm_object_t object, vm_pindex_t pindex, int req,
 		req_class = VM_ALLOC_SYSTEM;
 
 	SLIST_INIT(&deferred_vdrop_list);
+	m_ret = NULL;
 	mtx_lock(&vm_page_queue_free_mtx);
 	if (vm_cnt.v_free_count + vm_cnt.v_cache_count >= npages +
 	    vm_cnt.v_free_reserved || (req_class == VM_ALLOC_SYSTEM &&
@@ -1705,37 +1706,29 @@ vm_page_alloc_contig(vm_object_t object, vm_pindex_t pindex, int req,
 	    vm_cnt.v_interrupt_free_min) || (req_class == VM_ALLOC_INTERRUPT &&
 	    vm_cnt.v_free_count + vm_cnt.v_cache_count >= npages)) {
 #if VM_NRESERVLEVEL > 0
-retry:
 		if (object == NULL || (object->flags & OBJ_COLORED) == 0 ||
 		    (m_ret = vm_reserv_alloc_contig(object, pindex, npages,
 		    low, high, alignment, boundary)) == NULL)
 #endif
 			m_ret = vm_phys_alloc_contig(npages, low, high,
 			    alignment, boundary);
-	} else {
+	}
+	if (m_ret == NULL) {
 		mtx_unlock(&vm_page_queue_free_mtx);
 		atomic_add_int(&vm_pageout_deficit, npages);
 		pagedaemon_wakeup();
 		return (NULL);
 	}
-	if (m_ret != NULL)
-		for (m = m_ret; m < &m_ret[npages]; m++) {
-			drop = vm_page_alloc_init(m);
-			if (drop != NULL) {
-				/*
-				 * Enqueue the vnode for deferred vdrop().
-				 */
-				m->plinks.s.pv = drop;
-				SLIST_INSERT_HEAD(&deferred_vdrop_list, m,
-				    plinks.s.ss);
-			}
+	for (m = m_ret; m < &m_ret[npages]; m++) {
+		drop = vm_page_alloc_init(m);
+		if (drop != NULL) {
+			/*
+			 * Enqueue the vnode for deferred vdrop().
+			 */
+			m->plinks.s.pv = drop;
+			SLIST_INSERT_HEAD(&deferred_vdrop_list, m,
+			    plinks.s.ss);
 		}
-	else {
-#if VM_NRESERVLEVEL > 0
-		if (vm_reserv_reclaim_contig(npages, low, high, alignment,
-		    boundary))
-			goto retry;
-#endif
 	}
 	mtx_unlock(&vm_page_queue_free_mtx);
 	if (m_ret == NULL)
