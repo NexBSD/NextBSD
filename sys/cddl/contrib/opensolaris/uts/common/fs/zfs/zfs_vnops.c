@@ -378,9 +378,6 @@ page_busy(vnode_t *vp, int64_t start, int64_t off, int64_t nbytes)
 				continue;
 			}
 			vm_page_sbusy(pp);
-		} else {
-			ASSERT(pp != NULL && !pp->valid);
-			pp = NULL;
 		}
 
 		if (pp != NULL) {
