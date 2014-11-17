@@ -2347,7 +2347,8 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 				m->flags &= ~PG_WINATCFLS;
 				m->cacheage_ticks = ticks;
 			}
-			vm_page_enqueue(queue, m);
+			if (queue != PQ_NONE)
+				vm_page_enqueue(queue, m);
 		}
 	} else
 		panic("vm_page_unwire: page %p's wire count is zero", m);
