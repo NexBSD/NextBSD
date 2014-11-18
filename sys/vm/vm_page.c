@@ -2326,7 +2326,7 @@ void
 vm_page_unwire(vm_page_t m, uint8_t queue)
 {
 
-	KASSERT(queue < PQ_COUNT,
+	KASSERT(queue < PQ_COUNT || queue == PQ_NONE,
 	    ("vm_page_unwire: invalid queue %u request for page %p",
 	    queue, m));
 	if ((m->oflags & VPO_UNMANAGED) == 0)
