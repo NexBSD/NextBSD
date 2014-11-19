@@ -1563,7 +1563,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	flags &= m->flags;
 gotit:
 	if ((req & VM_ALLOC_NODUMP) != 0)
-		flags |= PG_DUMP_PRIO_IGNORE;
+		flags |= (PG_NODUMP | PG_DUMP_PRIO_IGNORE);
 	else if (req & VM_ALLOC_DUMP_PR_HIGH)
 		flags |= PG_DUMP_PRIO_ESSENTIAL;
 	else if (req & VM_ALLOC_DUMP_PR_MEDIUM)
@@ -1778,7 +1778,7 @@ vm_page_alloc_contig(vm_object_t object, vm_pindex_t pindex, int req,
 			memattr = object->memattr;
 	}
 	for (m = m_ret; m < &m_ret[npages]; m++) {
-		m->flags &= flags;
+		m->flags = (m->flags | PG_NODUMP) & flags;
 		m->flags &= ~PG_DUMP_MASK;
 		m->flags |= dflags;
 		m->aflags = 0;
