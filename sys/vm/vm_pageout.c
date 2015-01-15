@@ -420,6 +420,7 @@ vm_pageout_launder(vm_page_t m)
 			goto unlock;
 		}
 
+		vm_page_queue_fixup(m);
 		/*
 		 * The page may have been busied during the
 		 * blocking in vget().  We don't move the

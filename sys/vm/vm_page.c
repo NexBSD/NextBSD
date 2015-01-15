@@ -169,6 +169,7 @@ CTASSERT(sizeof(u_long) >= 8);
 #endif
 #endif
 
+#define PAQLENTHRESH 16
 
 struct vm_page_percpu {
 	struct mtx	vpp_lock;
@@ -360,9 +361,10 @@ vm_page_domain_init(struct vm_domain *vmd)
 	vmd->vmd_segs = 0;
 	vmd->vmd_oom = FALSE;
 	vmd->vmd_pass = 0;
-	for (i = 0; i < PQ_COUNT; i++) {
+	for (i = 0; i < PQ_COUNT + PA_LOCK_COUNT; i++) {
 		pq = &vmd->vmd_pagequeues[i];
 		TAILQ_INIT(&pq->pq_pl);
+		pq->pq_cnt = 0;
 		mtx_init(&pq->pq_mutex, pq->pq_name, "vm pagequeue",
 		    MTX_DEF | MTX_DUPOK);
 	}
@@ -1933,8 +1935,13 @@ vm_waitpfault(void)
 struct vm_pagequeue *
 vm_page_pagequeue(vm_page_t m)
 {
+	int queue = m->queue;
+	struct vm_domain *dom = vm_phys_domain(m);
 
-	return (&vm_phys_domain(m)->vmd_pagequeues[m->queue]);
+	if ((queue == PQ_INACTIVE) && (m->flags & PG_PAQUEUE))
+		return (&dom->vmd_pagequeues[vm_page_queue_idx(m)]);
+	else
+		return (&dom->vmd_pagequeues[queue]);
 }
 
 /*
@@ -1953,11 +1960,18 @@ vm_page_dequeue(vm_page_t m)
 	KASSERT(m->queue < PQ_COUNT, ("vm_page_dequeue: page %p is not queued",
 	    m));
 	pq = vm_page_pagequeue(m);
-	vm_pagequeue_lock(pq);
-	m->queue = PQ_NONE;
-	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
-	vm_pagequeue_cnt_dec(pq);
-	vm_pagequeue_unlock(pq);
+	if (m->flags & PG_PAQUEUE) {
+		m->queue = PQ_NONE;
+		m->flags &= ~PG_PAQUEUE;
+		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
+		vm_pagequeue_cnt_dec(pq);
+	} else {
+		vm_pagequeue_lock(pq);
+		m->queue = PQ_NONE;
+		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
+		vm_pagequeue_cnt_dec(pq);
+		vm_pagequeue_unlock(pq);
+	}
 }
 
 /*
@@ -1974,7 +1988,10 @@ vm_page_dequeue_locked(vm_page_t m)
 
 	vm_page_lock_assert(m, MA_OWNED);
 	pq = vm_page_pagequeue(m);
-	vm_pagequeue_assert_locked(pq);
+	if (m->flags & PG_PAQUEUE)
+		m->flags &= ~PG_PAQUEUE;
+	else
+		vm_pagequeue_assert_locked(pq);
 	m->queue = PQ_NONE;
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	vm_pagequeue_cnt_dec(pq);
@@ -1996,12 +2013,19 @@ vm_page_enqueue(uint8_t queue, vm_page_t m)
 	KASSERT(queue < PQ_COUNT,
 	    ("vm_page_enqueue: invalid queue %u request for page %p",
 	    queue, m));
-	pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
-	vm_pagequeue_lock(pq);
-	m->queue = queue;
-	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-	vm_pagequeue_cnt_inc(pq);
-	vm_pagequeue_unlock(pq);
+	if (queue == PQ_INACTIVE) {
+		pq = &vm_phys_domain(m)->vmd_pagequeues[vm_page_queue_idx(m)];
+		m->queue = queue;
+		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+		vm_pagequeue_cnt_inc(pq);
+	} else {
+		pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
+		vm_pagequeue_lock(pq);
+		m->queue = queue;
+		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+		vm_pagequeue_cnt_inc(pq);
+		vm_pagequeue_unlock(pq);
+	}
 }
 
 /*
@@ -2044,6 +2068,38 @@ vm_page_requeue_locked(vm_page_t m)
 	vm_pagequeue_assert_locked(pq);
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+}
+
+void
+vm_page_queue_fixup(vm_page_t m)
+{
+#ifdef INVARIANTS
+       int _cnt = 0;
+#endif
+       struct vm_pagequeue *vpq, *lvpq;
+       vm_page_t m1;
+
+       vm_page_lock_assert(m, MA_OWNED);
+
+	   if (!(m->flags & PG_PAQUEUE))
+		   return;
+       lvpq = vm_page_pagequeue(m);
+       if (lvpq->pq_cnt < PAQLENTHRESH)
+               return;
+
+       vpq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
+       TAILQ_FOREACH(m1, &lvpq->pq_pl, plinks.q) {
+#ifdef INVARIANTS
+               _cnt++;
+               VM_ASSERT(m1->queue == PQ_INACTIVE);
+               VM_ASSERT((m1->flags & PG_PAQUEUE) != 0);
+#endif
+               m1->flags &= ~PG_PAQUEUE;
+       }
+       VM_ASSERT(_cnt == lvpq->pq_cnt);
+       TAILQ_CONCAT(&vpq->pq_pl, &lvpq->pq_pl, plinks.q);
+	   vm_pagequeue_cnt_add(vpq, lvpq->pq_cnt);
+       lvpq->pq_cnt = 0;
 }
 
 /*
