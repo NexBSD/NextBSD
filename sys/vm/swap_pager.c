@@ -1663,7 +1663,7 @@ swp_pager_async_iodone(struct buf *bp)
 			vm_page_sunbusy(m);
 			if (vm_page_count_severe()) {
 				vm_page_lock(m);
-				vm_page_try_to_cache(m);
+				vm_page_try_to_free(m);
 				vm_page_unlock(m);
 			}
 		}

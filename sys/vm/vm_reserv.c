@@ -801,9 +801,6 @@ vm_reserv_free_page(vm_page_t m)
 	rv = vm_reserv_from_page(m);
 	if (rv->object == NULL)
 		return (FALSE);
-	if ((m->flags & PG_CACHED) != 0 && m->pool != VM_FREEPOOL_CACHE)
-		vm_phys_set_pool(VM_FREEPOOL_CACHE, rv->pages,
-		    VM_LEVEL_0_ORDER);
 	vm_reserv_depopulate(rv, m - rv->pages);
 	return (TRUE);
 }
@@ -847,45 +844,6 @@ vm_reserv_level_iffullpop(vm_page_t m)
 
 	rv = vm_reserv_from_page(m);
 	return (rv->popcnt == VM_LEVEL_0_NPAGES ? 0 : -1);
-}
-
-/*
- * Prepare for the reactivation of a cached page.
- *
- * First, suppose that the given page "m" was allocated individually, i.e., not
- * as part of a reservation, and cached.  Then, suppose a reservation
- * containing "m" is allocated by the same object.  Although "m" and the
- * reservation belong to the same object, "m"'s pindex may not match the
- * reservation's.
- *
- * The free page queue must be locked.
- */
-boolean_t
-vm_reserv_reactivate_page(vm_page_t m)
-{
-	vm_reserv_t rv;
-	int index;
-
-	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-	rv = vm_reserv_from_page(m);
-	if (rv->object == NULL)
-		return (FALSE);
-	KASSERT((m->flags & PG_CACHED) != 0,
-	    ("vm_reserv_reactivate_page: page %p is not cached", m));
-	if (m->object == rv->object &&
-	    m->pindex - rv->pindex == (index = VM_RESERV_INDEX(m->object,
-	    m->pindex)))
-		vm_reserv_populate(rv, index);
-	else {
-		KASSERT(rv->inpartpopq,
-	    ("vm_reserv_reactivate_page: reserv %p's inpartpopq is FALSE",
-		    rv));
-		TAILQ_REMOVE(&vm_rvq_partpop, rv, partpopq);
-		rv->inpartpopq = FALSE;
-		/* Don't release "m" to the physical memory allocator. */
-		vm_reserv_break(rv, m);
-	}
-	return (TRUE);
 }
 
 /*

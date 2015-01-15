@@ -689,7 +689,7 @@ vm_pageout_flush(vm_page_t *mc, int count, int flags, int mreq, int *prunlen,
 			vm_page_sunbusy(mt);
 			if (vm_page_count_severe()) {
 				vm_page_lock(mt);
-				vm_page_try_to_cache(mt);
+				vm_page_try_to_free(mt);
 				vm_page_unlock(mt);
 			}
 		}
@@ -1288,7 +1288,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 			 * Clean pages can be placed onto the cache queue.
 			 * This effectively frees them.
 			 */
-			vm_page_cache(m);
+			vm_page_free(m);
 			--page_shortage;
 		} else if ((m->flags & PG_WINATCFLS) == 0 && pass < 2) {
 			/*
