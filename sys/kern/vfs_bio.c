@@ -1903,7 +1903,11 @@ vfs_vmio_release(struct buf *bp)
 		 * everything on the inactive queue.
 		 */
 		vm_page_lock(m);
-		vm_page_unwire(m, PQ_INACTIVE);
+		if (((bp->b_flags & B_ASYNC) == 0 && !m->valid)  &&
+			(m->wire_count == 0 && !vm_page_busied(m)))
+			vm_page_unwire(m, PQ_NONE);
+		else
+			vm_page_unwire(m, PQ_INACTIVE);
 
 		/*
 		 * Might as well free the page if we can and it has

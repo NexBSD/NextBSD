@@ -1850,16 +1850,17 @@ sf_ext_free(void *arg1, void *arg2)
 	vm_page_t pg = sf_buf_page(sf);
 
 	sf_buf_free(sf);
-
 	vm_page_lock(pg);
-	vm_page_unwire(pg, PQ_INACTIVE);
 	/*
 	 * Check for the object going away on us. This can
 	 * happen since we don't hold a reference to it.
 	 * If so, we're responsible for freeing the page.
 	 */
-	if (pg->wire_count == 0 && pg->object == NULL)
+	if (pg->wire_count == 1 && pg->object == NULL) {
+		vm_page_unwire(pg, PQ_NONE);
 		vm_page_free(pg);
+	} else
+		vm_page_unwire(pg, PQ_INACTIVE);
 	vm_page_unlock(pg);
 
 	if (sfs != NULL) {
@@ -2052,14 +2053,15 @@ sendfile_readpage(vm_object_t obj, struct vnode *vp, int nd,
 	} else if (m != NULL) {
 free_page:
 		vm_page_lock(m);
-		vm_page_unwire(m, PQ_INACTIVE);
-
 		/*
 		 * See if anyone else might know about this page.  If
 		 * not and it is not valid, then free it.
 		 */
-		if (m->wire_count == 0 && m->valid == 0 && !vm_page_busied(m))
+		if (m->wire_count == 1 && m->valid == 0 && !vm_page_busied(m)) {
+			vm_page_unwire(m, PQ_NONE);
 			vm_page_free(m);
+		} else
+			vm_page_unwire(m, PQ_INACTIVE);
 		vm_page_unlock(m);
 	}
 	KASSERT(error != 0 || (m->wire_count > 0 &&
