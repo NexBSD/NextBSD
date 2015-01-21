@@ -364,9 +364,15 @@ vm_page_domain_init(struct vm_domain *vmd)
 	for (i = 0; i < PQ_COUNT + PA_LOCK_COUNT; i++) {
 		pq = &vmd->vmd_pagequeues[i];
 		TAILQ_INIT(&pq->pq_pl);
-		pq->pq_cnt = 0;
 		mtx_init(&pq->pq_mutex, pq->pq_name, "vm pagequeue",
-		    MTX_DEF | MTX_DUPOK);
+				 MTX_DEF | MTX_DUPOK);
+		if (i >= PQ_COUNT) {
+			pq->pq_cnt = 0;
+			*__DECONST(char **, &vmd->vmd_pagequeues[i].pq_name) =
+				"vm inactive pagequeue";
+			*__DECONST(int **, &vmd->vmd_pagequeues[i].pq_vcnt) =
+				&vm_cnt.v_inactive_count;
+		}
 	}
 }
 
@@ -1938,6 +1944,16 @@ vm_page_pagequeue(vm_page_t m)
 	int queue = m->queue;
 	struct vm_domain *dom = vm_phys_domain(m);
 
+	return (&dom->vmd_pagequeues[queue]);
+}
+
+struct vm_pagequeue *
+vm_page_pagequeue_deferred(vm_page_t m)
+{
+	int queue = m->queue;
+	struct vm_domain *dom = vm_phys_domain(m);
+
+	vm_page_lock_assert(m, MA_OWNED);
 	if ((queue == PQ_INACTIVE) && (m->flags & PG_PAQUEUE))
 		return (&dom->vmd_pagequeues[vm_page_queue_idx(m)]);
 	else
@@ -1959,7 +1975,7 @@ vm_page_dequeue(vm_page_t m)
 	vm_page_assert_locked(m);
 	KASSERT(m->queue < PQ_COUNT, ("vm_page_dequeue: page %p is not queued",
 	    m));
-	pq = vm_page_pagequeue(m);
+	pq = vm_page_pagequeue_deferred(m);
 	if (m->flags & PG_PAQUEUE) {
 		m->queue = PQ_NONE;
 		m->flags &= ~PG_PAQUEUE;
@@ -1987,7 +2003,7 @@ vm_page_dequeue_locked(vm_page_t m)
 	struct vm_pagequeue *pq;
 
 	vm_page_lock_assert(m, MA_OWNED);
-	pq = vm_page_pagequeue(m);
+	pq = vm_page_pagequeue_deferred(m);
 	if (m->flags & PG_PAQUEUE)
 		m->flags &= ~PG_PAQUEUE;
 	else
@@ -2043,7 +2059,7 @@ vm_page_requeue(vm_page_t m)
 	vm_page_lock_assert(m, MA_OWNED);
 	KASSERT(m->queue != PQ_NONE,
 	    ("vm_page_requeue: page %p is not queued", m));
-	pq = vm_page_pagequeue(m);
+	pq = vm_page_pagequeue_deferred(m);
 	vm_pagequeue_lock(pq);
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
@@ -2064,7 +2080,7 @@ vm_page_requeue_locked(vm_page_t m)
 
 	KASSERT(m->queue != PQ_NONE,
 	    ("vm_page_requeue_locked: page %p is not queued", m));
-	pq = vm_page_pagequeue(m);
+	pq = vm_page_pagequeue_deferred(m);
 	vm_pagequeue_assert_locked(pq);
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
@@ -2083,7 +2099,7 @@ vm_page_queue_fixup(vm_page_t m)
 
 	   if (!(m->flags & PG_PAQUEUE))
 		   return;
-       lvpq = vm_page_pagequeue(m);
+       lvpq = vm_page_pagequeue_deferred(m);
        if (lvpq->pq_cnt < PAQLENTHRESH)
                return;
 
