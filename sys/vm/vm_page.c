@@ -2030,8 +2030,11 @@ vm_page_enqueue(uint8_t queue, vm_page_t m)
 	    ("vm_page_enqueue: invalid queue %u request for page %p",
 	    queue, m));
 	if (queue == PQ_INACTIVE) {
+		/* look up deferred queue */
 		pq = &vm_phys_domain(m)->vmd_pagequeues[vm_page_queue_idx(m)];
 		m->queue = queue;
+		/* mark page as on physically addressed deferred queue */
+		m->flags |= PG_PAQUEUE;
 		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
 	} else {
@@ -2079,8 +2082,13 @@ vm_page_requeue_locked(vm_page_t m)
 	struct vm_pagequeue *pq;
 
 	KASSERT(m->queue != PQ_NONE,
-	    ("vm_page_requeue_locked: page %p is not queued", m));
-	pq = vm_page_pagequeue_deferred(m);
+			("vm_page_requeue_locked: page %p is not queued", m));
+	/* the page lock isn't held and the page isn't on 
+	* the inactive queue it should be moved by fixup
+	*/
+	if (m->flags & PG_PAQUEUE)
+		   return;
+	pq = vm_page_pagequeue(m);
 	vm_pagequeue_assert_locked(pq);
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
