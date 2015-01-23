@@ -315,6 +315,7 @@ VM_STATS_VM(v_wire_count, "Wired pages");
 VM_STATS_VM(v_active_count, "Active pages");
 VM_STATS_VM(v_inactive_target, "Desired inactive pages");
 VM_STATS_VM(v_inactive_count, "Inactive pages");
+VM_STATS_VM(v_inactive_deferred_count, "Inactive pages on a PA deferred queue");
 VM_STATS_VM(v_cache_count, "Pages on cache queue");
 VM_STATS_VM(v_cache_min, "Min pages on cache queue");
 VM_STATS_VM(v_cache_max, "Max pages on cached queue");

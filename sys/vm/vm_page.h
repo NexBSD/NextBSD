@@ -233,7 +233,7 @@ struct vm_domain {
 	int vmd_pass;	/* local pagedaemon pass */
 	struct vm_page vmd_marker; /* marker for pagedaemon private use */
 };
-#define vm_page_queue_idx(m)  (PQ_COUNT + pa_index(VM_PAGE_TO_PHYS((m))) % PA_LOCK_COUNT)
+#define vm_page_queue_idx(m)  (PQ_COUNT + (pa_index(VM_PAGE_TO_PHYS((m))) % PA_LOCK_COUNT))
 
 
 extern struct vm_domain vm_dom[MAXMEMDOM];
@@ -247,9 +247,6 @@ static __inline void
 vm_pagequeue_cnt_add(struct vm_pagequeue *pq, int addend)
 {
 
-#ifdef notyet
-	vm_pagequeue_assert_locked(pq);
-#endif
 	pq->pq_cnt += addend;
 	atomic_add_int(pq->pq_vcnt, addend);
 }
@@ -496,7 +493,7 @@ void vm_page_zero_invalid(vm_page_t m, boolean_t setvalid);
 void vm_page_free_toq(vm_page_t m);
 void vm_page_zero_idle_wakeup(void);
 
-void vm_page_queue_fixup(vm_page_t m);
+int vm_page_queue_fixup(struct vm_domain *vmd);
 void vm_page_dirty_KBI(vm_page_t m);
 void vm_page_lock_KBI(vm_page_t m, const char *file, int line);
 void vm_page_unlock_KBI(vm_page_t m, const char *file, int line);

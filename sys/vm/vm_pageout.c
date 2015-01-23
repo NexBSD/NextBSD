@@ -271,6 +271,7 @@ vm_pageout_fallback_object_lock(vm_page_t m, vm_page_t *next)
 	u_short queue;
 	vm_object_t object;
 
+	VM_ASSERT((m->flags & PG_PAQUEUE) == 0);
 	queue = m->queue;
 	vm_pageout_init_marker(&marker, queue);
 	pq = vm_page_pagequeue(m);
@@ -313,6 +314,7 @@ vm_pageout_page_lock(vm_page_t m, vm_page_t *next)
 	if (vm_page_trylock(m))
 		return (TRUE);
 
+	VM_ASSERT((m->flags & PG_PAQUEUE) == 0);
 	queue = m->queue;
 	vm_pageout_init_marker(&marker, queue);
 	pq = vm_page_pagequeue(m);
@@ -420,7 +422,6 @@ vm_pageout_launder(vm_page_t m)
 			goto unlock;
 		}
 
-		vm_page_queue_fixup(m);
 		/*
 		 * The page may have been busied during the
 		 * blocking in vget().  We don't move the
@@ -1081,7 +1082,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	vm_page_t m, next;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
-	int act_delta, addl_page_shortage, deficit, maxscan, page_shortage;
+	int act_delta, addl_page_shortage, deficit, maxscan, page_shortage, merged;
 	int vnodes_skipped = 0;
 	int maxlaunder;
 	boolean_t queues_locked;
@@ -1148,6 +1149,11 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 	maxscan = pq->pq_cnt;
 	vm_pagequeue_lock(pq);
+rescan:
+	/* try to move as many pages as possible from deferred inactive to
+	* inactive
+	*/
+	merged = vm_page_queue_fixup(vmd);
 	queues_locked = TRUE;
 	for (m = TAILQ_FIRST(&pq->pq_pl);
 	     m != NULL && maxscan-- > 0 && page_shortage > 0;
@@ -1349,6 +1355,11 @@ relock_queues:
 		next = TAILQ_NEXT(&vmd->vmd_marker, plinks.q);
 		TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_marker, plinks.q);
 	}
+	/*  we still need pages and we were able to collect inactive pages
+	 * last time so we should try again.
+	 */
+	if (page_shortage && maxscan && merged)
+		goto rescan;
 	vm_pagequeue_unlock(pq);
 
 #if !defined(NO_SWAPPING)

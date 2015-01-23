@@ -1977,17 +1977,17 @@ vm_page_dequeue(vm_page_t m)
 	    m));
 	pq = vm_page_pagequeue_deferred(m);
 	if (m->flags & PG_PAQUEUE) {
-		m->queue = PQ_NONE;
-		m->flags &= ~PG_PAQUEUE;
 		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_dec(pq);
+		m->flags &= ~PG_PAQUEUE;
+		atomic_add_int(&vm_cnt.v_inactive_deferred_count, -1);
 	} else {
 		vm_pagequeue_lock(pq);
-		m->queue = PQ_NONE;
 		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_dec(pq);
 		vm_pagequeue_unlock(pq);
 	}
+	m->queue = PQ_NONE;
 }
 
 /*
@@ -2004,9 +2004,10 @@ vm_page_dequeue_locked(vm_page_t m)
 
 	vm_page_lock_assert(m, MA_OWNED);
 	pq = vm_page_pagequeue_deferred(m);
-	if (m->flags & PG_PAQUEUE)
+	if (m->flags & PG_PAQUEUE) {
 		m->flags &= ~PG_PAQUEUE;
-	else
+		atomic_add_int(&vm_cnt.v_inactive_deferred_count, -1);
+	} else
 		vm_pagequeue_assert_locked(pq);
 	m->queue = PQ_NONE;
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
@@ -2037,6 +2038,7 @@ vm_page_enqueue(uint8_t queue, vm_page_t m)
 		m->flags |= PG_PAQUEUE;
 		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
+		atomic_add_int(&vm_cnt.v_inactive_deferred_count, 1);
 	} else {
 		pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
 		vm_pagequeue_lock(pq);
@@ -2063,10 +2065,15 @@ vm_page_requeue(vm_page_t m)
 	KASSERT(m->queue != PQ_NONE,
 	    ("vm_page_requeue: page %p is not queued", m));
 	pq = vm_page_pagequeue_deferred(m);
-	vm_pagequeue_lock(pq);
-	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
-	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-	vm_pagequeue_unlock(pq);
+	if (m->flags & PG_PAQUEUE) {
+		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
+		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+	} else {
+		vm_pagequeue_lock(pq);
+		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
+		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+		vm_pagequeue_unlock(pq);
+	}
 }
 
 /*
@@ -2094,36 +2101,43 @@ vm_page_requeue_locked(vm_page_t m)
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 }
 
-void
-vm_page_queue_fixup(vm_page_t m)
+int
+vm_page_queue_fixup(struct vm_domain *vmd)
 {
+	int i, merged;
 #ifdef INVARIANTS
-       int _cnt = 0;
+	int _cnt;
 #endif
-       struct vm_pagequeue *vpq, *lvpq;
-       vm_page_t m1;
+	struct vm_pagequeue *vpq, *lvpq;
+	struct mtx *qlock;
+	vm_page_t m1;
 
-       vm_page_lock_assert(m, MA_OWNED);
-
-	   if (!(m->flags & PG_PAQUEUE))
-		   return;
-       lvpq = vm_page_pagequeue_deferred(m);
-       if (lvpq->pq_cnt < PAQLENTHRESH)
-               return;
-
-       vpq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
-       TAILQ_FOREACH(m1, &lvpq->pq_pl, plinks.q) {
+	vpq = &vmd->vmd_pagequeues[PQ_INACTIVE];
+	merged = 0;
+	for (i = 0, lvpq = &vmd->vmd_pagequeues[PQ_COUNT]; i < PA_LOCK_COUNT; lvpq++, i++) {
+		qlock = (struct mtx *)&pa_lock[i];
+		if (lvpq->pq_cnt < PAQLENTHRESH)
+			continue;
+		if (!mtx_trylock(qlock))
+			continue;
+		_cnt = 0;
+		TAILQ_FOREACH(m1, &lvpq->pq_pl, plinks.q) {
 #ifdef INVARIANTS
-               _cnt++;
-               VM_ASSERT(m1->queue == PQ_INACTIVE);
-               VM_ASSERT((m1->flags & PG_PAQUEUE) != 0);
+			_cnt++;
+			VM_ASSERT(m1->queue == PQ_INACTIVE);
+			VM_ASSERT((m1->flags & PG_PAQUEUE) != 0);
 #endif
-               m1->flags &= ~PG_PAQUEUE;
-       }
+			m1->flags &= ~PG_PAQUEUE;
+		}
        VM_ASSERT(_cnt == lvpq->pq_cnt);
        TAILQ_CONCAT(&vpq->pq_pl, &lvpq->pq_pl, plinks.q);
 	   vm_pagequeue_cnt_add(vpq, lvpq->pq_cnt);
+	   atomic_add_int(&vm_cnt.v_inactive_deferred_count, -lvpq->pq_cnt);
+	   merged += lvpq->pq_cnt;
        lvpq->pq_cnt = 0;
+	   mtx_unlock(qlock);
+	}
+	return (merged);
 }
 
 /*
@@ -2399,16 +2413,15 @@ _vm_page_deactivate(vm_page_t m, int athead)
 		if (queue != PQ_NONE)
 			vm_page_dequeue(m);
 		m->flags &= ~PG_WINATCFLS;
-		pq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
-		vm_pagequeue_lock(pq);
+		m->flags |= PG_PAQUEUE;
 		m->queue = PQ_INACTIVE;
-
+		pq = &vm_phys_domain(m)->vmd_pagequeues[vm_page_queue_idx(m)];
 		if (athead)
 			TAILQ_INSERT_HEAD(&pq->pq_pl, m, plinks.q);
 		else
 			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
-		vm_pagequeue_unlock(pq);
+		atomic_add_int(&vm_cnt.v_inactive_deferred_count, 1);
 	}
 }
 
