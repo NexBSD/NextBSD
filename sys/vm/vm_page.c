@@ -2131,9 +2131,9 @@ vm_page_queue_fixup(struct vm_domain *vmd)
 		}
        VM_ASSERT(_cnt == lvpq->pq_cnt);
        TAILQ_CONCAT(&vpq->pq_pl, &lvpq->pq_pl, plinks.q);
-	   vm_pagequeue_cnt_add(vpq, lvpq->pq_cnt);
-	   atomic_add_int(&vm_cnt.v_inactive_deferred_count, -lvpq->pq_cnt);
+	   vpq->pq_cnt += lvpq->pq_cnt;
 	   merged += lvpq->pq_cnt;
+	   atomic_add_int(&vm_cnt.v_inactive_deferred_count, -lvpq->pq_cnt);
        lvpq->pq_cnt = 0;
 	   mtx_unlock(qlock);
 	}
