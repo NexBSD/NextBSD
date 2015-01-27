@@ -1904,7 +1904,7 @@ vfs_vmio_release(struct buf *bp)
 		 */
 		vm_page_lock(m);
 		if (((bp->b_flags & B_ASYNC) == 0 && !m->valid)  &&
-			(m->wire_count == 0 && !vm_page_busied(m)))
+			(m->wire_count == 1 && !vm_page_busied(m)))
 			vm_page_unwire(m, PQ_NONE);
 		else
 			vm_page_unwire(m, PQ_INACTIVE);
