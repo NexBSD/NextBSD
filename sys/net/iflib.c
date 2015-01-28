@@ -1389,7 +1389,7 @@ iflib_enqueue_pkt(if_t ifp, iflib_txq_t txq, struct mbuf *m)
 {
 	int bridx = 0;
 
-	if (m->m_flags & M_FLOWID)
+	if (M_HASHTYPE_GET(m))
 		bridx = BRIDX(txq, m);
 
 	return (drbr_enqueue(ifp, txq->ift_br[bridx], m));
@@ -1716,7 +1716,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		return (0);
 	}
 
-	if ((NQSETS(ctx) > 1) && (m->m_flags & M_FLOWID))
+	if ((NQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
 		qidx = QIDX(ctx, m);
 	/*
 	 * XXX calculate buf_ring based on flowid (divvy up bits?)

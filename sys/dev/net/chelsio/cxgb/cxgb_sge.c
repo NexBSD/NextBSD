@@ -2402,7 +2402,7 @@ skip:
 #endif
 	} else if (eth && eop) {
 		if (r->rss_hdr.hash_type && !sc->timestamp) {
-			ri->iri_flags |= M_FLOWID;
+			/* rsstype ? */
 			ri->iri_flowid = rss_hash;
 		}
 		t3_rx_eth(sc, ri, data);
