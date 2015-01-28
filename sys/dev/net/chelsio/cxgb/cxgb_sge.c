@@ -1267,8 +1267,142 @@ cxgb_isc_txd_flush(if_shared_ctx_t sctx, uint16_t qsidx, uint32_t pidx __unused)
 	struct adapter *adap = pi->adapter;
 
 	check_ring_tx_db(adap, txq, 1);
+
+}
+#ifdef later
+static void
+cxgb_start_locked(struct sge_qset *qs)
+{
+	struct mbuf *m_head = NULL;
+	struct sge_txq *txq = &qs->txq[TXQ_ETH];
+	struct port_info *pi = qs->port;
+	struct ifnet *ifp = pi->ifp;
+
+	if (qs->qs_flags & (QS_FLUSHING|QS_TIMEOUT))
+		reclaim_completed_tx(qs, 0, TXQ_ETH);
+
+	if (!pi->link_config.link_ok) {
+		TXQ_RING_FLUSH(qs);
+		return;
+	}
+	TXQ_LOCK_ASSERT(qs);
+	while (!TXQ_RING_EMPTY(qs) && (ifp->if_drv_flags & IFF_DRV_RUNNING) &&
+	    pi->link_config.link_ok) {
+		reclaim_completed_tx(qs, cxgb_tx_reclaim_threshold, TXQ_ETH);
+
+		if (txq->size - txq->in_use <= TX_MAX_DESC)
+			break;
+
+		if ((m_head = cxgb_dequeue(qs)) == NULL)
+			break;
+		/*
+		 *  Encapsulation can modify our pointer, and or make it
+		 *  NULL on failure.  In that event, we can't requeue.
+		 */
+		if (t3_encap(qs, &m_head) || m_head == NULL)
+			break;
+
+		m_head = NULL;
+	}
+
+	if (txq->db_pending)
+		check_ring_tx_db(pi->adapter, txq, 1);
+
+	if (!TXQ_RING_EMPTY(qs) && callout_pending(&txq->txq_timer) == 0 &&
+	    pi->link_config.link_ok)
+		callout_reset_on(&txq->txq_timer, 1, cxgb_tx_timeout,
+		    qs, txq->txq_timer.c_cpu);
+	if (m_head != NULL)
+		m_freem(m_head);
 }
 
+static int
+cxgb_transmit_locked(struct ifnet *ifp, struct sge_qset *qs, struct mbuf *m)
+{
+	struct port_info *pi = qs->port;
+	struct sge_txq *txq = &qs->txq[TXQ_ETH];
+	struct buf_ring *br = txq->txq_mr;
+	int error, avail;
+
+	avail = txq->size - txq->in_use;
+	TXQ_LOCK_ASSERT(qs);
+
+	/*
+	 * We can only do a direct transmit if the following are true:
+	 * - we aren't coalescing (ring < 3/4 full)
+	 * - the link is up -- checked in caller
+	 * - there are no packets enqueued already
+	 * - there is space in hardware transmit queue 
+	 */
+	if (check_pkt_coalesce(qs) == 0 &&
+	    !TXQ_RING_NEEDS_ENQUEUE(qs) && avail > TX_MAX_DESC) {
+		if (t3_encap(qs, &m)) {
+			if (m != NULL &&
+			    (error = drbr_enqueue(ifp, br, m)) != 0) 
+				return (error);
+		} else {
+			if (txq->db_pending)
+				check_ring_tx_db(pi->adapter, txq, 1);
+
+			/*
+			 * We've bypassed the buf ring so we need to update
+			 * the stats directly
+			 */
+			txq->txq_direct_packets++;
+			txq->txq_direct_bytes += m->m_pkthdr.len;
+		}
+	} else if ((error = drbr_enqueue(ifp, br, m)) != 0)
+		return (error);
+
+	reclaim_completed_tx(qs, cxgb_tx_reclaim_threshold, TXQ_ETH);
+	if (!TXQ_RING_EMPTY(qs) && pi->link_config.link_ok &&
+	    (!check_pkt_coalesce(qs) || (drbr_inuse(ifp, br) >= 7)))
+		cxgb_start_locked(qs);
+	else if (!TXQ_RING_EMPTY(qs) && !callout_pending(&txq->txq_timer))
+		callout_reset_on(&txq->txq_timer, 1, cxgb_tx_timeout,
+		    qs, txq->txq_timer.c_cpu);
+	return (0);
+}
+
+int
+cxgb_transmit(struct ifnet *ifp, struct mbuf *m)
+{
+	struct sge_qset *qs;
+	struct port_info *pi = ifp->if_softc;
+	int error, qidx = pi->first_qset;
+
+	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0
+	    ||(!pi->link_config.link_ok)) {
+		m_freem(m);
+		return (0);
+	}
+
+	/* check if flowid is set */
+	if (M_HASHTYPE_GET(m) != M_HASHTYPE_NONE)	
+		qidx = (m->m_pkthdr.flowid % pi->nqsets) + pi->first_qset;
+
+	qs = &pi->adapter->sge.qs[qidx];
+	
+	if (TXQ_TRYLOCK(qs)) {
+		/* XXX running */
+		error = cxgb_transmit_locked(ifp, qs, m);
+		TXQ_UNLOCK(qs);
+	} else
+		error = drbr_enqueue(ifp, qs->txq[TXQ_ETH].txq_mr, m);
+	return (error);
+}
+
+void
+cxgb_qflush(struct ifnet *ifp)
+{
+	/*
+	 * flush any enqueued mbufs in the buf_rings
+	 * and in the transmit queues
+	 * no-op for now
+	 */
+	return;
+}
+#endif
 /**
  *	write_imm - write a packet into a Tx descriptor as immediate data
  *	@d: the Tx descriptor to write
@@ -2205,6 +2339,36 @@ cxgb_isc_rxd_pkt_get(if_shared_ctx_t sctx, if_rxd_info_t ri)
 		no_mem:
 			rspq->next_holdoff = NOMEM_INTR_DELAY;
 			return (ENOMEM);
+#ifdef later
+				rspq->next_holdoff = NOMEM_INTR_DELAY;
+				budget_left--;
+				break;
+			}
+			if (mh->mh_head == NULL)
+				mh->mh_head = m;
+                        else 
+				mh->mh_tail->m_next = m;
+			mh->mh_tail = m;
+
+			get_imm_packet(adap, r, m);
+			mh->mh_head->m_pkthdr.len += m->m_len;
+			eop = 1;
+			rspq->imm_data++;
+		} else if (r->len_cq) {
+			int drop_thresh = eth ? SGE_RX_DROP_THRES : 0;
+			
+			eop = get_packet(adap, drop_thresh, qs, mh, r);
+			if (eop) {
+				if (r->rss_hdr.hash_type && !adap->timestamp) {
+					M_HASHTYPE_SET(mh->mh_head, M_HASHTYPE_OPAQUE);
+					mh->mh_head->m_pkthdr.flowid = rss_hash;
+				}
+			}
+			
+			ethpad = 2;
+		} else {
+			rspq->pure_rsps++;
+#endif
 		}
 
 		get_imm_packet(r, m);
@@ -2629,7 +2793,7 @@ t3_add_attach_sysctls(adapter_t *sc)
 	/* random information */
 	SYSCTL_ADD_STRING(ctx, children, OID_AUTO, 
 	    "firmware_version",
-	    CTLFLAG_RD, &sc->fw_version,
+	    CTLFLAG_RD, sc->fw_version,
 	    0, "firmware version");
 	SYSCTL_ADD_UINT(ctx, children, OID_AUTO,
 	    "hw_revision",
@@ -2637,7 +2801,7 @@ t3_add_attach_sysctls(adapter_t *sc)
 	    0, "chip model");
 	SYSCTL_ADD_STRING(ctx, children, OID_AUTO, 
 	    "port_types",
-	    CTLFLAG_RD, &sc->port_types,
+	    CTLFLAG_RD, sc->port_types,
 	    0, "type of ports");
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, 
 	    "enable_debug",
@@ -2771,7 +2935,7 @@ t3_add_configured_sysctls(adapter_t *sc)
 			SYSCTL_ADD_UINT(ctx, rspqpoidlist, OID_AUTO, "starved",
 			    CTLFLAG_RD, &qs->rspq.starved,
 			    0, "#times starved");
-			SYSCTL_ADD_ULONG(ctx, rspqpoidlist, OID_AUTO, "phys_addr",
+			SYSCTL_ADD_UAUTO(ctx, rspqpoidlist, OID_AUTO, "phys_addr",
 			    CTLFLAG_RD, &qs->rspq.phys_addr,
 			    "physical_address_of the queue");
 			SYSCTL_ADD_UINT(ctx, rspqpoidlist, OID_AUTO, "dump_start",
@@ -2807,7 +2971,7 @@ t3_add_configured_sysctls(adapter_t *sc)
 			SYSCTL_ADD_UINT(ctx, txqpoidlist, OID_AUTO, "in_use",
 			    CTLFLAG_RD, &txq->in_use,
 			    0, "#tunneled packet slots in use");
-			SYSCTL_ADD_ULONG(ctx, txqpoidlist, OID_AUTO, "frees",
+			SYSCTL_ADD_UQUAD(ctx, txqpoidlist, OID_AUTO, "frees",
 			    CTLFLAG_RD, &txq->txq_frees,
 			    "#tunneled packets freed");
 			SYSCTL_ADD_UINT(ctx, txqpoidlist, OID_AUTO, "skipped",
@@ -2822,7 +2986,7 @@ t3_add_configured_sysctls(adapter_t *sc)
 			SYSCTL_ADD_UINT(ctx, txqpoidlist, OID_AUTO, "stopped_flags",
 			    CTLFLAG_RD, &qs->txq_stopped,
 			    0, "tx queues stopped");
-			SYSCTL_ADD_ULONG(ctx, txqpoidlist, OID_AUTO, "phys_addr",
+			SYSCTL_ADD_UAUTO(ctx, txqpoidlist, OID_AUTO, "phys_addr",
 			    CTLFLAG_RD, &txq->phys_addr,
 			    "physical_address_of the queue");
 			SYSCTL_ADD_UINT(ctx, txqpoidlist, OID_AUTO, "qgen",

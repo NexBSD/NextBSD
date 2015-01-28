@@ -117,9 +117,9 @@ static int cdce_debug = 0;
 static int cdce_tx_interval = 0;
 
 static SYSCTL_NODE(_hw_usb, OID_AUTO, cdce, CTLFLAG_RW, 0, "USB CDC-Ethernet");
-SYSCTL_INT(_hw_usb_cdce, OID_AUTO, debug, CTLFLAG_RW, &cdce_debug, 0,
+SYSCTL_INT(_hw_usb_cdce, OID_AUTO, debug, CTLFLAG_RWTUN, &cdce_debug, 0,
     "Debug level");
-SYSCTL_INT(_hw_usb_cdce, OID_AUTO, interval, CTLFLAG_RW, &cdce_tx_interval, 0,
+SYSCTL_INT(_hw_usb_cdce, OID_AUTO, interval, CTLFLAG_RWTUN, &cdce_tx_interval, 0,
     "NCM transmit interval in ms");
 #endif
 
@@ -273,7 +273,6 @@ static const struct usb_ether_methods cdce_ue_methods = {
 
 static const STRUCT_USB_HOST_ID cdce_switch_devs[] = {
 	{USB_VPI(USB_VENDOR_HUAWEI, USB_PRODUCT_HUAWEI_E3272_INIT, MSC_EJECT_HUAWEI2)},
-	{USB_VPI(USB_VENDOR_HUAWEI, USB_PRODUCT_HUAWEI_R215_INIT, MSC_EJECT_HUAWEI2)},
 };
 
 static const STRUCT_USB_HOST_ID cdce_host_devs[] = {

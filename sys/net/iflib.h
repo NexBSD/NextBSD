@@ -59,7 +59,7 @@ typedef struct if_rxd_info {
 	uint32_t iri_csum_data;	/* m_pkthdr csum data */
 	struct mbuf *iri_m;		/* for driver paths that manage their own rx */
 	struct ifnet *iri_ifp;	/* some drivers >1 interface per softc */
-	uint8_t	 iri_hash_type; /* RSS hash type */
+	uint8_t	 iri_rsstype; /* RSS hash type */
 	uint8_t	 iri_pad;		/* any padding in the received data */
 	int8_t	 iri_qidx;		/* == -1 -> completion queue event
 							 * >=  0 -> free list id

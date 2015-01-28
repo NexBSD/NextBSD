@@ -141,14 +141,23 @@ udp6_append(struct inpcb *inp, struct mbuf *n, int off,
 {
 	struct socket *so;
 	struct mbuf *opts;
+	struct udpcb *up;
 
 	INP_LOCK_ASSERT(inp);
 
+	/*
+	 * Engage the tunneling protocol.
+	 */
+	up = intoudpcb(inp);
+	if (up->u_tun_func != NULL) {
+		(*up->u_tun_func)(n, off, inp, (struct sockaddr *)fromsa,
+		    up->u_tun_ctx);
+		return;
+	}
 #ifdef IPSEC
 	/* Check AH/ESP integrity. */
 	if (ipsec6_in_reject(n, inp)) {
 		m_freem(n);
-		IPSEC6STAT_INC(ips_in_polvio);
 		return;
 	}
 #endif /* IPSEC */
@@ -197,12 +206,6 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 
 	ifp = m->m_pkthdr.rcvif;
 	ip6 = mtod(m, struct ip6_hdr *);
-
-	if (faithprefix_p != NULL && (*faithprefix_p)(&ip6->ip6_dst)) {
-		/* XXX send icmp6 host/port unreach? */
-		m_freem(m);
-		return (IPPROTO_DONE);
-	}
 
 #ifndef PULLDOWN_TEST
 	IP6_EXTHDR_CHECK(m, off, sizeof(struct udphdr), IPPROTO_DONE);
@@ -361,20 +364,9 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 
 				if ((n = m_copy(m, 0, M_COPYALL)) != NULL) {
 					INP_RLOCK(last);
-					up = intoudpcb(last);
-					if (up->u_tun_func == NULL) {
-						udp6_append(last, n, off, &fromsa);
-					} else {
-						/*
-						 * Engage the tunneling
-						 * protocol we will have to
-						 * leave the info_lock up,
-						 * since we are hunting
-						 * through multiple UDP's.
-						 * 
-						 */
-						(*up->u_tun_func)(n, off, last);
-					}
+					UDP_PROBE(receive, NULL, last, ip6,
+					    last, uh);
+					udp6_append(last, n, off, &fromsa);
 					INP_RUNLOCK(last);
 				}
 			}
@@ -404,16 +396,8 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 		}
 		INP_RLOCK(last);
 		INP_INFO_RUNLOCK(pcbinfo);
-		up = intoudpcb(last);
 		UDP_PROBE(receive, NULL, last, ip6, last, uh);
-		if (up->u_tun_func == NULL) {
-			udp6_append(last, m, off, &fromsa);
-		} else {
-			/*
-			 * Engage the tunneling protocol.
-			 */
-			(*up->u_tun_func)(m, off, last);
-		}
+		udp6_append(last, m, off, &fromsa);
 		INP_RUNLOCK(last);
 		return (IPPROTO_DONE);
 	}
@@ -492,15 +476,7 @@ udp6_input(struct mbuf **mp, int *offp, int proto)
 		}
 	}
 	UDP_PROBE(receive, NULL, inp, ip6, inp, uh);
-	if (up->u_tun_func == NULL) {
-		udp6_append(inp, m, off, &fromsa);
-	} else {
-		/*
-		 * Engage the tunneling protocol.
-		 */
-
-		(*up->u_tun_func)(m, off, inp);
-	}
+	udp6_append(inp, m, off, &fromsa);
 	INP_RUNLOCK(inp);
 	return (IPPROTO_DONE);
 
@@ -865,8 +841,7 @@ udp6_output(struct inpcb *inp, struct mbuf *m, struct sockaddr *addr6,
 		 * XXX .. and we should likely cache this in the inpcb.
 		 */
 #ifdef	RSS
-		m->m_pkthdr.flowid = rss_hash_ip6_2tuple(*faddr, *laddr);
-		m->m_flags |= M_FLOWID;
+		m->m_pkthdr.flowid = rss_hash_ip6_2tuple(faddr, laddr);
 		M_HASHTYPE_SET(m, M_HASHTYPE_RSS_IPV6);
 #endif
 		flags = 0;

@@ -667,6 +667,10 @@ bd_speedup(void)
 	mtx_unlock(&bdlock);
 }
 
+#ifndef NSWBUF_MIN
+#define	NSWBUF_MIN	16
+#endif
+
 #ifdef __i386__
 #define	TRANSIENT_DENOM	5
 #else
@@ -778,11 +782,10 @@ kern_vfs_bio_buffer_alloc(caddr_t v, long physmem_est)
 	 * swbufs are used as temporary holders for I/O, such as paging I/O.
 	 * We have no less then 16 and no more then 256.
 	 */
-	nswbuf = max(min(nbuf/4, 256), 16);
-#ifdef NSWBUF_MIN
+	nswbuf = min(nbuf / 4, 256);
+	TUNABLE_INT_FETCH("kern.nswbuf", &nswbuf);
 	if (nswbuf < NSWBUF_MIN)
 		nswbuf = NSWBUF_MIN;
-#endif
 
 	/*
 	 * Reserve space for the buffer cache buffers
@@ -1880,15 +1883,18 @@ out:
 static void
 vfs_vmio_release(struct buf *bp)
 {
-	int i;
+	vm_object_t obj;
 	vm_page_t m;
+	int i;
 
 	if ((bp->b_flags & B_UNMAPPED) == 0) {
 		BUF_CHECK_MAPPED(bp);
 		pmap_qremove(trunc_page((vm_offset_t)bp->b_data), bp->b_npages);
 	} else
 		BUF_CHECK_UNMAPPED(bp);
-	VM_OBJECT_WLOCK(bp->b_bufobj->bo_object);
+	obj = bp->b_bufobj->bo_object;
+	if (obj != NULL)
+		VM_OBJECT_WLOCK(obj);
 	for (i = 0; i < bp->b_npages; i++) {
 		m = bp->b_pages[i];
 		bp->b_pages[i] = NULL;
@@ -1913,7 +1919,8 @@ vfs_vmio_release(struct buf *bp)
 			vm_page_try_to_cache(m);
 		vm_page_unlock(m);
 	}
-	VM_OBJECT_WUNLOCK(bp->b_bufobj->bo_object);
+	if (obj != NULL)
+		VM_OBJECT_WUNLOCK(obj);
 	
 	if (bp->b_bufsize) {
 		bufspacewakeup();

@@ -54,6 +54,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/uio.h>
 #include <sys/bus.h>
 #include <sys/interrupt.h>
+#include <sys/cpuset.h>
 
 #include <net/vnet.h>
 
@@ -284,6 +285,7 @@ static void
 device_sysctl_init(device_t dev)
 {
 	devclass_t dc = dev->devclass;
+	int domain;
 
 	if (dev->sysctl_tree != NULL)
 		return;
@@ -313,6 +315,10 @@ device_sysctl_init(device_t dev)
 	    OID_AUTO, "%parent", CTLTYPE_STRING | CTLFLAG_RD,
 	    dev, DEVICE_SYSCTL_PARENT, device_sysctl_handler, "A",
 	    "parent device");
+	if (bus_get_domain(dev, &domain) == 0)
+		SYSCTL_ADD_INT(&dev->sysctl_ctx,
+		    SYSCTL_CHILDREN(dev->sysctl_tree), OID_AUTO, "%domain",
+		    CTLFLAG_RD, NULL, domain, "NUMA domain");
 }
 
 static void
@@ -1148,7 +1154,7 @@ devclass_add_driver(devclass_t dc, driver_t *driver, int pass, devclass_t *dcp)
  * well as busclass.  Each layer will attempt to detach the driver
  * from any devices that are children of the bus's devclass.  The function
  * will return an error if a device fails to detach.
- * 
+ *
  * We do a full search here of the devclass list at each iteration
  * level to save storing children-lists in the devclass structure.  If
  * we ever move beyond a few dozen devices doing this, we may need to
@@ -1364,7 +1370,7 @@ devclass_get_name(devclass_t dc)
  *
  * @param dc		the devclass to search
  * @param unit		the unit number to search for
- * 
+ *
  * @returns		the device with the given unit number or @c
  *			NULL if there is no such device
  */
@@ -1381,7 +1387,7 @@ devclass_get_device(devclass_t dc, int unit)
  *
  * @param dc		the devclass to search
  * @param unit		the unit number to search for
- * 
+ *
  * @returns		the softc field of the device with the given
  *			unit number or @c NULL if there is no such
  *			device
@@ -1819,14 +1825,14 @@ device_print_child(device_t dev, device_t child)
  * This creates a new device and adds it as a child of an existing
  * parent device. The new device will be added after the last existing
  * child with order zero.
- * 
+ *
  * @param dev		the device which will be the parent of the
  *			new child device
  * @param name		devclass name for new device or @c NULL if not
  *			specified
  * @param unit		unit number for new device or @c -1 if not
  *			specified
- * 
+ *
  * @returns		the new device
  */
 device_t
@@ -1841,7 +1847,7 @@ device_add_child(device_t dev, const char *name, int unit)
  * This creates a new device and adds it as a child of an existing
  * parent device. The new device will be added after the last existing
  * child with the same order.
- * 
+ *
  * @param dev		the device which will be the parent of the
  *			new child device
  * @param order		a value which is used to partially sort the
@@ -1852,7 +1858,7 @@ device_add_child(device_t dev, const char *name, int unit)
  *			specified
  * @param unit		unit number for new device or @c -1 if not
  *			specified
- * 
+ *
  * @returns		the new device
  */
 device_t
@@ -1900,7 +1906,7 @@ device_add_child_ordered(device_t dev, u_int order, const char *name, int unit)
  * This function deletes a device along with all of its children. If
  * the device currently has a driver attached to it, the device is
  * detached first using device_detach().
- * 
+ *
  * @param dev		the parent device
  * @param child		the device to delete
  *
@@ -1943,7 +1949,7 @@ device_delete_child(device_t dev, device_t child)
  * any, using the device_delete_child() function for each device it
  * finds. If a child device cannot be deleted, this function will
  * return an error code.
- * 
+ *
  * @param dev		the parent device
  *
  * @retval 0		success
@@ -2759,7 +2765,7 @@ device_probe(device_t dev)
 		}
 		return (-1);
 	}
-	if ((error = device_probe_child(dev->parent, dev)) != 0) {		
+	if ((error = device_probe_child(dev->parent, dev)) != 0) {
 		if (bus_current_pass == BUS_PASS_DEFAULT &&
 		    !(dev->flags & DF_DONENOMATCH)) {
 			BUS_PROBE_NOMATCH(dev->parent, dev);
@@ -2850,7 +2856,7 @@ device_attach(device_t dev)
 	 * need to be adjusted on other platforms.
 	 */
 #ifdef RANDOM_DEBUG
-	printf("%s(): feeding %d bit(s) of entropy from %s%d\n",
+	printf("random: %s(): feeding %d bit(s) of entropy from %s%d\n",
 	    __func__, 4, dev->driver->name, dev->unit);
 #endif
 	random_harvest(&attachtime, sizeof(attachtime), 4, RANDOM_ATTACH);
@@ -3002,7 +3008,7 @@ resource_list_init(struct resource_list *rl)
  * This function frees the memory for all resource entries on the list
  * (if any).
  *
- * @param rl		the resource list to free		
+ * @param rl		the resource list to free
  */
 void
 resource_list_free(struct resource_list *rl)
@@ -3212,7 +3218,7 @@ resource_list_delete(struct resource_list *rl, int type, int rid)
  * @param flags		any extra flags to control the resource
  *			allocation - see @c RF_XXX flags in
  *			<sys/rman.h> for details
- * 
+ *
  * @returns		the resource which was allocated or @c NULL if no
  *			resource could be allocated
  */
@@ -3269,7 +3275,7 @@ resource_list_reserve(struct resource_list *rl, device_t bus, device_t child,
  * @param flags		any extra flags to control the resource
  *			allocation - see @c RF_XXX flags in
  *			<sys/rman.h> for details
- * 
+ *
  * @returns		the resource which was allocated or @c NULL if no
  *			resource could be allocated
  */
@@ -3331,17 +3337,17 @@ resource_list_alloc(struct resource_list *rl, device_t bus, device_t child,
 
 /**
  * @brief Helper function for implementing BUS_RELEASE_RESOURCE()
- * 
+ *
  * Implement BUS_RELEASE_RESOURCE() using a resource list. Normally
  * used with resource_list_alloc().
- * 
+ *
  * @param rl		the resource list which was allocated from
  * @param bus		the parent device of @p child
  * @param child		the device which is requesting a release
  * @param type		the type of resource to release
  * @param rid		the resource identifier
  * @param res		the resource to release
- * 
+ *
  * @retval 0		success
  * @retval non-zero	a standard unix error code indicating what
  *			error condition prevented the operation
@@ -3399,7 +3405,7 @@ resource_list_release(struct resource_list *rl, device_t bus, device_t child,
  * @param bus		the parent device of @p child
  * @param child		the device whose active resources are being released
  * @param type		the type of resources to release
- * 
+ *
  * @retval 0		success
  * @retval EBUSY	at least one resource was active
  */
@@ -3441,7 +3447,7 @@ resource_list_release_active(struct resource_list *rl, device_t bus,
  * @param type		the type of resource to release
  * @param rid		the resource identifier
  * @param res		the resource to release
- * 
+ *
  * @retval 0		success
  * @retval non-zero	a standard unix error code indicating what
  *			error condition prevented the operation
@@ -3481,7 +3487,7 @@ resource_list_unreserve(struct resource_list *rl, device_t bus, device_t child,
  * @param type		type type of resource entry to print
  * @param format	printf(9) format string to print resource
  *			start and end values
- * 
+ *
  * @returns		the number of characters printed
  */
 int
@@ -3516,7 +3522,7 @@ resource_list_print_type(struct resource_list *rl, const char *name, int type,
  * @brief Releases all the resources in a list.
  *
  * @param rl		The resource list to purge.
- * 
+ *
  * @returns		nothing
  */
 void
@@ -3754,6 +3760,25 @@ bus_print_child_footer(device_t dev, device_t child)
 /**
  * @brief Helper function for implementing BUS_PRINT_CHILD().
  *
+ * This function prints out the VM domain for the given device.
+ *
+ * @returns the number of characters printed
+ */
+int
+bus_print_child_domain(device_t dev, device_t child)
+{
+	int domain;
+
+	/* No domain? Don't print anything */
+	if (BUS_GET_DOMAIN(dev, child, &domain) != 0)
+		return (0);
+
+	return (printf(" numa-domain %d", domain));
+}
+
+/**
+ * @brief Helper function for implementing BUS_PRINT_CHILD().
+ *
  * This function simply calls bus_print_child_header() followed by
  * bus_print_child_footer().
  *
@@ -3765,6 +3790,7 @@ bus_generic_print_child(device_t dev, device_t child)
 	int	retval = 0;
 
 	retval += bus_print_child_header(dev, child);
+	retval += bus_print_child_domain(dev, child);
 	retval += bus_print_child_footer(dev, child);
 
 	return (retval);
@@ -3772,7 +3798,7 @@ bus_generic_print_child(device_t dev, device_t child)
 
 /**
  * @brief Stub function for implementing BUS_READ_IVAR().
- * 
+ *
  * @returns ENOENT
  */
 int
@@ -3784,7 +3810,7 @@ bus_generic_read_ivar(device_t dev, device_t child, int index,
 
 /**
  * @brief Stub function for implementing BUS_WRITE_IVAR().
- * 
+ *
  * @returns ENOENT
  */
 int
@@ -3796,7 +3822,7 @@ bus_generic_write_ivar(device_t dev, device_t child, int index,
 
 /**
  * @brief Stub function for implementing BUS_GET_RESOURCE_LIST().
- * 
+ *
  * @returns NULL
  */
 struct resource_list *
@@ -3863,7 +3889,7 @@ bus_generic_new_pass(device_t dev)
  */
 int
 bus_generic_setup_intr(device_t dev, device_t child, struct resource *irq,
-    int flags, driver_filter_t *filter, driver_intr_t *intr, void *arg, 
+    int flags, driver_filter_t *filter, driver_intr_t *intr, void *arg,
     void **cookiep)
 {
 	/* Propagate up the bus hierarchy until someone handles it. */
@@ -4177,6 +4203,16 @@ int
 bus_generic_child_present(device_t dev, device_t child)
 {
 	return (BUS_CHILD_PRESENT(device_get_parent(dev), dev));
+}
+
+int
+bus_generic_get_domain(device_t dev, device_t child, int *domain)
+{
+
+	if (dev->parent)
+		return (BUS_GET_DOMAIN(dev->parent, dev, domain));
+
+	return (ENOENT);
 }
 
 /*
@@ -4511,6 +4547,18 @@ bus_get_dma_tag(device_t dev)
 	return (BUS_GET_DMA_TAG(parent, dev));
 }
 
+/**
+ * @brief Wrapper function for BUS_GET_DOMAIN().
+ *
+ * This function simply calls the BUS_GET_DOMAIN() method of the
+ * parent of @p dev.
+ */
+int
+bus_get_domain(device_t dev, int *domain)
+{
+	return (BUS_GET_DOMAIN(device_get_parent(dev), dev, domain));
+}
+
 /* Resume all devices and then notify userland that we're up again. */
 static int
 root_resume(device_t dev)
@@ -4620,7 +4668,7 @@ DECLARE_MODULE(rootbus, root_bus_mod, SI_SUB_DRIVERS, SI_ORDER_FIRST);
  *
  * This function begins the autoconfiguration process by calling
  * device_probe_and_attach() for each child of the @c root0 device.
- */ 
+ */
 void
 root_bus_configure(void)
 {

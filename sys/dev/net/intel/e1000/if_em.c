@@ -3546,8 +3546,8 @@ em_add_hw_stats(struct adapter *adapter)
 				E1000_TDT(txr->me),
 				em_sysctl_reg_handler, "IU",
  				"Transmit Descriptor Tail");
-		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "tx_irq",
-				CTLFLAG_RD, &txr->tx_irq.ii_rid,
+		SYSCTL_ADD_INT(ctx, queue_list, OID_AUTO, "tx_irq",
+				CTLFLAG_RD, &txr->tx_irq.ii_rid, txr->tx_irq.ii_rid,
 				"Queue MSI-X Transmit Interrupts");
 #if 0
 		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "no_desc_avail", 
@@ -3564,8 +3564,8 @@ em_add_hw_stats(struct adapter *adapter)
 				E1000_RDT(rxr->me),
 				em_sysctl_reg_handler, "IU",
 				"Receive Descriptor Tail");
-		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "rx_irq",
-				CTLFLAG_RD, &rxr->rx_irq.ii_rid,
+		SYSCTL_ADD_INT(ctx, queue_list, OID_AUTO, "rx_irq",
+				CTLFLAG_RD, &rxr->rx_irq.ii_rid, rxr->rx_irq.ii_rid,
 				"Queue MSI-X Receive Interrupts");
 	}
 

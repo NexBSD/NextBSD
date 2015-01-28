@@ -1118,7 +1118,7 @@ iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 	if (ri->iri_flags & M_VLANTAG)
 		if_setvtag(m, ri->iri_vtag);
 	m->m_pkthdr.flowid = ri->iri_flowid;
-	M_HASHTYPE_SET(m, ri->iri_hash_type);
+	M_HASHTYPE_SET(m, ri->iri_rsstype);
 	m->m_pkthdr.csum_flags = ri->iri_csum_flags;
 	m->m_pkthdr.csum_data = ri->iri_csum_data;
 	if_inc_counter(ri->iri_ifp, IFCOUNTER_IBYTES, m->m_pkthdr.len);

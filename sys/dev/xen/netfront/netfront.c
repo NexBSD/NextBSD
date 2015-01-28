@@ -470,7 +470,7 @@ netfront_attach(device_t dev)
 #if __FreeBSD_version >= 700000
 	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
 	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "enable_lro", CTLTYPE_INT|CTLFLAG_RW,
+	    OID_AUTO, "enable_lro", CTLFLAG_RW,
 	    &xn_enable_lro, 0, "Large Receive Offload");
 #endif
 
@@ -822,8 +822,7 @@ network_alloc_rx_buffers(struct netfront_info *sc)
 			goto no_mbuf;
 		}
 
-		m_cljget(m_new, M_NOWAIT, MJUMPAGESIZE);
-		if ((m_new->m_flags & M_EXT) == 0) {
+		if (m_cljget(m_new, M_NOWAIT, MJUMPAGESIZE) == NULL) {
 			printf("%s: m_cljget failed\n", __func__);
 			m_freem(m_new);
 
