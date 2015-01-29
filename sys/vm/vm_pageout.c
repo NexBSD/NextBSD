@@ -1082,7 +1082,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	vm_page_t m, next;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
-	int act_delta, addl_page_shortage, deficit, maxscan, page_shortage, merged;
+	int act_delta, addl_page_shortage, deficit, maxscan, page_shortage, force;
 	int vnodes_skipped = 0;
 	int maxlaunder;
 	boolean_t queues_locked;
@@ -1149,11 +1149,12 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 	maxscan = pq->pq_cnt;
 	vm_pagequeue_lock(pq);
+	force = 0;
 rescan:
 	/* try to move as many pages as possible from deferred inactive to
 	* inactive
 	*/
-	merged = vm_page_queue_fixup(vmd);
+	vm_page_queue_fixup(vmd, force);
 	queues_locked = TRUE;
 	for (m = TAILQ_FIRST(&pq->pq_pl);
 	     m != NULL && maxscan-- > 0 && page_shortage > 0;
@@ -1358,8 +1359,14 @@ relock_queues:
 	/*  we still need pages and we were able to collect inactive pages
 	 * last time so we should try again.
 	 */
-	if (page_shortage && maxscan && merged)
+	if (vm_page_merging_needed()) {
+		force = 0;
 		goto rescan;
+	}
+	if (page_shortage && maxscan && vm_cnt.v_inactive_deferred_count) {
+		force = 1;
+		goto rescan;
+	}
 	vm_pagequeue_unlock(pq);
 
 #if !defined(NO_SWAPPING)

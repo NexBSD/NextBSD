@@ -169,7 +169,27 @@ CTASSERT(sizeof(u_long) >= 8);
 #endif
 #endif
 
-#define PAQLENTHRESH 16
+#define PAQLENTHRESH_SMALL   4
+#define PAQLENTHRESH_MEDIUM 16
+#define PAQLENTHRESH_LARGE  64
+
+#define MAX_DEFERRED_SMALL   256
+#define MAX_DEFERRED_MEDIUM 1024
+#define MAX_DEFERRED_LARGE  4096
+
+#define VM_PAGES_SMALL  (1<<18)
+#define VM_PAGES_MEDIUM (1<<21)
+
+static int vm_max_inactive_deferred;
+static int vm_paqlenthresh;
+
+int
+vm_page_merging_needed(void)
+{
+
+	return (vm_cnt.v_inactive_deferred_count > vm_max_inactive_deferred);
+}
+
 
 struct vm_page_percpu {
 	struct mtx	vpp_lock;
@@ -599,6 +619,16 @@ vm_page_startup(vm_offset_t vaddr)
 	vm_reserv_init();
 #endif
 	vm_page_percpu_init();
+	if (vm_page_array_size < VM_PAGES_SMALL) {
+		vm_max_inactive_deferred = MAX_DEFERRED_SMALL;
+		vm_paqlenthresh = PAQLENTHRESH_SMALL;
+	} else if (vm_page_array_size < VM_PAGES_MEDIUM) {
+		vm_max_inactive_deferred = MAX_DEFERRED_MEDIUM;
+		vm_paqlenthresh = PAQLENTHRESH_MEDIUM;
+	} else {
+		vm_max_inactive_deferred = MAX_DEFERRED_LARGE;
+		vm_paqlenthresh = PAQLENTHRESH_LARGE;
+	}
 	return (vaddr);
 }
 
@@ -2039,6 +2069,10 @@ vm_page_enqueue(uint8_t queue, vm_page_t m)
 		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
 		atomic_add_int(&vm_cnt.v_inactive_deferred_count, 1);
+		if (vm_page_merging_needed() && vm_pages_needed == 0) {
+			vm_pages_needed = 1;
+			wakeup(&vm_pages_needed);
+		}
 	} else {
 		pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
 		vm_pagequeue_lock(pq);
@@ -2102,7 +2136,7 @@ vm_page_requeue_locked(vm_page_t m)
 }
 
 int
-vm_page_queue_fixup(struct vm_domain *vmd)
+vm_page_queue_fixup(struct vm_domain *vmd, int force)
 {
 	int i, merged;
 #ifdef INVARIANTS
@@ -2116,9 +2150,15 @@ vm_page_queue_fixup(struct vm_domain *vmd)
 	merged = 0;
 	for (i = 0, lvpq = &vmd->vmd_pagequeues[PQ_COUNT]; i < PA_LOCK_COUNT; lvpq++, i++) {
 		qlock = (struct mtx *)&pa_lock[i];
-		if (lvpq->pq_cnt < PAQLENTHRESH)
+		if (lvpq->pq_cnt == 0)
 			continue;
-		if (!mtx_trylock(qlock))
+		if (force) {
+			vm_pagequeue_unlock(vpq);
+			mtx_lock(qlock);
+			vm_pagequeue_lock(vpq);
+		} else if (lvpq->pq_cnt < vm_paqlenthresh)
+			continue;
+		else if (!mtx_trylock(qlock))
 			continue;
 		_cnt = 0;
 		TAILQ_FOREACH(m1, &lvpq->pq_pl, plinks.q) {
@@ -2422,6 +2462,10 @@ _vm_page_deactivate(vm_page_t m, int athead)
 			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
 		atomic_add_int(&vm_cnt.v_inactive_deferred_count, 1);
+		if (vm_page_merging_needed() && vm_pages_needed == 0) {
+			vm_pages_needed = 1;
+			wakeup(&vm_pages_needed);
+		}
 	}
 }
 

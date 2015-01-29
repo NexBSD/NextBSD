@@ -493,7 +493,8 @@ void vm_page_zero_invalid(vm_page_t m, boolean_t setvalid);
 void vm_page_free_toq(vm_page_t m);
 void vm_page_zero_idle_wakeup(void);
 
-int vm_page_queue_fixup(struct vm_domain *vmd);
+int vm_page_merging_needed(void);
+int vm_page_queue_fixup(struct vm_domain *vmd, int force);
 void vm_page_dirty_KBI(vm_page_t m);
 void vm_page_lock_KBI(vm_page_t m, const char *file, int line);
 void vm_page_unlock_KBI(vm_page_t m, const char *file, int line);
