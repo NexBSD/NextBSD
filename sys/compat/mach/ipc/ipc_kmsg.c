@@ -328,7 +328,6 @@ extern vm_size_t	ipc_kmsg_max_vm_space;
 extern vm_size_t	ipc_kmsg_max_body_space;
 extern vm_size_t	msg_ool_size_small;
 
-#define MSG_OOL_SIZE_SMALL(rt)	msg_ool_size_small
 #define DESC_SIZE_ADJUSTMENT	((mach_msg_size_t)(sizeof(mach_msg_ool_descriptor64_t) - \
 				 sizeof(mach_msg_ool_descriptor32_t)))
 /*
@@ -630,7 +629,7 @@ ipc_kmsg_clean_body(
 		    assert(dsc->address == (void *) 0);
 		} else {
 		    if (dsc->copy == MACH_MSG_PHYSICAL_COPY &&
-			    dsc->size < MSG_OOL_SIZE_SMALL(rt)) {
+			    dsc->size < msg_ool_size_small) {
 			    KFREE((vm_offset_t)dsc->address,
 				  (vm_size_t)dsc->size,
 				  rt);
@@ -1701,7 +1700,7 @@ ipc_kmsg_copyin_body(
 		    return MACH_SEND_INVALID_TYPE;
 		}
 		if (sstart->out_of_line.copy == MACH_MSG_PHYSICAL_COPY && 
-		    sstart->out_of_line.size >= MSG_OOL_SIZE_SMALL(rt) &&
+		    sstart->out_of_line.size >= msg_ool_size_small &&
 		    !sstart->out_of_line.deallocate) {
 
 		     	/*
@@ -1835,7 +1834,7 @@ ipc_kmsg_copyin_body(
 
 				dsc->address = (void *) copy;
 				dsc->copy = MACH_MSG_PAGE_LIST_COPY_T;
-			} else if (length < MSG_OOL_SIZE_SMALL(rt) &&
+			} else if (length < msg_ool_size_small &&
 					   dsc->copy == MACH_MSG_PHYSICAL_COPY) {
 
 				/*
@@ -2709,7 +2708,7 @@ ipc_kmsg_copyout_body(
 		    }
 			
 		    if (copy_option == MACH_MSG_PHYSICAL_COPY &&
-			    dsc->size < MSG_OOL_SIZE_SMALL(rt)) {
+			    dsc->size < msg_ool_size_small) {
 
 			/* 
 			 * Sufficiently 'small' data was copied into a kalloc'ed
