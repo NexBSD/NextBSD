@@ -85,10 +85,6 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/param.h>
-#include <sys/file.h>
-#include <sys/filedesc.h>
-#include <sys/fcntl.h>
-#include <sys/syscallsubr.h>
 
 #include <sys/mach/kern_return.h>
 #include <sys/mach/port.h>
@@ -351,9 +347,9 @@ ipc_right_dnrequest(
 		    immediate && (notify != IP_NULL)) {
 
 			assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_DEAD_NAME);
-			assert(entry->ie_fp->f_count > 0);
+			assert(ipc_entry_refs(entry) > 0);
 
-			fhold(entry->ie_fp); /* increment urefs */
+			ipc_entry_hold(entry); /* increment urefs */
 			is_write_unlock(space);
 
 			ipc_notify_dead_name(notify, name);
@@ -460,14 +456,14 @@ ipc_right_check(
 
 	bits = entry->ie_bits;
 	assert((bits & MACH_PORT_TYPE_RECEIVE) == 0);
-	assert(entry->ie_fp->f_count > 0);
+	assert(ipc_entry_refs(entry) > 0);
 
 	if (bits & MACH_PORT_TYPE_SEND) {
 		assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_SEND);
 		ipc_hash_delete(space, (ipc_object_t) port, name, entry);
 	} else {
 		assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_SEND_ONCE);
-		MACH_VERIFY(entry->ie_fp->f_count == 1, ("urefs expected 1 got %d", entry->ie_fp->f_count));
+		MACH_VERIFY(ipc_entry_refs(entry) == 1, ("urefs expected 1 got %d", ipc_entry_refs(entry)));
 	}
 
 	ipc_port_release(port);
@@ -478,7 +474,7 @@ ipc_right_check(
 
 	if (entry->ie_request != 0) {
 		entry->ie_request = 0;
-		fhold(entry->ie_fp); /* increment urefs */
+		ipc_entry_hold(entry); /* increment urefs */
 	}
 
 	entry->ie_bits = bits;
@@ -752,17 +748,17 @@ ipc_right_dealloc(
 	assert(space->is_active);
 
 	switch (type) {
-	    case MACH_PORT_TYPE_DEAD_NAME: {
+	case MACH_PORT_TYPE_DEAD_NAME: {
 	    dead_name:
 
-		assert(entry->ie_fp->f_count > 0);
+		assert(ipc_entry_refs(entry) > 0);
 		assert(entry->ie_request == 0);
 		assert(entry->ie_object == IO_NULL);
 
-		if (entry->ie_fp->f_count == 1)
+		if (ipc_entry_refs(entry) == 1)
 			ipc_entry_dealloc(space, name, entry);
 		else
-			kern_close(curthread, name); /* decrement urefs */
+			ipc_entry_close(space, name); /* decrement urefs */
 
 		is_write_unlock(space);
 		break;
@@ -771,7 +767,7 @@ ipc_right_dealloc(
 	    case MACH_PORT_TYPE_SEND_ONCE: {
 		ipc_port_t port, dnrequest;
 
-		MACH_VERIFY(entry->ie_fp->f_count == 1, ("urefs expected 1 got %d", entry->ie_fp->f_count));
+		MACH_VERIFY(ipc_entry_refs(entry) == 1, ("urefs expected 1 got %d", ipc_entry_refs(entry)));
 		port = (ipc_port_t) entry->ie_object;
 		assert(port != IP_NULL);
 
@@ -806,7 +802,7 @@ ipc_right_dealloc(
 		mach_port_mscount_t mscount;
 
 
-		assert(entry->ie_fp->f_count > 0);
+		assert(ipc_entry_refs(entry) > 0);
 
 		port = (ipc_port_t) entry->ie_object;
 		assert(port != IP_NULL);
@@ -820,7 +816,7 @@ ipc_right_dealloc(
 
 		assert(port->ip_srights > 0);
 
-		if (entry->ie_fp->f_count == 1) {
+		if (ipc_entry_refs(entry) == 1) {
 			if (--port->ip_srights == 0
 			    ) {
 				nsrequest = port->ip_nsrequest;
@@ -840,7 +836,7 @@ ipc_right_dealloc(
 			OBJECT_CLEAR(entry, name);
 			ipc_entry_dealloc(space, name, entry);
 		} else {
-			kern_close(curthread, name); /* decrement urefs - free name */
+			ipc_entry_close(space, name); /* decrement urefs - free name */
 		}
 		/* even if dropped a ref, port is active */
 		ip_unlock(port);
@@ -859,7 +855,7 @@ ipc_right_dealloc(
 		ipc_port_t nsrequest = IP_NULL;
 		mach_port_mscount_t mscount;
 
-		assert(entry->ie_fp->f_count > 0);
+		assert(ipc_entry_refs(entry) > 0);
 
 		port = (ipc_port_t) entry->ie_object;
 		assert(port != IP_NULL);
@@ -870,7 +866,7 @@ ipc_right_dealloc(
 		assert(port->ip_receiver == space);
 		assert(port->ip_srights > 0);
 
-		if (entry->ie_fp->f_count == 1) {
+		if (ipc_entry_refs(entry) == 1) {
 			if (--port->ip_srights == 0
 			    ) {
 				nsrequest = port->ip_nsrequest;
@@ -883,7 +879,7 @@ ipc_right_dealloc(
 			entry->ie_bits = bits &~ (IE_BITS_UREFS_MASK|
 						  MACH_PORT_TYPE_SEND);
 		} else
-			kern_close(curthread, name);
+			ipc_entry_close(space, name);
 
 		ip_unlock(port);
 		is_write_unlock(space);
@@ -1001,7 +997,7 @@ ipc_right_delta(
 		if (bits & MACH_PORT_TYPE_SEND) {
 			assert(IE_BITS_TYPE(bits) ==
 					MACH_PORT_TYPE_SEND_RECEIVE);
-			assert(entry->ie_fp->f_count > 0);
+			assert(ipc_entry_refs(entry) > 0);
 			assert(port->ip_srights > 0);
 
 			/*
@@ -1017,7 +1013,7 @@ ipc_right_delta(
 
 			if (entry->ie_request != 0) {
 				entry->ie_request = 0;
-				fhold(entry->ie_fp); /* increment urefs */
+				ipc_entry_hold(entry); /* increment urefs */
 			}
 
 			entry->ie_bits = bits;
@@ -1048,7 +1044,7 @@ ipc_right_delta(
 			goto invalid_right;
 
 		assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_SEND_ONCE);
-		MACH_VERIFY(entry->ie_fp->f_count == 1, ("urefs expected 1 got %d", entry->ie_fp->f_count));
+		MACH_VERIFY(ipc_entry_refs(entry) == 1, ("urefs expected 1 got %d", ipc_entry_refs(entry)));
 
 		port = (ipc_port_t) entry->ie_object;
 		assert(port != IP_NULL);
@@ -1103,18 +1099,18 @@ ipc_right_delta(
 			goto invalid_right;
 
 		assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_DEAD_NAME);
-		assert(entry->ie_fp->f_count > 0);
+		assert(ipc_entry_refs(entry) > 0);
 		assert(entry->ie_object == IO_NULL);
 		assert(entry->ie_request == 0);
 
-		urefs = entry->ie_fp->f_count;
+		urefs = ipc_entry_refs(entry);
 		if (MACH_PORT_UREFS_UNDERFLOW(urefs, delta))
 			goto invalid_value;
 
 		if ((urefs + delta) == 0)
 			ipc_entry_dealloc(space, name, entry);
 		else
-			atomic_add_acq_int(&entry->ie_fp->f_count, delta);
+			ipc_entry_add_refs(entry, delta);
 
 		is_write_unlock(space);
 
@@ -1144,7 +1140,7 @@ ipc_right_delta(
 
 		assert(port->ip_srights > 0);
 
-		urefs = entry->ie_fp->f_count;
+		urefs = ipc_entry_refs(entry);
 		if (MACH_PORT_UREFS_UNDERFLOW(urefs, delta)) {
 			ip_unlock(port);
 			goto invalid_value;
@@ -1182,7 +1178,7 @@ ipc_right_delta(
 				ipc_entry_dealloc(space, name, entry);
 			}
 		} else
-			atomic_add_acq_int(&entry->ie_fp->f_count, delta);
+			ipc_entry_add_refs(entry, delta);
 
 		/* even if dropped a ref, port is active */
 		ip_unlock(port);
@@ -1256,7 +1252,7 @@ ipc_right_info(
 		type |= MACH_PORT_TYPE_DNREQUEST;
 
 	*typep = type;
-	*urefsp = entry->ie_fp->f_count;
+	*urefsp = ipc_entry_refs(entry);
 	ipc_entry_release(entry);
 	return KERN_SUCCESS;
 }
@@ -1445,7 +1441,7 @@ ipc_right_copyin(
 		if (bits & MACH_PORT_TYPE_SEND) {
 			assert(IE_BITS_TYPE(bits) ==
 					MACH_PORT_TYPE_SEND_RECEIVE);
-			assert(entry->ie_fp->f_count > 0);
+			assert(ipc_entry_refs(entry) > 0);
 			assert(port->ip_srights > 0);
 
 			ipc_hash_insert(space, (ipc_object_t) port,
@@ -1492,7 +1488,7 @@ ipc_right_copyin(
 			witness_trace = bits;
 			goto invalid_right;
 		}
-		assert(entry->ie_fp->f_count > 0);
+		assert(ipc_entry_refs(entry) > 0);
 
 		port = (ipc_port_t) entry->ie_object;
 		assert(port != IP_NULL);
@@ -1536,7 +1532,7 @@ ipc_right_copyin(
 			ELOG;
 			goto invalid_right;
 		}
-		assert(entry->ie_fp->f_count > 0);
+		assert(ipc_entry_refs(entry) > 0);
 
 		port = (ipc_port_t) entry->ie_object;
 		assert(port != IP_NULL);
@@ -1558,7 +1554,7 @@ ipc_right_copyin(
 
 		assert(port->ip_srights > 0);
 
-		if (entry->ie_fp->f_count == 1) {
+		if (ipc_entry_refs(entry) == 1) {
 			if (bits & MACH_PORT_TYPE_RECEIVE) {
 				assert(port->ip_receiver_name == name);
 				assert(port->ip_receiver == space);
@@ -1582,7 +1578,7 @@ ipc_right_copyin(
 		} else {
 			port->ip_srights++;
 			ip_reference(port);
-			fdrop(entry->ie_fp, curthread); /* decrement urefs */
+			ipc_entry_release(entry); /* decrement urefs */
 		}
 
 		ip_unlock(port);
@@ -1605,7 +1601,7 @@ ipc_right_copyin(
 			ELOG;
 			goto invalid_right;
 		}
-		assert(entry->ie_fp->f_count > 0);
+		assert(ipc_entry_refs(entry) > 0);
 
 		port = (ipc_port_t) entry->ie_object;
 		assert(port != IP_NULL);
@@ -1627,7 +1623,7 @@ ipc_right_copyin(
 		}
 
 		assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_SEND_ONCE);
-		MACH_VERIFY(entry->ie_fp->f_count == 1, ("urefs expected 1 got %d", entry->ie_fp->f_count));
+		MACH_VERIFY(ipc_entry_refs(entry) == 1, ("urefs expected 1 got %d", ipc_entry_refs(entry)));
 		assert(port->ip_sorights > 0);
 
 		dnrequest = ipc_right_dncancel_macro(space, port, name, entry);
@@ -1649,7 +1645,7 @@ ipc_right_copyin(
 
     copy_dead:
 	assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_DEAD_NAME);
-	assert(entry->ie_fp->f_count > 0);
+	assert(ipc_entry_refs(entry) > 0);
 	assert(entry->ie_request == 0);
 	assert(entry->ie_object == 0);
 
@@ -1663,7 +1659,7 @@ ipc_right_copyin(
 
     move_dead:
 	assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_DEAD_NAME);
-	assert(entry->ie_fp->f_count > 0);
+	assert(ipc_entry_refs(entry) > 0);
 	assert(entry->ie_request == 0);
 	assert(entry->ie_object == 0);
 
@@ -1671,10 +1667,10 @@ ipc_right_copyin(
 		ELOG;
 		goto invalid_right;
 	}
-	if (entry->ie_fp->f_count == 1)
+	if (ipc_entry_refs(entry) == 1)
 		entry->ie_bits = bits &~ MACH_PORT_TYPE_DEAD_NAME;
 	else
-		fdrop(entry->ie_fp, curthread); /* decrement urefs */
+		ipc_entry_release(entry); /* decrement urefs */
 
 	*objectp = IO_DEAD;
 	*sorightp = IP_NULL;
@@ -1730,10 +1726,10 @@ ipc_right_copyin_undo(
 	} else if (IE_BITS_TYPE(bits) == MACH_PORT_TYPE_DEAD_NAME) {
 		assert(entry->ie_object == IO_NULL);
 		assert(object == IO_DEAD);
-		assert(entry->ie_fp->f_count > 0);
+		assert(ipc_entry_refs(entry) > 0);
 
 		if (msgt_name != MACH_MSG_TYPE_COPY_SEND) {
-			fhold(entry->ie_fp);/* increment urefs */
+			ipc_entry_hold(entry);/* increment urefs */
 		}
 	} else {
 		assert((msgt_name == MACH_MSG_TYPE_MOVE_SEND) ||
@@ -1741,10 +1737,10 @@ ipc_right_copyin_undo(
 		assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_SEND);
 		assert(object != IO_DEAD);
 		assert(entry->ie_object == object);
-		assert(entry->ie_fp->f_count > 0);
+		assert(ipc_entry_refs(entry) > 0);
 
 		if (msgt_name != MACH_MSG_TYPE_COPY_SEND) {
-			fhold(entry->ie_fp); /* increment urefs */
+			ipc_entry_hold(entry); /* increment urefs */
 		}
 
 		/*
@@ -1795,7 +1791,7 @@ ipc_right_copyin_two(
 	if ((bits & MACH_PORT_TYPE_SEND) == 0)
 		goto invalid_right;
 
-	urefs = entry->ie_fp->f_count;
+	urefs = ipc_entry_refs(entry);
 	if (urefs < 2)
 		goto invalid_right;
 
@@ -1908,7 +1904,7 @@ ipc_right_copyout(
 		if (bits & MACH_PORT_TYPE_SEND) {
 
 			assert(port->ip_srights > 1);
-			assert(entry->ie_fp->f_count > 0);
+			assert(ipc_entry_refs(entry) > 0);
 
 			port->ip_srights--;
 			ip_unlock(port);
@@ -1948,7 +1944,7 @@ ipc_right_copyout(
 
 		if (bits & MACH_PORT_TYPE_SEND) {
 			assert(IE_BITS_TYPE(bits) == MACH_PORT_TYPE_SEND);
-			assert(entry->ie_fp->f_count > 0);
+			assert(ipc_entry_refs(entry) > 0);
 			assert(port->ip_srights > 0);
 
 			ip_unlock(port);
