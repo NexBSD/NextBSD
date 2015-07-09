@@ -82,7 +82,7 @@ static const CODE prioritynames[] = {
 	{ "panic", 	LOG_EMERG,	},	/* DEPRECATED */
 	{ "warn",	LOG_WARNING,	},	/* DEPRECATED */
 	{ "warning",	LOG_WARNING,	},
-	{ NULL,		-1,		}269fb01e60ca8f7
+	{ NULL,		-1,		}
 };
 #endif
 
