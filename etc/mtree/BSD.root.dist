@@ -40,6 +40,8 @@
         ..
         gss
         ..
+		launch.d
+		..
         mail
         ..
         mtree

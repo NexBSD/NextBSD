@@ -25,6 +25,7 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	.WAIT \
 	libalias \
 	libarchive \
+	libasl \
 	${_libatm} \
 	libauditd \
 	libbegemot \
@@ -44,6 +45,7 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	libdevctl \
 	libdevinfo \
 	libdevstat \
+	libdispatch \
 	libdpv \
 	libdwarf \
 	libedit \
@@ -60,10 +62,13 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	${_libiconv_modules} \
 	libipsec \
 	libjail \
+	libjansson \
 	libkiconv \
 	libkvm \
+	liblaunch \
 	${_libldns} \
 	liblzma \
+	libmach \
 	${_libmagic} \
 	libmemstat \
 	libmd \
@@ -74,9 +79,11 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	libnetbsd \
 	${_libnetgraph} \
 	${_libngatm} \
+	libnotify \
 	libnv \
 	libohash \
 	libopie \
+	libosxsupport \
 	libpam \
 	libpcap \
 	libpjdlog \
@@ -97,6 +104,7 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	libstand \
 	libstdbuf \
 	libstdthreads \
+	libSystem \
 	libtacplus \
 	${_libtelnet} \
 	${_libthr} \
@@ -113,6 +121,7 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	${_libvmmapi} \
 	libwrap \
 	libxo \
+	libxpc \
 	liby \
 	${_libypclnt} \
 	libz \

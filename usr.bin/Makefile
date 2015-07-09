@@ -13,6 +13,7 @@ SUBDIR=	${_addr2line} \
 	alias \
 	apply \
 	asa \
+	aslutil \
 	awk \
 	banner \
 	basename \
@@ -94,10 +95,12 @@ SUBDIR=	${_addr2line} \
 	lsvfs \
 	lzmainfo \
 	m4 \
+	mach-tests \
 	${_makewhatis} \
 	${_man} \
 	mandoc \
 	mesg \
+	migcom \
 	minigzip \
 	ministat \
 	${_mkcsmapper} \
@@ -118,6 +121,7 @@ SUBDIR=	${_addr2line} \
 	nl \
 	${_nm} \
 	nohup \
+	notifyutil \
 	opieinfo \
 	opiekey \
 	opiepasswd \
@@ -198,6 +202,7 @@ SUBDIR=	${_addr2line} \
 	xargs \
 	xinstall \
 	xo \
+	xpc-tests \
 	xz \
 	xzdec \
 	yes \

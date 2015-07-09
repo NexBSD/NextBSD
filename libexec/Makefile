@@ -10,6 +10,7 @@ SUBDIR=	${_atf} \
 	${_dma} \
 	${_dma-mbox-create} \
 	getty \
+	launchproxy \
 	${_mail.local} \
 	${_mknetid} \
 	${_pppoed} \

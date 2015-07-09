@@ -5,6 +5,7 @@
 
 SUBDIR=	adduser \
 	arp \
+	asl \
 	binmiscctl \
 	bsdconfig \
 	cdcontrol \
@@ -56,6 +57,7 @@ SUBDIR=	adduser \
 	nfsuserd \
 	nmtree \
 	nologin \
+	notifyd \
 	${_pc_sysinstall} \
 	pciconf \
 	periodic \
