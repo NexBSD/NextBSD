@@ -129,7 +129,7 @@ xpc_unpack(void *buf, size_t size)
 	struct xpc_object *xo;
 	nvlist_t *nv;
 
-	nv = nvlist_unpack(buf, size);
+	nv = nvlist_unpack(buf, size, 0);
 	xo = nv2xpc(nv);
 	return (xo);
 }
