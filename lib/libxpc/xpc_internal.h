@@ -28,7 +28,7 @@
 #ifndef	_LIBXPC_XPC_INTERNAL_H
 #define	_LIBXPC_XPC_INTERNAL_H
 
-#include <nv.h>
+#include <sys/nv.h>
 
 #define debugf(...) 				\
     do { 					\

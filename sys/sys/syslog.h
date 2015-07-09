@@ -82,7 +82,7 @@ static const CODE prioritynames[] = {
 	{ "panic", 	LOG_EMERG,	},	/* DEPRECATED */
 	{ "warn",	LOG_WARNING,	},	/* DEPRECATED */
 	{ "warning",	LOG_WARNING,	},
-	{ NULL,		-1,		}
+	{ NULL,		-1,		}269fb01e60ca8f7
 };
 #endif
 
@@ -115,8 +115,9 @@ static const CODE prioritynames[] = {
 #define	LOG_LOCAL5	(21<<3)	/* reserved for local use */
 #define	LOG_LOCAL6	(22<<3)	/* reserved for local use */
 #define	LOG_LOCAL7	(23<<3)	/* reserved for local use */
+#define        LOG_LAUNCHD (24<<3) /* launchd - initNG */
 
-#define	LOG_NFACILITIES	24	/* current number of facilities */
+#define	LOG_NFACILITIES	25	/* current number of facilities */
 #define	LOG_FACMASK	0x03f8	/* mask to extract facility part */
 				/* facility of pri */
 #define	LOG_FAC(p)	(((p) & LOG_FACMASK) >> 3)
@@ -147,6 +148,7 @@ static const CODE facilitynames[] = {
 	{ "local5",	LOG_LOCAL5,	},
 	{ "local6",	LOG_LOCAL6,	},
 	{ "local7",	LOG_LOCAL7,	},
+	{ "launchd", LOG_LAUNCHD },
 	{ NULL,		-1,		}
 };
 #endif
