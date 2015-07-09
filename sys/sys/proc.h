@@ -329,6 +329,7 @@ struct thread {
 	struct vm_page	**td_ma;	/* (k) uio pages held */
 	int		td_ma_cnt;	/* (k) size of *td_ma */
 	void		*td_emuldata;	/* Emulator state data */
+	void		*td_machdata;   /* (k) mach state. */
 };
 
 struct mtx *thread_lock_block(struct thread *);
@@ -614,6 +615,7 @@ struct proc {
 	 */
 	LIST_ENTRY(proc) p_orphan;	/* (e) List of orphan processes. */
 	LIST_HEAD(, proc) p_orphans;	/* (e) Pointer to list of orphans. */
+	void		*p_machdata;	/* (c) Mach state data. */
 };
 
 #define	p_session	p_pgrp->pg_session
