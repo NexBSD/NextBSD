@@ -3,7 +3,7 @@
 PROG= launchctl
 MAN=
 
-BASE_INCLUDE= -I${.CURDIR}/../../include/apple
+BASE_INCLUDE= -I${.CURDIR}/../../include/apple -I${.CURDIR}/../../include
 
 CFLAGS+= ${BASE_INCLUDE} -fblocks
 CFLAGS+= -I${.CURDIR}/../../lib/liblaunch
