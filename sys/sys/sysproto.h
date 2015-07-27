@@ -2450,7 +2450,8 @@ int	sys_procctl(struct thread *, struct procctl_args *);
 int	sys_ppoll(struct thread *, struct ppoll_args *);
 int	sys_futimens(struct thread *, struct futimens_args *);
 int	sys_utimensat(struct thread *, struct utimensat_args *);
-<<<<<<< HEAD
+int     sys_numa_getaffinity(struct thread *, struct numa_getaffinity_args *);
+int     sys_numa_setaffinity(struct thread *, struct numa_setaffinity_args *);
 int	sys__kernelrpc_mach_vm_allocate_trap(struct thread *, struct _kernelrpc_mach_vm_allocate_trap_args *);
 int	sys__kernelrpc_mach_vm_deallocate_trap(struct thread *, struct _kernelrpc_mach_vm_deallocate_trap_args *);
 int	sys__kernelrpc_mach_vm_protect_trap(struct thread *, struct _kernelrpc_mach_vm_protect_trap_args *);
@@ -2498,10 +2499,6 @@ int	sys_mk_timer_create(struct thread *, struct mk_timer_create_args *);
 int	sys_mk_timer_destroy(struct thread *, struct mk_timer_destroy_args *);
 int	sys_mk_timer_arm(struct thread *, struct mk_timer_arm_args *);
 int	sys_mk_timer_cancel(struct thread *, struct mk_timer_cancel_args *);
-=======
-int	sys_numa_getaffinity(struct thread *, struct numa_getaffinity_args *);
-int	sys_numa_setaffinity(struct thread *, struct numa_setaffinity_args *);
->>>>>>> hardened/hardened/current/master
 
 #ifdef COMPAT_43
 
