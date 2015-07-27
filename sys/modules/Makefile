@@ -39,7 +39,6 @@ SUBDIR=	\
 	${_amdtemp} \
 	amr \
 	${_an} \
-	${_aout} \
 	${_apm} \
 	${_arcmsr} \
 	${_arcnet} \
@@ -72,9 +71,10 @@ SUBDIR=	\
 	${_ce} \
 	${_cfi} \
 	${_ciss} \
+	cloudabi \
+	${_cloudabi64} \
 	${_cm} \
 	${_cmx} \
-	${_coff} \
 	${_coretemp} \
 	${_cp} \
 	${_cpsw} \
@@ -134,7 +134,6 @@ SUBDIR=	\
 	${_hyperv} \
 	i2c \
         ${_ibcore} \
-	${_ibcs2} \
 	${_ichwd} \
 	${_ida} \
 	${_ie} \
@@ -277,6 +276,7 @@ SUBDIR=	\
 	${_pfsync} \
 	plip \
 	${_pmc} \
+	${_pms} \
 	ppbus \
 	ppc \
 	ppi \
@@ -328,8 +328,6 @@ SUBDIR=	\
 	ste \
 	${_stg} \
 	stge \
-	${_streams} \
-	${_svr4} \
 	${_sym} \
 	${_syscons} \
 	sysvipc \
@@ -479,7 +477,6 @@ _cxgb=		cxgb
 .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
 _agp=		agp
 _an=		an
-_aout=		aout
 _bktr=		bktr
 _bxe=		bxe
 _cardbus=	cardbus
@@ -616,11 +613,13 @@ _x86bios=	x86bios
 .endif
 
 .if ${MACHINE_CPUARCH} == "amd64"
+_cloudabi64=	cloudabi64
 _ixl=		ixl
 _ixlv=		ixlv
 _linux64=	linux64
 _linux_common=	linux_common
 _ntb=		ntb
+_pms=		pms
 _qlxge=		qlxge
 _qlxgb=		qlxgb
 _qlxgbe=	qlxgbe
@@ -642,14 +641,12 @@ _arcnet=	arcnet
 .if ${MK_SOURCELESS_UCODE} != "no"
 _ce=		ce
 .endif
-_coff=		coff
 .if ${MK_SOURCELESS_UCODE} != "no"
 _cp=		cp
 .endif
 _elink=		elink
 _glxiic=	glxiic
 _glxsb=		glxsb
-_ibcs2=		ibcs2
 _ie=		ie
 _mse=		mse
 _ncr=		ncr
@@ -658,9 +655,7 @@ _nsp=		nsp
 _pcfclock=	pcfclock
 _pst=		pst
 _sbni=		sbni
-_streams=	streams
 _stg=		stg
-_svr4=		svr4
 _wds=		wds
 .if ${MACHINE} == "i386"
 .if ${MK_EISA} != "no"

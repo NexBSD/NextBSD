@@ -30,6 +30,7 @@ __FBSDID("$FreeBSD$");
 #include "opt_capsicum.h"
 #include "opt_hwpmc_hooks.h"
 #include "opt_ktrace.h"
+#include "opt_pax.h"
 #include "opt_vm.h"
 
 #include <sys/param.h>
@@ -50,6 +51,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/imgact_elf.h>
 #include <sys/wait.h>
 #include <sys/malloc.h>
+#include <sys/pax.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/pioctl.h>
@@ -126,10 +128,6 @@ SYSCTL_INT(_kern, OID_AUTO, disallow_high_osrel, CTLFLAG_RW,
     &disallow_high_osrel, 0,
     "Disallow execution of binaries built for higher version of the world");
 
-static int map_at_zero = 0;
-SYSCTL_INT(_security_bsd, OID_AUTO, map_at_zero, CTLFLAG_RWTUN, &map_at_zero, 0,
-    "Permit processes to map an object at virtual address 0.");
-
 static int
 sysctl_kern_ps_strings(SYSCTL_HANDLER_ARGS)
 {
@@ -140,12 +138,12 @@ sysctl_kern_ps_strings(SYSCTL_HANDLER_ARGS)
 #ifdef SCTL_MASK32
 	if (req->flags & SCTL_MASK32) {
 		unsigned int val;
-		val = (unsigned int)p->p_sysent->sv_psstrings;
+		val = (unsigned int)p->p_psstrings;
 		error = SYSCTL_OUT(req, &val, sizeof(val));
 	} else
 #endif
-		error = SYSCTL_OUT(req, &p->p_sysent->sv_psstrings,
-		   sizeof(p->p_sysent->sv_psstrings));
+		error = SYSCTL_OUT(req, &p->p_psstrings,
+		   sizeof(p->p_psstrings));
 	return error;
 }
 
@@ -159,12 +157,12 @@ sysctl_kern_usrstack(SYSCTL_HANDLER_ARGS)
 #ifdef SCTL_MASK32
 	if (req->flags & SCTL_MASK32) {
 		unsigned int val;
-		val = (unsigned int)p->p_sysent->sv_usrstack;
+		val = (unsigned int)p->p_usrstack;
 		error = SYSCTL_OUT(req, &val, sizeof(val));
 	} else
 #endif
-		error = SYSCTL_OUT(req, &p->p_sysent->sv_usrstack,
-		    sizeof(p->p_sysent->sv_usrstack));
+		error = SYSCTL_OUT(req, &p->p_usrstack,
+		    sizeof(p->p_usrstack));
 	return error;
 }
 
@@ -359,7 +357,7 @@ do_execve(td, args, mac_p)
 	struct vnode *tracevp = NULL;
 	struct ucred *tracecred = NULL;
 #endif
-	struct vnode *textvp = NULL, *binvp;
+	struct vnode *oldtextvp = NULL, *newtextvp;
 	cap_rights_t rights;
 	int credential_changing;
 	int textset;
@@ -394,6 +392,16 @@ do_execve(td, args, mac_p)
 	imgp->proc = p;
 	imgp->attr = &attr;
 	imgp->args = args;
+
+#ifdef PAX
+	PROC_LOCK(imgp->proc);
+	error = pax_elf(imgp, 0);
+	if (error) {
+		PROC_UNLOCK(imgp->proc);
+		goto exec_fail;
+	}
+	PROC_UNLOCK(imgp->proc);
+#endif
 
 #ifdef MAC
 	error = mac_execve_enter(imgp, mac_p);
@@ -433,21 +441,32 @@ interpret:
 		if (error)
 			goto exec_fail;
 
-		binvp = nd.ni_vp;
-		imgp->vp = binvp;
+		newtextvp = nd.ni_vp;
+		imgp->vp = newtextvp;
 	} else {
 		AUDIT_ARG_FD(args->fd);
 		/*
 		 * Descriptors opened only with O_EXEC or O_RDONLY are allowed.
 		 */
 		error = fgetvp_exec(td, args->fd,
-		    cap_rights_init(&rights, CAP_FEXECVE), &binvp);
+		    cap_rights_init(&rights, CAP_FEXECVE), &newtextvp);
 		if (error)
 			goto exec_fail;
-		vn_lock(binvp, LK_EXCLUSIVE | LK_RETRY);
-		AUDIT_ARG_VNODE1(binvp);
-		imgp->vp = binvp;
+		vn_lock(newtextvp, LK_EXCLUSIVE | LK_RETRY);
+		AUDIT_ARG_VNODE1(newtextvp);
+		imgp->vp = newtextvp;
 	}
+
+#ifdef PAX_SEGVGUARD
+	/*
+	 * XXXOP: check return value
+	 */
+	(void)pax_segvguard_update_flags_if_setuid(imgp, imgp->vp);
+#if 0
+	if (error)
+		goto exec_fail_dealloc;
+#endif
+#endif
 
 	/*
 	 * Check file permissions (also 'opens' file)
@@ -497,6 +516,11 @@ interpret:
 		error = (*execsw[i]->ex_imgact)(imgp);
 	}
 
+#ifdef PAX_SEGVGUARD
+	if (!error)
+		error = pax_segvguard_check(td, imgp->vp, args->fname);
+#endif
+
 	if (error) {
 		if (error == -1) {
 			if (textset == 0)
@@ -523,13 +547,13 @@ interpret:
 		if (args->fname != NULL)
 			NDFREE(&nd, NDF_ONLY_PNBUF);
 #ifdef MAC
-		mac_execve_interpreter_enter(binvp, &interpvplabel);
+		mac_execve_interpreter_enter(newtextvp, &interpvplabel);
 #endif
 		if (imgp->opened) {
-			VOP_CLOSE(binvp, FREAD, td->td_ucred, td);
+			VOP_CLOSE(newtextvp, FREAD, td->td_ucred, td);
 			imgp->opened = 0;
 		}
-		vput(binvp);
+		vput(newtextvp);
 		vm_object_deallocate(imgp->object);
 		imgp->object = NULL;
 		/* set new name to that of the interpreter */
@@ -562,6 +586,10 @@ interpret:
 		goto exec_fail_dealloc;
 	}
 
+	p->p_psstrings = p->p_sysent->sv_psstrings;
+#ifdef PAX_ASLR
+	pax_aslr_stack_with_gap(p, &(p->p_psstrings));
+#endif
 	/*
 	 * Copy out strings (args and env) and initialize stack base
 	 */
@@ -580,13 +608,20 @@ interpret:
 	else
 		suword(--stack_base, imgp->args->argc);
 
-	/*
-	 * For security and other reasons, the file descriptor table cannot
-	 * be shared after an exec.
-	 */
-	fdunshare(td);
-	/* close files on exec */
-	fdcloseexec(td);
+	if (args->fdp != NULL) {
+		/* Install a brand new file descriptor table. */
+		fdinstall_remapped(td, args->fdp);
+		args->fdp = NULL;
+	} else {
+		/*
+		 * Keep on using the existing file descriptor table. For
+		 * security and other reasons, the file descriptor table
+		 * cannot be shared after an exec.
+		 */
+		fdunshare(td);
+		/* close files on exec */
+		fdcloseexec(td);
+	}
 
 	/*
 	 * Malloc things before we need locks.
@@ -599,9 +634,6 @@ interpret:
 	}
 
 	vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
-
-	/* Get a reference to the vnode prior to locking the proc */
-	VREF(binvp);
 
 	/*
 	 * For security and other reasons, signal handlers cannot
@@ -633,7 +665,7 @@ interpret:
 	if (args->fname)
 		bcopy(nd.ni_cnd.cn_nameptr, p->p_comm,
 		    min(nd.ni_cnd.cn_namelen, MAXCOMLEN));
-	else if (vn_commname(binvp, p->p_comm, sizeof(p->p_comm)) != 0)
+	else if (vn_commname(newtextvp, p->p_comm, sizeof(p->p_comm)) != 0)
 		bcopy(fexecv_proc_title, p->p_comm, sizeof(fexecv_proc_title));
 	bcopy(p->p_comm, td->td_name, sizeof(td->td_name));
 #ifdef KTR
@@ -767,11 +799,11 @@ interpret:
 	}
 
 	/*
-	 * Store the vp for use in procfs.  This vnode was referenced prior
-	 * to locking the proc lock.
+	 * Store the vp for use in procfs.  This vnode was referenced by namei
+	 * or fgetvp_exec.
 	 */
-	textvp = p->p_textvp;
-	p->p_textvp = binvp;
+	oldtextvp = p->p_textvp;
+	p->p_textvp = newtextvp;
 
 #ifdef KDTRACE_HOOKS
 	/*
@@ -848,10 +880,8 @@ done1:
 	/*
 	 * Handle deferred decrement of ref counts.
 	 */
-	if (textvp != NULL)
-		vrele(textvp);
-	if (error != 0)
-		vrele(binvp);
+	if (oldtextvp != NULL)
+		vrele(oldtextvp);
 #ifdef KTRACE
 	if (tracevp != NULL)
 		vrele(tracevp);
@@ -877,7 +907,10 @@ exec_fail_dealloc:
 			NDFREE(&nd, NDF_ONLY_PNBUF);
 		if (imgp->opened)
 			VOP_CLOSE(imgp->vp, FREAD, td->td_ucred, td);
-		vput(imgp->vp);
+		if (error != 0)
+			vput(imgp->vp);
+		else
+			VOP_UNLOCK(imgp->vp, 0);
 	}
 
 	if (imgp->object != NULL)
@@ -915,7 +948,7 @@ done2:
 
 	if (error && imgp->vmspace_destroyed) {
 		/* sorry, no more process anymore. exit gracefully */
-		exit1(td, W_EXITCODE(0, SIGABRT));
+		exit1(td, 0, SIGABRT);
 		/* NOT REACHED */
 	}
 
@@ -1034,10 +1067,7 @@ exec_new_vmspace(imgp, sv)
 	 * not disrupted
 	 */
 	map = &vmspace->vm_map;
-	if (map_at_zero)
-		sv_minuser = sv->sv_minuser;
-	else
-		sv_minuser = MAX(sv->sv_minuser, PAGE_SIZE);
+	sv_minuser = MAX(sv->sv_minuser, PAGE_SIZE);
 	if (vmspace->vm_refcnt == 1 && vm_map_min(map) == sv_minuser &&
 	    vm_map_max(map) == sv->sv_maxuser) {
 		shmexit(vmspace);
@@ -1051,17 +1081,32 @@ exec_new_vmspace(imgp, sv)
 		map = &vmspace->vm_map;
 	}
 
+#ifdef PAX_ASLR
+	PROC_LOCK(imgp->proc);
+	pax_aslr_init(imgp);
+	PROC_UNLOCK(imgp->proc);
+#endif
+
 	/* Map a shared page */
 	obj = sv->sv_shared_page_obj;
 	if (obj != NULL) {
+		p->p_shared_page_base=sv->sv_shared_page_base;
+#ifdef PAX_ASLR
+		PROC_LOCK(imgp->proc);
+		pax_aslr_vdso(p, &(p->p_shared_page_base));
+		PROC_UNLOCK(imgp->proc);
+#endif
 		vm_object_reference(obj);
 		error = vm_map_fixed(map, obj, 0,
-		    sv->sv_shared_page_base, sv->sv_shared_page_len,
+		    p->p_shared_page_base, sv->sv_shared_page_len,
 		    VM_PROT_READ | VM_PROT_EXECUTE,
 		    VM_PROT_READ | VM_PROT_EXECUTE,
 		    MAP_INHERIT_SHARE | MAP_ACC_NO_CHARGE);
 		if (error) {
 			vm_object_deallocate(obj);
+			pax_log_aslr(p, PAX_LOG_DEFAULT,
+			    "failed to map the shared-page @%p",
+			    (void *)p->p_shared_page_base);
 			return (error);
 		}
 	}
@@ -1083,13 +1128,26 @@ exec_new_vmspace(imgp, sv)
 	} else {
 		ssiz = maxssiz;
 	}
-	stack_addr = sv->sv_usrstack - ssiz;
+
+	stack_addr = sv->sv_usrstack;
+#ifdef PAX_ASLR
+	/* Randomize the stack top. */
+	pax_aslr_stack(p, &stack_addr);
+#endif
+	/* Save the process specific randomized stack top. */
+	p->p_usrstack = stack_addr;
+	/* Calculate the stack's mapping address.  */
+	stack_addr -= ssiz;
 	error = vm_map_stack(map, stack_addr, (vm_size_t)ssiz,
 	    obj != NULL && imgp->stack_prot != 0 ? imgp->stack_prot :
 		sv->sv_stackprot,
 	    VM_PROT_ALL, MAP_STACK_GROWS_DOWN);
-	if (error)
+	if (error) {
+		pax_log_aslr(p, PAX_LOG_DEFAULT,
+		    "failed to map the main stack @%p",
+		    (void *)p->p_usrstack);
 		return (error);
+	}
 
 	/*
 	 * vm_ssize and vm_maxsaddr are somewhat antiquated concepts, but they
@@ -1199,6 +1257,71 @@ err_exit:
 	return (error);
 }
 
+int
+exec_copyin_data_fds(struct thread *td, struct image_args *args,
+    const void *data, size_t datalen, const int *fds, size_t fdslen)
+{
+	struct filedesc *ofdp;
+	const char *p;
+	int *kfds;
+	int error;
+
+	memset(args, '\0', sizeof(*args));
+	ofdp = td->td_proc->p_fd;
+	if (datalen >= ARG_MAX || fdslen > ofdp->fd_lastfile + 1)
+		return (E2BIG);
+	error = exec_alloc_args(args);
+	if (error != 0)
+		return (error);
+
+	args->begin_argv = args->buf;
+	args->stringspace = ARG_MAX;
+
+	if (datalen > 0) {
+		/*
+		 * Argument buffer has been provided. Copy it into the
+		 * kernel as a single string and add a terminating null
+		 * byte.
+		 */
+		error = copyin(data, args->begin_argv, datalen);
+		if (error != 0)
+			goto err_exit;
+		args->begin_argv[datalen] = '\0';
+		args->endp = args->begin_argv + datalen + 1;
+		args->stringspace -= datalen + 1;
+
+		/*
+		 * Traditional argument counting. Count the number of
+		 * null bytes.
+		 */
+		for (p = args->begin_argv; p < args->endp; ++p)
+			if (*p == '\0')
+				++args->argc;
+	} else {
+		/* No argument buffer provided. */
+		args->endp = args->begin_argv;
+	}
+	/* There are no environment variables. */
+	args->begin_envv = args->endp;
+
+	/* Create new file descriptor table. */
+	kfds = malloc(fdslen * sizeof(int), M_TEMP, M_WAITOK);
+	error = copyin(fds, kfds, fdslen * sizeof(int));
+	if (error != 0) {
+		free(kfds, M_TEMP);
+		goto err_exit;
+	}
+	error = fdcopy_remapped(ofdp, kfds, fdslen, &args->fdp);
+	free(kfds, M_TEMP);
+	if (error != 0)
+		goto err_exit;
+
+	return (0);
+err_exit:
+	exec_free_args(args);
+	return (error);
+}
+
 /*
  * Allocate temporary demand-paged, zero-filled memory for the file name,
  * argument, and environment strings.  Returns zero if the allocation succeeds
@@ -1225,6 +1348,8 @@ exec_free_args(struct image_args *args)
 		free(args->fname_buf, M_TEMP);
 		args->fname_buf = NULL;
 	}
+	if (args->fdp != NULL)
+		fdescfree_remapped(args->fdp);
 }
 
 /*
@@ -1258,10 +1383,16 @@ exec_copyout_strings(imgp)
 		execpath_len = 0;
 	p = imgp->proc;
 	szsigcode = 0;
-	arginfo = (struct ps_strings *)p->p_sysent->sv_psstrings;
-	if (p->p_sysent->sv_sigcode_base == 0) {
+	p->p_sigcode_base = p->p_sysent->sv_sigcode_base;
+	arginfo = (struct ps_strings *)p->p_psstrings;
+	if (p->p_sigcode_base == 0) {
 		if (p->p_sysent->sv_szsigcode != NULL)
 			szsigcode = *(p->p_sysent->sv_szsigcode);
+#ifdef PAX_ASLR
+	} else {
+		// XXXOP
+		pax_aslr_vdso(p, &(p->p_sigcode_base));
+#endif
 	}
 	destp =	(uintptr_t)arginfo;
 

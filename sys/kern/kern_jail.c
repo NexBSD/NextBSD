@@ -33,6 +33,7 @@ __FBSDID("$FreeBSD$");
 #include "opt_ddb.h"
 #include "opt_inet.h"
 #include "opt_inet6.h"
+#include "opt_pax.h"
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -42,6 +43,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sysproto.h>
 #include <sys/malloc.h>
 #include <sys/osd.h>
+#include <sys/pax.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/taskqueue.h>
@@ -205,6 +207,8 @@ static char *pr_allow_names[] = {
 	"allow.mount.procfs",
 	"allow.mount.tmpfs",
 	"allow.mount.fdescfs",
+	"allow.mount.linprocfs",
+	"allow.mount.linsysfs",
 };
 const size_t pr_allow_names_size = sizeof(pr_allow_names);
 
@@ -222,6 +226,8 @@ static char *pr_allow_nonames[] = {
 	"allow.mount.noprocfs",
 	"allow.mount.notmpfs",
 	"allow.mount.nofdescfs",
+	"allow.mount.nolinprocfs",
+	"allow.mount.nolinsysfs",
 };
 const size_t pr_allow_nonames_size = sizeof(pr_allow_nonames);
 
@@ -246,6 +252,10 @@ prison0_init(void)
 	prison0.pr_cpuset = cpuset_ref(thread0.td_cpuset);
 	prison0.pr_osreldate = osreldate;
 	strlcpy(prison0.pr_osrelease, osrelease, sizeof(prison0.pr_osrelease));
+
+#ifdef PAX
+	pax_init_prison(&prison0);
+#endif
 }
 
 #ifdef INET
@@ -1358,6 +1368,10 @@ kern_jail_set(struct thread *td, struct uio *optuio, int flags)
 			goto done_releroot;
 		}
 
+#ifdef PAX
+		pax_init_prison(pr);
+#endif
+
 		mtx_lock(&pr->pr_mtx);
 		/*
 		 * New prisons do not yet have a reference, because we do not
@@ -2313,6 +2327,10 @@ prison_remove_one(struct prison *pr)
 	struct proc *p;
 	int deuref;
 
+#ifdef MAC
+	mac_prison_destroy(pr);
+#endif
+
 	/* If the prison was persistent, it is not anymore. */
 	deuref = 0;
 	if (pr->pr_flags & PR_PERSIST) {
@@ -2432,7 +2450,7 @@ do_jail_attach(struct thread *td, struct prison *pr)
 		goto e_unlock;
 #endif
 	VOP_UNLOCK(pr->pr_root, 0);
-	if ((error = change_root(pr->pr_root, td)))
+	if ((error = pwd_chroot(td, pr->pr_root)))
 		goto e_revert_osd;
 
 	newcred = crget();
@@ -4290,6 +4308,14 @@ SYSCTL_PROC(_security_jail, OID_AUTO, mount_procfs_allowed,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
     NULL, PR_ALLOW_MOUNT_PROCFS, sysctl_jail_default_allow, "I",
     "Processes in jail can mount the procfs file system");
+SYSCTL_PROC(_security_jail, OID_AUTO, mount_linprocfs_allowed,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    NULL, PR_ALLOW_MOUNT_LINPROCFS, sysctl_jail_default_allow, "I",
+    "Processes in jail can mount the linprocfs file system");
+SYSCTL_PROC(_security_jail, OID_AUTO, mount_linsysfs_allowed,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    NULL, PR_ALLOW_MOUNT_LINSYSFS, sysctl_jail_default_allow, "I",
+    "Processes in jail can mount the linsysfs file system");
 SYSCTL_PROC(_security_jail, OID_AUTO, mount_tmpfs_allowed,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
     NULL, PR_ALLOW_MOUNT_TMPFS, sysctl_jail_default_allow, "I",
@@ -4456,6 +4482,10 @@ SYSCTL_JAIL_PARAM(_allow_mount, nullfs, CTLTYPE_INT | CTLFLAG_RW,
     "B", "Jail may mount the nullfs file system");
 SYSCTL_JAIL_PARAM(_allow_mount, procfs, CTLTYPE_INT | CTLFLAG_RW,
     "B", "Jail may mount the procfs file system");
+SYSCTL_JAIL_PARAM(_allow_mount, linprocfs, CTLTYPE_INT | CTLFLAG_RW,
+    "B", "Jail may mount the linprocfs file system");
+SYSCTL_JAIL_PARAM(_allow_mount, linsysfs, CTLTYPE_INT | CTLFLAG_RW,
+    "B", "Jail may mount the linsysfs file system");
 SYSCTL_JAIL_PARAM(_allow_mount, tmpfs, CTLTYPE_INT | CTLFLAG_RW,
     "B", "Jail may mount the tmpfs file system");
 SYSCTL_JAIL_PARAM(_allow_mount, zfs, CTLTYPE_INT | CTLFLAG_RW,
@@ -4708,6 +4738,44 @@ db_show_prison(struct prison *pr)
 		db_printf(" %s %s\n",
 		    ii == 0 ? "ip6.addr        =" : "                 ",
 		    ip6_sprintf(ip6buf, &pr->pr_ip6[ii]));
+#endif
+#ifdef PAX
+	db_printf(" pr_hardening = {\n");
+	db_printf(" .hr_pax_aslr_status             = %d\n",
+	    pr->pr_hardening.hr_pax_aslr_status);
+	db_printf(" .hr_pax_aslr_mmap_len           = %d\n",
+	    pr->pr_hardening.hr_pax_aslr_mmap_len);
+	db_printf(" .hr_pax_aslr_stack_len          = %d\n",
+	    pr->pr_hardening.hr_pax_aslr_stack_len);
+	db_printf(" .hr_pax_aslr_exec_len           = %d\n",
+	    pr->pr_hardening.hr_pax_aslr_exec_len);
+	db_printf(" .hr_pax_aslr_compat_status      = %d\n",
+	    pr->pr_hardening.hr_pax_aslr_compat_status);
+	db_printf(" .hr_pax_aslr_compat_mmap_len    = %d\n",
+	    pr->pr_hardening.hr_pax_aslr_compat_mmap_len);
+	db_printf(" .hr_pax_aslr_compat_stack_len   = %d\n",
+	    pr->pr_hardening.hr_pax_aslr_compat_stack_len);
+	db_printf(" .hr_pax_aslr_compat_exec_len    = %d\n",
+	    pr->pr_hardening.hr_pax_aslr_compat_exec_len);
+	db_printf(" .hr_pax_pageexec_status           = %d\n",
+	   pr->pr_hardening.hr_pax_pageexec_status);
+	db_printf(" .hr_pax_mprotect_status           = %d\n",
+	   pr->pr_hardening.hr_pax_mprotect_status);
+	db_printf(" .hr_pax_segvguard_status        = %d\n",
+	   pr->pr_hardening.hr_pax_segvguard_status);
+	db_printf(" .hr_pax_segvguard_expiry        = %d\n",
+	   pr->pr_hardening.hr_pax_segvguard_expiry);
+	db_printf(" .hr_pax_segvguard_suspension    = %d\n",
+	   pr->pr_hardening.hr_pax_segvguard_suspension);
+	db_printf(" .hr_pax_segvguard_maxcrashes    = %d\n",
+	   pr->pr_hardening.hr_pax_segvguard_maxcrashes);
+	db_printf(" .hr_pax_map32_enabled           = %d\n",
+	   pr->pr_hardening.hr_pax_map32_enabled);
+	db_printf(" .hr_pax_procfs_harden           = %d\n",
+	   pr->pr_hardening.hr_pax_procfs_harden);
+	db_printf(" .hr_pax_ptrace_hardening_status = %d\n",
+	   pr->pr_hardening.hr_pax_ptrace_hardening_status);
+	db_printf(" }\n");
 #endif
 }
 

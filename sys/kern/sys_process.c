@@ -34,6 +34,7 @@ __FBSDID("$FreeBSD$");
 
 #include "opt_compat.h"
 #include "opt_compat_mach.h"
+#include "opt_pax.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -42,9 +43,11 @@ __FBSDID("$FreeBSD$");
 #include <sys/syscallsubr.h>
 #include <sys/sysent.h>
 #include <sys/sysproto.h>
+#include <sys/pioctl.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/vnode.h>
+#include <sys/pax.h>
 #include <sys/ptrace.h>
 #include <sys/rwlock.h>
 #include <sys/sx.h>
@@ -696,6 +699,12 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 	}
 	AUDIT_ARG_PROCESS(p);
 
+#ifdef PAX_PTRACE_HARDENING
+	error = pax_ptrace_hardening(td);
+	if (error)
+		goto fail;
+#endif
+
 	if ((p->p_flag & P_WEXIT) != 0) {
 		error = ESRCH;
 		goto fail;
@@ -976,7 +985,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 			sx_xunlock(&proctree_lock);
 			proctree_locked = 0;
 		}
-		p->p_xstat = data;
+		p->p_xsig = data;
 		p->p_xthread = NULL;
 		if ((p->p_flag & (P_STOPPED_SIG | P_STOPPED_TRACE)) != 0) {
 			/* deliver or queue signal */
@@ -1301,7 +1310,8 @@ stopevent(struct proc *p, unsigned int event, unsigned int val)
 	CTR3(KTR_PTRACE, "stopevent: pid %d event %u val %u", p->p_pid, event,
 	    val);
 	do {
-		p->p_xstat = val;
+		if (event != S_EXIT)
+			p->p_xsig = val;
 		p->p_xthread = NULL;
 		p->p_stype = event;	/* Which event caused the stop? */
 		wakeup(&p->p_stype);	/* Wake up any PIOCWAIT'ing procs */

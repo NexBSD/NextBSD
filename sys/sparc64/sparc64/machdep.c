@@ -499,7 +499,7 @@ sparc64_init(caddr_t mdp, u_long o1, u_long o2, u_long o3, ofw_vec_t *vec)
 	}
 
 #ifdef SMP
-	mp_init(cpu_impl);
+	mp_init();
 #endif
 
 	/*
@@ -995,7 +995,7 @@ exec_setregs(struct thread *td, struct image_params *imgp, u_long stack)
 	bzero(pcb, sizeof(*pcb));
 	bzero(tf, sizeof(*tf));
 	tf->tf_out[0] = stack;
-	tf->tf_out[3] = p->p_sysent->sv_psstrings;
+	tf->tf_out[3] = p->p_psstrings;
 	tf->tf_out[6] = sp - SPOFF - sizeof(struct frame);
 	tf->tf_tnpc = imgp->entry_addr + 4;
 	tf->tf_tpc = imgp->entry_addr;

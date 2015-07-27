@@ -63,6 +63,7 @@
 #endif
 #include <sys/ucontext.h>
 #include <sys/ucred.h>
+#include <sys/_vm_domain.h>
 #include <machine/proc.h>		/* Machine-dependent proc substruct. */
 
 /*
@@ -217,6 +218,7 @@ struct thread {
 	struct turnstile *td_turnstile;	/* (k) Associated turnstile. */
 	struct rl_q_entry *td_rlqe;	/* (k) Associated range lock entry. */
 	struct umtx_q   *td_umtxq;	/* (c?) Link for when we're blocked. */
+	struct vm_domain_policy td_vm_dom_policy;	/* (c) current numa domain policy */
 	lwpid_t		td_tid;		/* (b) Thread ID. */
 	sigqueue_t	td_sigqueue;	/* (c) Sigs arrived, not delivered. */
 #define	td_siglist	td_sigqueue.sq_signals
@@ -290,6 +292,7 @@ struct thread {
 	u_char		td_pri_class;	/* (t) Scheduling class. */
 	u_char		td_user_pri;	/* (t) User pri from estcpu and nice. */
 	u_char		td_base_user_pri; /* (t) Base user pri */
+	uint32_t	td_pax;		/* (b) Cached PaX settings from process. */
 #define	td_endcopy td_pcb
 
 /*
@@ -582,13 +585,18 @@ struct proc {
 	rlim_t		p_cpulimit;	/* (c) Current CPU limit in seconds. */
 	signed char	p_nice;		/* (c) Process "nice" value. */
 	int		p_fibnum;	/* in this routing domain XXX MRT */
+	uint32_t	p_pax;		/* (b) PaX is enabled to this process */
 	pid_t		p_reapsubtree;	/* (e) Pid of the direct child of the
 					       reaper which spawned
 					       our subtree. */
+	vm_offset_t	p_usrstack;	/* (b) Process stack top. */
+	vm_offset_t	p_psstrings;	/* (b) Process psstrings address. */
+	vm_offset_t	p_shared_page_base;	/* (c) Address of shared page. */
+	vm_offset_t	p_sigcode_base;	/* (c) Address of sigcode. */
+	u_int		p_xexit;	/* (c) Exit code. */
+	u_int		p_xsig;		/* (c) Stop/kill sig. */
 /* End area that is copied on creation. */
-#define	p_endcopy	p_xstat
-
-	u_short		p_xstat;	/* (c) Exit status; also stop sig. */
+#define	p_endcopy	p_xsig
 	struct knlist	p_klist;	/* (c) Knotes attached to this proc. */
 	int		p_numthreads;	/* (c) Number of threads. */
 	struct mdproc	p_md;		/* Any machine-dependent fields. */
@@ -608,6 +616,7 @@ struct proc {
 	uint64_t	p_prev_runtime;	/* (c) Resource usage accounting. */
 	struct racct	*p_racct;	/* (b) Resource accounting. */
 	u_char		p_throttled;	/* (c) Flag for racct pcpu throttling */
+	struct vm_domain_policy p_vm_dom_policy;	/* (c) process default VM domain, or -1 */
 	/*
 	 * An orphan is the child that has beed re-parented to the
 	 * debugger as a result of attaching to it.  Need to keep
@@ -970,7 +979,7 @@ void	unsleep(struct thread *);
 void	userret(struct thread *, struct trapframe *);
 
 void	cpu_exit(struct thread *);
-void	exit1(struct thread *, int) __dead2;
+void	exit1(struct thread *, int, int) __dead2;
 struct syscall_args;
 int	cpu_fetch_syscall_args(struct thread *td, struct syscall_args *sa);
 void	cpu_fork(struct thread *, struct proc *, struct thread *, int);
@@ -992,6 +1001,8 @@ void	thread_cow_get_proc(struct thread *newtd, struct proc *p);
 void	thread_cow_get(struct thread *newtd, struct thread *td);
 void	thread_cow_free(struct thread *td);
 void	thread_cow_update(struct thread *td);
+int	thread_create(struct thread *td, struct rtprio *rtp,
+	    int (*initialize_thread)(struct thread *, void *), void *thunk);
 void	thread_exit(void) __dead2;
 void	thread_free(struct thread *td);
 void	thread_link(struct thread *td, struct proc *p);

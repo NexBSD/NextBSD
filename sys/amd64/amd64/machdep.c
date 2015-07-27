@@ -435,7 +435,7 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	}
 
 	regs->tf_rsp = (long)sfp;
-	regs->tf_rip = p->p_sysent->sv_sigcode_base;
+	regs->tf_rip = p->p_sigcode_base;
 	regs->tf_rflags &= ~(PSL_T | PSL_D);
 	regs->tf_cs = _ucodesel;
 	regs->tf_ds = _udatasel;
@@ -878,11 +878,26 @@ DB_SHOW_COMMAND(sysregs, db_show_sysregs)
 	db_printf("cr2\t0x%016lx\n", rcr2());
 	db_printf("cr3\t0x%016lx\n", rcr3());
 	db_printf("cr4\t0x%016lx\n", rcr4());
-	db_printf("EFER\t%016lx\n", rdmsr(MSR_EFER));
-	db_printf("FEATURES_CTL\t%016lx\n", rdmsr(MSR_IA32_FEATURE_CONTROL));
-	db_printf("DEBUG_CTL\t%016lx\n", rdmsr(MSR_DEBUGCTLMSR));
-	db_printf("PAT\t%016lx\n", rdmsr(MSR_PAT));
-	db_printf("GSBASE\t%016lx\n", rdmsr(MSR_GSBASE));
+	if (rcr4() & CR4_XSAVE)
+		db_printf("xcr0\t0x%016lx\n", rxcr(0));
+	db_printf("EFER\t0x%016lx\n", rdmsr(MSR_EFER));
+	if (cpu_feature2 & (CPUID2_VMX | CPUID2_SMX))
+		db_printf("FEATURES_CTL\t%016lx\n",
+		    rdmsr(MSR_IA32_FEATURE_CONTROL));
+	db_printf("DEBUG_CTL\t0x%016lx\n", rdmsr(MSR_DEBUGCTLMSR));
+	db_printf("PAT\t0x%016lx\n", rdmsr(MSR_PAT));
+	db_printf("GSBASE\t0x%016lx\n", rdmsr(MSR_GSBASE));
+}
+
+DB_SHOW_COMMAND(dbregs, db_show_dbregs)
+{
+
+	db_printf("dr0\t0x%016lx\n", rdr0());
+	db_printf("dr1\t0x%016lx\n", rdr1());
+	db_printf("dr2\t0x%016lx\n", rdr2());
+	db_printf("dr3\t0x%016lx\n", rdr3());
+	db_printf("dr6\t0x%016lx\n", rdr6());
+	db_printf("dr7\t0x%016lx\n", rdr7());	
 }
 #endif
 
@@ -1848,6 +1863,15 @@ int
 ptrace_set_pc(struct thread *td, unsigned long addr)
 {
 
+	/*
+	 * DragonflyBSD's safety towards:
+	 * enforce canonical addresses - this should
+	 * fix SYSRET's potential issue handling
+	 */
+	if (addr & 0x0000800000000000LLU)
+		addr = addr | 0xFFFF000000000000LLU;
+	else
+		addr = addr & 0x0000FFFFFFFFFFFFLLU;
 	td->td_frame->tf_rip = addr;
 	set_pcb_flags(td->td_pcb, PCB_FULL_IRET);
 	return (0);

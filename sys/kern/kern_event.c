@@ -442,12 +442,8 @@ filt_proc(struct knote *kn, long hint)
 			knlist_remove_inevent(&p->p_klist, kn);
 		kn->kn_flags |= EV_EOF | EV_ONESHOT;
 		kn->kn_ptr.p_proc = NULL;
-		if (kn->kn_fflags & NOTE_EXIT) {
-			kn->kn_data = p->p_xstat;
-			/* Darwin compatibility */
-			if (kn->kn_sfflags & NOTE_EXITSTATUS)
-				kn->kn_fflags |= NOTE_EXITSTATUS;
-		}
+		if (kn->kn_fflags & NOTE_EXIT)
+			kn->kn_data = KW_EXITCODE(p->p_xexit, p->p_xsig);
 		if (kn->kn_fflags == 0)
 			kn->kn_flags |= EV_DROP;
 		return (1);

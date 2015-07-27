@@ -38,6 +38,8 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20150719: Remove libarchive.pc
+OLD_FILES+=usr/libdata/pkgconfig/libarchive.pc
 # 20150705: Rename DTrace provider man pages.
 OLD_FILES+=usr/share/man/man4/dtrace-io.4.gz
 OLD_FILES+=usr/share/man/man4/dtrace-ip.4.gz
@@ -645,6 +647,10 @@ OLD_FILES+=usr/tests/usr.sbin/pw/pw_modify
 # 20141202: update to mandoc CVS 20141201
 OLD_FILES+=usr.bin/preconv
 OLD_FILES+=share/man/man1/preconv.1.gz
+# 20141204 ibcs support removal
+OLD_FILES+=etc/rc.d/archdep
+OLD_FILES+=shate/examples/ibcs2/README
+OLD_FILES+=shate/examples/ibcs2/hello.uu
 # 20141129: mrouted rc.d scripts removed from base
 OLD_FILES+=etc/rc.d/mrouted
 # 20141126: convert sbin/mdconfig/tests to ATF format tests

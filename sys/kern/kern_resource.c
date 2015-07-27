@@ -751,13 +751,12 @@ kern_proc_setrlimit(struct thread *td, struct proc *p, u_int which,
 			if (limp->rlim_cur > oldssiz.rlim_cur) {
 				prot = p->p_sysent->sv_stackprot;
 				size = limp->rlim_cur - oldssiz.rlim_cur;
-				addr = p->p_sysent->sv_usrstack -
-				    limp->rlim_cur;
+				addr = p->p_usrstack - limp->rlim_cur;
+				// XXXOP NOEXEC NX here
 			} else {
 				prot = VM_PROT_NONE;
 				size = oldssiz.rlim_cur - limp->rlim_cur;
-				addr = p->p_sysent->sv_usrstack -
-				    oldssiz.rlim_cur;
+				addr = p->p_usrstack - oldssiz.rlim_cur;
 			}
 			addr = trunc_page(addr);
 			size = round_page(size);
@@ -1435,18 +1434,4 @@ chgkqcnt(struct uidinfo *uip, int diff, rlim_t max)
 {
 
 	return (chglimit(uip, &uip->ui_kqcnt, diff, max, "kqcnt"));
-}
-
-void
-lim_update_thread(struct thread *td)
-{
-	struct proc *p;
-	struct plimit *lim;
-
-	p = td->td_proc;
-	lim = td->td_limit;
-	PROC_LOCK_ASSERT(p, MA_OWNED);
-	td->td_limit = lim_hold(p->p_limit);
-	if (lim != NULL)
-		lim_free(lim);
 }
