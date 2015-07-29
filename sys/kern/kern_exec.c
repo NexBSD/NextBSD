@@ -1104,9 +1104,9 @@ exec_new_vmspace(imgp, sv)
 		    MAP_INHERIT_SHARE | MAP_ACC_NO_CHARGE);
 		if (error) {
 			vm_object_deallocate(obj);
-			pax_log_aslr(p, PAX_LOG_DEFAULT,
-			    "failed to map the shared-page @%p",
-			    (void *)p->p_shared_page_base);
+/*			pax_log_aslr(p, PAX_LOG_DEFAULT,
+*			    "failed to map the shared-page @%p",
+*			    (void *)p->p_shared_page_base); */
 			return (error);
 		}
 	}
@@ -1143,9 +1143,9 @@ exec_new_vmspace(imgp, sv)
 		sv->sv_stackprot,
 	    VM_PROT_ALL, MAP_STACK_GROWS_DOWN);
 	if (error) {
-		pax_log_aslr(p, PAX_LOG_DEFAULT,
-		    "failed to map the main stack @%p",
-		    (void *)p->p_usrstack);
+/* #		pax_log_aslr(p, PAX_LOG_DEFAULT, 
+*		    "failed to map the main stack @%p",
+*		    (void *)p->p_usrstack); */
 		return (error);
 	}
 

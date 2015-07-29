@@ -473,7 +473,6 @@
 #define	SYS_utimensat	547
 #define SYS_numa_getaffinity    548
 #define SYS_numa_setaffinity    549
-#define SYS_MAXSYSCALL  550
 #define	SYS__kernelrpc_mach_vm_allocate_trap	610
 #define	SYS__kernelrpc_mach_vm_deallocate_trap	612
 #define	SYS__kernelrpc_mach_vm_protect_trap	614
