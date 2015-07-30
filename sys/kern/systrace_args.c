@@ -9477,7 +9477,6 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
->>>>>>> projects/darwin-support
 	/* _kernelrpc_mach_vm_allocate_trap */
 	case 610:
 		switch(ndx) {
