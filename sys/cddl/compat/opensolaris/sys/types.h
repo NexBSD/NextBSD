@@ -34,6 +34,7 @@
  */
 
 #include <sys/stdint.h>
+#include <sysexits.h>
 
 #ifdef _KERNEL
 typedef	int64_t		clock_t;
@@ -43,6 +44,21 @@ typedef	int64_t		clock_t;
 #include_next <sys/types.h>
 
 #define	MAXNAMELEN	256
+#define      _LIFNAMSIZ      32
+#define      LIFNAMSIZ       _LIFNAMSIZ
+#define      LIFC_EXTERNAL_SOURCE    0x02    /* Exclude the interfaces which can't */
+
+/*
+ * Defined Peripheral Device Types
+ */
+#define DTYPE_DIRECT            0x00    /* magnetic disk */
+#define DTYPE_SEQUENTIAL        0x01    /* magnetic tape */
+#define DTYPE_CHANGER           0x08    /* jukeboxes */
+
+#define SMF_EXIT_ERR_CONFIG EX_CONFIG
+#define SMF_EXIT_ERR_FATAL EX_OSERR
+#define SMF_EXIT_OK EX_OK
+
 
 typedef	struct timespec	timestruc_t;
 typedef	struct timespec	timespec_t;

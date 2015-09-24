@@ -38,6 +38,11 @@
 #define	MNTMAXSTR	128
 
 #define	MNTTYPE_ZFS	"zfs"		/* ZFS file system */
+#define MNTTYPE_UFS     "ufs"           /* Unix file system */
+#define MNTTYPE_SMBFS   "smbfs"         /* SMBFS file system */
+#define MNTTYPE_NFS     "nfs"           /* NFS file system */
+#define MNTTYPE_NFS3    "nfs3"          /* NFS Version 3 file system */
+#define MNTTYPE_NFS4    "nfs4"          /* NFS Version 4 file system */
 
 #define	MNTOPT_RO	"ro"		/* Read only */
 #define	MNTOPT_RW	"rw"		/* Read/write */
