@@ -1,7 +1,7 @@
 {
 	"Label": "org.freebsd.demoserver",
 	"ProgramArguments": [
-		"/home/jceel/demo/server"
+		"/usr/bin/demo-server"
 	],
 	"MachServices": {
 		"org.freebsd.demoserver": {
