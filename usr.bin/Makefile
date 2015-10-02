@@ -38,6 +38,7 @@ SUBDIR=	alias \
 	dirname \
 	dpv \
 	du \
+	demo \
 	elf2aout \
 	elfdump \
 	enigma \

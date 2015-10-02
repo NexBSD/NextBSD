@@ -1,0 +1,11 @@
+{
+	"Label": "org.freebsd.demoserver",
+	"ProgramArguments": [
+		"/home/jceel/demo/server"
+	],
+	"MachServices": {
+		"org.freebsd.demoserver": {
+			"ResetAtClose": true
+		}
+	}
+}

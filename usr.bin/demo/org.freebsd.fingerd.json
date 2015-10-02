@@ -1,0 +1,16 @@
+{
+	"Label": "org.freebsd.fingerd",
+	"ProgramArguments": [
+		"/usr/libexec/fingerd"
+	],
+	"Sockets": {
+		"Listeners": {
+			"SockFamily": "IPv4",
+			"SockProtocol": "TCP",
+			"SockServiceName": "finger"
+		}
+	},
+	"inetdCompatibility": {
+		"Wait": false
+	}
+}
