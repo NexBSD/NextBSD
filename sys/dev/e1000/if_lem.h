@@ -36,6 +36,68 @@
 #ifndef _LEM_H_DEFINED_
 #define _LEM_H_DEFINED_
 
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/buf_ring.h>
+#include <sys/bus.h>
+#include <sys/endian.h>
+#include <sys/kernel.h>
+#include <sys/kthread.h>
+#include <sys/malloc.h>
+#include <sys/mbuf.h>
+#include <sys/module.h>
+#include <sys/rman.h>
+#include <sys/socket.h>
+#include <sys/sockio.h>
+#include <sys/sysctl.h>
+#include <sys/taskqueue.h>
+#include <sys/eventhandler.h>
+#include <machine/bus.h>
+#include <machine/resource.h>
+
+#include <net/bpf.h>
+#include <net/ethernet.h>
+#include <net/if.h>
+#include <net/if_var.h>
+#include <net/if_arp.h>
+#include <net/if_dl.h>
+#include <net/iflib.h>
+#include <net/if_media.h>
+
+#include <net/if_types.h>
+#include <net/if_vlan_var.h>
+
+#include <netinet/in_systm.h>
+#include <netinet/in.h>
+#include <netinet/if_ether.h>
+#include <netinet/ip.h>
+#include <netinet/ip6.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
+
+#include <machine/in_cksum.h>
+#include <dev/led/led.h>
+#include <dev/pci/pcivar.h>
+#include <dev/pci/pcireg.h>
+
+#include "e1000_api.h"
+
+#include <sys/bus.h>
+#include <machine/bus.h>
+#include <sys/rman.h>
+#include <machine/resource.h>
+#include <vm/vm.h>
+#include <vm/pmap.h>
+#include <machine/clock.h>
+#include <sys/proc.h>
+#include <sys/sysctl.h>
+#include <sys/endian.h>
+#include <sys/taskqueue.h>
+#include <sys/pcpu.h>
+#include <sys/smp.h>
+#include <machine/smp.h>
+#include <sys/sbuf.h>
+
 
 /* Tunables */
 
@@ -287,14 +349,11 @@ struct em_dma_alloc {
 
 struct adapter;
 
-struct em_int_delay_info {
-	struct adapter *adapter;	/* Back-pointer to the adapter struct */
-	int offset;			/* Register offset to read/write */
-	int value;			/* Current value in usecs */
-};
-
 /* Our adapter structure */
 struct adapter {
+    if_ctx_t ctx;
+	if_softc_ctx_t shared;
+	
 	if_t		ifp;
 	struct e1000_hw	hw;
 
@@ -309,25 +368,22 @@ struct adapter {
 
 	struct resource	*ioport;
 	int		io_rid;
+    struct if_irq irq; 
 
+	struct mtx core_mtx; 
 	/* 82574 may use 3 int vectors */
 	struct resource	*res[3];
 	void		*tag[3];
 	int		rid[3];
 
-	struct ifmedia	media;
+	struct ifmedia	*media;
 	struct callout	timer;
 	struct callout	tx_fifo_timer;
 	bool		watchdog_check;
-	int		watchdog_time;
 	int		msi;
 	int		if_flags;
 	int		max_frame_size;
 	int		min_frame_size;
-	struct mtx	core_mtx;
-	struct mtx	tx_mtx;
-	struct mtx	rx_mtx;
-	int		em_insert_vlan_header;
 
 	/* Task for FAST handling */
 	struct task     link_task;
@@ -336,12 +392,10 @@ struct adapter {
 	struct task     tx_task;
 	struct taskqueue *tq;           /* private task queue */
 
-	eventhandler_tag vlan_attach;
-	eventhandler_tag vlan_detach;
 	u32	num_vlans;
 
 	/* Management and WOL features */
-	u32		wol;
+	u32		    wol;
 	bool		has_manage;
 	bool		has_amt;
 
@@ -363,11 +417,11 @@ struct adapter {
 	uint32_t	smartspeed;
 	uint32_t	fc_setting;
 
-	struct em_int_delay_info tx_int_delay;
-	struct em_int_delay_info tx_abs_int_delay;
-	struct em_int_delay_info rx_int_delay;
-	struct em_int_delay_info rx_abs_int_delay;
-	struct em_int_delay_info tx_itr;
+	struct if_int_delay_info tx_int_delay;
+	struct if_int_delay_info tx_abs_int_delay;
+	struct if_int_delay_info rx_int_delay;
+	struct if_int_delay_info rx_abs_int_delay;
+	struct if_int_delay_info tx_itr;
 
 	/*
 	 * Transmit definitions
