@@ -188,6 +188,7 @@ static void lem_if_queues_free(if_ctx_t ctx);
 static int lem_if_media_change(if_ctx_t ctx);
 static void lem_if_media_status(if_ctx_t ctx, struct ifmediareq *ifmr);
 static void lem_if_timer(if_ctx_t ctx, uint16_t qid); 
+static void lem_if_led_func(if_ctx_t ctx, int onoff); 
 
 static int	lem_setup_interface(device_t, struct adapter *);
 static void	lem_initialize_transmit_unit(struct adapter *);
@@ -209,6 +210,7 @@ static void lem_get_hw_control(struct adapter *);
 static void	lem_get_wakeup(if_ctx_t ctx); 
 static void	lem_smartspeed(struct adapter *);
 static int	lem_irq_fast(void *);
+int lem_intr(void *arg);
 static void	lem_setup_vlan_hw_support(struct adapter *);
 static int 	lem_is_valid_ether_addr(u8 *);
 
@@ -226,7 +228,7 @@ static void	lem_set_flow_cntrl(struct adapter *, const char *,
 							   const char *, int *, int);
 
 static int	lem_enable_phy_wakeup(struct adapter *);
-static void	lem_led_func(void *, int);
+
 
 /*********************************************************************
  *  FreeBSD Device Interface Entry Points
@@ -269,6 +271,7 @@ static device_method_t lem_if_methods[] =
 	DEVMETHOD(ifdi_mtu_set, lem_if_mtu_set),
 	DEVMETHOD(ifdi_intr_disable, lem_if_intr_disable),
 	DEVMETHOD(ifdi_intr_enable, lem_if_intr_enable),
+	DEVMETHOD(ifdi_led_func, lem_if_led_func), 
 	DEVMETHOD(ifdi_multi_set, lem_if_multi_set),
 	DEVMETHOD(ifdi_media_set, lem_if_media_set),
 	DEVMETHOD(ifdi_media_change, lem_if_media_change),
@@ -288,9 +291,6 @@ static device_method_t lem_if_methods[] =
 static driver_t lem_if_driver = {
 	"lem_if", lem_if_methods, sizeof(struct adapter)
 };
-
-
-
 
 /*********************************************************************
  *  Tunable default values.
@@ -405,6 +405,7 @@ lem_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 static void
 lem_if_queues_free(if_ctx_t ctx)
 {
+	device_printf(iflib_get_dev(ctx), "calling lem_if_queues_free\n"); 
 	struct adapter *adapter = iflib_get_softc(ctx);
 
 	if (adapter->tx_buffer_area != NULL) {
@@ -734,8 +735,7 @@ lem_if_attach_post(if_ctx_t ctx)
 	/* Tell the stack that the interface is not active */
 	if_setdrvflagbits(ifp, 0, IFF_DRV_OACTIVE | IFF_DRV_RUNNING);
 
-	adapter->led_dev = led_create(lem_led_func, adapter,
-	    device_get_nameunit(dev));
+	iflib_led_create(ctx); 
 
 	INIT_DEBUGOUT("lem_attach: end");
 
@@ -760,12 +760,23 @@ lem_if_detach(if_ctx_t ctx)
 
 	INIT_DEBUGOUT("em_detach: begin");
 
+	adapter->in_detach = 1;
+
+	device_printf(iflib_get_dev(ctx), "calling e1000_phy_hw_reset\n"); 
 	e1000_phy_hw_reset(&adapter->hw);
 
+	device_printf(iflib_get_dev(ctx), "calling lem_release_manageability\n"); 
+	
 	lem_release_manageability(adapter);
+	
+    	device_printf(iflib_get_dev(ctx), "calling lem_free_pci_resources\n"); 
+	
 	lem_free_pci_resources(adapter);
 
-	lem_release_hw_control(adapter);
+		device_printf(iflib_get_dev(ctx), "calling lem_release_hw_control\n"); 
+		lem_release_hw_control(adapter);
+
+			device_printf(iflib_get_dev(ctx), "calling free adapter\n"); 
 	free(adapter->mta, M_DEVBUF);
 
 	return (0);
@@ -811,6 +822,19 @@ lem_if_resume(if_ctx_t ctx)
 	lem_init_manageability(adapter);
 
 	return bus_generic_resume(dev);
+}
+
+static void
+lem_if_led_func(if_ctx_t ctx, int onoff) 
+{
+	struct adapter *adapter = iflib_get_softc(ctx);
+	if (onoff) {
+		e1000_setup_led(&adapter->hw);
+		e1000_led_on(&adapter->hw);
+	} else {
+		e1000_led_off(&adapter->hw);
+		e1000_cleanup_led(&adapter->hw);
+	}	
 }
 
 /*********************************************************************
@@ -1014,6 +1038,38 @@ lem_irq_fast(void *arg)
 	return FILTER_HANDLED;
 }
 
+/*********************************************************************
+ *
+ *  Legacy Interrupt Service routine
+ *
+ **********************************************************************/
+int 
+lem_intr(void *arg)
+{
+   	struct adapter *adapter = arg;
+	if_t ifp = iflib_get_ifp(adapter->ctx); 
+    u32 reg_icr;
+
+		if ((if_getcapenable(ifp) & IFCAP_POLLING) ||
+	    ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0))
+			return (FILTER_HANDLED);
+
+	reg_icr = E1000_READ_REG(&adapter->hw, E1000_ICR);
+	if (reg_icr & E1000_ICR_RXO)
+		adapter->rx_overruns++;
+
+	if ((reg_icr == 0xffffffff) || (reg_icr == 0)) {
+		return (FILTER_HANDLED);
+	}
+
+	if (reg_icr & (E1000_ICR_RXSEQ | E1000_ICR_LSC)) {
+		adapter->hw.mac.get_link_status = 1;
+		lem_update_link_status(adapter);
+		return (FILTER_HANDLED);
+	}
+	
+	return (FILTER_SCHEDULE_THREAD); 
+}
 
 /*********************************************************************
  *
@@ -1415,10 +1471,16 @@ lem_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	/* Manually turn off all interrupts */
 	E1000_WRITE_REG(&adapter->hw, E1000_IMC, 0xffffffff);
 
-	/* We allocate a single interrupt resource */
-    error = iflib_irq_alloc_generic(ctx, &adapter->irq, rid, IFLIB_INTR_RX,
-									lem_irq_fast, adapter, 0, "irq");
 
+    /* Do Legacy Setup ? */
+	if (lem_use_legacy_irq) {
+		error = iflib_irq_alloc_generic(ctx, &adapter->irq, rid, IFLIB_INTR_RX,
+										lem_intr, adapter, 0, "irq-legacy");
+	} else {
+		error = iflib_irq_alloc_generic(ctx, &adapter->irq, rid, IFLIB_INTR_RX,
+										lem_irq_fast, adapter, 0, "irq");
+    }
+		
 	if (error) {
 		iflib_irq_free(ctx, &adapter->irq); 
 		device_printf(iflib_get_dev(ctx), "Failed to allocate interrupt err: %d", error);
@@ -2217,20 +2279,6 @@ out:
 	hw->phy.ops.release(hw);
 
 	return ret;
-}
-
-static void
-lem_led_func(void *arg, int onoff)
-{
-	struct adapter	*adapter = arg;
-
-	if (onoff) {
-		e1000_setup_led(&adapter->hw);
-		e1000_led_on(&adapter->hw);
-	} else {
-		e1000_led_off(&adapter->hw);
-		e1000_cleanup_led(&adapter->hw);
-	}
 }
 
 /**********************************************************************

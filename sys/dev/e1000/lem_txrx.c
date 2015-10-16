@@ -12,6 +12,7 @@ static void	lem_82547_move_tail(void *arg, int i);
 
 extern void lem_if_enable_intr(if_ctx_t ctx);
 extern void lem_update_link_status(struct adapter *adapter);
+extern int lem_intr(void *arg); 
 
 static int lem_isc_txd_encap(void *arg, if_pkt_info_t pi);
 static void lem_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx);
@@ -37,39 +38,6 @@ struct if_txrx lem_txrx = {
 };
 
 extern if_shared_ctx_t lem_sctx;
-
-/*********************************************************************
- *
- *  Legacy Interrupt Service routine
- *
- **********************************************************************/
-int 
-lem_intr(void *arg)
-{
-   	struct adapter *adapter = arg;
-	if_t ifp = iflib_get_ifp(adapter->ctx); 
-    u32 reg_icr;
-
-		if ((if_getcapenable(ifp) & IFCAP_POLLING) ||
-	    ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0))
-			return (FILTER_HANDLED);
-
-	reg_icr = E1000_READ_REG(&adapter->hw, E1000_ICR);
-	if (reg_icr & E1000_ICR_RXO)
-		adapter->rx_overruns++;
-
-	if ((reg_icr == 0xffffffff) || (reg_icr == 0)) {
-		return (FILTER_HANDLED);
-	}
-
-	if (reg_icr & (E1000_ICR_RXSEQ | E1000_ICR_LSC)) {
-		adapter->hw.mac.get_link_status = 1;
-		lem_update_link_status(adapter);
-		return (FILTER_HANDLED);
-	}
-	
-	return (FILTER_SCHEDULE_THREAD); 
-}
 
 static int
 lem_isc_txd_encap(void *arg, if_pkt_info_t pi)
