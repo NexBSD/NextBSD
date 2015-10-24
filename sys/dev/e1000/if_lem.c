@@ -170,10 +170,8 @@ static int	lem_if_attach_pre(if_ctx_t ctx);
 static int	lem_if_attach_post(if_ctx_t ctx);
 static int  lem_if_suspend(if_ctx_t ctx);
 static int  lem_if_shutdown(if_ctx_t ctx);
-static int  lem_if_resume(if_ctx_t ctx);
 static int  lem_if_detach(if_ctx_t ctx); 
 static int  lem_if_sysctl_int_delay(if_ctx_t ctx, if_int_delay_info_t info);
-static int  lem_if_msix_intr_assign(if_ctx_t ctx, int msix);
 static int  lem_if_mtu_set(if_ctx_t ctx, uint32_t mtu);
 static int  lem_if_promisc_set(if_ctx_t ctx, int flags);
 static void lem_if_init(if_ctx_t ctx);
@@ -198,7 +196,7 @@ static int	lem_allocate_pci_resources(struct adapter *);
 static int	lem_hardware_init(struct adapter *);
 static void	lem_release_manageability(struct adapter *);
 static void	lem_free_pci_resources(struct adapter *);
-void	lem_update_link_status(struct adapter *);
+static void lem_if_update_admin_status(if_ctx_t ctx); 
 static void	lem_update_stats_counters(struct adapter *);
 static void	lem_add_hw_stats(struct adapter *adapter);
 static void lem_if_vlan_register(if_ctx_t ctx, u16 vtag);
@@ -209,8 +207,7 @@ static void	lem_add_rx_process_limit(struct adapter *, const char *,
 static void lem_get_hw_control(struct adapter *);
 static void	lem_get_wakeup(if_ctx_t ctx); 
 static void	lem_smartspeed(struct adapter *);
-static int	lem_irq_fast(void *);
-int lem_intr(void *arg);
+int	lem_intr(void *);
 static void	lem_setup_vlan_hw_support(struct adapter *);
 static int 	lem_is_valid_ether_addr(u8 *);
 
@@ -263,8 +260,6 @@ static device_method_t lem_if_methods[] =
 	DEVMETHOD(ifdi_attach_post, lem_if_attach_post),
 	DEVMETHOD(ifdi_suspend, lem_if_suspend),
 	DEVMETHOD(ifdi_shutdown, lem_if_shutdown),
-	DEVMETHOD(ifdi_resume, lem_if_resume), 
-	DEVMETHOD(ifdi_msix_intr_assign, lem_if_msix_intr_assign),
 	DEVMETHOD(ifdi_detach, lem_if_detach),
 	DEVMETHOD(ifdi_sysctl_int_delay, lem_if_sysctl_int_delay),
 	DEVMETHOD(ifdi_queues_alloc, lem_if_queues_alloc),
@@ -282,6 +277,7 @@ static device_method_t lem_if_methods[] =
     DEVMETHOD(ifdi_stop, lem_if_stop),
 	DEVMETHOD(ifdi_queues_free, lem_if_queues_free),
 	DEVMETHOD(ifdi_timer, lem_if_timer),
+	DEVMETHOD(ifdi_update_admin_status, lem_if_update_admin_status), 
 	DEVMETHOD(ifdi_vlan_register, lem_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, lem_if_vlan_unregister),
 	DEVMETHOD_END
@@ -717,7 +713,7 @@ lem_if_attach_post(if_ctx_t ctx)
 	lem_update_stats_counters(adapter);
 
 	adapter->hw.mac.get_link_status = 1;
-	lem_update_link_status(adapter);
+    lem_if_update_admin_status(ctx); 
 
 	/* Indicate SOL/IDER usage */
 	if (e1000_check_reset_block(&adapter->hw))
@@ -801,16 +797,6 @@ lem_if_suspend(if_ctx_t ctx)
 	lem_release_manageability(adapter);
 	lem_release_hw_control(adapter);
 	lem_enable_wakeup(adapter);
-	return (0);
-}
-
-static int
-lem_if_resume(if_ctx_t ctx)
-{
-	struct adapter *adapter = iflib_get_softc(ctx);
-
-	lem_if_init(ctx);
-	lem_init_manageability(adapter);
 	return (0);
 }
 
@@ -947,7 +933,7 @@ lem_if_init(if_ctx_t ctx)
 		device_printf(dev, "Unable to initialize the hardware\n");
 		return;
 	}
-	lem_update_link_status(adapter);
+    lem_if_update_admin_status(ctx); 
 
 	/* Setup VLAN support, basic and offload if available */
 	E1000_WRITE_REG(&adapter->hw, E1000_VET, ETHERTYPE_VLAN);
@@ -995,8 +981,8 @@ lem_if_init(if_ctx_t ctx)
  *  Fast Legacy/MSI Combined Interrupt Service routine  
  *
  *********************************************************************/
-static int
-lem_irq_fast(void *arg)
+int
+lem_intr(void *arg)
 {
 	struct adapter	*adapter = arg;
 	u32		reg_icr;
@@ -1014,46 +1000,13 @@ lem_irq_fast(void *arg)
 	/* Link status change */
 	if (reg_icr & (E1000_ICR_RXSEQ | E1000_ICR_LSC)) {
 		adapter->hw.mac.get_link_status = 1;
-		//lem_update_link_status(adapter);
+		lem_if_update_admin_status(adapter->ctx); 
 	}
 
 	if (reg_icr & E1000_ICR_RXO)
 		adapter->rx_overruns++;
 
-	return FILTER_HANDLED;
-}
-
-/*********************************************************************
- *
- *  Legacy Interrupt Service routine
- *
- **********************************************************************/
-int 
-lem_intr(void *arg)
-{
-   	struct adapter *adapter = arg;
-	if_t ifp = iflib_get_ifp(adapter->ctx); 
-    u32 reg_icr;
-
-		if ((if_getcapenable(ifp) & IFCAP_POLLING) ||
-	    ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0))
-			return (FILTER_HANDLED);
-
-	reg_icr = E1000_READ_REG(&adapter->hw, E1000_ICR);
-	if (reg_icr & E1000_ICR_RXO)
-		adapter->rx_overruns++;
-
-	if ((reg_icr == 0xffffffff) || (reg_icr == 0)) {
-		return (FILTER_HANDLED);
-	}
-
-	if (reg_icr & (E1000_ICR_RXSEQ | E1000_ICR_LSC)) {
-		adapter->hw.mac.get_link_status = 1;
-		lem_update_link_status(adapter);
-		return (FILTER_HANDLED);
-	}
-	
-	return (FILTER_SCHEDULE_THREAD); 
+	return FILTER_SCHEDULE_THREAD;
 }
 
 /*********************************************************************
@@ -1072,7 +1025,7 @@ lem_if_media_status(if_ctx_t ctx, struct ifmediareq *ifmr)
 
 	INIT_DEBUGOUT("lem_media_status: begin");
 
-	lem_update_link_status(adapter);
+	lem_if_update_admin_status(ctx); 
 
 	ifmr->ifm_status = IFM_AVALID;
 	ifmr->ifm_active = IFM_ETHER;
@@ -1265,18 +1218,19 @@ static void
 {
 	struct adapter	*adapter = iflib_get_softc(ctx); 
 
-	lem_update_link_status(adapter);
+    lem_if_update_admin_status(ctx); 
 	lem_update_stats_counters(adapter);
 
 	lem_smartspeed(adapter);
 }
 
 void
-lem_update_link_status(struct adapter *adapter)
+lem_if_update_admin_status(if_ctx_t ctx)
 {
+	struct adapter *adapter = iflib_get_softc(ctx); 
 	struct e1000_hw *hw = &adapter->hw;
-	if_t ifp = iflib_get_ifp(adapter->ctx); 
-	device_t dev = iflib_get_dev(adapter->ctx); 
+	if_t ifp = iflib_get_ifp(ctx); 
+	device_t dev = iflib_get_dev(ctx); 
 	u32 link_check = 0;
 
 	/* Get the cached link value or read phy for real */
@@ -1442,50 +1396,10 @@ lem_allocate_pci_resources(struct adapter *adapter)
 	return (error);
 }
 
-/*********************************************************************
- *
- *  Setup the Legacy or MSI Interrupt handler
- *
- **********************************************************************/
-
-static int
-lem_if_msix_intr_assign(if_ctx_t ctx, int msix)
-{
-	struct adapter *adapter = iflib_get_softc(ctx); 
-	int error, rid = 0;
-
-	/* Manually turn off all interrupts */
-	E1000_WRITE_REG(&adapter->hw, E1000_IMC, 0xffffffff);
-
-
-    /* Do Legacy Setup ? */
-	if (lem_use_legacy_irq) {
-		error = iflib_irq_alloc_generic(ctx, &adapter->irq, rid, IFLIB_INTR_RX,
-										lem_intr, adapter, 0, "irq-legacy");
-	} else {
-		error = iflib_irq_alloc_generic(ctx, &adapter->irq, rid, IFLIB_INTR_RX,
-										lem_irq_fast, adapter, 0, "irq");
-    }
-		
-	if (error) {
-		iflib_irq_free(ctx, &adapter->irq); 
-		device_printf(iflib_get_dev(ctx), "Failed to allocate interrupt err: %d", error);
-        return (error);                 		
-	}
-
-    iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, adapter, 0, "irq");
-
-	return 0; 
-}
-
-
 static void
 lem_free_pci_resources(struct adapter *adapter)
 {
 	device_t dev = iflib_get_dev(adapter->ctx); 
-	
-	/* Release all msix resources */
-	iflib_irq_free(adapter->ctx, &adapter->irq); 
 	
 	if (adapter->memory != NULL)
 		bus_release_resource(dev, SYS_RES_MEMORY,
