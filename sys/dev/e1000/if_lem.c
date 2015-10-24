@@ -410,10 +410,17 @@ lem_if_queues_free(if_ctx_t ctx)
 
 	if (adapter->tx_buffer_area != NULL) {
 		free(adapter->tx_buffer_area, M_DEVBUF);
+		adapter->tx_buffer_area = NULL;
 	}
 
 	if (adapter->rx_buffer_area != NULL) {
 		free(adapter->rx_buffer_area, M_DEVBUF);
+		adapter->rx_buffer_area = NULL;
+	}
+
+	if (adapter->mta != NULL) {
+		free(adapter->mta, M_DEVBUF);
+		adapter->mta = NULL;
 	}
 }
 
@@ -693,8 +700,6 @@ lem_if_attach_pre(if_ctx_t ctx)
 	   lem_release_hw_control(adapter);
 
     err_pci:
-	   if (adapter->ifp != (void *)NULL)
-	  	  if_free(adapter->ifp);
 	   lem_free_pci_resources(adapter);
 	   free(adapter->mta, M_DEVBUF);
 
@@ -761,23 +766,12 @@ lem_if_detach(if_ctx_t ctx)
 	INIT_DEBUGOUT("em_detach: begin");
 
 	adapter->in_detach = 1;
-
-	device_printf(iflib_get_dev(ctx), "calling e1000_phy_hw_reset\n"); 
 	e1000_phy_hw_reset(&adapter->hw);
 
-	device_printf(iflib_get_dev(ctx), "calling lem_release_manageability\n"); 
-	
 	lem_release_manageability(adapter);
-	
-    	device_printf(iflib_get_dev(ctx), "calling lem_free_pci_resources\n"); 
-	
 	lem_free_pci_resources(adapter);
 
-		device_printf(iflib_get_dev(ctx), "calling lem_release_hw_control\n"); 
-		lem_release_hw_control(adapter);
-
-			device_printf(iflib_get_dev(ctx), "calling free adapter\n"); 
-	free(adapter->mta, M_DEVBUF);
+	lem_release_hw_control(adapter);
 
 	return (0);
 }
@@ -801,27 +795,23 @@ static int
 lem_if_suspend(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
-    device_t dev = iflib_get_dev(ctx);
 
 	INIT_DEBUGOUT("lem_suspend: begin"); 
 	
 	lem_release_manageability(adapter);
 	lem_release_hw_control(adapter);
 	lem_enable_wakeup(adapter);
-
-	return bus_generic_suspend(dev);
+	return (0);
 }
 
 static int
 lem_if_resume(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
-    device_t dev = iflib_get_dev(ctx); 
 
 	lem_if_init(ctx);
 	lem_init_manageability(adapter);
-
-	return bus_generic_resume(dev);
+	return (0);
 }
 
 static void
@@ -1021,20 +1011,15 @@ lem_irq_fast(void *arg)
 	if (reg_icr == 0x0)
 		return FILTER_STRAY;
 
-	/*
-	 * Mask interrupts until the taskqueue is finished running.  This is
-	 * cheap, just assume that it is needed.  This also works around the
-	 * MSI message reordering errata on certain systems.
-	 */
-	lem_if_intr_disable(adapter->ctx);
-
 	/* Link status change */
 	if (reg_icr & (E1000_ICR_RXSEQ | E1000_ICR_LSC)) {
 		adapter->hw.mac.get_link_status = 1;
+		//lem_update_link_status(adapter);
 	}
 
 	if (reg_icr & E1000_ICR_RXO)
 		adapter->rx_overruns++;
+
 	return FILTER_HANDLED;
 }
 
@@ -1235,6 +1220,7 @@ lem_if_multi_set(if_ctx_t ctx)
 
 	IOCTL_DEBUGOUT("lem_set_multi: begin");
 
+	MPASS(adapter->mta != NULL);
 	mta = adapter->mta;
 	bzero(mta, sizeof(u8) * ETH_ADDR_LEN * MAX_NUM_MULTICAST_ADDRESSES);
 
@@ -1331,7 +1317,7 @@ lem_update_link_status(struct adapter *adapter)
 		adapter->link_active = 1;
 		adapter->smartspeed = 0;
 		if_setbaudrate(ifp, adapter->link_speed * 1000000);
-		if_link_state_change(ifp, LINK_STATE_UP);
+		iflib_link_state_change(adapter->ctx, LINK_STATE_UP);
 	} else if (!link_check && (adapter->link_active == 1)) {
 		if_setbaudrate(ifp, 0);
 		adapter->link_speed = 0;
@@ -1341,7 +1327,7 @@ lem_update_link_status(struct adapter *adapter)
 		adapter->link_active = 0;
 		/* Link down, disable watchdog */
 		adapter->watchdog_check = FALSE;
-		if_link_state_change(ifp, LINK_STATE_DOWN);
+		iflib_link_state_change(adapter->ctx, LINK_STATE_DOWN);
 	}
 }
 
@@ -1501,18 +1487,6 @@ lem_free_pci_resources(struct adapter *adapter)
 	/* Release all msix resources */
 	iflib_irq_free(adapter->ctx, &adapter->irq); 
 	
-
-	if (adapter->tag[0] != NULL) {
-		bus_teardown_intr(dev, adapter->res[0],
-		    adapter->tag[0]);
-		adapter->tag[0] = NULL;
-	}
-
-	if (adapter->res[0] != NULL) {
-		bus_release_resource(dev, SYS_RES_IRQ,
-		    0, adapter->res[0]);
-	}
-
 	if (adapter->memory != NULL)
 		bus_release_resource(dev, SYS_RES_MEMORY,
 		    PCIR_BAR(0), adapter->memory);
