@@ -156,6 +156,8 @@
 #define	MBOX_SEND_CHANGE_REQUEST	0x0070
 #define	MBOX_FABRIC_LOGOUT		0x0071
 #define	MBOX_INIT_LIP_LOGIN		0x0072
+#define	MBOX_GET_PORT_NODE_NAME_LIST	0x0075
+#define	MBOX_GET_ID_LIST		0x007C
 #define	MBOX_LUN_RESET			0x007E
 
 #define	MBOX_DRIVER_HEARTBEAT		0x005B
@@ -189,13 +191,17 @@
 #define	MBOX_LOOP_ID_USED		0x4008
 #define	MBOX_ALL_IDS_USED		0x4009
 #define	MBOX_NOT_LOGGED_IN		0x400A
+#define	MBOX_LINK_DOWN_ERROR		0x400B
+#define	MBOX_LOOPBACK_ERROR		0x400C
+#define	MBOX_CHECKSUM_ERROR		0x4010
+#define	MBOX_INVALID_PRODUCT_KEY	0x4020
 /* pseudo mailbox completion codes */
 #define	MBOX_REGS_BUSY			0x6000	/* registers in use */
 #define	MBOX_TIMEOUT			0x6001	/* command timed out */
 
-#define	MBLOGALL			0x000f
-#define	MBLOGNONE			0x0000
-#define	MBLOGMASK(x)			((x) & 0xf)
+#define	MBLOGALL			0xffffffff
+#define	MBLOGNONE			0x00000000
+#define	MBLOGMASK(x)			(1 << (((x) - 1) & 0x1f))
 
 /*
  * Asynchronous event status codes
@@ -574,7 +580,8 @@ typedef struct {
 	uint16_t	abrt_nphdl;
 	uint16_t	abrt_options;
 	uint32_t	abrt_cmd_handle;
-	uint8_t		abrt_reserved[32];
+	uint16_t	abrt_queue_number;
+	uint8_t		abrt_reserved[30];
 	uint16_t	abrt_tidlo;
 	uint8_t		abrt_tidhi;
 	uint8_t		abrt_vpidx;
@@ -632,7 +639,7 @@ typedef struct {
 	uint32_t	req_resid;
 	uint16_t	req_reserved0;
 	uint16_t	req_state_flags;
-	uint16_t	req_reserved1;
+	uint16_t	req_retry_delay;	/* aka Status Qualifier */
 	uint16_t	req_scsi_status;
 	uint32_t	req_fcp_residual;
 	uint32_t	req_sense_len;
@@ -644,11 +651,12 @@ typedef struct {
  * For Qlogic 2X00, the high order byte of SCSI status has
  * additional meaning.
  */
-#define	RQCS_RU	0x800	/* Residual Under */
-#define	RQCS_RO	0x400	/* Residual Over */
+#define	RQCS_CR	0x1000	/* Confirmation Request */
+#define	RQCS_RU	0x0800	/* Residual Under */
+#define	RQCS_RO	0x0400	/* Residual Over */
 #define	RQCS_RESID	(RQCS_RU|RQCS_RO)
-#define	RQCS_SV	0x200	/* Sense Length Valid */
-#define	RQCS_RV	0x100	/* FCP Response Length Valid */
+#define	RQCS_SV	0x0200	/* Sense Length Valid */
+#define	RQCS_RV	0x0100	/* FCP Response Length Valid */
 
 /*
  * CT Passthru IOCB
@@ -853,6 +861,8 @@ typedef struct {
 	(IS_24XX(isp)? (isp->isp_fwattr & ISP2400_FW_ATTR_MULTIID) : 0)
 #define	ISP_GET_VPIDX(isp, tag) \
 	(ISP_CAP_MULTI_ID(isp) ? tag : 0)
+#define	ISP_CAP_VP0(isp)	\
+	(IS_24XX(isp)? (isp->isp_fwattr & ISP2400_FW_ATTR_VP0) : 0)
 
 /*
  * This is true manifestly or is dependent on a f/w attribute
@@ -926,7 +936,7 @@ typedef struct {
 #define	ICBOPT_BOTH_WWNS	0x4000
 #define	ICBOPT_FULL_LOGIN	0x2000
 #define	ICBOPT_STOP_ON_QFULL	0x1000	/* 2200/2100 only */
-#define	ICBOPT_PREVLOOP		0x0800
+#define	ICBOPT_PREV_ADDRESS	0x0800
 #define	ICBOPT_SRCHDOWN		0x0400
 #define	ICBOPT_NOLIP		0x0200
 #define	ICBOPT_PDBCHANGE_AE	0x0100
@@ -980,7 +990,7 @@ typedef struct {
 /* 2400 F/W options */
 #define	ICB2400_OPT1_BOTH_WWNS		0x00004000
 #define	ICB2400_OPT1_FULL_LOGIN		0x00002000
-#define	ICB2400_OPT1_PREVLOOP		0x00000800
+#define	ICB2400_OPT1_PREV_ADDRESS	0x00000800
 #define	ICB2400_OPT1_SRCHDOWN		0x00000400
 #define	ICB2400_OPT1_NOLIP		0x00000200
 #define	ICB2400_OPT1_INI_DISABLE	0x00000020
@@ -1142,7 +1152,7 @@ typedef struct {
 #define	ICB2400_VPOPT_INI_ENABLE	0x00000010	/* Initiator Mode Enabled */
 #define	ICB2400_VPOPT_ENABLED		0x00000008	/* VP Enabled */
 #define	ICB2400_VPOPT_NOPLAY		0x00000004	/* ID Not Acquired */
-#define	ICB2400_VPOPT_PREVLOOP		0x00000002	/* Previously Assigned ID */
+#define	ICB2400_VPOPT_PREV_ADDRESS	0x00000002	/* Previously Assigned ID */
 #define	ICB2400_VPOPT_HARD_ADDRESS	0x00000001	/* Hard Assigned ID */
 
 #define	ICB2400_VPOPT_WRITE_SIZE	20
@@ -1175,14 +1185,16 @@ typedef struct {
 	uint16_t	vp_ctrl_status;
 	uint16_t	vp_ctrl_command;
 	uint16_t	vp_ctrl_vp_count;
-	uint16_t	vp_ctrl_idmap[8];
-	uint8_t		vp_ctrl_reserved[32];
+	uint16_t	vp_ctrl_idmap[16];
+	uint16_t	vp_ctrl_reserved[7];
+	uint16_t	vp_ctrl_fcf_index;
 } vp_ctrl_info_t;
 
-#define	VP_CTRL_CMD_ENABLE_VP			0
-#define	VP_CTRL_CMD_DISABLE_VP			8
-#define	VP_CTRL_CMD_DISABLE_VP_REINIT_LINK	9
-#define	VP_CTRL_CMD_DISABLE_VP_LOGO		0xA
+#define	VP_CTRL_CMD_ENABLE_VP			0x00
+#define	VP_CTRL_CMD_DISABLE_VP			0x08
+#define	VP_CTRL_CMD_DISABLE_VP_REINIT_LINK	0x09
+#define	VP_CTRL_CMD_DISABLE_VP_LOGO		0x0A
+#define	VP_CTRL_CMD_DISABLE_VP_LOGO_ALL		0x0B
 
 /*
  * We can use this structure for modifying either one or two VP ports after initialization
@@ -1336,6 +1348,40 @@ typedef struct {
 } isp_pdb_t;
 
 /*
+ * Port/Node Name List Element
+ */
+typedef struct {
+	uint8_t		pnnle_name[8];
+	uint16_t	pnnle_handle;
+	uint16_t	pnnle_reserved;
+} isp_pnnle_t;
+
+#define	PNNL_OPTIONS_NODE_NAMES	(1<<0)
+#define	PNNL_OPTIONS_PORT_DATA	(1<<2)
+#define	PNNL_OPTIONS_INITIATORS	(1<<3)
+
+/*
+ * Port and N-Port Handle List Element
+ */
+typedef struct {
+	uint16_t	pnhle_port_id_lo;
+	uint16_t	pnhle_port_id_hi_handle;
+} isp_pnhle_21xx_t;
+
+typedef struct {
+	uint16_t	pnhle_port_id_lo;
+	uint16_t	pnhle_port_id_hi;
+	uint16_t	pnhle_handle;
+} isp_pnhle_23xx_t;
+
+typedef struct {
+	uint16_t	pnhle_port_id_lo;
+	uint16_t	pnhle_port_id_hi;
+	uint16_t	pnhle_handle;
+	uint16_t	pnhle_reserved;
+} isp_pnhle_24xx_t;
+
+/*
  * Port Database Changed Async Event information for 24XX cards
  */
 #define	PDB24XX_AE_OK		0x00
@@ -1405,7 +1451,7 @@ typedef struct {
 #define	PLOGX_IOCBERR_FAILED	0x04	/* further info in IOPARM 1 */
 #define	PLOGX_IOCBERR_NOFABRIC	0x05
 #define	PLOGX_IOCBERR_NOTREADY	0x07
-#define	PLOGX_IOCBERR_NOLOGIN	0x08	/* further info in IOPARM 1 */
+#define	PLOGX_IOCBERR_NOLOGIN	0x09	/* further info in IOPARM 1 */
 #define	PLOGX_IOCBERR_NOPCB	0x0a
 #define	PLOGX_IOCBERR_REJECT	0x18	/* further info in IOPARM 1 */
 #define	PLOGX_IOCBERR_EINVAL	0x19	/* further info in IOPARM 1 */

@@ -53,7 +53,7 @@ __FBSDID("$FreeBSD$");
 
 static uint32_t isp_sbus_rd_reg(ispsoftc_t *, int);
 static void isp_sbus_wr_reg(ispsoftc_t *, int, uint32_t);
-static int isp_sbus_rd_isr(ispsoftc_t *, uint32_t *, uint16_t *, uint16_t *);
+static int isp_sbus_rd_isr(ispsoftc_t *, uint16_t *, uint16_t *, uint16_t *);
 static int isp_sbus_mbxdma(ispsoftc_t *);
 static int isp_sbus_dmasetup(ispsoftc_t *, XS_T *, void *);
 
@@ -313,15 +313,10 @@ isp_sbus_attach(device_t dev)
 	 * Make sure we're in reset state.
 	 */
 	ISP_LOCK(isp);
-	isp_reset(isp, 1);
-	if (isp->isp_state != ISP_RESETSTATE) {
+	if (isp_reinit(isp, 1) != 0) {
 		isp_uninit(isp);
 		ISP_UNLOCK(isp);
 		goto bad;
-	}
-	isp_init(isp);
-	if (isp->isp_state == ISP_INITSTATE) {
-		isp->isp_state = ISP_RUNSTATE;
 	}
 	ISP_UNLOCK(isp);
 	if (isp_attach(isp)) {

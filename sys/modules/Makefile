@@ -202,7 +202,7 @@ SUBDIR=	\
 	${_linux} \
 	${_linux_common} \
 	${_linux64} \
-	${_linuxkpi} \
+	linuxkpi \
 	lmc \
 	lpt \
 	mac_biba \
@@ -542,9 +542,6 @@ _ipoib=         ipoib
 _linprocfs=	linprocfs
 _linsysfs=	linsysfs
 _linux=		linux
-.if ${MK_OFED} != "no"
-_linuxkpi=	linuxkpi
-.endif
 _ndis=		ndis
 _pccard=	pccard
 .if ${MK_OFED} != "no" || defined(ALL_MODULES)
