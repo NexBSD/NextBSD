@@ -1011,33 +1011,15 @@ isp_reset(ispsoftc_t *isp, int do_load_defaults)
 		}
 	}
 
-	/*
-	 * Give it a chance to finish starting up.
-	 * Give the 24XX more time.
-	 */
-	if (IS_24XX(isp)) {
-		ISP_DELAY(500000);
+	if (IS_SCSI(isp)) {
 		/*
-		 * Check to see if the 24XX firmware really started.
+		 * Set CLOCK RATE, but only if asked to.
 		 */
-		if (mbs.param[1] == 0xdead) {
-			isp_prt(isp, ISP_LOGERR, "f/w didn't *really* start");
-			ISP_RESET0(isp);
-			return;
-		}
-	} else {
-		ISP_DELAY(250000);
-		if (IS_SCSI(isp)) {
-			/*
-			 * Set CLOCK RATE, but only if asked to.
-			 */
-			if (isp->isp_clock) {
-				mbs.param[0] = MBOX_SET_CLOCK_RATE;
-				mbs.param[1] = isp->isp_clock;
-				mbs.logval = MBLOGNONE;
-				isp_mboxcmd(isp, &mbs);
-				/* we will try not to care if this fails */
-			}
+		if (isp->isp_clock) {
+			MBSINIT(&mbs, MBOX_SET_CLOCK_RATE, MBLOGALL, 0);
+			mbs.param[1] = isp->isp_clock;
+			isp_mboxcmd(isp, &mbs);
+			/* we will try not to care if this fails */
 		}
 	}
 
@@ -2297,10 +2279,6 @@ isp_mark_portdb(ispsoftc_t *isp, int chan, int disposition)
 	fcportdb_t *lp;
 	int i;
 
-	if (chan < 0 || chan >= isp->isp_nchan) {
-		isp_prt(isp, ISP_LOGWARN, "isp_mark_portdb: bad channel %d", chan);
-		return;
-	}
 	for (i = 0; i < MAX_FC_TARG; i++) {
 		lp = &fcp->portdb[i];
 		switch (lp->state) {
