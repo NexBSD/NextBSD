@@ -791,90 +791,6 @@ nobounce_bus_dmamap_load_kernel_buffer(bus_dma_tag_t dmat, bus_dmamap_t map __un
 	return (buflen != 0 ? EFBIG : 0); /* XXX better return value here? */
 }
 
-static int
-bounce_bus_dmamap_load_ma(bus_dma_tag_t dmat, bus_dmamap_t map,
-    struct vm_page **ma, bus_size_t buflen, int ma_offs, int flags,
-    bus_dma_segment_t *segs, int *segp)
-{
-	vm_paddr_t paddr, next_paddr;
-	int error, page_index;
-	struct vm_page *page;
-	bus_size_t sgsize, max_sgsize;
-
-	if (dmat->common.flags & BUS_DMA_KEEP_PG_OFFSET) {
-		/*
-		 * If we have to keep the offset of each page this function
-		 * is not suitable, switch back to bus_dmamap_load_ma_triv
-		 * which is going to do the right thing in this case.
-		 */
-		error = bus_dmamap_load_ma_triv(dmat, map, ma, buflen, ma_offs,
-		    flags, segs, segp);
-		return (error);
-	}
-
-	if (map == NULL)
-		map = &nobounce_dmamap;
-
-	if (segs == NULL)
-		segs = dmat->segments;
-
-	if ((dmat->bounce_flags & BUS_DMA_COULD_BOUNCE) != 0) {
-		_bus_dmamap_count_ma(dmat, map, ma, ma_offs, buflen, flags);
-		if (map->pagesneeded != 0) {
-			error = _bus_dmamap_reserve_pages(dmat, map, flags);
-			if (error)
-				return (error);
-		}
-	}
-
-	page_index = 0;
-	page = ma[0];
-	while (buflen > 0) {
-		/*
-		 * Compute the segment size, and adjust counts.
-		 */
-		page = ma[page_index];
-		paddr = page->phys_addr + ma_offs;
-		max_sgsize = MIN(buflen, dmat->common.maxsegsz);
-		sgsize = PAGE_SIZE - ma_offs;
-		if (((dmat->bounce_flags & BUS_DMA_COULD_BOUNCE) != 0) &&
-		    map->pagesneeded != 0 &&
-		    bus_dma_run_filter(&dmat->common, paddr)) {
-			sgsize = roundup2(sgsize, dmat->common.alignment);
-			sgsize = MIN(sgsize, max_sgsize);
-			KASSERT((sgsize & (dmat->common.alignment - 1)) == 0,
-			    ("Segment size is not aligned"));
-			/*
-			 * Check if two pages of the user provided buffer
-			 * are used.
-			 */
-			if (((ma_offs + sgsize) & ~PAGE_MASK) != 0)
-				next_paddr = ma[page_index + 1]->phys_addr;
-			else
-				next_paddr = 0;
-			paddr = add_bounce_page(dmat, map, 0, paddr,
-			    next_paddr, sgsize);
-		} else {
-			sgsize = MIN(sgsize, max_sgsize);
-		}
-		sgsize = _bus_dmamap_addseg(dmat, paddr, sgsize, segs,
-		    segp);
-		if (sgsize == 0)
-			break;
-		KASSERT(buflen >= sgsize,
-		    ("Segment length overruns original buffer"));
-		buflen -= sgsize;
-		if (((ma_offs + sgsize) & ~PAGE_MASK) != 0)
-			page_index++;
-		ma_offs = (ma_offs + sgsize) & PAGE_MASK;
-	}
-
-	/*
-	 * Did we fit?
-	 */
-	return (buflen != 0 ? EFBIG : 0); /* XXX better return value here? */
-}
-
 static void
 bounce_bus_dmamap_waitok(bus_dma_tag_t dmat, bus_dmamap_t map,
     struct memdesc *mem, bus_dmamap_callback_t *callback, void *callback_arg)
@@ -1151,6 +1067,7 @@ add_bounce_page(bus_dma_tag_t dmat, bus_dmamap_t map, vm_offset_t vaddr,
 		bpage->busaddr |= addr & PAGE_MASK;
 	}
 	bpage->datavaddr = vaddr;
+	/* PHYS_TO_VM_PAGE() will truncate unaligned addresses. */
 	bpage->datapage = PHYS_TO_VM_PAGE(addr);
 	bpage->dataoffs = addr & PAGE_MASK;
 	bpage->datacount = size;
