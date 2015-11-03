@@ -31,22 +31,42 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef VCHIQ_PAGELIST_H
-#define VCHIQ_PAGELIST_H
+#ifndef VCHIQ_KILLABLE_H
+#define VCHIQ_KILLABLE_H
 
-#ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
+#ifdef notyet
+#include <linux/mutex.h>
+#include <linux/semaphore.h>
+
+#define SHUTDOWN_SIGS   (sigmask(SIGKILL) | sigmask(SIGINT) | sigmask(SIGQUIT) | sigmask(SIGTRAP) | sigmask(SIGSTOP) | sigmask(SIGCONT))
+
+static inline int __must_check down_interruptible_killable(struct semaphore *sem)
+{
+	/* Allow interception of killable signals only. We don't want to be interrupted by harmless signals like SIGALRM */
+	int ret;
+	sigset_t blocked, oldset;
+	siginitsetinv(&blocked, SHUTDOWN_SIGS);
+	sigprocmask(SIG_SETMASK, &blocked, &oldset);
+	ret = down_interruptible(sem);
+	sigprocmask(SIG_SETMASK, &oldset, NULL);
+	return ret;
+}
+#define down_interruptible down_interruptible_killable
+
+
+static inline int __must_check mutex_lock_interruptible_killable(struct mutex *lock)
+{
+	/* Allow interception of killable signals only. We don't want to be interrupted by harmless signals like SIGALRM */
+	int ret;
+	sigset_t blocked, oldset;
+	siginitsetinv(&blocked, SHUTDOWN_SIGS);
+	sigprocmask(SIG_SETMASK, &blocked, &oldset);
+	ret = mutex_lock_interruptible(lock);
+	sigprocmask(SIG_SETMASK, &oldset, NULL);
+	return ret;
+}
+#define mutex_lock_interruptible mutex_lock_interruptible_killable
+
 #endif
-#define PAGELIST_WRITE 0
-#define PAGELIST_READ 1
-#define PAGELIST_READ_WITH_FRAGMENTS 2
 
-typedef struct pagelist_struct {
-	unsigned long length;
-	unsigned short type;
-	unsigned short offset;
-	unsigned long addrs[1];	/* N.B. 12 LSBs hold the number of following
-				   pages at consecutive addresses. */
-} PAGELIST_T;
-
-#endif /* VCHIQ_PAGELIST_H */
+#endif

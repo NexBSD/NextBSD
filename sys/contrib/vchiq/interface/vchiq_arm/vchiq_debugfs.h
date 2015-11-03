@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2012 Broadcom. All rights reserved.
+ * Copyright (c) 2014 Raspberry Pi (Trading) Ltd. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,22 +31,22 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef VCHIQ_PAGELIST_H
-#define VCHIQ_PAGELIST_H
+#ifndef VCHIQ_DEBUGFS_H
+#define VCHIQ_DEBUGFS_H
 
-#ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
-#endif
-#define PAGELIST_WRITE 0
-#define PAGELIST_READ 1
-#define PAGELIST_READ_WITH_FRAGMENTS 2
+#include "vchiq_core.h"
 
-typedef struct pagelist_struct {
-	unsigned long length;
-	unsigned short type;
-	unsigned short offset;
-	unsigned long addrs[1];	/* N.B. 12 LSBs hold the number of following
-				   pages at consecutive addresses. */
-} PAGELIST_T;
+typedef struct vchiq_debugfs_node_struct
+{
+    struct dentry *dentry;
+} VCHIQ_DEBUGFS_NODE_T;
 
-#endif /* VCHIQ_PAGELIST_H */
+int vchiq_debugfs_init(void);
+
+void vchiq_debugfs_deinit(void);
+
+int vchiq_debugfs_add_instance(VCHIQ_INSTANCE_T instance);
+
+void vchiq_debugfs_remove_instance(VCHIQ_INSTANCE_T instance);
+
+#endif /* VCHIQ_DEBUGFS_H */
