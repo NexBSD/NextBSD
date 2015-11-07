@@ -24,6 +24,9 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_platform.h"
+#include "opt_at91.h"
+
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
@@ -71,6 +74,12 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 #include <machine/intr.h>
+
+#ifdef FDT
+#include <dev/fdt/fdt_common.h>
+#include <dev/ofw/ofw_bus.h>
+#include <dev/ofw/ofw_bus_subr.h>
+#endif
 
 /* "device miibus" required.  See GENERIC if you get errors here. */
 #include "miibus_if.h"
@@ -1196,6 +1205,11 @@ macbioctl(struct ifnet * ifp, u_long cmd, caddr_t data)
 static int
 macb_probe(device_t dev)
 {
+#ifdef FDT
+        if (!ofw_bus_is_compatible(dev, "cdns,at32ap7000-macb"))
+                return (ENXIO);
+#endif
+
 	device_set_desc(dev, "macb");
 	return (0);
 }
@@ -1346,8 +1360,14 @@ macb_attach(device_t dev)
 
 	sc->clock = sc->clock << 10;
 
+#ifdef AT91_MACB_USE_RMII
+	sc->use_rmii = USRIO_RMII;
+#else
+	sc->use_rmii = read_4(sc, EMAC_USRIO) & USRIO_RMII;
+#endif
+
 	write_4(sc, EMAC_NCFGR, sc->clock);
-	write_4(sc, EMAC_USRIO, USRIO_CLOCK);       //enable clock
+	write_4(sc, EMAC_USRIO, USRIO_CLOCK | sc->use_rmii);       //enable clock
 
 	write_4(sc, EMAC_NCR, MPE_ENABLE); //enable MPE
 
@@ -1546,7 +1566,11 @@ static driver_t macb_driver = {
 };
 
 
+#ifdef FDT
+DRIVER_MODULE(macb, simplebus, macb_driver, macb_devclass, NULL, NULL);
+#else
 DRIVER_MODULE(macb, atmelarm, macb_driver, macb_devclass, 0, 0);
+#endif
 DRIVER_MODULE(miibus, macb, miibus_driver, miibus_devclass, 0, 0);
 MODULE_DEPEND(macb, miibus, 1, 1, 1);
 MODULE_DEPEND(macb, ether, 1, 1, 1);
