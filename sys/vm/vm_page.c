@@ -2601,37 +2601,32 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 
 	vm_page_assert_locked(m);
 
-	
 	/*
-	 * If it's already inactive but still deferred just note that it should be put at the head
-	 */
-	if ((m->flags & PG_PAQUEUE) && athead) {
-			m->flags |= PG_ATHEAD;
-			return;
-	}
-	/*
-	 * Ignore if the page is likely to be reused - note that this is a somewhat expensive way
-	 * of accelerating page free - would likely be faster to mark them with ATHEAD and then
-	 * scan later during fixup
+	 * Ignore if the page is already inactive, unless it is unlikely to be
+	 * reactivated.
 	 */
 	if ((queue = m->queue) == PQ_INACTIVE && !noreuse)
 		return;
 	if (m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0) {
-		if (queue != PQ_NONE) {
-			vm_page_dequeue(m);
+		pq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
+		/* Avoid multiple acquisitions of the inactive queue lock. */
+		if (queue == PQ_INACTIVE) {
+			vm_pagequeue_lock(pq);
+			vm_page_dequeue_locked(m);
+		} else {
+			if (queue != PQ_NONE)
+				vm_page_dequeue(m);
 			m->flags &= ~PG_WINATCFLS;
+			vm_pagequeue_lock(pq);
 		}
-		if (athead)
-			m->flags |= PG_ATHEAD;
-		m->flags |= PG_PAQUEUE;
 		m->queue = PQ_INACTIVE;
-
-		pq = &vm_phys_domain(m)->vmd_pagequeues[vm_page_queue_idx(m)];
-		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+		if (noreuse)
+			TAILQ_INSERT_BEFORE(&vm_phys_domain(m)->vmd_inacthead,
+			    m, plinks.q);
+		else
+			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
-		atomic_add_int(&vm_cnt.v_inactive_deferred_count, 1);
-		if (pq->pq_cnt > vm_paqlenthresh_lwm)
-			vm_page_queue_fixup(m);
+		vm_pagequeue_unlock(pq);
 	}
 }
 
