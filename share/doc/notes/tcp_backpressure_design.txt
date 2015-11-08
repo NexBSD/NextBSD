@@ -1,0 +1,88 @@
+inpcb portion of implementation:
+
+private:
+	  - initialize an inpcb tailq per-cpu
+	  - on non-iflib systems initialize a taskqueue thread per-cpu
+
+inp_rexmt_fn() task function:
+	- call inp_rexmt function for each inpcb in tailq
+	  - inp_rexmt or the function it is a wrapper for should just
+	  	call inp_rexmt_enqueue when ENOBUFS is returned so that inpcbs
+		will end up being serviced round robin for all participating
+	    interfaces
+	  - Would be faster to skip further inp_rexmt (tcp_output) calls for a queue
+	  	that had already returned ENOBUFS. However, that would require callers
+		that check the return code of tcp_output to handle an ENOBUFS return.
+	    Consider this a future optimization pending indication that much
+		time is spent in the txq overrun state.
+
+public:
+inp_rexmt_enqueue():
+	- initialize inp_rexmt to passed function
+	- enqueue inpcb to the tailq for the cpu corresponding to the flowid
+
+inp_rexmt_start(uint32_t qid, uint32_t nqs):
+	- wakeup taskq threads corresponding to qid
+
+
+Driver portion of implementation:
+
+Backpressure adds a new state machine to driver packet processing:
+
+
+
+      !full ifq                 ifq >= half full   
+       _________                   _______ 
+       |       |                   |     |
+    __\ /___   |   full ifq   ____\ /__  |
+    | OPEN | --|------------->| CLOSED|--|
+	--------                  ---------  |
+      / \                                |
+       |           ifq < half full       |
+       |----------------------------------
+
+
+
+The term ifq refers to any software queue including struct ifq, buf_ring and
+np_ring. When a queue becomes full the driver will return ENOBUFS on any
+further requests until the software ring transtions to less than half full.
+When the driver enqueues the packet that transitions the software queue back
+to the open state it calls inp_rxmt_start with a cpuset indicating the cpus that
+map to the software ring whose state has just transitioned. For example, a
+hypothetical driver has 4 hw tx queues paired with 4 sw queues feeding them on
+a system with 8 logical cores. If the software queue that is used by cores 4
+and 5 transitions from CLOSED to open, the driver will call inp_rxmt_start
+with a cpuset corresponding to 4 and 5.
+
+
+TCP portion of implementation:
+
+Legacy TCP behavior of tcp_output:
+
+		switch (error) {
+		<..>
+		case ENOBUFS:
+	                if (!tcp_timer_active(tp, TT_REXMT) &&
+			    !tcp_timer_active(tp, TT_PERSIST))
+	                        tcp_timer_activate(tp, TT_REXMT, tp->t_rxtcur);
+			tp->snd_cwnd = tp->t_maxseg;
+			return (0);
+		<...>
+
+With backpressure supported the inpcb is simply put at the end of a tailq
+corresponding to the current cpu:
+		switch (error) {
+		<..>
+		case ENOBUFS:
+			inp_rexmt_enqueue(tp->t_inp, tcp_output_rexmt);
+			return (0);
+		<...>
+
+where tcp_output_rexmt is a wrapper for tcp_output():
+
+void
+tcp_output_rexmt(struct inpcb *inp)
+{
+	
+	(void)tcp_output(tp->inp_ppcb);
+}
