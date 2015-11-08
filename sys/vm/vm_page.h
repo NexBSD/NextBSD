@@ -233,6 +233,7 @@ struct vm_domain {
 	int vmd_pass;	/* local pagedaemon pass */
 	int vmd_last_active_scan;
 	struct vm_page vmd_marker; /* marker for pagedaemon private use */
+	struct vm_page vmd_inacthead; /* marker for LRU-defeating insertions */
 };
 #define	vm_page_queue_idx(m)  	\
     (PQ_COUNT + (pa_index(VM_PAGE_TO_PHYS((m))) % PA_LOCK_COUNT))
