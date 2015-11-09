@@ -2585,51 +2585,48 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
  * processes.  This optimization causes one-time-use metadata to be
  * reused more quickly.
  *
- * Normally athead is 0 resulting in LRU operation.  athead is set
- * to 1 if we want this page to be 'as if it were placed in the cache',
- * except without unmapping it from the process address space.
+ * Normally noreuse is FALSE, resulting in LRU operation.  noreuse is set
+ * to TRUE if we want this page to be 'as if it were placed in the cache',
+ * except without unmapping it from the process address space.  In
+ * practice this is implemented by inserting the page at the head of the
+ * queue, using a marker page to guide FIFO insertion ordering.
  *
  * The page must be locked.
  */
 static inline void
-_vm_page_deactivate(vm_page_t m, int athead)
+_vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 {
 	struct vm_pagequeue *pq;
 	int queue;
 
 	vm_page_assert_locked(m);
 
-	
 	/*
-	 * If it's already inactive but still deferred just note that it should be put at the head
+	 * Ignore if the page is already inactive, unless it is unlikely to be
+	 * reactivated.
 	 */
-	if ((m->flags & PG_PAQUEUE) && athead) {
-			m->flags |= PG_ATHEAD;
-			return;
-	}
-	/*
-	 * Ignore if the page is likely to be reused - note that this is a somewhat expensive way
-	 * of accelerating page free - would likely be faster to mark them with ATHEAD and then
-	 * scan later during fixup
-	 */
-	if ((queue = m->queue) == PQ_INACTIVE && !athead)
+	if ((queue = m->queue) == PQ_INACTIVE && !noreuse)
 		return;
 	if (m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0) {
-		if (queue != PQ_NONE) {
-			vm_page_dequeue(m);
+		pq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
+		/* Avoid multiple acquisitions of the inactive queue lock. */
+		if (queue == PQ_INACTIVE) {
+			vm_pagequeue_lock(pq);
+			vm_page_dequeue_locked(m);
+		} else {
+			if (queue != PQ_NONE)
+				vm_page_dequeue(m);
 			m->flags &= ~PG_WINATCFLS;
+			vm_pagequeue_lock(pq);
 		}
-		if (athead)
-			m->flags |= PG_ATHEAD;
-		m->flags |= PG_PAQUEUE;
 		m->queue = PQ_INACTIVE;
-
-		pq = &vm_phys_domain(m)->vmd_pagequeues[vm_page_queue_idx(m)];
-		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+		if (noreuse)
+			TAILQ_INSERT_BEFORE(&vm_phys_domain(m)->vmd_inacthead,
+			    m, plinks.q);
+		else
+			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
-		atomic_add_int(&vm_cnt.v_inactive_deferred_count, 1);
-		if (pq->pq_cnt > vm_paqlenthresh_lwm)
-			vm_page_queue_fixup(m);
+		vm_pagequeue_unlock(pq);
 	}
 }
 
@@ -2642,7 +2639,7 @@ void
 vm_page_deactivate(vm_page_t m)
 {
 
-	_vm_page_deactivate(m, 0);
+	_vm_page_deactivate(m, FALSE);
 }
 
 /*
@@ -2655,7 +2652,7 @@ void
 vm_page_deactivate_noreuse(vm_page_t m)
 {
 
-	_vm_page_deactivate(m, 1);
+	_vm_page_deactivate(m, TRUE);
 }
 
 /*

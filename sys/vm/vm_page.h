@@ -233,6 +233,7 @@ struct vm_domain {
 	int vmd_pass;	/* local pagedaemon pass */
 	int vmd_last_active_scan;
 	struct vm_page vmd_marker; /* marker for pagedaemon private use */
+	struct vm_page vmd_inacthead; /* marker for LRU-defeating insertions */
 };
 #define	vm_page_queue_idx(m)  	\
     (PQ_COUNT + (pa_index(VM_PAGE_TO_PHYS((m))) % PA_LOCK_COUNT))
@@ -379,6 +380,11 @@ extern long first_page;			/* first physical page number */
 
 #define VM_PAGE_TO_PHYS(entry)	((entry)->phys_addr)
 
+/*
+ * PHYS_TO_VM_PAGE() returns the vm_page_t object that represents a memory
+ * page to which the given physical address belongs. The correct vm_page_t
+ * object is returned for addresses that are not page-aligned.
+ */
 vm_page_t PHYS_TO_VM_PAGE(vm_paddr_t pa);
 
 /*

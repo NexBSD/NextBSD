@@ -379,8 +379,6 @@ MAN=	aac.4 \
 	oce.4 \
 	ohci.4 \
 	orm.4 \
-	otus.4 \
-	otusfw.4 \
 	ow.4 \
 	ow_temp.4 \
 	owc.4 \
@@ -425,8 +423,6 @@ MAN=	aac.4 \
 	rndtest.4 \
 	route.4 \
 	rp.4 \
-	rsu.4 \
-	rsufw.4 \
 	rue.4 \
 	rum.4 \
 	run.4 \
@@ -866,6 +862,10 @@ _pfsync.4=	pfsync.4
 
 .if ${MK_USB} != "no"
 MAN+=	\
+	otus.4 \
+	otusfw.4 \
+	rsu.4 \
+	rsufw.4 \
 	u3g.4 \
 	uark.4 \
 	uart.4 \
@@ -919,6 +919,8 @@ MAN+=	\
 	uvisor.4 \
 	uvscom.4 \
 
+MLINKS+=otus.4 if_otus.4
+MLINKS+=rsu.4 if_rsu.4
 MLINKS+=u3g.4 u3gstub.4
 MLINKS+=uath.4 if_uath.4
 MLINKS+=udav.4 if_udav.4
@@ -926,6 +928,7 @@ MLINKS+=upgt.4 if_upgt.4
 MLINKS+=ural.4 if_ural.4
 MLINKS+=urndis.4 if_urndis.4
 MLINKS+=${_urtw.4} ${_if_urtw.4}
+MLINKS+=urtwn.4 if_urtwn.4
 .endif
 
 .include <bsd.prog.mk>

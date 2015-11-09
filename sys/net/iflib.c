@@ -2489,7 +2489,6 @@ static void
 iflib_if_init(void *arg)
 {
 	if_ctx_t ctx = arg;
-
 	CTX_LOCK(ctx);
 	iflib_stop(ctx);
 	iflib_init_locked(ctx);
@@ -2504,7 +2503,6 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	iflib_txq_t txq;
 	struct mbuf *marr[16], **mp, *next;
 	int err, i, count, qidx;
-
 
 	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx)) {
 		DBG_COUNTER_INC(tx_frees);
@@ -2901,6 +2899,7 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 
 	scctx = &ctx->ifc_softc_ctx;
 	msix_bar = scctx->isc_msix_bar;
+
 	/*
 	** Now setup MSI or MSI/X, should
 	** return us the number of supported
@@ -3673,27 +3672,39 @@ iflib_irq_free(if_ctx_t ctx, if_irq_t irq)
 }
 
 static int
-iflib_legacy_setup(if_ctx_t ctx, driver_filter_t filter, void *filterarg, int *rid, char *str)
+iflib_legacy_setup(if_ctx_t ctx, driver_filter_t filter, void *filter_arg, int *rid, char *name)
 {
 	iflib_txq_t txq = ctx->ifc_txqs;
 	iflib_rxq_t rxq = ctx->ifc_rxqs;
 	if_irq_t irq = &ctx->ifc_legacy_irq;
+	iflib_filter_info_t info;
+	struct grouptask *gtask;
+	struct taskqgroup *tqg;
+	task_fn_t *fn;
+	int tqrid;
+	void *q;
 	int err;
 
-	ctx->ifc_flags |= IFC_LEGACY;
-	/* We allocate a single interrupt resource */
-	if ((err = iflib_irq_alloc(ctx, irq, *rid, filter, filterarg, NULL, ctx, str)) != 0)
-		return (err);
+	q = &ctx->ifc_rxqs[0];
+	info = &rxq[0].ifr_filter_info;
+	gtask = &rxq[0].ifr_task;
+	tqg = gctx->igc_io_tqg;
+	tqrid = irq->ii_rid = *rid;
+	fn = _task_fn_rx;
 
-	/*
-	 * Allocate a fast interrupt and the associated
-	 * deferred processing contexts.
-	 *
-	 */
+	ctx->ifc_flags |= IFC_LEGACY;
+	info->ifi_filter = filter;
+	info->ifi_filter_arg = filter_arg;
+	info->ifi_task = gtask;
+
+	/* We allocate a single interrupt resource */
+	if ((err = _iflib_irq_alloc(ctx, irq, tqrid, iflib_fast_intr, NULL, info, name)) != 0)
+		return (err);
+	GROUPTASK_INIT(gtask, 0, fn, q);
+	taskqgroup_attach(tqg, gtask, q, tqrid, name);
+
 	GROUPTASK_INIT(&txq->ift_task, 0, _task_fn_tx, txq);
-	taskqgroup_attach(gctx->igc_io_tqg, &txq->ift_task, txq, irq->ii_rid, "tx");
-	GROUPTASK_INIT(&rxq->ifr_task, 0, _task_fn_rx, rxq);
-	taskqgroup_attach(gctx->igc_io_tqg, &rxq->ifr_task, rxq, irq->ii_rid, "rx");
+	taskqgroup_attach(gctx->igc_io_tqg, &txq->ift_task, txq, tqrid, "tx");
 	GROUPTASK_INIT(&ctx->ifc_admin_task, 0, _task_fn_admin, ctx);
 	taskqgroup_attach(gctx->igc_config_tqg, &ctx->ifc_admin_task, ctx, -1, "admin/link");
 

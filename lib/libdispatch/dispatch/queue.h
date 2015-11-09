@@ -648,7 +648,7 @@ dispatch_queue_get_qos_class(dispatch_queue_t queue,
  * A dispatch source's target queue specifies where its event handler and
  * cancellation handler blocks will be submitted.
  *
- * A dispatch I/O channel's target queue specifies where where its I/O
+ * A dispatch I/O channel's target queue specifies where its I/O
  * operations are executed. If the channel's target queue's priority is set to
  * DISPATCH_QUEUE_PRIORITY_BACKGROUND, then the I/O operations performed by
  * dispatch_io_read() or dispatch_io_write() on that queue will be
@@ -764,7 +764,7 @@ dispatch_after_f(dispatch_time_t when,
  * will not run until all blocks submitted to the queue earlier have completed,
  * and any blocks submitted to the queue after a barrier block will not run
  * until the barrier block has completed.
- * When submitted to a a global queue or to a queue not created with the
+ * When submitted to a global queue or to a queue not created with the
  * DISPATCH_QUEUE_CONCURRENT attribute, barrier blocks behave identically to
  * blocks submitted with the dispatch_async()/dispatch_sync() API.
  */
