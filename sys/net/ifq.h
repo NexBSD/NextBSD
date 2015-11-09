@@ -160,7 +160,6 @@ int	if_handoff(struct ifqueue *ifq, struct mbuf *m, struct ifnet *ifp,
 	if_handoff((struct ifqueue *)ifq, m, ifp, adj)
 
 void	if_start(struct ifnet *);
-void	if_rexmt_start(int qid, int nqs);
 
 #define	IFQ_ENQUEUE(ifq, m, err)					\
 do {									\

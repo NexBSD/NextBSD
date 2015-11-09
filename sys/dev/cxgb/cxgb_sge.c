@@ -2421,13 +2421,18 @@ t3_sge_alloc_qset(adapter_t *sc, u_int id, int nports, int irq_vec_idx,
 {
 	struct sge_qset *q = &sc->sge.qs[id];
 	int i, ret = 0;
+	int nqsets;
 
 	MTX_INIT(&q->lock, q->namebuf, NULL, MTX_DEF);
 	q->port = pi;
 	q->adap = sc;
 
+	for (nqsets = i = 0; i < sc->params.nports; i++) {
+		struct port_info *ptmp = &sc->port[i];
+		nqsets += ptmp->nqsets;
+	}
 	if ((q->txq[TXQ_ETH].txq_mr = buf_ring_alloc(cxgb_txq_buf_ring_size,
-	    M_DEVBUF, M_WAITOK, &q->lock)) == NULL) {
+		M_DEVBUF, M_WAITOK, &q->lock, id, nqsets)) == NULL) {
 		device_printf(sc->dev, "failed to allocate mbuf ring\n");
 		goto err;
 	}

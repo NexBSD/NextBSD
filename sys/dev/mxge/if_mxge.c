@@ -4435,7 +4435,7 @@ mxge_alloc_slices(mxge_softc_t *sc)
 		mtx_init(&ss->tx.mtx, ss->tx.mtx_name, NULL, MTX_DEF);
 #ifdef IFNET_BUF_RING
 		ss->tx.br = buf_ring_alloc(2048, M_DEVBUF, M_WAITOK,
-					   &ss->tx.mtx);
+					   &ss->tx.mtx, i, sc->num_slices);
 #endif
 	}
 

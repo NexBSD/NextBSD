@@ -3288,7 +3288,7 @@ em_allocate_queues(struct adapter *adapter)
 #if __FreeBSD_version >= 800000
 		/* Allocate a buf ring */
 		txr->br = buf_ring_alloc(4096, M_DEVBUF,
-		    M_WAITOK, &txr->tx_mtx);
+			    M_WAITOK, &txr->tx_mtx, i, adapter->num_queues);
 #endif
 	}
 
