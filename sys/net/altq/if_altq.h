@@ -44,6 +44,7 @@ struct	ifaltq {
 	struct	mbuf *ifq_tail;
 	int	ifq_len;
 	int	ifq_maxlen;
+	int	ifq_closed;
 	struct	mtx ifq_mtx;
 
 	/* driver owned queue (used for bulk dequeue and prepend) UNLOCKED */

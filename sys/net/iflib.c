@@ -52,6 +52,7 @@
 #include <net/mp_ring.h>
 
 #include <netinet/in.h>
+#include <netinet/in_pcb.h>
 #include <netinet/tcp_lro.h>
 
 #include <machine/bus.h>
@@ -288,12 +289,13 @@ struct iflib_txq {
 	iflib_sd_t              ift_sds;
 	int                     ift_nbr;
 	struct mp_ring        **ift_br;
-	struct grouptask		ift_task;
-	int			            ift_qstatus;
+	struct grouptask	ift_task;
+	int			ift_qstatus;
 	int                     ift_active;
-	int                     ift_watchdog_time;
+	int			ift_watchdog_time;
 	struct iflib_filter_info ift_filter_info;
-	iflib_dma_info_t		ift_ifdi;
+	iflib_dma_info_t	ift_ifdi;
+	int                     ift_closed;
 };
 
 struct iflib_fl {
@@ -2290,6 +2292,10 @@ iflib_txq_drain(struct mp_ring *r, uint32_t cidx, uint32_t pidx)
 	int i, count, pkt_sent, bytes_sent, mcast_sent, avail;
 
 	avail = IDXDIFF(pidx, cidx, r->size);
+	if (avail < (r->size >> 1)) {
+		txq->ift_closed = FALSE;
+		inp_rexmt_start(txq->ift_id, ctx->ifc_softc_ctx.isc_nqsets);
+	}
 	if (ctx->ifc_flags & IFC_QFLUSH) {
 		DBG_COUNTER_INC(txq_drain_flushing);
 		for (i = 0; i < avail; i++) {
@@ -2505,6 +2511,26 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		m_freem(m);
 		return (0);
 	}
+
+	qidx = 0;
+	if ((NQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
+		qidx = QIDX(ctx, m);
+	/*
+	 * XXX calculate buf_ring based on flowid (divvy up bits?)
+	 */
+	txq = &ctx->ifc_txqs[qidx];
+
+
+	if (txq->ift_closed) {
+		while (m != NULL) {
+			next = m->m_nextpkt;
+			m->m_nextpkt = NULL;
+			m_freem(m);
+			m = next;
+		}
+		return (ENOBUFS);
+	}
+
 	qidx = count = 0;
 	mp = marr;
 	next = m;
@@ -2526,17 +2552,11 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		next = next->m_nextpkt;
 		mp[i]->m_nextpkt = NULL;
 	}
-	if ((NQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
-		qidx = QIDX(ctx, m);
-	/*
-	 * XXX calculate buf_ring based on flowid (divvy up bits?)
-	 */
-	txq = &ctx->ifc_txqs[qidx];
-
 	DBG_COUNTER_INC(tx_seen);
 	err = mp_ring_enqueue(txq->ift_br[0], (void **)mp, count, IFLIB_BUDGET);
 	/* drain => err = iflib_txq_transmit(ifp, txq, m); */
 	if (err) {
+		txq->ift_closed = TRUE;
 		for (i = 0; i < count; i++)
 			m_freem(mp[i]);
 		mp_ring_check_drainage(txq->ift_br[0], BATCH_SIZE);
@@ -3715,6 +3735,14 @@ iflib_iov_intr_deferred(if_ctx_t ctx)
 
 	GROUPTASK_ENQUEUE(&ctx->ifc_vflr_task);
 }
+
+void
+iflib_io_tqg_attach(struct grouptask *gt, void *uniq, int cpu, char *name)
+{
+
+	taskqgroup_attach_cpu(gctx->igc_io_tqg, gt, uniq, cpu, -1, name);
+}
+
 
 void
 iflib_link_state_change(if_ctx_t ctx, int link_state)

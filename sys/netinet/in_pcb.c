@@ -2387,6 +2387,159 @@ inp_4tuple_get(struct inpcb *inp, uint32_t *laddr, uint16_t *lp,
 	*fp = inp->inp_fport;
 }
 
+
+/* backpressure start */
+#include <sys/smp.h>
+#include <sys/taskqueue.h>
+
+#include <net/iflib.h>
+
+STAILQ_HEAD(inp_rexmt_head, inpcb) *inp_rexmt_list, *inp_rexmt_worklist;
+static struct mtx *inp_rexmt_lock;
+static struct grouptask *inp_rexmt_gt;
+static counter_u64_t inp_rexmt_count;
+SYSCTL_COUNTER_U64(_net_inet_ip, OID_AUTO, rexmt, CTLFLAG_RD, &inp_rexmt_count,
+		   "Number of times inpcb was enqueued for rexmit");
+#define INP_REXMT_LOCK(i) mtx_lock(&inp_rexmt_lock[i])
+#define INP_REXMT_UNLOCK(i) mtx_unlock(&inp_rexmt_lock[i])
+
+void inp_rexmt_fn(void *context __unused, int pending __unused);
+
+static void
+inp_rexmt_init(const void *arg __unused)
+{
+	int i;
+	struct grouptask *gt;
+
+	inp_rexmt_list = malloc(sizeof(struct inp_rexmt_head)*mp_ncpus, M_PCB, M_WAITOK|M_ZERO);
+	inp_rexmt_worklist = malloc(sizeof(struct inp_rexmt_head)*mp_ncpus, M_PCB, M_WAITOK|M_ZERO);
+	inp_rexmt_lock = malloc(sizeof(struct mtx)*mp_ncpus, M_PCB, M_WAITOK|M_ZERO);
+	inp_rexmt_gt = malloc(sizeof(struct grouptask)*mp_ncpus, M_PCB, M_WAITOK|M_ZERO);
+	inp_rexmt_count = counter_u64_alloc(M_WAITOK|M_ZERO);
+	for (i = 0; i < mp_ncpus; i++) {
+		STAILQ_INIT(&inp_rexmt_list[i]);
+		STAILQ_INIT(&inp_rexmt_worklist[i]);
+		mtx_init(&inp_rexmt_lock[i], "rexmt", NULL, MTX_DEF);
+		gt = &inp_rexmt_gt[i];
+		GROUPTASK_INIT(gt, 0, inp_rexmt_fn, NULL);
+		iflib_io_tqg_attach(gt, gt, i, "rexmt");
+	}
+}
+/* must be post-SI_SUB_SMP */
+SYSINIT(inp_rexmt_init, SI_SUB_LAST, SI_ORDER_ANY,
+    inp_rexmt_init, NULL);
+
+void
+inp_rexmt_enqueue(struct inpcb *inp, void (*inp_rexmt) (struct inpcb *))
+{
+	int cpuid;
+
+	INP_WLOCK_ASSERT(inp);
+	if (inp->inp_flags2 & INP_IN_REXMTQ)
+		return;
+
+	counter_u64_add(inp_rexmt_count, 1);
+	inp->inp_flags2 |= INP_IN_REXMTQ;
+	inp->inp_rexmt = inp_rexmt;
+	in_pcbref(inp);
+
+	/*
+	 * having a consistent reversible mapping is more important than
+	 * optimal cpu locality - so wo don't go the route of:
+	 * cpuid = rss_hash2cpuid(inp->inp_flowid, inp->inp_flowtype);
+	 */
+	cpuid = inp->inp_flowid % mp_ncpus;
+
+	INP_REXMT_LOCK(cpuid);
+	/*
+	 * If performance is an issue on systems with multiple interfaces
+	 * it would make sense to hash the inp based on it's ifp so that
+	 * rexmt_start only wakes up inpcbs on the callers interface
+	 */
+	STAILQ_INSERT_TAIL(&inp_rexmt_list[cpuid], inp, inp_rexmt_entry);
+	INP_REXMT_UNLOCK(cpuid);
+}
+
+void
+inp_rexmt_fn(void *context __unused, int pending __unused)
+{
+	struct inpcb *inp;
+	int cpuid;
+	struct inp_rexmt_head *worklist, *list;
+	void (*inp_rexmt) (struct inpcb *);
+
+	cpuid = curcpu;
+	worklist = &inp_rexmt_worklist[cpuid];
+	list = &inp_rexmt_list[cpuid];
+	if (STAILQ_EMPTY(worklist)) {
+		INP_REXMT_LOCK(cpuid);
+		STAILQ_SWAP(worklist, list, inpcb);
+		INP_REXMT_UNLOCK(cpuid);
+	}
+
+	inp = STAILQ_FIRST(worklist);
+	STAILQ_REMOVE_HEAD(worklist, inp_rexmt_entry);
+	INP_WLOCK(inp);
+	inp_rexmt = inp->inp_rexmt;
+	inp->inp_flags2 &= ~INP_IN_REXMTQ;
+	inp->inp_rexmt = NULL;
+	if (inp_rexmt != NULL)
+		inp_rexmt(inp);
+	if (!in_pcbrele_wlocked(inp))
+		INP_WUNLOCK(inp);
+	/* reschedule task to continue work */
+	if (!STAILQ_EMPTY(worklist))
+		GROUPTASK_ENQUEUE(&inp_rexmt_gt[cpuid]);
+}
+
+void
+inp_rexmt_stop(struct inpcb *inp)
+{
+
+	INP_WLOCK_ASSERT(inp);
+
+	/* we rely on tq thread to call rele on the inpcb */
+	if ((inp->inp_flags2 & INP_IN_REXMTQ) == 0)
+		return;
+
+	inp->inp_rexmt = NULL;
+}
+
+void
+inp_rexmt_start(uint32_t qid, uint32_t nqs)
+{
+	int i, start, count;
+
+	MPASS(nqs > 0);
+
+	if (nqs == 1) {
+		count = mp_ncpus;
+		start = 0;
+	} else if (nqs == mp_ncpus) {
+		count = 1;
+		start = qid;
+	} else if (nqs < mp_ncpus && (mp_ncpus % nqs) == 0) {
+		count = mp_ncpus/nqs;
+		start = count*qid;
+	} else if (nqs > mp_ncpus && (nqs % mp_ncpus) == 0) {
+		count = 1;
+		start = qid/mp_ncpus;
+	} else {
+		/* XXX chance for future optimization
+		 * there isn't a trivial way to map queues to
+		 * cpus in this case
+		 */
+		count = mp_ncpus;
+		start = 0;
+	}
+
+	for (i = start; i < start + count; i++)
+		GROUPTASK_ENQUEUE(&inp_rexmt_gt[i]);
+}
+
+/* backpressure end */
+
+
 struct inpcb *
 so_sotoinpcb(struct socket *so)
 {

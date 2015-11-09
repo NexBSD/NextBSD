@@ -81,6 +81,7 @@
 #include <net/ethernet.h>
 #include <netinet/in.h>
 #include <netinet/in_var.h>
+#include <netinet/in_pcb.h>
 #include <netinet/ip.h>
 #include <netinet/ip_carp.h>
 #ifdef INET
@@ -3423,6 +3424,16 @@ if_start(struct ifnet *ifp)
 
 	(*(ifp)->if_start)(ifp);
 }
+
+void
+if_rexmt_start(int qid, int nqs)
+{
+
+#if defined(INET6) || defined(INET)
+	inp_rexmt_start(qid, nqs);
+#endif
+}
+
 
 /*
  * Backwards compatibility interface for drivers 
