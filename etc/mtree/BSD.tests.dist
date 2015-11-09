@@ -12,6 +12,8 @@
         ..
         date
         ..
+        dd
+        ..
         expr
         ..
         ls
@@ -273,6 +275,8 @@
                 data
                 ..
             ..
+            rpc
+            ..
             ssp
             ..
             stdio
@@ -360,6 +364,8 @@
         ..
     ..
     sys
+        acl
+        ..
         aio
         ..
         fifo
@@ -409,6 +415,8 @@
             ..
             unlink
             ..
+        ..
+        posixshm
         ..
         vfs
         ..
@@ -589,6 +597,8 @@
         etcupdate
         ..
         fstyp
+        ..
+        makefs
         ..
         newsyslog
         ..

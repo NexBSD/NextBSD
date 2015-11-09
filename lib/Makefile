@@ -80,7 +80,7 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	${_libngatm} \
 	libnotify \
 	libnv \
-	libohash \
+	libopenbsd \
 	libopie \
 	libosxsupport \
 	libpam \

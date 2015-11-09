@@ -145,13 +145,12 @@ ECHODIR		?=	true
 .endif
 .endif
 
-.if defined(.PARSEDIR)
-# _+_ appears to be a workaround for the special src .MAKE not working.
-# setting it to + interferes with -N
-_+_		?=
-.elif !empty(.MAKEFLAGS:M-n) && ${.MAKEFLAGS:M-n} == "-n"
-# the check above matches only a single -n, so -n -n will result
-# in _+_ = +
+.if ${.MAKEFLAGS:M-N}
+# bmake -N is supposed to skip executing anything but it does not skip
+# exeucting '+' commands.  The '+' feature is used where .MAKE
+# is not safe for the entire target.  -N is intended to skip building sub-makes
+# so it executing '+' commands is not right.  Work around the bug by not
+# setting '+' when -N is used.
 _+_		?=
 .else
 _+_		?=	+
@@ -318,11 +317,11 @@ YFLAGS		?=	-d
 	${FC} ${RFLAGS} ${EFLAGS} ${FFLAGS} -c ${.IMPSRC} -o ${.TARGET}
 
 .S.o:
-	${CC} ${CFLAGS} ${ACFLAGS} -c ${.IMPSRC} -o ${.TARGET}
+	${CC:N${CCACHE_BIN}} ${CFLAGS} ${ACFLAGS} -c ${.IMPSRC} -o ${.TARGET}
 	${CTFCONVERT_CMD}
 
 .asm.o:
-	${CC} -x assembler-with-cpp ${CFLAGS} ${ACFLAGS} -c ${.IMPSRC} \
+	${CC:N${CCACHE_BIN}} -x assembler-with-cpp ${CFLAGS} ${ACFLAGS} -c ${.IMPSRC} \
 	    -o ${.TARGET}
 	${CTFCONVERT_CMD}
 
