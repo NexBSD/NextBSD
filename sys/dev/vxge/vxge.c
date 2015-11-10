@@ -2296,7 +2296,7 @@ vxge_vpath_open(vxge_dev_t *vdev)
 #if __FreeBSD_version >= 800000
 		vpath->br = buf_ring_alloc(VXGE_DEFAULT_BR_SIZE, M_DEVBUF,
 		        M_WAITOK, &vpath->mtx_tx, i,
-			vdev->no_of_path);
+			vdev->no_of_vpath);
 		if (vpath->br == NULL) {
 			err = ENOMEM;
 			break;
