@@ -523,7 +523,7 @@ cc_ecnpkt_handler(struct tcpcb *tp, struct tcphdr *th, uint8_t iptos)
 		CC_ALGO(tp)->ecnpkt_handler(tp->ccv);
 
 		if (tp->ccv->flags & CCF_ACKNOW)
-			tcp_timer_activate(tp, TT_DELACK, tcp_delacktime);
+			tcp_timer_activate(tp, TT_DELACK, tp->t_delack);
 	}
 }
 
@@ -1995,7 +1995,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			 */
 			if (DELAY_ACK(tp, tlen) && tlen != 0)
 				tcp_timer_activate(tp, TT_DELACK,
-				    tcp_delacktime);
+				    tp->t_delack);
 			else
 				tp->t_flags |= TF_ACKNOW;
 
@@ -3059,7 +3059,7 @@ check_delack:
 
 	if (tp->t_flags & TF_DELACK) {
 		tp->t_flags &= ~TF_DELACK;
-		tcp_timer_activate(tp, TT_DELACK, tcp_delacktime);
+		tcp_timer_activate(tp, TT_DELACK, tp->t_delack);
 	}
 	INP_WUNLOCK(tp->t_inpcb);
 	return;

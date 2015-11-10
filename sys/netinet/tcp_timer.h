@@ -75,7 +75,7 @@
 #define	TCPTV_MSL	( 30*hz)		/* max seg lifetime (hah!) */
 #define	TCPTV_SRTTBASE	0			/* base roundtrip time;
 						   if 0, no idea yet */
-#define	TCPTV_RTOBASE	(  3*hz)		/* assumed RTO if no info */
+#define	TCPTV_RTOBASE	( hz )			/* assumed RTO if no info - RFC 6298 */
 
 #define	TCPTV_PERSMIN	(  5*hz)		/* retransmit persistence */
 #define	TCPTV_PERSMAX	( 60*hz)		/* maximum persist interval */
@@ -107,7 +107,7 @@
  * The prior minimum of 1*hz (1 second) badly breaks throughput on any
  * networks faster then a modem that has minor (e.g. 1%) packet loss.
  */
-#define	TCPTV_MIN	( hz/33 )		/* minimum allowable value */
+#define	TCPTV_MIN	( 3 )			/* minimum allowable value - see above */
 #define TCPTV_CPU_VAR	( hz/5 )		/* cpu variance allowed (200ms) */
 #define	TCPTV_REXMTMAX	( 64*hz)		/* max allowable REXMT value */
 
@@ -117,7 +117,7 @@
 
 #define	TCP_MAXRXTSHIFT	12			/* maximum retransmits */
 
-#define	TCPTV_DELACK	( hz/10 )		/* 100ms timeout */
+#define	TCPTV_DELACK	( hz/25 )		/* 40ms timeout */
 
 #ifdef	TCPTIMERS
 static const char *tcptimers[] =

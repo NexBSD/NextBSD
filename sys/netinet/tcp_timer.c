@@ -649,6 +649,8 @@ tcp_timer_rexmt(void * xtp)
 		rexmt = TCP_REXMTVAL(tp) * tcp_backoff[tp->t_rxtshift];
 	TCPT_RANGESET(tp->t_rxtcur, rexmt,
 		      tp->t_rttmin, TCPTV_REXMTMAX);
+	/*  1 < delack < tcp_delacktime - and should scale down with RTO/2 */
+	TCPT_RANGESET(tp->t_delack, (rexmt >> 1), 1, tcp_delacktime);
 
 	/*
 	 * We enter the path for PLMTUD if connection is established or, if
