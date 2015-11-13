@@ -3337,22 +3337,36 @@ static void
 tcp_xmit_timer(struct tcpcb *tp, int rtt)
 {
 	int delta;
+	int expected_samples, expected_shift, shift;
 
 	INP_WLOCK_ASSERT(tp->t_inpcb);
 
+	/* RFC 7323 Appendix G RTO Calculation Modification */
+	/* ExpectedSamples = ceiling(FlightSize / (SMSS * 2)) */
+	expected_samples = ((tcp_compute_pipe(tp) + (tp->t_maxseg - 1)) / (tp->t_maxseg << 1));
+	/* alpha' = alpha / ExpectedSamples */
+	expected_shift = min(max(fls(expected_samples + 1) - 1, 0), TCP_DELTA_SHIFT);
+	shift = TCP_DELTA_SHIFT - expected_shift;
 	TCPSTAT_INC(tcps_rttupdated);
 	tp->t_rttupdated++;
 	if (tp->t_srtt != 0) {
 		/*
-		 * srtt is stored as fixed point with 5 bits after the
-		 * binary point (i.e., scaled by 8).  The following magic
+		 * srtt is stored as fixed point with 16 bits after the
+		 * binary (decimal) point (i.e., scaled by 1^16).  The following magic
 		 * is equivalent to the smoothing algorithm in rfc793 with
 		 * an alpha of .875 (srtt = rtt/8 + srtt*7/8 in fixed
-		 * point).  Adjust rtt to origin 0.
+		 * point) when FlightSize is 1.  Adjust rtt to origin 0.
 		 */
-		delta = ((rtt - 1) << TCP_DELTA_SHIFT)
-			- (tp->t_srtt >> (TCP_RTT_SHIFT - TCP_DELTA_SHIFT));
+		/* delta = (rtt-1)*4 - (srtt*32)/8 = 4*rtt - 4*srtt - 4 */
+		/* old: tp_srtt += delta =>  32*srtt = 32*srtt - 4*srtt + 4*rtt - 4  */
+		/* srtt = 7/8 * srtt + 1/8 * rtt  - 1 / 8 */
+		delta = ((rtt - 1) << shift)
+			- (tp->t_srtt >> (TCP_RTT_SHIFT - shift));
 
+		/*
+		 * essential logic unchanged, but this now equates to
+		 * srtt = (1/expected_samples)*1/8*rtt + (1 - (1/expect_samples)*7/8)*srtt
+		 */
 		if ((tp->t_srtt += delta) <= 0)
 			tp->t_srtt = 1;
 
@@ -3368,7 +3382,7 @@ tcp_xmit_timer(struct tcpcb *tp, int rtt)
 		 */
 		if (delta < 0)
 			delta = -delta;
-		delta -= tp->t_rttvar >> (TCP_RTTVAR_SHIFT - TCP_DELTA_SHIFT);
+		delta -= tp->t_rttvar >> (TCP_RTTVAR_SHIFT - shift);
 		if ((tp->t_rttvar += delta) <= 0)
 			tp->t_rttvar = 1;
 		if (tp->t_rttbest > tp->t_srtt + tp->t_rttvar)

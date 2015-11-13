@@ -383,15 +383,15 @@ struct tcptw {
  * are stored as fixed point numbers scaled by the values below.
  * For convenience, these scales are also used in smoothing the average
  * (smoothed = (1/scale)sample + ((scale-1)/scale)smoothed).
- * With these scales, srtt has 3 bits to the right of the binary point,
- * and thus an "ALPHA" of 0.875.  rttvar has 2 bits to the right of the
+ * With these scales, srtt has 13 bits to the right of the binary point,
+ * and thus an "ALPHA" of 0.875.  rttvar has 13 bits to the right of the
  * binary point, and is smoothed with an ALPHA of 0.75.
  */
-#define	TCP_RTT_SCALE		32	/* multiplier for srtt; 3 bits frac. */
-#define	TCP_RTT_SHIFT		5	/* shift for srtt; 3 bits frac. */
-#define	TCP_RTTVAR_SCALE	16	/* multiplier for rttvar; 2 bits */
-#define	TCP_RTTVAR_SHIFT	4	/* shift for rttvar; 2 bits */
-#define	TCP_DELTA_SHIFT		2	/* see tcp_input.c */
+#define	TCP_RTT_SCALE		(1<<16)	/* multiplier for srtt; 14 bits frac. */
+#define	TCP_RTT_SHIFT		16	/* shift for srtt; 14 bits frac. */
+#define	TCP_RTTVAR_SCALE	(1<<15)	/* multiplier for rttvar; 2 bits */
+#define	TCP_RTTVAR_SHIFT	15	/* shift for rttvar; 2 bits */
+#define	TCP_DELTA_SHIFT		13	/* see tcp_input.c */
 
 /*
  * The initial retransmission should happen at rtt + 4 * rttvar.
