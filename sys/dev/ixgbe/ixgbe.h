@@ -538,7 +538,6 @@ struct adapter {
 	 *	Allocated at run time, an array of rings.
 	 */
 	struct rx_ring		*rx_rings;
-	u64			active_queues;
 	u32			rx_process_limit;
 
 	/* Multicast array memory */
