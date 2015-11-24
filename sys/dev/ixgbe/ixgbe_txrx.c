@@ -41,9 +41,9 @@ static int ixgbe_tso_setup(struct tx_ring *, struct mbuf *, u32 *, u32 *);
 static int ixgbe_tx_ctx_setup(struct tx_ring *txr, struct mbuf *mp, u32 *cmd_type_len, u32 *olinfo_status, int pidx, int *offload);
 
 static void ixgbe_rx_checksum(u32 staterr, if_rxd_info_t ri, u32 ptype);
-int ixgbe_intr(void *arg);
 
 extern void ixgbe_if_enable_intr(if_ctx_t ctx);
+extern int ixgbe_intr(void *arg);
 
 struct if_txrx ixgbe_txrx  = {
 	ixgbe_isc_txd_encap,
@@ -57,37 +57,6 @@ struct if_txrx ixgbe_txrx  = {
 };
 
 extern if_shared_ctx_t ixgbe_sctx;
-
-/*********************************************************************
- *
- *  Legacy Interrupt Service routine
- *
- **********************************************************************/
-int 
-ixgbe_intr(void *arg)
-{
-	struct adapter *adapter = arg;
-	struct ixgbe_hw *hw = &adapter->hw;
-	if_ctx_t ctx = adapter->ctx; 
-    u32 reg_eicr; 
-	
-	    reg_eicr = IXGBE_READ_REG(hw, IXGBE_EICR);
-		if (reg_eicr == 0) {
-			ixgbe_if_enable_intr(ctx);
-		return (FILTER_HANDLED);
-		}
-
-		/* Check for fan failure */
-		if ((hw->device_id == IXGBE_DEV_ID_82598AT) &&
-			(reg_eicr & IXGBE_EICR_GPI_SDP1)) {
-			device_printf(adapter->dev, "\nCRITICAL: FAN FAILURE!! "
-						  "REPLACE IMMEDIATELY!!\n");
-			IXGBE_WRITE_REG(hw, IXGBE_EIMS, IXGBE_EICR_GPI_SDP1_BY_MAC(hw));
-		}
-		
-		/* External PHY interrupt --- NEED TO FINISH */
-        return (FILTER_SCHEDULE_THREAD); 		
-}
 
 /*********************************************************************
  *
@@ -331,6 +300,7 @@ ixgbe_tso_setup(struct tx_ring *txr, struct mbuf *mp,
 static int
 ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 {
+  printf("Callint ixgbe_isc_txd_encap\n"); 
   struct adapter *sc       = arg;
   struct ix_queue *que     = &sc->queues[pi->ipi_qsidx];
   struct tx_ring *txr      = &que->txr;
@@ -358,6 +328,7 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
    *********************************************/
   error = ixgbe_tx_ctx_setup(txr, m_head, &cmd, &olinfo_status, first, &offload);
   if (error)
+    printf("ixgbe_tx_ctx_setup ERROR\n"); 
     return error; 
   
   if (offload)
@@ -388,7 +359,8 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
   buf->eop = txd;
   ++txr->total_packets;
   pi->ipi_new_pidx = i; 
-  
+
+  printf("returning 0 from isc_txd_encap\n"); 
   return (0); 
 }
   
