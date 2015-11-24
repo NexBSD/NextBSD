@@ -3717,6 +3717,15 @@ iflib_iov_intr_deferred(if_ctx_t ctx)
 }
 
 void
+iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask, task_fn_t *fn,
+	char *name)
+{
+
+	GROUPTASK_INIT(gtask, 0, fn, ctx);
+	taskqgroup_attach(gctx->igc_config_tqg, gtask, gtask, -1, name);
+}
+
+void
 iflib_link_state_change(if_ctx_t ctx, int link_state)
 {
 	if_t ifp = ctx->ifc_ifp;
