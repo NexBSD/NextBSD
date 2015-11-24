@@ -403,8 +403,6 @@ MODULE_VERSION(iflib, 1);
 MODULE_DEPEND(iflib, pci, 1, 1, 1);
 MODULE_DEPEND(iflib, ether, 1, 1, 1);
 
-
-
 TASKQGROUP_DEFINE(if_io_tqg, mp_ncpus, 1);
 TASKQGROUP_DEFINE(if_config_tqg, 1, 1);
 
@@ -480,6 +478,8 @@ SYSCTL_INT(_net_iflib, OID_AUTO, encap_txd_encap_fail, CTLFLAG_RD,
 static int iflib_task_fn_rxs;
 static int iflib_rx_intr_enables;
 static int iflib_fast_intrs;
+static int iflib_intr_link;
+static int iflib_intr_msix; 
 static int iflib_rx_unavail;
 static int iflib_rx_ctx_inactive;
 static int iflib_rx_zero_len;
@@ -487,6 +487,10 @@ static int iflib_rx_if_input;
 static int iflib_rx_mbuf_null;
 static int iflib_rxd_flush;
 
+SYSCTL_INT(_net_iflib, OID_AUTO, intr_link, CTLFLAG_RD,
+		   &iflib_intr_link, 0, "# intr link calls");
+SYSCTL_INT(_net_iflib, OID_AUTO, intr_msix, CTLFLAG_RD,
+		   &iflib_intr_msix, 0, "# intr msix calls");
 SYSCTL_INT(_net_iflib, OID_AUTO, task_fn_rx, CTLFLAG_RD,
 		   &iflib_task_fn_rxs, 0, "# task_fn_rx calls");
 SYSCTL_INT(_net_iflib, OID_AUTO, rx_intr_enables, CTLFLAG_RD,
@@ -512,7 +516,6 @@ SYSCTL_INT(_net_iflib, OID_AUTO, rxd_flush, CTLFLAG_RD,
 #endif
 
 #define IFLIB_DEBUG 0
-
 
 static void iflib_tx_structures_free(if_ctx_t ctx);
 static void iflib_rx_structures_free(if_ctx_t ctx);
@@ -2131,6 +2134,7 @@ retry:
 		txq->ift_npending += pi.ipi_ndescs;
 	} else {
 		DBG_COUNTER_INC(encap_txd_encap_fail);
+		printf("encap failed\n"); 
 	}
 	return (err);
 }
@@ -2283,6 +2287,7 @@ iflib_txq_can_drain(struct mp_ring *r)
 static uint32_t
 iflib_txq_drain(struct mp_ring *r, uint32_t cidx, uint32_t pidx)
 {
+  printf("iflib_txq_drain called\n"); 
 	iflib_txq_t txq = r->cookie;
 	if_ctx_t ctx = txq->ift_ctx;
 	if_t ifp = ctx->ifc_ifp;
@@ -2498,7 +2503,6 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	iflib_txq_t txq;
 	struct mbuf *marr[16], **mp, *next;
 	int err, i, count, qidx;
-
 
 	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx)) {
 		DBG_COUNTER_INC(tx_frees);
@@ -3339,7 +3343,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 
 		/* Allocate a buf ring */
 		txq->ift_br = brscp + i*nbuf_rings;
-		for (j = 0; j < nbuf_rings; j++) {
+		for (j = 0; j < nbuf_rings; j++) { 
 			err = mp_ring_alloc(&txq->ift_br[j], 2048, txq, iflib_txq_drain,
 								iflib_txq_can_drain, M_IFLIB, M_WAITOK);
 			if (err) {
