@@ -52,6 +52,7 @@ __FBSDID("$FreeBSD$");
 #include "cpufreq_if.h"
 
 uint64_t	tsc_freq;
+uint64_t	tsc_sbt;
 int		tsc_is_invariant;
 int		tsc_perf_stat;
 
