@@ -1969,7 +1969,8 @@ kern_aio_suspend(struct thread *td, int njoblist, struct aiocb **ujoblist,
 	struct timeval atv;
 	struct kaioinfo *ki;
 	struct aiocblist *cb, *cbfirst;
-	int error, i, timo;
+	int error, i;
+	int64_t timo;
 
 	timo = 0;
 	if (ts) {
@@ -1979,7 +1980,7 @@ kern_aio_suspend(struct thread *td, int njoblist, struct aiocb **ujoblist,
 		TIMESPEC_TO_TIMEVAL(&atv, ts);
 		if (itimerfix(&atv))
 			return (EINVAL);
-		timo = tvtohz(&atv);
+		timo = tvtohz64(&atv);
 	}
 
 	ki = p->p_aioinfo;
@@ -2490,7 +2491,8 @@ kern_aio_waitcomplete(struct thread *td, struct aiocb **aiocbp,
 	struct kaioinfo *ki;
 	struct aiocblist *cb;
 	struct aiocb *uuaiocb;
-	int error, status, timo;
+	int error, status;
+	int64_t timo;
 
 	ops->store_aiocb(aiocbp, NULL);
 
@@ -2505,7 +2507,7 @@ kern_aio_waitcomplete(struct thread *td, struct aiocb **aiocbp,
 		TIMESPEC_TO_TIMEVAL(&atv, ts);
 		if (itimerfix(&atv))
 			return (EINVAL);
-		timo = tvtohz(&atv);
+		timo = tvtohz64(&atv);
 	}
 
 	if (p->p_aioinfo == NULL)

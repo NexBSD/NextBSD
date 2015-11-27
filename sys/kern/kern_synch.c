@@ -342,7 +342,7 @@ pause_sbt(const char *wmesg, sbintime_t sbt, sbintime_t pr, int flags)
 
 	/* silently convert invalid timeouts */
 	if (sbt == 0)
-		sbt = tick_sbt;
+		sbt = htick_sbt;
 
 	if (cold || kdb_active) {
 		/*
@@ -556,8 +556,8 @@ loadav(void *arg)
 	 * run at regular intervals.
 	 */
 	callout_reset_sbt(&loadav_callout,
-	    SBT_1US * (4000000 + (int)(random() % 2000001)), SBT_1US,
-	    loadav, NULL, C_DIRECT_EXEC | C_PREL(32));
+	    SBT_1US * (4000000 + (int)(random() % 2000001)), SBT_1MS,
+	    loadav, NULL, C_DIRECT_EXEC | C_PREL(C_PMS));
 }
 
 /* ARGSUSED */
