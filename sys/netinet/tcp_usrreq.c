@@ -2079,15 +2079,15 @@ db_print_tcpcb(struct tcpcb *tp, const char *name, int indent)
 	    tp->t_maxopd, tp->t_rcvtime, tp->t_starttime);
 
 	db_print_indent(indent);
-	db_printf("t_rttime: %u   t_rtsq: 0x%08x\n",
+	db_printf("t_rttime: %zu   t_rtsq: 0x%08x\n",
 	    tp->t_rtttime, tp->t_rtseq);
 
 	db_print_indent(indent);
-	db_printf("t_rxtcur: %d   t_maxseg: %u   t_srtt: %d\n",
+	db_printf("t_rxtcur: %d   t_maxseg: %u   t_srtt: %zu\n",
 	    tp->t_rxtcur, tp->t_maxseg, tp->t_srtt);
 
 	db_print_indent(indent);
-	db_printf("t_rttvar: %d   t_rxtshift: %d   t_rttmin: %u   "
+	db_printf("t_rttvar: %zu   t_rxtshift: %d   t_rttmin: %u   "
 	    "t_rttbest: %u\n", tp->t_rttvar, tp->t_rxtshift, tp->t_rttmin,
 	    tp->t_rttbest);
 
