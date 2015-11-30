@@ -78,8 +78,7 @@ ixgbe_tx_ctx_setup(struct tx_ring *txr, struct mbuf *mp,
 	u8	ipproto = 0;
 	u16	vtag = 0;
 	int     ctxd = txr->next_avail_desc; 
-        printf("next avail desc %d\n", ctxd); 
-	
+  	
 	*offload = TRUE;
 	/* First check if TSO is to be used */
 	if (mp->m_pkthdr.csum_flags & CSUM_TSO)
@@ -286,15 +285,11 @@ ixgbe_tso_setup(struct tx_ring *txr, struct mbuf *mp,
 
 	TXD->seqnum_seed = htole32(0);
 
-	if (++ctxd == txr->num_desc)
-		ctxd = 0;
-
-	txr->tx_avail--;
-	txr->next_avail_desc = ctxd;
 	*cmd_type_len |= IXGBE_ADVTXD_DCMD_TSE;
 	*olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
 	*olinfo_status |= paylen << IXGBE_ADVTXD_PAYLEN_SHIFT;
 	++txr->tso_tx;
+
 	return (0);
 }
 
@@ -302,7 +297,6 @@ static int
 ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 {
   printf("Calling ixgbe_isc_txd_encap\n");
-  printf("pi->ipi_qsidx %d\n", pi->ipi_qsidx); 
   struct adapter *sc       = arg;
   struct ix_queue *que     = &sc->queues[pi->ipi_qsidx];
   struct tx_ring *txr      = &que->txr;
@@ -330,14 +324,14 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
    * this will consume the first descriptor
    *********************************************/
   error = ixgbe_tx_ctx_setup(txr, m_head, &cmd, &olinfo_status, first, &offload);
-  if (error)
+  
+  if (error) {
     printf("ixgbe_tx_ctx_setup ERROR\n"); 
     return error; 
-  
+  }
+    
   if (offload)
     i++;
-
-  printf("offload %d\n", offload); 
 
   for (j = 0; j < nsegs; j++) {
     bus_size_t seglen;
@@ -351,9 +345,15 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
     txd->read.cmd_type_len = htole32(txr->txd_cmd |
 			    cmd |seglen);
     txd->read.olinfo_status = htole32(olinfo_status);
+  }
 
-    if (++i == ixgbe_sctx->isc_ntxd)
-      i = 0;
+  pi->ipi_pidx = pi->ipi_new_pidx;
+  if (++i == ixgbe_sctx->isc_ntxd) {
+      pi->ipi_new_pidx = 0;
+      txr->next_avail_desc = 0; 
+  } else {
+      ++pi->ipi_new_pidx;
+      ++txr->next_avail_desc; 
   }
 
   txd->read.cmd_type_len |=
@@ -363,9 +363,12 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
   buf = &txr->tx_buffers[first];
   buf->eop = txd;
   ++txr->total_packets;
-  pi->ipi_new_pidx = i; 
+  txr->tx_avail--;
 
-  printf("returning 0 from isc_txd_encap\n"); 
+  printf("pi->ipi_pidx %d\n", pi->ipi_pidx);
+  printf("pi->ipi_new_pidx %d\n", pi->ipi_new_pidx); 
+  printf("txr next avail desc %d\n", txr->next_avail_desc);
+	
   return (0); 
 }
   
