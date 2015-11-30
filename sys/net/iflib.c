@@ -2113,6 +2113,7 @@ retry:
 		DBG_COUNTER_INC(tx_encap);
 		MPASS(pi.ipi_m != NULL);
 		MPASS(txsd->ifsd_m == NULL);
+		MPASS(pi.ipi_new_pidx != pidx);
 #ifdef INVARIANTS
 		{
 			int i;
