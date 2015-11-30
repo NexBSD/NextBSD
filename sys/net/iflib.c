@@ -2113,7 +2113,6 @@ retry:
 		DBG_COUNTER_INC(tx_encap);
 		MPASS(pi.ipi_m != NULL);
 		MPASS(txsd->ifsd_m == NULL);
-		MPASS(pi.ipi_new_pidx != pidx);
 #ifdef INVARIANTS
 		{
 			int i;
@@ -2129,6 +2128,8 @@ retry:
 			ndesc = pi.ipi_new_pidx - pi.ipi_pidx + sctx->isc_ntxd;
 			txq->ift_gen = 1;
 		}
+		MPASS(pi.ipi_new_pidx != pidx);
+		MPASS(ndesc > 0);
 		txq->ift_in_use += ndesc;
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
