@@ -2105,6 +2105,7 @@ retry:
 	pi.ipi_ndescs = 0;
 	pi.ipi_qsidx = txq->ift_id;
 
+	MPASS(pidx >= 0 && pidx < sctx->isc_ntxd);
 	if ((err = ctx->isc_txd_encap(ctx->ifc_softc, &pi)) == 0) {
 		bus_dmamap_sync(txq->ift_ifdi->idi_tag, txq->ift_ifdi->idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
@@ -2120,6 +2121,7 @@ retry:
 		}
 #endif
 		txsd->ifsd_m = pi.ipi_m;
+		MPASS(pi.ipi_new_pidx >= 0 && pi.ipi_new_pidx < sctx->isc_ntxd);
 		if (pi.ipi_new_pidx >= pi.ipi_pidx) {
 			ndesc = pi.ipi_new_pidx - pi.ipi_pidx;
 		} else {
