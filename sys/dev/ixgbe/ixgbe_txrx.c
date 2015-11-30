@@ -78,7 +78,8 @@ ixgbe_tx_ctx_setup(struct tx_ring *txr, struct mbuf *mp,
 	u8	ipproto = 0;
 	u16	vtag = 0;
 	int     ctxd = txr->next_avail_desc; 
-
+        printf("next avail desc %d\n", ctxd); 
+	
 	*offload = TRUE;
 	/* First check if TSO is to be used */
 	if (mp->m_pkthdr.csum_flags & CSUM_TSO)
@@ -300,7 +301,8 @@ ixgbe_tso_setup(struct tx_ring *txr, struct mbuf *mp,
 static int
 ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 {
-  printf("Callint ixgbe_isc_txd_encap\n"); 
+  printf("Calling ixgbe_isc_txd_encap\n");
+  printf("pi->ipi_qsidx %d\n", pi->ipi_qsidx); 
   struct adapter *sc       = arg;
   struct ix_queue *que     = &sc->queues[pi->ipi_qsidx];
   struct tx_ring *txr      = &que->txr;
@@ -321,6 +323,7 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		cmd |= IXGBE_ADVTXD_DCMD_VLE;
   
   i = first = pi->ipi_pidx;
+  printf("first is %d\n", first); 
 
   /*********************************************
    * Set up the appropriate offload context
@@ -333,6 +336,8 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
   
   if (offload)
     i++;
+
+  printf("offload %d\n", offload); 
 
   for (j = 0; j < nsegs; j++) {
     bus_size_t seglen;

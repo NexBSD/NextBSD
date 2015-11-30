@@ -1,8 +1,11 @@
 #ifndef IXGBE_STANDALONE_BUILD
 
+#undef PCI_IOV
+
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_rss.h"
+
 #endif
 
 #include "ixgbe.h"
@@ -119,6 +122,7 @@ static void ixgbe_free_pci_resources(if_ctx_t ctx);
 
 static int ixgbe_msix_link(void *arg);
 static int ixgbe_msix_que(void *arg);
+static void ixgbe_initialize_transmit_units(struct adapter *adapter);
 
 static int ixgbe_interface_setup(if_ctx_t ctx);
 static void ixgbe_add_media_types(if_ctx_t ctx);
@@ -380,8 +384,7 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
 	struct ix_queue *que;
-	struct ixgbe_tx_buf *bufs;
-	int i;
+	int i, error;
 	
 	MPASS(adapter->num_queues > 0);
 	MPASS(nqs == 2);
@@ -394,33 +397,64 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 	  return (ENOMEM);
 	}
 
-	if ((bufs = malloc(sizeof(*bufs)*ixgbe_sctx->isc_ntxd*adapter->num_queues, M_DEVBUF, M_WAITOK|M_ZERO)) == NULL) {
-		free(adapter->queues, M_DEVBUF);
-		device_printf(iflib_get_dev(ctx), "failed to allocate sw bufs\n");
-		return (ENOMEM);
-	}
 
 	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
 		struct rx_ring 		*rxr = &que->rxr;
 
-		que->me = i;
+	    if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * ixgbe_sctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+	        device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
+		error = ENOMEM;
+		goto fail; 
+	    }
+		
+		/* #ifdef DEV_NETMAP
+		struct netmap_adapter *na = NA(adapter->ifp);
+		struct netmap_slot *slot;
+		slot = netmap_reset(na, NR_TX, txr->me, 0);
+
+		if (slot) {
+		  int si = netmap_idx_n2k(&na->tx_rings[txr->me], i);
+		  netmap_load_map(na, txr->txtag,
+				  txr->tx_buffers->map, NMB(na, slot + si));
+		}
+                #endif */
+		
+	        que->me = txr->me = i; 
 		txr->adapter = rxr->adapter = que->adapter = adapter;
 		adapter->active_queues |= (u64)1 << que->me;
 
 		/* get the virtual and physical address of the hardware queues */
 		txr->tail = IXGBE_TDT(que->me);
 		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i*2];
+		bzero((void *)txr->tx_base, (sizeof(union ixgbe_adv_tx_desc)) * ixgbe_sctx->isc_ntxd);
 		txr->tx_paddr = paddrs[i*2];
-		txr->tx_buffers = bufs + i*ixgbe_sctx->isc_ntxd;
+
 		rxr->tail = IXGBE_RDT(que->me);
 		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[i*2 + 1];
+		bzero((void *)txr->tx_base, (sizeof(union ixgbe_adv_tx_desc)) * ixgbe_sctx->isc_ntxd);
 		rxr->rx_paddr = paddrs[i*2 + 1];
+		
 		txr->que = rxr->que = que;
+		txr->tx_buffers->eop = NULL;
+		txr->total_packets = 0; 
+
+#ifdef IXGBE_FDIR
+	/* Set the rate at which we sample packets */
+	if (adapter->hw.mac.type != ixgbe_mac_82598EB)
+		txr->atr_sample = atr_sample_rate;
+#endif
+
+	        txr->tx_avail = ixgbe_sctx->isc_ntxd;
 	}
 
 	device_printf(iflib_get_dev(ctx), "allocated for %d queues\n", adapter->num_queues);
 	return (0);
+	
+ fail:
+	ixgbe_if_queues_free(ctx);
+	return (error); 
+	
 }
 
 static void
@@ -428,12 +462,98 @@ ixgbe_if_queues_free(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
 	struct ix_queue *que = adapter->queues;
-
+        int i; 
+	
 	if (que == NULL)
 	  return;
-  
-	free(que->txr.tx_buffers, M_DEVBUF);
+
+        for (i = 0; i < adapter->num_queues; i++, que++) {
+		struct tx_ring		*txr = &que->txr;
+		if (txr->tx_buffers == NULL)
+		  break;
+
+		free(txr->tx_buffers, M_DEVBUF); 
+	}
+	
 	free(que, M_DEVBUF);
+}
+
+/*********************************************************************
+ *
+ *  Enable transmit units.
+ *
+ **********************************************************************/
+static void
+ixgbe_initialize_transmit_units(struct adapter *adapter)
+{
+  struct ixgbe_hw	*hw = &adapter->hw;
+  struct ix_queue *que;
+  int i; 
+  
+  /* Setup the Base and Length of the Tx Descriptor Ring */
+  for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
+                struct tx_ring	   *txr = &que->txr;
+		u64	tdba = 	txr->tx_paddr;
+		u32	txctrl = 0;
+		int	j = txr->me;
+
+		IXGBE_WRITE_REG(hw, IXGBE_TDBAL(j),
+		       (tdba & 0x00000000ffffffffULL));
+		IXGBE_WRITE_REG(hw, IXGBE_TDBAH(j), (tdba >> 32));
+		IXGBE_WRITE_REG(hw, IXGBE_TDLEN(j),
+		    ixgbe_sctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc));
+
+		/* Setup the HW Tx Head and Tail descriptor pointers */
+		IXGBE_WRITE_REG(hw, IXGBE_TDH(j), 0);
+		IXGBE_WRITE_REG(hw, IXGBE_TDT(j), 0);
+
+		/* Disable Head Writeback */
+		switch (hw->mac.type) {
+		case ixgbe_mac_82598EB:
+			txctrl = IXGBE_READ_REG(hw, IXGBE_DCA_TXCTRL(j));
+			break;
+		case ixgbe_mac_82599EB:
+		case ixgbe_mac_X540:
+		default:
+			txctrl = IXGBE_READ_REG(hw, IXGBE_DCA_TXCTRL_82599(j));
+			break;
+                }
+		txctrl &= ~IXGBE_DCA_TXCTRL_DESC_WRO_EN;
+		switch (hw->mac.type) {
+		case ixgbe_mac_82598EB:
+			IXGBE_WRITE_REG(hw, IXGBE_DCA_TXCTRL(j), txctrl);
+			break;
+		case ixgbe_mac_82599EB:
+		case ixgbe_mac_X540:
+		default:
+			IXGBE_WRITE_REG(hw, IXGBE_DCA_TXCTRL_82599(j), txctrl);
+			break;
+		}
+
+	}
+
+	if (hw->mac.type != ixgbe_mac_82598EB) {
+		u32 dmatxctl, rttdcs;
+#ifdef PCI_IOV
+		enum ixgbe_iov_mode mode = ixgbe_get_iov_mode(adapter);
+#endif
+		dmatxctl = IXGBE_READ_REG(hw, IXGBE_DMATXCTL);
+		dmatxctl |= IXGBE_DMATXCTL_TE;
+		IXGBE_WRITE_REG(hw, IXGBE_DMATXCTL, dmatxctl);
+		/* Disable arbiter to set MTQC */
+		rttdcs = IXGBE_READ_REG(hw, IXGBE_RTTDCS);
+		rttdcs |= IXGBE_RTTDCS_ARBDIS;
+		IXGBE_WRITE_REG(hw, IXGBE_RTTDCS, rttdcs);
+#ifdef PCI_IOV
+		IXGBE_WRITE_REG(hw, IXGBE_MTQC, ixgbe_get_mtqc(mode));
+#else
+		IXGBE_WRITE_REG(hw, IXGBE_MTQC, IXGBE_MTQC_64Q_1PB);
+#endif
+		rttdcs &= ~IXGBE_RTTDCS_ARBDIS;
+		IXGBE_WRITE_REG(hw, IXGBE_RTTDCS, rttdcs);
+	}
+
+	return;
 }
 
 
@@ -588,7 +708,13 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	default:
 		break;
 	}
-  
+
+#ifdef PCI_IOV
+	ixgbe_initialize_iov(adapter);
+#endif
+	ixgbe_initialize_transmit_units(adapter);
+
+	
 	/* Detect and set physical type */
 	ixgbe_setup_optics(adapter);
 
@@ -872,8 +998,9 @@ ixgbe_config_link(struct adapter *adapter)
 			hw->mac.ops.setup_sfp(hw);
 			ixgbe_enable_tx_laser(hw);
 			/* taskqueue_enqueue(adapter->tq, &adapter->msf_task); */
-		} else
+		} else {
 		  /* taskqueue_enqueue(adapter->tq, &adapter->mod_task); */
+		}
 	} else {
 		if (hw->mac.ops.check_link)
 			err = ixgbe_check_link(hw, &adapter->link_speed,
@@ -1549,7 +1676,7 @@ display:
 static int
 ixgbe_if_msix_intr_assign(if_ctx_t ctx, int msix)
 {
-	struct          adapter *adapter = iflib_get_softc(ctx); 
+	struct          adapter *adapter = iflib_get_softc(ctx);
 	struct 		ix_queue *que = adapter->queues;
 	int 		error, rid, vector = 0;
 	int		cpu_id = 0;
@@ -1581,10 +1708,11 @@ ixgbe_if_msix_intr_assign(if_ctx_t ctx, int msix)
 		snprintf(buf, sizeof(buf), "txq%d", i);
 		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, que, que->me, buf);
 
+		/*		
 #if __FreeBSD_version >= 800504
 		bus_describe_intr(dev, que->res, que->tag, "que %d", i);
 #endif
-	  
+		*/
 		que->msix = vector;
 		adapter->active_queues |= (u64)(1 << que->msix);
 #ifdef	RSS
