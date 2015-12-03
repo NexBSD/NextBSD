@@ -1732,7 +1732,7 @@ iwn_dma_contig_alloc(struct iwn_softc *sc, struct iwn_dma_info *dma,
 
 	error = bus_dma_tag_create(bus_get_dma_tag(sc->sc_dev), alignment,
 	    0, BUS_SPACE_MAXADDR_32BIT, BUS_SPACE_MAXADDR, NULL, NULL, size,
-	    1, size, BUS_DMA_NOWAIT, NULL, NULL, &dma->tag);
+	    1, size, 0, NULL, NULL, &dma->tag);
 	if (error != 0)
 		goto fail;
 
@@ -1861,8 +1861,7 @@ iwn_alloc_rx_ring(struct iwn_softc *sc, struct iwn_rx_ring *ring)
 	/* Create RX buffer DMA tag. */
 	error = bus_dma_tag_create(bus_get_dma_tag(sc->sc_dev), 1, 0,
 	    BUS_SPACE_MAXADDR_32BIT, BUS_SPACE_MAXADDR, NULL, NULL,
-	    IWN_RBUF_SIZE, 1, IWN_RBUF_SIZE, BUS_DMA_NOWAIT, NULL, NULL,
-	    &ring->data_dmat);
+	    IWN_RBUF_SIZE, 1, IWN_RBUF_SIZE, 0, NULL, NULL, &ring->data_dmat);
 	if (error != 0) {
 		device_printf(sc->sc_dev,
 		    "%s: could not create RX buf DMA tag, error %d\n",
@@ -2008,8 +2007,7 @@ iwn_alloc_tx_ring(struct iwn_softc *sc, struct iwn_tx_ring *ring, int qid)
 
 	error = bus_dma_tag_create(bus_get_dma_tag(sc->sc_dev), 1, 0,
 	    BUS_SPACE_MAXADDR_32BIT, BUS_SPACE_MAXADDR, NULL, NULL, MCLBYTES,
-	    IWN_MAX_SCATTER - 1, MCLBYTES, BUS_DMA_NOWAIT, NULL, NULL,
-	    &ring->data_dmat);
+	    IWN_MAX_SCATTER - 1, MCLBYTES, 0, NULL, NULL, &ring->data_dmat);
 	if (error != 0) {
 		device_printf(sc->sc_dev,
 		    "%s: could not create TX buf DMA tag, error %d\n",
@@ -4368,7 +4366,6 @@ iwn_tx_data(struct iwn_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 		struct ieee80211_tx_ampdu *tap = &ni->ni_tx_ampdu[ac];
 
 		if (!IEEE80211_AMPDU_RUNNING(tap)) {
-			m_freem(m);
 			return EINVAL;
 		}
 
@@ -4420,7 +4417,6 @@ iwn_tx_data(struct iwn_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 		/* Retrieve key for TX. */
 		k = ieee80211_crypto_encap(ni, m);
 		if (k == NULL) {
-			m_freem(m);
 			return ENOBUFS;
 		}
 		/* 802.11 header may have moved. */
@@ -4551,7 +4547,6 @@ iwn_tx_data(struct iwn_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 		if (error != EFBIG) {
 			device_printf(sc->sc_dev,
 			    "%s: can't map mbuf (error %d)\n", __func__, error);
-			m_freem(m);
 			return error;
 		}
 		/* Too many DMA segments, linearize mbuf. */
@@ -4559,7 +4554,6 @@ iwn_tx_data(struct iwn_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 		if (m1 == NULL) {
 			device_printf(sc->sc_dev,
 			    "%s: could not defrag mbuf\n", __func__);
-			m_freem(m);
 			return ENOBUFS;
 		}
 		m = m1;
@@ -4569,7 +4563,6 @@ iwn_tx_data(struct iwn_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 		if (error != 0) {
 			device_printf(sc->sc_dev,
 			    "%s: can't map mbuf (error %d)\n", __func__, error);
-			m_freem(m);
 			return error;
 		}
 	}
@@ -4755,7 +4748,6 @@ iwn_tx_data_raw(struct iwn_softc *sc, struct mbuf *m,
 		if (error != EFBIG) {
 			device_printf(sc->sc_dev,
 			    "%s: can't map mbuf (error %d)\n", __func__, error);
-			m_freem(m);
 			return error;
 		}
 		/* Too many DMA segments, linearize mbuf. */
@@ -4763,7 +4755,6 @@ iwn_tx_data_raw(struct iwn_softc *sc, struct mbuf *m,
 		if (m1 == NULL) {
 			device_printf(sc->sc_dev,
 			    "%s: could not defrag mbuf\n", __func__);
-			m_freem(m);
 			return ENOBUFS;
 		}
 		m = m1;
@@ -4773,7 +4764,6 @@ iwn_tx_data_raw(struct iwn_softc *sc, struct mbuf *m,
 		if (error != 0) {
 			device_printf(sc->sc_dev,
 			    "%s: can't map mbuf (error %d)\n", __func__, error);
-			m_freem(m);
 			return error;
 		}
 	}
@@ -4862,6 +4852,7 @@ iwn_xmit_task(void *arg0, int pending)
 			if_inc_counter(ni->ni_vap->iv_ifp,
 			    IFCOUNTER_OERRORS, 1);
 			ieee80211_free_node(ni);
+			m_freem(m);
 		}
 	}
 
@@ -4869,6 +4860,9 @@ iwn_xmit_task(void *arg0, int pending)
 	IWN_UNLOCK(sc);
 }
 
+/*
+ * raw frame xmit - free node/reference if failed.
+ */
 static int
 iwn_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
     const struct ieee80211_bpf_params *params)
@@ -4879,24 +4873,17 @@ iwn_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 
 	DPRINTF(sc, IWN_DEBUG_XMIT | IWN_DEBUG_TRACE, "->%s begin\n", __func__);
 
-	if ((sc->sc_flags & IWN_FLAG_RUNNING) == 0) {
-		ieee80211_free_node(ni);
-		m_freem(m);
-		return ENETDOWN;
-	}
-
-	/* XXX? net80211 doesn't set this on xmit'ed raw frames? */
-	m->m_pkthdr.rcvif = (void *) ni;
-
 	IWN_LOCK(sc);
+	if ((sc->sc_flags & IWN_FLAG_RUNNING) == 0) {
+		m_freem(m);
+		IWN_UNLOCK(sc);
+		return (ENETDOWN);
+	}
 
 	/* queue frame if we have to */
 	if (sc->sc_beacon_wait) {
 		if (iwn_xmit_queue_enqueue(sc, m) != 0) {
 			m_freem(m);
-			if_inc_counter(ni->ni_vap->iv_ifp,
-			    IFCOUNTER_OERRORS, 1);
-			ieee80211_free_node(ni);
 			IWN_UNLOCK(sc);
 			return (ENOBUFS);
 		}
@@ -4918,25 +4905,29 @@ iwn_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 		 */
 		error = iwn_tx_data_raw(sc, m, ni, params);
 	}
-	if (error != 0) {
-		/* NB: m is reclaimed on tx failure */
-		ieee80211_free_node(ni);
-	} else
+	if (error == 0)
 		sc->sc_tx_timer = 5;
+	else
+		m_freem(m);
 
 	IWN_UNLOCK(sc);
 
 	DPRINTF(sc, IWN_DEBUG_TRACE | IWN_DEBUG_XMIT, "->%s: end\n",__func__);
 
-	return error;
+	return (error);
 }
 
+/*
+ * transmit - don't free mbuf if failed; don't free node ref if failed.
+ */
 static int
 iwn_transmit(struct ieee80211com *ic, struct mbuf *m)
 {
 	struct iwn_softc *sc = ic->ic_softc;
 	struct ieee80211_node *ni;
 	int error;
+
+	ni = (struct ieee80211_node *)m->m_pkthdr.rcvif;
 
 	IWN_LOCK(sc);
 	if ((sc->sc_flags & IWN_FLAG_RUNNING) == 0 || sc->sc_beacon_wait) {
@@ -4949,12 +4940,8 @@ iwn_transmit(struct ieee80211com *ic, struct mbuf *m)
 		return (ENOBUFS);
 	}
 
-	ni = (struct ieee80211_node *)m->m_pkthdr.rcvif;
 	error = iwn_tx_data(sc, m, ni);
-	if (error) {
-		if_inc_counter(ni->ni_vap->iv_ifp, IFCOUNTER_OERRORS, 1);
-		ieee80211_free_node(ni);
-	} else
+	if (!error)
 		sc->sc_tx_timer = 5;
 	IWN_UNLOCK(sc);
 	return (error);
@@ -5346,6 +5333,8 @@ iwn_updateedca(struct ieee80211com *ic)
 
 	memset(&cmd, 0, sizeof cmd);
 	cmd.flags = htole32(IWN_EDCA_UPDATE);
+
+	IEEE80211_LOCK(ic);
 	for (aci = 0; aci < WME_NUM_AC; aci++) {
 		const struct wmeParams *ac =
 		    &ic->ic_wme.wme_chanParams.cap_wmeParams[aci];
@@ -5356,10 +5345,10 @@ iwn_updateedca(struct ieee80211com *ic)
 		    htole16(IEEE80211_TXOP_TO_US(ac->wmep_txopLimit));
 	}
 	IEEE80211_UNLOCK(ic);
+
 	IWN_LOCK(sc);
 	(void)iwn_cmd(sc, IWN_CMD_EDCA_PARAMS, &cmd, sizeof cmd, 1);
 	IWN_UNLOCK(sc);
-	IEEE80211_LOCK(ic);
 
 	DPRINTF(sc, IWN_DEBUG_TRACE, "->%s: end\n",__func__);
 
@@ -6289,8 +6278,8 @@ iwn_set_pslevel(struct iwn_softc *sc, int dtim, int level, int async)
 	if (level == 5)
 		cmd.flags |= htole16(IWN_PS_FAST_PD);
 	/* Retrieve PCIe Active State Power Management (ASPM). */
-	reg = pci_read_config(sc->sc_dev, sc->sc_cap_off + 0x10, 1);
-	if (!(reg & 0x1))	/* L0s Entry disabled. */
+	reg = pci_read_config(sc->sc_dev, sc->sc_cap_off + PCIER_LINK_CTL, 4);
+	if (!(reg & PCIEM_LINK_CTL_ASPMC_L0S))	/* L0s Entry disabled. */
 		cmd.flags |= htole16(IWN_PS_PCI_PMGT);
 	cmd.rxtimeout = htole32(pmgt->rxtimeout * 1024);
 	cmd.txtimeout = htole32(pmgt->txtimeout * 1024);
@@ -8289,9 +8278,9 @@ iwn_apm_init(struct iwn_softc *sc)
 	IWN_SETBITS(sc, IWN_HW_IF_CONFIG, IWN_HW_IF_CONFIG_HAP_WAKE_L1A);
 
 	/* Retrieve PCIe Active State Power Management (ASPM). */
-	reg = pci_read_config(sc->sc_dev, sc->sc_cap_off + 0x10, 1);
+	reg = pci_read_config(sc->sc_dev, sc->sc_cap_off + PCIER_LINK_CTL, 4);
 	/* Workaround for HW instability in PCIe L0->L0s->L1 transition. */
-	if (reg & 0x02)	/* L1 Entry enabled. */
+	if (reg & PCIEM_LINK_CTL_ASPMC_L1)	/* L1 Entry enabled. */
 		IWN_SETBITS(sc, IWN_GIO, IWN_GIO_L0S_ENA);
 	else
 		IWN_CLRBITS(sc, IWN_GIO, IWN_GIO_L0S_ENA);

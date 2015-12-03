@@ -46,6 +46,7 @@
 #include <sys/stdint.h>		/* for people using printf mainly */
 
 extern int cold;		/* nonzero if we are doing a cold boot */
+extern int suspend_blocked;	/* block suspend due to pending shutdown */
 extern int rebooting;		/* kern_reboot() has been called. */
 extern const char *panicstr;	/* panic message */
 extern char version[];		/* system version */
@@ -206,6 +207,7 @@ int	kvprintf(char const *, void (*)(int, void*), void *, int,
 	    __va_list) __printflike(1, 0);
 void	log(int, const char *, ...) __printflike(2, 3);
 void	log_console(struct uio *);
+void	vlog(int, const char *, __va_list) __printflike(2, 0);
 int	asprintf(char **ret, struct malloc_type *mtp, const char *format, 
 	    ...) __printflike(3, 4);
 int	printf(const char *, ...) __printflike(1, 2);
@@ -411,7 +413,6 @@ struct root_hold_token;
 
 struct root_hold_token *root_mount_hold(const char *identifier);
 void root_mount_rel(struct root_hold_token *h);
-void root_mount_wait(void);
 int root_mounted(void);
 
 

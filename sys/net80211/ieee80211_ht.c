@@ -1081,7 +1081,7 @@ ieee80211_ht_node_init(struct ieee80211_node *ni)
 		tap = &ni->ni_tx_ampdu[tid];
 		tap->txa_tid = tid;
 		tap->txa_ni = ni;
-		tap->txa_lastsample = ticks;
+		ieee80211_txampdu_init_pps(tap);
 		/* NB: further initialization deferred */
 	}
 	ni->ni_flags |= IEEE80211_NODE_HT | IEEE80211_NODE_AMPDU;
@@ -1251,7 +1251,7 @@ ieee80211_ht_wds_init(struct ieee80211_node *ni)
 	for (tid = 0; tid < WME_NUM_TID; tid++) {
 		tap = &ni->ni_tx_ampdu[tid];
 		tap->txa_tid = tid;
-		tap->txa_lastsample = ticks;
+		ieee80211_txampdu_init_pps(tap);
 	}
 	/* NB: AMPDU tx/rx governed by IEEE80211_FHT_AMPDU_{TX,RX} */
 	ni->ni_flags |= IEEE80211_NODE_HT | IEEE80211_NODE_AMPDU;
@@ -1752,8 +1752,7 @@ ampdu_tx_stop(struct ieee80211_tx_ampdu *tap)
 	/*
 	 * Reset packet estimate.
 	 */
-	tap->txa_lastsample = ticks;
-	tap->txa_avgpps = 0;
+	ieee80211_txampdu_init_pps(tap);
 
 	/* NB: clearing NAK means we may re-send ADDBA */ 
 	tap->txa_flags &= ~(IEEE80211_AGGR_SETUP | IEEE80211_AGGR_NAK);
@@ -2175,9 +2174,9 @@ ieee80211_ampdu_enable(struct ieee80211_node *ni,
 		return 0;
 	}
 	IEEE80211_NOTE(vap, IEEE80211_MSG_11N, ni,
-	    "enable AMPDU on tid %d (%s), avgpps %d pkts %d",
+	    "enable AMPDU on tid %d (%s), avgpps %d pkts %d attempt %d",
 	    tap->txa_tid, ieee80211_wme_acnames[TID_TO_WME_AC(tap->txa_tid)],
-	    tap->txa_avgpps, tap->txa_pkts);
+	    tap->txa_avgpps, tap->txa_pkts, tap->txa_attempts);
 	return 1;
 }
 
