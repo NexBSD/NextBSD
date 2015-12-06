@@ -87,7 +87,7 @@ struct callout_handle {
 /* if the passed precision is less than 1 microsecond set it to the resolution
  * of hardclock
  */
-#define prthresh(pr) ((pr) < SBT_1US ? htick_sbt : (pr))
+#define prthresh(pr) ((pr) < tick_sbt ? htick_sbt : (pr))
 
 #define	callout_active(c)	((c)->c_flags & CALLOUT_ACTIVE)
 #define	callout_deactivate(c)	((c)->c_flags &= ~CALLOUT_ACTIVE)

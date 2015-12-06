@@ -41,6 +41,8 @@ int	timer_spkr_acquire(void);
 int	timer_spkr_release(void);
 void	timer_spkr_setfreq(int freq);
 
+
+extern sbintime_t (*cpu_tcp_ts_getsbintime)(void);
 #endif /* _KERNEL */
 
 #endif /* !_MACHINE_CLOCK_H_ */

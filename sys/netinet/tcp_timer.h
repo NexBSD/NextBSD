@@ -127,8 +127,8 @@ static const char *tcptimers[] =
 /*
  * Force a time value to be in a certain range.
  */
-#define	TCPT_RANGESET(tv, value, tvmin, tvmax) do { \
-	(tv) = (value) + tcp_rexmit_slop; \
+#define	TCPT_RANGESET(tv, value, tvmin, tvmax) do {	\
+	tv = value;				\
 	if ((u_long)(tv) < (u_long)(tvmin)) \
 		(tv) = (tvmin); \
 	if ((u_long)(tv) > (u_long)(tvmax)) \
@@ -180,7 +180,6 @@ extern int tcp_keepcnt;			/* number of keepalives */
 extern int tcp_delacktime;		/* time before sending a delayed ACK */
 extern int tcp_maxpersistidle;
 extern int tcp_rexmit_min;
-extern int tcp_rexmit_slop;
 extern int tcp_msl;
 extern int tcp_ttl;			/* time to live for TCP segs */
 extern int tcp_backoff[];

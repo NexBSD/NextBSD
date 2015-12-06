@@ -749,13 +749,13 @@ send:
 		/* Timestamps. */
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
-			to.to_tsval = tcp_ts_getticks() + tp->ts_offset;
+			to.to_tsval = tcp_ts_getsbintime32() + tp->ts_offset;
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
 			/* Set receive buffer autosizing timestamp. */
 			if (tp->rfbuf_ts == 0 &&
 			    (so->so_rcv.sb_flags & SB_AUTOSIZE))
-				tp->rfbuf_ts = tcp_ts_getticks();
+				tp->rfbuf_ts = tcp_ts_getsbintime();
 		}
 		/* Selective ACK's. */
 		if (tp->t_flags & TF_SACK_PERMIT) {
@@ -1416,7 +1416,7 @@ out:
 			 * not currently timing anything.
 			 */
 			if (tp->t_rtttime == 0) {
-				tp->t_rtttime = ticks;
+				tp->t_rtttime = tcp_ts_getsbintime();
 				tp->t_rtseq = startseq;
 				TCPSTAT_INC(tcps_segstimed);
 			}
@@ -1578,8 +1578,7 @@ timer:
 void
 tcp_setpersist(struct tcpcb *tp)
 {
-	int t = ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1;
-	int tt;
+	uint64_t tt, t = ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1;
 
 	tp->t_flags &= ~TF_PREVVALID;
 	if (tcp_timer_active(tp, TT_REXMT))
@@ -1588,7 +1587,7 @@ tcp_setpersist(struct tcpcb *tp)
 	 * Start/restart persistance timer.
 	 */
 	TCPT_RANGESET(tt, t * tcp_backoff[tp->t_rxtshift],
-		      TCPTV_PERSMIN, TCPTV_PERSMAX);
+		      TCPTV_PERSMIN*tick_sbt, TCPTV_PERSMAX*tick_sbt);
 	tcp_timer_activate(tp, TT_PERSIST, tt);
 	if (tp->t_rxtshift < TCP_MAXRXTSHIFT)
 		tp->t_rxtshift++;

@@ -135,22 +135,22 @@ struct tcpcb {
 
 	u_int	t_maxopd;		/* mss plus options */
 
-	u_int	t_rcvtime;		/* inactivity time */
-	u_int	t_starttime;		/* time connection was established */
+	sbintime_t	t_rcvtime;		/* inactivity time */
+	sbintime_t	t_starttime;		/* time connection was established */
 	u_int	t_rtttime;		/* RTT measurement start time */
 	tcp_seq	t_rtseq;		/* sequence number being timed */
 
 	u_int	t_bw_spare1;		/* unused */
 	tcp_seq	t_bw_spare2;		/* unused */
 
-	int	t_rxtcur;		/* current retransmit value (ticks) */
+	sbintime_t t_rxtcur;		/* current retransmit value */
 	u_int	t_maxseg;		/* maximum segment size */
-	int	t_srtt;			/* smoothed round-trip time */
-	int	t_rttvar;		/* variance in round-trip time */
+	uint64_t	t_srtt;			/* smoothed round-trip time */
+	uint64_t	t_rttvar;		/* variance in round-trip time */
 
 	int	t_rxtshift;		/* log(2) of rexmt exp. backoff */
-	u_int	t_rttmin;		/* minimum rtt allowed */
-	u_int	t_rttbest;		/* best rtt we've seen */
+	sbintime_t	t_rttmin;		/* minimum rtt allowed */
+	sbintime_t	t_rttbest;		/* best rtt we've seen */
 	u_long	t_rttupdated;		/* number of times rtt sampled */
 	u_long	max_sndwnd;		/* largest window peer has offered */
 
@@ -163,7 +163,7 @@ struct tcpcb {
 	u_char	rcv_scale;		/* window scaling for recv window */
 	u_char	request_r_scale;	/* pending window scaling */
 	u_int32_t  ts_recent;		/* timestamp echo data */
-	u_int	ts_recent_age;		/* when last updated */
+	sbintime_t	ts_recent_age;		/* when last updated */
 	u_int32_t  ts_offset;		/* our timestamp offset */
 
 	tcp_seq	last_ack_sent;
@@ -172,7 +172,7 @@ struct tcpcb {
 	u_long	snd_ssthresh_prev;	/* ssthresh prior to retransmit */
 	tcp_seq	snd_recover_prev;	/* snd_recover prior to retransmit */
 	int	t_sndzerowin;		/* zero-window updates sent */
-	u_int	t_badrxtwin;		/* window for retransmit recovery */
+	sbintime_t	t_badrxtwin;		/* window for retransmit recovery */
 	u_char	snd_limited;		/* segments limited transmitted */
 /* SACK related state */
 	int	snd_numholes;		/* number of holes seen by sender */
@@ -367,7 +367,7 @@ struct tcptw {
 	struct ucred	*tw_cred;	/* user credentials */
 	u_int32_t	t_recent;
 	u_int32_t	ts_offset;	/* our timestamp offset */
-	u_int		t_starttime;
+	sbintime_t	t_starttime;
 	int		tw_time;
 	TAILQ_ENTRY(tcptw) tw_2msl;
 	void		*tw_pspare;	/* TCP_SIGNATURE */
@@ -723,7 +723,7 @@ void	 tcp_slowtimo(void);
 struct tcptemp *
 	 tcpip_maketemplate(struct inpcb *);
 void	 tcpip_fillheaders(struct inpcb *, void *, void *);
-void	 tcp_timer_activate(struct tcpcb *, uint32_t, u_int);
+void	 tcp_timer_activate(struct tcpcb *, uint32_t, sbintime_t);
 int	 tcp_timer_active(struct tcpcb *, uint32_t);
 void	 tcp_timer_stop(struct tcpcb *, uint32_t);
 void	 tcp_trace(short, short, struct tcpcb *, void *, struct tcphdr *, int);

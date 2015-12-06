@@ -59,6 +59,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/hhook.h>
+#include <sys/limits.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/proc.h>		/* for proc0 declaration */
@@ -238,7 +239,7 @@ static void	 tcp_dropwithreset(struct mbuf *, struct tcphdr *,
 		     struct tcpcb *, int, int);
 static void	 tcp_pulloutofband(struct socket *,
 		     struct tcphdr *, struct mbuf *, int);
-static void	 tcp_xmit_timer(struct tcpcb *, int);
+static void	 tcp_xmit_timer(struct tcpcb *, sbintime_t);
 static void	 tcp_newreno_partial_ack(struct tcpcb *, struct tcphdr *);
 static void inline	cc_ack_received(struct tcpcb *tp, struct tcphdr *th,
 			    uint16_t type);
@@ -347,7 +348,7 @@ cc_conn_init(struct tcpcb *tp)
 		}
 		TCPT_RANGESET(tp->t_rxtcur,
 		    ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1,
-		    tp->t_rttmin, TCPTV_REXMTMAX);
+		    tp->t_rttmin, TCPTV_REXMTMAX*tick_sbt);
 	}
 	if (metrics.rmx_ssthresh) {
 		/*
@@ -1484,6 +1485,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	int thflags, acked, ourfinisacked, needoutput = 0;
 	int rstreason, todrop, win;
 	u_long tiwin;
+	sbintime_t t;
 	char *s;
 	struct in_conninfo *inc;
 	struct mbuf *mfree;
@@ -1541,9 +1543,9 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * XXX: This should be done after segment
 	 * validation to ignore broken/spoofed segs.
 	 */
-	tp->t_rcvtime = ticks;
+	tp->t_rcvtime = tcp_ts_getsbintime();
 	if (TCPS_HAVEESTABLISHED(tp->t_state))
-		tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp));
+		tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp)*tick_sbt);
 
 	/*
 	 * Scale up the window into a 32-bit value.
@@ -1594,7 +1596,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	if ((to.to_flags & TOF_TS) && (to.to_tsecr != 0)) {
 		to.to_tsecr -= tp->ts_offset;
-		if (TSTMP_GT(to.to_tsecr, tcp_ts_getticks()))
+		if (TSTMP_GT(to.to_tsecr, tcp_ts_getsbintime32()))
 			to.to_tsecr = 0;
 	}
 	/*
@@ -1637,7 +1639,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		if (to.to_flags & TOF_TS) {
 			tp->t_flags |= TF_RCVD_TSTMP;
 			tp->ts_recent = to.to_tsval;
-			tp->ts_recent_age = tcp_ts_getticks();
+			tp->ts_recent_age = tcp_ts_getsbintime();
 		}
 		if (to.to_flags & TOF_MSS)
 			tcp_mss(tp, to.to_mss);
@@ -1681,7 +1683,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		 */
 		if ((to.to_flags & TOF_TS) != 0 &&
 		    SEQ_LEQ(th->th_seq, tp->last_ack_sent)) {
-			tp->ts_recent_age = tcp_ts_getticks();
+			tp->ts_recent_age = tcp_ts_getsbintime();
 			tp->ts_recent = to.to_tsval;
 		}
 
@@ -1705,7 +1707,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				 */
 				if (tp->t_rxtshift == 1 &&
 				    tp->t_flags & TF_PREVVALID &&
-				    (int)(ticks - tp->t_badrxtwin) < 0) {
+				    (int)(tcp_ts_getsbintime() - tp->t_badrxtwin) < 0) {
 					cc_cong_signal(tp, th, CC_RTO_ERR);
 				}
 
@@ -1719,20 +1721,30 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				 */
 				if ((to.to_flags & TOF_TS) != 0 &&
 				    to.to_tsecr) {
-					u_int t;
+					u_int t, curts;
 
-					t = tcp_ts_getticks() - to.to_tsecr;
+
+					curts = tcp_ts_getsbintime32();
+					/*
+					 * cope with hourly wrap
+					 */
+					if (__predict_true(curts > to.to_tsecr))
+						t = curts - to.to_tsecr;
+					else
+						t = UINT_MAX - to.to_tsecr + curts;
 					if (!tp->t_rttlow || tp->t_rttlow > t)
 						tp->t_rttlow = t;
 					tcp_xmit_timer(tp,
-					    TCP_TS_TO_TICKS(t) + 1);
+					    TCP_TS_TO_SBT(t) + 1);
 				} else if (tp->t_rtttime &&
-				    SEQ_GT(th->th_ack, tp->t_rtseq)) {
+					   SEQ_GT(th->th_ack, tp->t_rtseq)) {
+					sbintime_t t;
+
+					t = tcp_ts_getsbintime();
 					if (!tp->t_rttlow ||
-					    tp->t_rttlow > ticks - tp->t_rtttime)
-						tp->t_rttlow = ticks - tp->t_rtttime;
-					tcp_xmit_timer(tp,
-							ticks - tp->t_rtttime);
+					    tp->t_rttlow > t - tp->t_rtttime)
+						tp->t_rttlow = t - tp->t_rtttime;
+					tcp_xmit_timer(tp, t - tp->t_rtttime);
 				}
 				acked = BYTES_THIS_ACK(tp, th);
 
@@ -2010,7 +2022,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			 *	SYN_SENT  --> ESTABLISHED
 			 *	SYN_SENT* --> FIN_WAIT_1
 			 */
-			tp->t_starttime = ticks;
+			tp->t_starttime = tcp_ts_getsbintime();
 			if (tp->t_flags & TF_NEEDFIN) {
 				tcp_state_change(tp, TCPS_FIN_WAIT_1);
 				tp->t_flags &= ~TF_NEEDFIN;
@@ -2021,7 +2033,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				    mtod(m, const char *), tp, th);
 				cc_conn_init(tp);
 				tcp_timer_activate(tp, TT_KEEP,
-				    TP_KEEPIDLE(tp));
+				    TP_KEEPIDLE(tp)*tick_sbt);
 			}
 		} else {
 			/*
@@ -2184,7 +2196,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    TSTMP_LT(to.to_tsval, tp->ts_recent)) {
 
 		/* Check to see if ts_recent is over 24 days old.  */
-		if (tcp_ts_getticks() - tp->ts_recent_age > TCP_PAWS_IDLE) {
+		if (tcp_ts_getsbintime() - tp->ts_recent_age > TCP_PAWS_IDLE) {
 			/*
 			 * Invalidate ts_recent.  If this segment updates
 			 * ts_recent, the age will be reset later and ts_recent
@@ -2338,7 +2350,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    SEQ_LEQ(th->th_seq, tp->last_ack_sent) &&
 	    SEQ_LEQ(tp->last_ack_sent, th->th_seq + tlen +
 		((thflags & (TH_SYN|TH_FIN)) != 0))) {
-		tp->ts_recent_age = tcp_ts_getticks();
+		tp->ts_recent_age = tcp_ts_getsbintime();
 		tp->ts_recent = to.to_tsval;
 	}
 
@@ -2382,7 +2394,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		 *      SYN-RECEIVED  -> ESTABLISHED
 		 *      SYN-RECEIVED* -> FIN-WAIT-1
 		 */
-		tp->t_starttime = ticks;
+		tp->t_starttime = tcp_ts_getsbintime();
 		if (tp->t_flags & TF_NEEDFIN) {
 			tcp_state_change(tp, TCPS_FIN_WAIT_1);
 			tp->t_flags &= ~TF_NEEDFIN;
@@ -2391,7 +2403,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			TCP_PROBE5(accept__established, NULL, tp,
 			    mtod(m, const char *), tp, th);
 			cc_conn_init(tp);
-			tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp));
+			tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp)*tick_sbt);
 		}
 		/*
 		 * If segment contains data or ACK, will call tcp_reass()
@@ -2666,8 +2678,9 @@ process_ACK:
 		 * original cwnd and ssthresh, and proceed to transmit where
 		 * we left off.
 		 */
+		t = tcp_ts_getsbintime();
 		if (tp->t_rxtshift == 1 && tp->t_flags & TF_PREVVALID &&
-		    (int)(ticks - tp->t_badrxtwin) < 0)
+		    (int)(t - tp->t_badrxtwin) < 0)
 			cc_cong_signal(tp, th, CC_RTO_ERR);
 
 		/*
@@ -2685,16 +2698,19 @@ process_ACK:
 		 * huge RTT and blow up the retransmit timer.
 		 */
 		if ((to.to_flags & TOF_TS) != 0 && to.to_tsecr) {
-			u_int t;
+			u_int t_;
 
-			t = tcp_ts_getticks() - to.to_tsecr;
-			if (!tp->t_rttlow || tp->t_rttlow > t)
-				tp->t_rttlow = t;
-			tcp_xmit_timer(tp, TCP_TS_TO_TICKS(t) + 1);
+			t_ = ((uint32_t)t) - to.to_tsecr;
+			if (!tp->t_rttlow || tp->t_rttlow > t_)
+				tp->t_rttlow = t_;
+			tcp_xmit_timer(tp, TCP_TS_TO_SBT(t) + 1);
 		} else if (tp->t_rtttime && SEQ_GT(th->th_ack, tp->t_rtseq)) {
-			if (!tp->t_rttlow || tp->t_rttlow > ticks - tp->t_rtttime)
-				tp->t_rttlow = ticks - tp->t_rtttime;
-			tcp_xmit_timer(tp, ticks - tp->t_rtttime);
+			u_int t_;
+
+			t_ = ((uint32_t)t);
+			if (!tp->t_rttlow || tp->t_rttlow > t_ - tp->t_rtttime)
+				tp->t_rttlow = t_ - tp->t_rtttime;
+			tcp_xmit_timer(tp, TCP_TS_TO_SBT(t_ - tp->t_rtttime));
 		}
 
 		/*
@@ -2780,7 +2796,7 @@ process_ACK:
 					tcp_timer_activate(tp, TT_2MSL,
 					    (tcp_fast_finwait2_recycle ?
 					    tcp_finwait2_timeout :
-					    TP_MAXIDLE(tp)));
+					    TP_MAXIDLE(tp))*tick_sbt);
 				}
 				tcp_state_change(tp, TCPS_FIN_WAIT_2);
 			}
@@ -3004,7 +3020,7 @@ dodata:							/* XXX */
 		 * enter the CLOSE_WAIT state.
 		 */
 		case TCPS_SYN_RECEIVED:
-			tp->t_starttime = ticks;
+			tp->t_starttime = tcp_ts_getsbintime();
 			/* FALLTHROUGH */
 		case TCPS_ESTABLISHED:
 			tcp_state_change(tp, TCPS_CLOSE_WAIT);
@@ -3334,15 +3350,16 @@ tcp_pulloutofband(struct socket *so, struct tcphdr *th, struct mbuf *m,
  * and update averages and current timeout.
  */
 static void
-tcp_xmit_timer(struct tcpcb *tp, int rtt)
+tcp_xmit_timer(struct tcpcb *tp, sbintime_t rtt)
 {
-	int delta;
-	int expected_samples, expected_shift, shift;
+	uint64_t delta;
+	uint64_t expected_samples, expected_shift, shift;
 
 	INP_WLOCK_ASSERT(tp->t_inpcb);
 
 	/* RFC 7323 Appendix G RTO Calculation Modification */
 	/* ExpectedSamples = ceiling(FlightSize / (SMSS * 2)) */
+	/* roundup(x, y) == ceiling(x / y) * y */
 	expected_samples = ((tcp_compute_pipe(tp) + (tp->t_maxseg - 1)) / (tp->t_maxseg << 1));
 	/* alpha' = alpha / ExpectedSamples */
 	expected_shift = min(max(fls(expected_samples + 1) - 1, 0), TCP_DELTA_SHIFT);
@@ -3411,8 +3428,8 @@ tcp_xmit_timer(struct tcpcb *tp, int rtt)
 	 * statistical, we have to test that we don't drop below
 	 * the minimum feasible timer (which is 2 ticks).
 	 */
-	TCPT_RANGESET(tp->t_rxtcur, TCP_REXMTVAL(tp),
-		      max(tp->t_rttmin, rtt + 2), TCPTV_REXMTMAX);
+	TCPT_RANGESET(tp->t_rxtcur, TCP_REXMTVAL(tp)*tick_sbt,
+		      max(tp->t_rttmin, rtt + 2), TCPTV_REXMTMAX*tick_sbt);
 
 	/*
 	 * We received an ack for a packet that wasn't retransmitted;
