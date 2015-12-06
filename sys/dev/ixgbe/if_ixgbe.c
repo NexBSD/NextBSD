@@ -134,7 +134,7 @@ static void ixgbe_check_wol_support(struct adapter *adapter);
 static void ixgbe_enable_rx_drop(struct adapter *);
 static void ixgbe_disable_rx_drop(struct adapter *);
 
-static void ixgbe_add_hw_stats(if_ctx_t ctx);
+static void ixgbe_add_hw_stats(struct adapter *adapter);
 static void ixgbe_setup_vlan_hw_support(if_ctx_t ctx);
 static void ixgbe_setup_optics(struct adapter *adapter);
 static void ixgbe_config_gpie(struct adapter *adapter);
@@ -749,7 +749,7 @@ ixgbe_if_attach_post(if_ctx_t ctx)
 
 	/* Initialize statistics */
 	ixgbe_update_stats_counters(adapter);
-	ixgbe_add_hw_stats(ctx);
+	ixgbe_add_hw_stats(adapter);
   
 	/* Check PCIE slot type/speed/width */
 	ixgbe_get_slot_info(hw);
@@ -1144,15 +1144,13 @@ ixgbe_update_stats_counters(struct adapter *adapter)
  * Add sysctl variables, one per statistic, to the system.
  */
 static void
-ixgbe_add_hw_stats(if_ctx_t ctx)
+ixgbe_add_hw_stats(struct adapter *adapter)
 {
-        struct adapter *adapter = iflib_get_softc(ctx); 
-        device_t dev = iflib_get_dev(ctx);
+        device_t dev = iflib_get_dev(adapter->ctx);
+        struct ix_queue *que;
+	int i;
 
-	struct tx_ring *txr = &adapter->queues->txr;
-	struct rx_ring *rxr = &adapter->queues->rxr;
-
-	struct sysctl_ctx_list *ctx_list = device_get_sysctl_ctx(dev);
+	struct sysctl_ctx_list *ctx = device_get_sysctl_ctx(dev);
 	struct sysctl_oid *tree = device_get_sysctl_tree(dev);
 	struct sysctl_oid_list *child = SYSCTL_CHILDREN(tree);
 	struct ixgbe_hw_stats *stats = &adapter->stats.pf;
@@ -1164,231 +1162,233 @@ ixgbe_add_hw_stats(if_ctx_t ctx)
 	char namebuf[QUEUE_NAME_LEN];
 
 	/* Driver Statistics */
-	SYSCTL_ADD_ULONG(ctx_list, child, OID_AUTO, "dropped",
-					 CTLFLAG_RD, &adapter->dropped_pkts,
-					 "Driver dropped packets");
-	SYSCTL_ADD_ULONG(ctx_list, child, OID_AUTO, "mbuf_defrag_failed",
-					 CTLFLAG_RD, &adapter->mbuf_defrag_failed,
-					 "m_defrag() failed");
-	SYSCTL_ADD_ULONG(ctx_list, child, OID_AUTO, "watchdog_events",
-					 CTLFLAG_RD, &adapter->watchdog_events,
-					 "Watchdog timeouts");
-	SYSCTL_ADD_ULONG(ctx_list, child, OID_AUTO, "link_irq",
-					 CTLFLAG_RD, &adapter->link_irq,
-					 "Link MSIX IRQ Handled");
+	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "dropped",
+			CTLFLAG_RD, &adapter->dropped_pkts,
+			"Driver dropped packets");
+	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "mbuf_defrag_failed",
+			CTLFLAG_RD, &adapter->mbuf_defrag_failed,
+			"m_defrag() failed");
+	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "watchdog_events",
+			CTLFLAG_RD, &adapter->watchdog_events,
+			"Watchdog timeouts");
+	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "link_irq",
+			CTLFLAG_RD, &adapter->link_irq,
+			"Link MSIX IRQ Handled");
 
-	for (int i = 0; i < adapter->num_queues; i++, txr++) {
+	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
+	        struct tx_ring *txr = &que->txr;
 		snprintf(namebuf, QUEUE_NAME_LEN, "queue%d", i);
-		queue_node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, namebuf,
-									 CTLFLAG_RD, NULL, "Queue Name");
+		queue_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf,
+					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 
-		SYSCTL_ADD_PROC(ctx_list, queue_list, OID_AUTO, "interrupt_rate",
-						CTLTYPE_UINT | CTLFLAG_RW, &adapter->queues[i],
-						sizeof(&adapter->queues[i]),
-						ixgbe_sysctl_interrupt_rate_handler, "IU",
-						"Interrupt Rate");
-		SYSCTL_ADD_UQUAD(ctx_list, queue_list, OID_AUTO, "irqs",
-						 CTLFLAG_RD, &(adapter->queues[i].irqs),
-						 "irqs on this queue");
-		SYSCTL_ADD_PROC(ctx_list, queue_list, OID_AUTO, "txd_head", 
-						CTLTYPE_UINT | CTLFLAG_RD, txr, sizeof(txr),
-						ixgbe_sysctl_tdh_handler, "IU",
-						"Transmit Descriptor Head");
-		SYSCTL_ADD_PROC(ctx_list, queue_list, OID_AUTO, "txd_tail", 
-						CTLTYPE_UINT | CTLFLAG_RD, txr, sizeof(txr),
-						ixgbe_sysctl_tdt_handler, "IU",
-						"Transmit Descriptor Tail");
-		SYSCTL_ADD_ULONG(ctx_list, queue_list, OID_AUTO, "tso_tx",
-						 CTLFLAG_RD, &txr->tso_tx,
-						 "TSO");
-		SYSCTL_ADD_ULONG(ctx_list, queue_list, OID_AUTO, "no_tx_dma_setup",
-						 CTLFLAG_RD, &txr->no_tx_dma_setup,
-						 "Driver tx dma failure in xmit");
-		SYSCTL_ADD_UQUAD(ctx_list, queue_list, OID_AUTO, "no_desc_avail",
-						 CTLFLAG_RD, &txr->no_desc_avail,
-						 "Queue No Descriptor Available");
-		SYSCTL_ADD_UQUAD(ctx_list, queue_list, OID_AUTO, "tx_packets",
-						 CTLFLAG_RD, &txr->total_packets,
-						 "Queue Packets Transmitted");
+		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "interrupt_rate",
+				CTLTYPE_UINT | CTLFLAG_RW, &adapter->queues[i],
+				sizeof(&adapter->queues[i]),
+				ixgbe_sysctl_interrupt_rate_handler, "IU",
+				"Interrupt Rate");
+		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "irqs",
+				CTLFLAG_RD, &(adapter->queues[i].irqs),
+				"irqs on this queue");
+		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "txd_head", 
+				CTLTYPE_UINT | CTLFLAG_RD, txr, sizeof(txr),
+				ixgbe_sysctl_tdh_handler, "IU",
+				"Transmit Descriptor Head");
+		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "txd_tail", 
+				CTLTYPE_UINT | CTLFLAG_RD, txr, sizeof(txr),
+				ixgbe_sysctl_tdt_handler, "IU",
+				"Transmit Descriptor Tail");
+		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "tso_tx",
+				CTLFLAG_RD, &txr->tso_tx,
+				"TSO");
+		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "no_tx_dma_setup",
+				CTLFLAG_RD,  &txr->no_tx_dma_setup,
+				"Driver tx dma failure in xmit");
+		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "no_desc_avail",
+				CTLFLAG_RD,  &txr->no_desc_avail,
+				"Queue No Descriptor Available");
+		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "tx_packets",
+				CTLFLAG_RD,  &txr->total_packets,
+				"Queue Packets Transmitted");
 	}
 
-	for (int i = 0; i < adapter->num_queues; i++, rxr++) {
+	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
+	        struct rx_ring *rxr = &que->rxr;
 		snprintf(namebuf, QUEUE_NAME_LEN, "queue%d", i);
-		queue_node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, namebuf, 
-									 CTLFLAG_RD, NULL, "Queue Name");
+		queue_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf, 
+					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 
 		struct lro_ctrl *lro = &rxr->lro;
 
 		snprintf(namebuf, QUEUE_NAME_LEN, "queue%d", i);
-		queue_node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, namebuf, 
-									 CTLFLAG_RD, NULL, "Queue Name");
+		queue_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf, 
+					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 
-		SYSCTL_ADD_PROC(ctx_list, queue_list, OID_AUTO, "rxd_head", 
-						CTLTYPE_UINT | CTLFLAG_RD, rxr, sizeof(rxr),
-						ixgbe_sysctl_rdh_handler, "IU",
-						"Receive Descriptor Head");
-		SYSCTL_ADD_PROC(ctx_list, queue_list, OID_AUTO, "rxd_tail", 
-						CTLTYPE_UINT | CTLFLAG_RD, rxr, sizeof(rxr),
-						ixgbe_sysctl_rdt_handler, "IU",
-						"Receive Descriptor Tail");
-		SYSCTL_ADD_UQUAD(ctx_list, queue_list, OID_AUTO, "rx_packets",
-						 CTLFLAG_RD, &rxr->rx_packets,
-						 "Queue Packets Received");
-		SYSCTL_ADD_UQUAD(ctx_list, queue_list, OID_AUTO, "rx_bytes",
-						 CTLFLAG_RD, &rxr->rx_bytes,
-						 "Queue Bytes Received");
-		SYSCTL_ADD_UQUAD(ctx_list, queue_list, OID_AUTO, "rx_copies",
-						 CTLFLAG_RD, &rxr->rx_copies,
-						 "Copied RX Frames");
-		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "lro_queued",
-					   CTLFLAG_RD, &lro->lro_queued, 0,
-					   "LRO Queued");
-		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "lro_flushed",
-					   CTLFLAG_RD, &lro->lro_flushed, 0,
-					   "LRO Flushed");
+		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "rxd_head", 
+				CTLTYPE_UINT | CTLFLAG_RD, rxr, sizeof(rxr),
+				ixgbe_sysctl_rdh_handler, "IU",
+				"Receive Descriptor Head");
+		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "rxd_tail", 
+				CTLTYPE_UINT | CTLFLAG_RD, rxr, sizeof(rxr),
+				ixgbe_sysctl_rdt_handler, "IU",
+				"Receive Descriptor Tail");
+		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "rx_packets",
+				CTLFLAG_RD, &rxr->rx_packets,
+				"Queue Packets Received");
+		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "rx_bytes",
+				CTLFLAG_RD, &rxr->rx_bytes,
+				"Queue Bytes Received");
+		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "rx_copies",
+				CTLFLAG_RD, &rxr->rx_copies,
+				"Copied RX Frames");
+		SYSCTL_ADD_INT(ctx, queue_list, OID_AUTO, "lro_queued",
+				CTLFLAG_RD, &lro->lro_queued, 0,
+				"LRO Queued");
+		SYSCTL_ADD_INT(ctx, queue_list, OID_AUTO, "lro_flushed",
+				CTLFLAG_RD, &lro->lro_flushed, 0,
+				"LRO Flushed");
 	}
 
 	/* MAC stats get the own sub node */
 
-	stat_node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, "mac_stats", 
-								CTLFLAG_RD, NULL, "MAC Statistics");
+	stat_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, "mac_stats", 
+				    CTLFLAG_RD, NULL, "MAC Statistics");
 	stat_list = SYSCTL_CHILDREN(stat_node);
 
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "crc_errs",
-					 CTLFLAG_RD, &stats->crcerrs,
-					 "CRC Errors");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "ill_errs",
-					 CTLFLAG_RD, &stats->illerrc,
-					 "Illegal Byte Errors");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "byte_errs",
-					 CTLFLAG_RD, &stats->errbc,
-					 "Byte Errors");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "short_discards",
-					 CTLFLAG_RD, &stats->mspdc,
-					 "MAC Short Packets Discarded");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "local_faults",
-					 CTLFLAG_RD, &stats->mlfc,
-					 "MAC Local Faults");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "remote_faults",
-					 CTLFLAG_RD, &stats->mrfc,
-					 "MAC Remote Faults");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "rec_len_errs",
-					 CTLFLAG_RD, &stats->rlec,
-					 "Receive Length Errors");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "crc_errs",
+			CTLFLAG_RD, &stats->crcerrs,
+			"CRC Errors");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "ill_errs",
+			CTLFLAG_RD, &stats->illerrc,
+			"Illegal Byte Errors");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "byte_errs",
+			CTLFLAG_RD, &stats->errbc,
+			"Byte Errors");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "short_discards",
+			CTLFLAG_RD, &stats->mspdc,
+			"MAC Short Packets Discarded");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "local_faults",
+			CTLFLAG_RD, &stats->mlfc,
+			"MAC Local Faults");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "remote_faults",
+			CTLFLAG_RD, &stats->mrfc,
+			"MAC Remote Faults");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "rec_len_errs",
+			CTLFLAG_RD, &stats->rlec,
+			"Receive Length Errors");
 
 	/* Flow Control stats */
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "xon_txd",
-					 CTLFLAG_RD, &stats->lxontxc,
-					 "Link XON Transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "xon_recvd",
-					 CTLFLAG_RD, &stats->lxonrxc,
-					 "Link XON Received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "xoff_txd",
-					 CTLFLAG_RD, &stats->lxofftxc,
-					 "Link XOFF Transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "xoff_recvd",
-					 CTLFLAG_RD, &stats->lxoffrxc,
-					 "Link XOFF Received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "xon_txd",
+			CTLFLAG_RD, &stats->lxontxc,
+			"Link XON Transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "xon_recvd",
+			CTLFLAG_RD, &stats->lxonrxc,
+			"Link XON Received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "xoff_txd",
+			CTLFLAG_RD, &stats->lxofftxc,
+			"Link XOFF Transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "xoff_recvd",
+			CTLFLAG_RD, &stats->lxoffrxc,
+			"Link XOFF Received");
 
 	/* Packet Reception Stats */
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "total_octets_rcvd",
-					 CTLFLAG_RD, &stats->tor, 
-					 "Total Octets Received"); 
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "good_octets_rcvd",
-					 CTLFLAG_RD, &stats->gorc, 
-					 "Good Octets Received"); 
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "total_pkts_rcvd",
-					 CTLFLAG_RD, &stats->tpr,
-					 "Total Packets Received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "good_pkts_rcvd",
-					 CTLFLAG_RD, &stats->gprc,
-					 "Good Packets Received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "mcast_pkts_rcvd",
-					 CTLFLAG_RD, &stats->mprc,
-					 "Multicast Packets Received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "bcast_pkts_rcvd",
-					 CTLFLAG_RD, &stats->bprc,
-					 "Broadcast Packets Received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "rx_frames_64",
-					 CTLFLAG_RD, &stats->prc64,
-					 "64 byte frames received ");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "rx_frames_65_127",
-					 CTLFLAG_RD, &stats->prc127,
-					 "65-127 byte frames received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "rx_frames_128_255",
-					 CTLFLAG_RD, &stats->prc255,
-					 "128-255 byte frames received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "rx_frames_256_511",
-					 CTLFLAG_RD, &stats->prc511,
-					 "256-511 byte frames received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "rx_frames_512_1023",
-					 CTLFLAG_RD, &stats->prc1023,
-					 "512-1023 byte frames received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "rx_frames_1024_1522",
-					 CTLFLAG_RD, &stats->prc1522,
-					 "1023-1522 byte frames received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "recv_undersized",
-					 CTLFLAG_RD, &stats->ruc,
-					 "Receive Undersized");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "recv_fragmented",
-					 CTLFLAG_RD, &stats->rfc,
-					 "Fragmented Packets Received ");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "recv_oversized",
-					 CTLFLAG_RD, &stats->roc,
-					 "Oversized Packets Received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "recv_jabberd",
-					 CTLFLAG_RD, &stats->rjc,
-					 "Received Jabber");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "management_pkts_rcvd",
-					 CTLFLAG_RD, &stats->mngprc,
-					 "Management Packets Received");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "management_pkts_drpd",
-					 CTLFLAG_RD, &stats->mngptc,
-					 "Management Packets Dropped");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "checksum_errs",
-					 CTLFLAG_RD, &stats->xec,
-					 "Checksum Errors");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "total_octets_rcvd",
+			CTLFLAG_RD, &stats->tor, 
+			"Total Octets Received"); 
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "good_octets_rcvd",
+			CTLFLAG_RD, &stats->gorc, 
+			"Good Octets Received"); 
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "total_pkts_rcvd",
+			CTLFLAG_RD, &stats->tpr,
+			"Total Packets Received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "good_pkts_rcvd",
+			CTLFLAG_RD, &stats->gprc,
+			"Good Packets Received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "mcast_pkts_rcvd",
+			CTLFLAG_RD, &stats->mprc,
+			"Multicast Packets Received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "bcast_pkts_rcvd",
+			CTLFLAG_RD, &stats->bprc,
+			"Broadcast Packets Received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "rx_frames_64",
+			CTLFLAG_RD, &stats->prc64,
+			"64 byte frames received ");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "rx_frames_65_127",
+			CTLFLAG_RD, &stats->prc127,
+			"65-127 byte frames received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "rx_frames_128_255",
+			CTLFLAG_RD, &stats->prc255,
+			"128-255 byte frames received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "rx_frames_256_511",
+			CTLFLAG_RD, &stats->prc511,
+			"256-511 byte frames received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "rx_frames_512_1023",
+			CTLFLAG_RD, &stats->prc1023,
+			"512-1023 byte frames received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "rx_frames_1024_1522",
+			CTLFLAG_RD, &stats->prc1522,
+			"1023-1522 byte frames received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "recv_undersized",
+			CTLFLAG_RD, &stats->ruc,
+			"Receive Undersized");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "recv_fragmented",
+			CTLFLAG_RD, &stats->rfc,
+			"Fragmented Packets Received ");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "recv_oversized",
+			CTLFLAG_RD, &stats->roc,
+			"Oversized Packets Received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "recv_jabberd",
+			CTLFLAG_RD, &stats->rjc,
+			"Received Jabber");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "management_pkts_rcvd",
+			CTLFLAG_RD, &stats->mngprc,
+			"Management Packets Received");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "management_pkts_drpd",
+			CTLFLAG_RD, &stats->mngptc,
+			"Management Packets Dropped");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "checksum_errs",
+			CTLFLAG_RD, &stats->xec,
+			"Checksum Errors");
 
 	/* Packet Transmission Stats */
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "good_octets_txd",
-					 CTLFLAG_RD, &stats->gotc, 
-					 "Good Octets Transmitted"); 
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "total_pkts_txd",
-					 CTLFLAG_RD, &stats->tpt,
-					 "Total Packets Transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "good_pkts_txd",
-					 CTLFLAG_RD, &stats->gptc,
-					 "Good Packets Transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "bcast_pkts_txd",
-					 CTLFLAG_RD, &stats->bptc,
-					 "Broadcast Packets Transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "mcast_pkts_txd",
-					 CTLFLAG_RD, &stats->mptc,
-					 "Multicast Packets Transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "management_pkts_txd",
-					 CTLFLAG_RD, &stats->mngptc,
-					 "Management Packets Transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "tx_frames_64",
-					 CTLFLAG_RD, &stats->ptc64,
-					 "64 byte frames transmitted ");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "tx_frames_65_127",
-					 CTLFLAG_RD, &stats->ptc127,
-					 "65-127 byte frames transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "tx_frames_128_255",
-					 CTLFLAG_RD, &stats->ptc255,
-					 "128-255 byte frames transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "tx_frames_256_511",
-					 CTLFLAG_RD, &stats->ptc511,
-					 "256-511 byte frames transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "tx_frames_512_1023",
-					 CTLFLAG_RD, &stats->ptc1023,
-					 "512-1023 byte frames transmitted");
-	SYSCTL_ADD_UQUAD(ctx_list, stat_list, OID_AUTO, "tx_frames_1024_1522",
-					 CTLFLAG_RD, &stats->ptc1522,
-					 "1024-1522 byte frames transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "good_octets_txd",
+			CTLFLAG_RD, &stats->gotc, 
+			"Good Octets Transmitted"); 
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "total_pkts_txd",
+			CTLFLAG_RD, &stats->tpt,
+			"Total Packets Transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "good_pkts_txd",
+			CTLFLAG_RD, &stats->gptc,
+			"Good Packets Transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "bcast_pkts_txd",
+			CTLFLAG_RD, &stats->bptc,
+			"Broadcast Packets Transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "mcast_pkts_txd",
+			CTLFLAG_RD, &stats->mptc,
+			"Multicast Packets Transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "management_pkts_txd",
+			CTLFLAG_RD, &stats->mngptc,
+			"Management Packets Transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "tx_frames_64",
+			CTLFLAG_RD, &stats->ptc64,
+			"64 byte frames transmitted ");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "tx_frames_65_127",
+			CTLFLAG_RD, &stats->ptc127,
+			"65-127 byte frames transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "tx_frames_128_255",
+			CTLFLAG_RD, &stats->ptc255,
+			"128-255 byte frames transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "tx_frames_256_511",
+			CTLFLAG_RD, &stats->ptc511,
+			"256-511 byte frames transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "tx_frames_512_1023",
+			CTLFLAG_RD, &stats->ptc1023,
+			"512-1023 byte frames transmitted");
+	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "tx_frames_1024_1522",
+			CTLFLAG_RD, &stats->ptc1522,
+			"1024-1522 byte frames transmitted");
 }
 
 /** ixgbe_sysctl_tdh_handler - Handler function
