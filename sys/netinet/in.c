@@ -1238,6 +1238,9 @@ in_lltable_alloc(struct lltable *llt, u_int flags, const struct sockaddr *l3addr
 	const struct sockaddr_in *sin = (const struct sockaddr_in *)l3addr;
 	struct ifnet *ifp = llt->llt_ifp;
 	struct llentry *lle;
+	char linkhdr[LLE_MAX_LINKHDR];
+	size_t linkhdrsize;
+	int lladdr_off;
 
 	KASSERT(l3addr->sa_family == AF_INET,
 	    ("sin_family %d", l3addr->sa_family));
@@ -1258,7 +1261,12 @@ in_lltable_alloc(struct lltable *llt, u_int flags, const struct sockaddr *l3addr
 	}
 	lle->la_flags = flags;
 	if ((flags & LLE_IFADDR) == LLE_IFADDR) {
-		lltable_set_entry_addr(ifp, lle, IF_LLADDR(ifp));
+		linkhdrsize = LLE_MAX_LINKHDR;
+		if (lltable_calc_llheader(ifp, AF_INET, IF_LLADDR(ifp),
+		    linkhdr, &linkhdrsize, &lladdr_off) != 0)
+			return (NULL);
+		lltable_set_entry_addr(ifp, lle, linkhdr, linkhdrsize,
+		    lladdr_off);
 		lle->la_flags |= LLE_STATIC;
 	}
 
@@ -1337,7 +1345,7 @@ in_lltable_dump_entry(struct lltable *llt, struct llentry *lle,
 			sdl->sdl_type = ifp->if_type;
 			if ((lle->la_flags & LLE_VALID) == LLE_VALID) {
 				sdl->sdl_alen = ifp->if_addrlen;
-				bcopy(&lle->ll_addr, LLADDR(sdl), ifp->if_addrlen);
+				bcopy(lle->ll_addr, LLADDR(sdl), ifp->if_addrlen);
 			} else {
 				sdl->sdl_alen = 0;
 				bzero(LLADDR(sdl), ifp->if_addrlen);

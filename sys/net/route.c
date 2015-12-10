@@ -1119,6 +1119,25 @@ rt_updatemtu(struct ifnet *ifp)
 	}
 }
 
+/*
+ * Blank function for default encapsulation requests.
+ */
+int
+if_requestencap_default(struct ifnet *ifp, struct if_encap_req *req)
+{
+
+	if (req->rtype != IFENCAP_LL)
+		return (EOPNOTSUPP);
+
+	if (req->bufsize < req->lladdr_len)
+		return (ENOMEM);
+
+	/* Copy lladdr to storage as is */
+	memmove(req->buf, req->lladdr, req->lladdr_len);
+	req->lladdr_off = 0;
+
+	return (0);
+}
 
 #if 0
 int p_sockaddr(char *buf, int buflen, struct sockaddr *s);

@@ -126,6 +126,8 @@ struct ifnet_hw_tsomax {
 	u_int	tsomaxsegsize;	/* TSO maximum segment size in bytes */
 };
 
+struct if_encap_req;
+
 /*
  * Structure defining a network interface.
  *
@@ -227,6 +229,8 @@ struct ifnet {
 	void	(*if_reassign)		/* reassign to vnet routine */
 		(struct ifnet *, struct vnet *, char *);
 	if_get_counter_t if_get_counter; /* get counter values */
+	int	(*if_requestencap)	/* make link header from request */
+		(struct ifnet *, struct if_encap_req *);
 
 	/* Statistics. */
 	counter_u64_t	if_counters[IFCOUNTERS];
