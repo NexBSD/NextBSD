@@ -670,6 +670,9 @@ if_attach_internal(struct ifnet *ifp, int vmove, struct if_clone *ifc)
 	if (ifp->if_input == NULL)
 		ifp->if_input = if_input_default;
 
+	if (ifp->if_requestencap == NULL)
+		ifp->if_requestencap = if_requestencap_default;
+
 	if (!vmove) {
 #ifdef MAC
 		mac_ifnet_create(ifp);

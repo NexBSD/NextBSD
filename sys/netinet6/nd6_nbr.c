@@ -643,6 +643,9 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 	union nd_opts ndopts;
 	struct mbuf *chain = NULL;
 	struct sockaddr_in6 sin6;
+	u_char linkhdr[LLE_MAX_LINKHDR];
+	size_t linkhdrsize;
+	int lladdr_off;
 	char ip6bufs[INET6_ADDRSTRLEN], ip6bufd[INET6_ADDRSTRLEN];
 
 	if (ip6->ip6_hlim != 255) {
@@ -765,7 +768,13 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 		/*
 		 * Record link-layer address, and update the state.
 		 */
-		lltable_set_entry_addr(ifp, ln, lladdr);
+		linkhdrsize = sizeof(linkhdr);
+		if (lltable_calc_llheader(ifp, AF_INET6, lladdr,
+		    linkhdr, &linkhdrsize, &lladdr_off) != 0)
+			return;
+		lltable_set_entry_addr(ifp, ln, linkhdr, linkhdrsize,
+		    lladdr_off);
+
 		EVENTHANDLER_INVOKE(lle_event, ln, LLENTRY_RESOLVED);
 		if (is_solicited)
 			nd6_llinfo_setstate(ln, ND6_LLINFO_REACHABLE);
@@ -789,7 +798,7 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 			llchange = 0;
 		else {
 			if (ln->la_flags & LLE_VALID) {
-				if (bcmp(lladdr, &ln->ll_addr, ifp->if_addrlen))
+				if (bcmp(lladdr, ln->ll_addr, ifp->if_addrlen))
 					llchange = 1;
 				else
 					llchange = 0;
@@ -831,7 +840,13 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 			 * Update link-local address, if any.
 			 */
 			if (lladdr != NULL) {
-				lltable_set_entry_addr(ifp, ln, lladdr);
+				linkhdrsize = sizeof(linkhdr);
+				if (lltable_calc_llheader(ifp, AF_INET6, lladdr,
+				    linkhdr, &linkhdrsize, &lladdr_off) != 0)
+					return;
+				lltable_set_entry_addr(ifp, ln, linkhdr, linkhdrsize,
+				    lladdr_off);
+
 				EVENTHANDLER_INVOKE(lle_event, ln,
 				    LLENTRY_RESOLVED);
 			}

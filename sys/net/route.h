@@ -51,14 +51,21 @@
  */
 struct route {
 	struct	rtentry *ro_rt;
-	struct	llentry *ro_lle;
-	struct	in_ifaddr *ro_ia;
-	int		ro_flags;
+	char		*ro_prepend;
+	uint16_t	ro_plen;
+	uint16_t	ro_flags;
 	struct	sockaddr ro_dst;
 };
 
+#define	RT_L2_ME_BIT		2	/* dst L2 addr is our address */
+#define	RT_MAY_LOOP_BIT		3	/* dst may require loop copy */
+#define	RT_HAS_HEADER_BIT	4	/* mbuf already have its header prepended */
+
 #define	RT_CACHING_CONTEXT	0x1	/* XXX: not used anywhere */
 #define	RT_NORTREF		0x2	/* doesn't hold reference on ro_rt */
+#define	RT_L2_ME		(1 << RT_L2_ME_BIT)
+#define	RT_MAY_LOOP		(1 << RT_MAY_LOOP_BIT)
+#define	RT_HAS_HEADER		(1 << RT_HAS_HEADER_BIT)
 
 struct rt_metrics {
 	u_long	rmx_locks;	/* Kernel must leave these values alone */
@@ -342,6 +349,27 @@ struct rt_addrinfo {
 		}						\
 	}							\
 } while (0)
+
+
+/* Encap request types */
+typedef enum {
+	IFENCAP_LL = 1			/* pre-calculate link-layer header */
+} ife_type;
+
+struct if_encap_req {
+	u_char		*buf;		/* Destination buffer */
+	size_t		bufsize;	/* pointer to size of provided buffer */
+	ife_type	rtype;		/* request type */
+	uint32_t	flags;		/* Request flags */
+	int		family;		/* Address family */
+	int		lladdr_off;	/* offset from header start (w) */
+	int		lladdr_len;	/* lladdr length */
+	char		*lladdr;	/* link-level address pointer */
+	char		*hdata;		/* Upper layer header data */
+};
+
+#define	IFENCAP_FLAG_BROADCAST	0x02	/* Destination is broadcast */
+int	if_requestencap_default(struct ifnet *ifp, struct if_encap_req *req);
 
 struct radix_node_head *rt_tables_get_rnh(int, int);
 
