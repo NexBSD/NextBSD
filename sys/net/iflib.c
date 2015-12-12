@@ -1630,12 +1630,13 @@ static void
 iflib_init_locked(if_ctx_t ctx)
 {
 	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
-	iflib_txq_t txq = ctx->ifc_txqs;
-	iflib_rxq_t rxq = ctx->ifc_rxqs;
+	iflib_fl_t fl;
+	iflib_txq_t txq;
+	iflib_rxq_t rxq;
 	int i;
 
 	IFDI_INTR_DISABLE(ctx);
-	for (i = 0; i < sctx->isc_nqsets; i++, txq++, rxq++) {
+	for (i = 0, txq = ctx->ifc_txqs, rxq = ctx->ifc_rxqs; i < sctx->isc_nqsets; i++, txq++, rxq++) {
 		TX_LOCK(txq);
 		callout_stop(&txq->ift_timer);
 		callout_stop(&txq->ift_db_check);
@@ -1645,6 +1646,14 @@ iflib_init_locked(if_ctx_t ctx)
 	}
 
 	IFDI_INIT(ctx);
+	for (i = 0, rxq = ctx->ifc_rxqs; i < sctx->isc_nqsets; i++, rxq++) {
+		for (i = 0, fl = rxq->ifr_fl; i < rxq->ifr_nfl; i++, fl++)
+			if (iflib_fl_setup(fl)) {
+				device_printf(ctx->ifc_dev, "freelist setup failed - check cluster settings\n");
+				goto done;
+			}
+	}
+	done:
 	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_RUNNING, 0);
 	IFDI_INTR_ENABLE(ctx);
 	txq = ctx->ifc_txqs;
@@ -3459,16 +3468,10 @@ static int
 iflib_rx_structures_setup(if_ctx_t ctx)
 {
 	iflib_rxq_t rxq = ctx->ifc_rxqs;
-	iflib_fl_t fl;
 	int i,  q, err;
 
 	for (q = 0; q < ctx->ifc_softc_ctx.isc_nqsets; q++, rxq++) {
 		tcp_lro_free(&rxq->ifr_lc);
-		for (i = 0, fl = rxq->ifr_fl; i < rxq->ifr_nfl; i++, fl++)
-			if (iflib_fl_setup(fl)) {
-				err = ENOBUFS;
-				goto fail;
-			}
 		if (ctx->ifc_ifp->if_capenable & IFCAP_LRO) {
 			if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
 				device_printf(ctx->ifc_dev, "LRO Initialization failed!\n");
