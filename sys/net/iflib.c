@@ -1457,6 +1457,16 @@ done:
 #endif
 	DBG_COUNTER_INC(rxd_flush);
 	ctx->isc_rxd_flush(ctx->ifc_softc, fl->ifl_rxq->ifr_id, fl->ifl_id, fl->ifl_pidx);
+#ifdef INVARIANTS
+	{
+		uint32_t reclaimable = fl->ifl_size - fl->ifl_credits - 1;
+		uint32_t delta = fl->ifl_size - get_inuse(fl->ifl_size, fl->ifl_cidx, fl->ifl_pidx, fl->ifl_gen) - 1;
+
+		MPASS(fl->ifl_credits <= fl->ifl_size);
+		MPASS(reclaimable == delta);
+	}
+#endif
+
 }
 
 static __inline void
@@ -1486,11 +1496,20 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 		if (d->ifsd_flags & RX_SW_DESC_INUSE) {
 			bus_dmamap_unload(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
 			bus_dmamap_destroy(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
-			m_init(d->ifsd_m, zone_mbuf, MLEN,
-				   M_NOWAIT, MT_DATA, 0);
-			uma_zfree(zone_mbuf, d->ifsd_m);
-			uma_zfree(fl->ifl_zone, d->ifsd_cl);
+			if (d->ifsd_m != NULL) {
+				m_init(d->ifsd_m, zone_mbuf, MLEN,
+				       M_NOWAIT, MT_DATA, 0);
+				uma_zfree(zone_mbuf, d->ifsd_m);
+			}
+			if (d->ifsd_cl != NULL)
+				uma_zfree(fl->ifl_zone, d->ifsd_cl);
 		}
+#ifdef INVARIANTS
+		else {
+			MPASS(d->ifsd_cl == NULL);
+			MPASS(d->ifsd_m == NULL);
+		}
+#endif
 		d->ifsd_cl = NULL;
 		d->ifsd_m = NULL;
 		if (++cidx == fl->ifl_size)
@@ -1650,11 +1669,12 @@ iflib_init_locked(if_ctx_t ctx)
 
 	IFDI_INIT(ctx);
 	for (i = 0, rxq = ctx->ifc_rxqs; i < sctx->isc_nqsets; i++, rxq++) {
-		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++)
+		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++) {
 			if (iflib_fl_setup(fl)) {
 				device_printf(ctx->ifc_dev, "freelist setup failed - check cluster settings\n");
 				goto done;
 			}
+		}
 	}
 	done:
 	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_RUNNING, 0);
