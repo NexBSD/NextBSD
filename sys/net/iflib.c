@@ -1636,7 +1636,7 @@ iflib_init_locked(if_ctx_t ctx)
 	iflib_fl_t fl;
 	iflib_txq_t txq;
 	iflib_rxq_t rxq;
-	int i;
+	int i, j;
 
 	IFDI_INTR_DISABLE(ctx);
 	for (i = 0, txq = ctx->ifc_txqs, rxq = ctx->ifc_rxqs; i < sctx->isc_nqsets; i++, txq++, rxq++) {
@@ -1650,7 +1650,7 @@ iflib_init_locked(if_ctx_t ctx)
 
 	IFDI_INIT(ctx);
 	for (i = 0, rxq = ctx->ifc_rxqs; i < sctx->isc_nqsets; i++, rxq++) {
-		for (i = 0, fl = rxq->ifr_fl; i < rxq->ifr_nfl; i++, fl++)
+		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++)
 			if (iflib_fl_setup(fl)) {
 				device_printf(ctx->ifc_dev, "freelist setup failed - check cluster settings\n");
 				goto done;
@@ -1695,15 +1695,23 @@ static void
 iflib_stop(if_ctx_t ctx)
 {
 	iflib_txq_t txq = ctx->ifc_txqs;
+	iflib_rxq_t rxq = ctx->ifc_rxqs;
 	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
+	iflib_fl_t fl;
+	int i, j;
 
-	IFDI_INTR_DISABLE(ctx);
 	/* Tell the stack that the interface is no longer active */
 	if_setdrvflagbits(ctx->ifc_ifp, 0, IFF_DRV_RUNNING);
 
+	IFDI_INTR_DISABLE(ctx);
+
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
-	for (int i = 0; i < sctx->isc_nqsets; i++, txq++)
+	for (i = 0; i < sctx->isc_nqsets; i++, txq++, rxq++) {
 		iflib_txq_check_drain(txq, 0);
+		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++)
+			iflib_fl_bufs_free(fl);
+
+	}
 	IFDI_STOP(ctx);
 }
 
