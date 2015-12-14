@@ -97,6 +97,11 @@ extern void sctp_addr_change(struct ifaddr *ifa, int cmd);
 u_int rt_numfibs = RT_NUMFIBS;
 SYSCTL_UINT(_net, OID_AUTO, fibs, CTLFLAG_RDTUN, &rt_numfibs, 0, "");
 
+u_int inpcb_rt_cache_enable = 0;
+SYSCTL_UINT(_net, OID_AUTO, conn_rt_cache, CTLFLAG_RW|CTLFLAG_TUN, &inpcb_rt_cache_enable, 0, "");
+TUNABLE_INT("net.conn_rt_cache", &inpcb_rt_cache_enable);
+
+
 /*
  * By default add routes to all fibs for new interfaces.
  * Once this is set to 0 then only allocate routes on interface
@@ -1019,6 +1024,7 @@ rt_expunge(struct radix_node_head *rnh, struct rtentry *rt)
 	 * but when callers invoke us blindly it may not (sigh).
 	 */
 	rn = rnh->rnh_deladdr(rt_key(rt), rt_mask(rt), rnh);
+	atomic_add_int(&rnh->rnh_gen, 1);
 	if (rn == NULL) {
 		error = ESRCH;
 		goto bad;
@@ -1243,6 +1249,7 @@ rn_mpath_update(int req, struct rt_addrinfo *info,
 				 * to the caller
 				 */
 				rn = rnh->rnh_deladdr(dst, netmask, rnh);
+				atomic_add_int(&rnh->rnh_gen, 1);
 				KASSERT(rt == RNTORT(rn), ("radix node disappeared"));
 				goto gwdelete;
 			}
@@ -1374,6 +1381,7 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 		 * Complain if it is not there and do no more processing.
 		 */
 		rn = rnh->rnh_deladdr(dst, netmask, rnh);
+		atomic_add_int(&rnh->rnh_gen, 1);
 		if (rn == NULL)
 			senderr(ESRCH);
 		if (rn->rn_flags & (RNF_ACTIVE | RNF_ROOT))
@@ -1534,6 +1542,7 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 
 		/* XXX mtu manipulation will be done in rnh_addaddr -- itojun */
 		rn = rnh->rnh_addaddr(ndst, netmask, rnh, rt->rt_nodes);
+		atomic_add_int(&rnh->rnh_gen, 1);
 		/*
 		 * If it still failed to go into the tree,
 		 * then un-make it (this should be a function)
