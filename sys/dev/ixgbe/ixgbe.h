@@ -503,20 +503,20 @@ struct adapter {
 
 	/* Support for pluggable optics */
 	bool			sfp_probe;
-#if 0
-	struct task     	mod_task;   /* SFP tasklet */
-	struct task     	msf_task;   /* Multispeed Fiber */
-#endif	
+
+	struct grouptask     	mod_task;   /* SFP tasklet */
+	struct grouptask     	msf_task;   /* Multispeed Fiber */
+
 #ifdef PCI_IOV
-	struct task		mbx_task;   /* VF -> PF mailbox interrupt */
+	struct grouptask		mbx_task;   /* VF -> PF mailbox interrupt */
 #endif /* PCI_IOV */
 #ifdef IXGBE_FDIR
 	int			fdir_reinit;
-	struct task     	fdir_task;
+	struct grouptask     	fdir_task;
 #endif
-#if 0
-	struct task		phy_task;   /* PHY intr tasklet */
-#endif	
+
+	struct grouptask		phy_task;   /* PHY intr tasklet */
+
 	/*
 	** Queues: 
 	**   This is the irq holder, it has
@@ -553,6 +553,7 @@ struct adapter {
 #endif
 
 	/* Misc stats maintained by the driver */
+        unsigned long           rx_mbuf_sz;
 	unsigned long   	dropped_pkts;
 	unsigned long   	mbuf_defrag_failed;
 	unsigned long   	mbuf_header_failed;

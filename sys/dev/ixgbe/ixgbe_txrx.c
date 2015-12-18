@@ -286,7 +286,6 @@ ixgbe_tso_setup(struct tx_ring *txr, int ctxd, struct mbuf *mp,
 	*olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
 	*olinfo_status |= paylen << IXGBE_ADVTXD_PAYLEN_SHIFT;
 	++txr->tso_tx;
-        txr->tx_avail--; 
 	
 	return (0);
 }
@@ -342,11 +341,11 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
     txd->read.cmd_type_len = htole32(txr->txd_cmd |
 			    cmd |seglen);
     txd->read.olinfo_status = htole32(olinfo_status);
-  }
 
-  if (++i == ixgbe_sctx->isc_ntxd) {
-      i = 0; 
-  } 
+    if (++i == ixgbe_sctx->isc_ntxd) {
+      i = 0;
+    }
+  }
 
   txd->read.cmd_type_len |=
     htole32(IXGBE_TXD_CMD_EOP | IXGBE_TXD_CMD_RS);
@@ -354,13 +353,14 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
   /* Set the EOP descriptor that will be marked done */
   buf = &txr->tx_buffers[first];
   buf->eop = txd;
-  ++txr->total_packets;
-  txr->tx_avail -= nsegs;
 
+  txr->bytes += m_head->m_pkthdr.len;
   pi->ipi_pidx = pi->ipi_new_pidx = i;
-  ++pi->ipi_new_pidx; 
+  ++pi->ipi_new_pidx;
+
+  ++txr->total_packets;
   
-  return (0); 
+    return (0); 
 }
   
 static void
@@ -381,11 +381,10 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx)
   struct tx_ring   *txr = &que->txr;
 	
   u32			work, processed = 0;
+  u32                   limit = sc->tx_process_limit;
   struct ixgbe_tx_buf	*buf;
   union ixgbe_adv_tx_desc *txd;
-  int limit;
   
-  limit = ixgbe_sctx->isc_ntxd - 1;
   /* Get work starting point */
   work = cidx;
   buf = &txr->tx_buffers[work];
@@ -441,7 +440,6 @@ static void ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unuse
   struct adapter *sc       = arg;
   struct ix_queue *que     = &sc->queues[rxqid];
   struct rx_ring *rxr      = &que->rxr;
-
   int			i;
   uint32_t next_pidx;
 
@@ -476,14 +474,17 @@ static int ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
     staterr = le32toh(rxd->wb.upper.status_error);
     pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
 
-    if ((staterr & IXGBE_RXD_STAT_DD) == 0)
+    if ((staterr & IXGBE_RXD_STAT_DD) == 0) {
+      printf("staterr & IXGBE_RXD_STAT_DD == 0\n");
       break;
+    }
     cnt++; 
     
-    if (++i == ixgbe_sctx->isc_nrxd)
-      i = 0; 
+    if (++i == ixgbe_sctx->isc_nrxd) {
+      i = 0;
+    }
   }
-  
+
   return (cnt); 
 }
 
@@ -500,28 +501,28 @@ ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
   struct adapter           *adapter = arg;
   struct ix_queue          *que = &adapter->queues[ri->iri_qsidx];
   struct rx_ring           *rxr = &que->rxr;
-  struct ifnet             *ifp = adapter->ifp; 
+  struct ifnet             *ifp = iflib_get_ifp(adapter->ctx);
   union ixgbe_adv_rx_desc  *rxd;
+
   u16                      pkt_info, len;
   u16                      vtag = 0; 
   u32                      ptype;
-  u32                      staterr = 0; 
+  u32                      staterr = 0;
   bool                     eop;
   
-  ri->iri_qidx = 0; 
   rxd = &rxr->rx_base[ri->iri_cidx];
   staterr = le32toh(rxd->wb.upper.status_error);
   pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
 
    /* Error Checking then decrement count */
-  MPASS ((staterr & IXGBE_RXD_STAT_DD) == 0);
+  MPASS ((staterr & IXGBE_RXD_STAT_DD) != 0);
 
     len = le16toh(rxd->wb.upper.length);
     ptype = le32toh(rxd->wb.lower.lo_dword.data) &
 		IXGBE_RXDADV_PKTTYPE_MASK;
    
     ri->iri_len = len;
-    rxr->rx_bytes += len;
+    rxr->bytes += len;
 
     rxd->wb.upper.status_error = 0;
     eop = ((staterr & IXGBE_RXD_STAT_EOP) != 0);
