@@ -1107,6 +1107,7 @@ acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
 int
 acpi_parse_pxm(device_t dev, int *domain)
 {
+#if MAXMEMDOM > 1
 	ACPI_HANDLE h;
 	int d, pxm;
 
@@ -1120,7 +1121,7 @@ acpi_parse_pxm(device_t dev, int *domain)
 		*domain = d;
 		return (1);
 	}
-
+#endif
 	return (0);
 }
 
