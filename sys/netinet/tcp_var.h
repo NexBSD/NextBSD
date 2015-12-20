@@ -590,6 +590,7 @@ struct	xtcpcb {
 	struct	xsocket	xt_socket;
 	struct	xtcp_timer xt_timer;
 	u_quad_t	xt_alignment_hack;
+	char    xt_cc_name[TCP_CA_NAME_MAX];
 };
 #endif
 

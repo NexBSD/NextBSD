@@ -1356,6 +1356,10 @@ tcp_pcblist(SYSCTL_HANDLER_ARGS)
 				xt.xt_socket.xso_protocol = IPPROTO_TCP;
 			}
 			xt.xt_inp.inp_gencnt = inp->inp_gencnt;
+			xt.xt_cc_name[0] = '\0';
+			if (CC_ALGO(&xt.xt_tp) != NULL)
+				strlcpy(xt.xt_cc_name, CC_ALGO(&xt.xt_tp)->name,
+					sizeof(xt.xt_cc_name));
 			INP_RUNLOCK(inp);
 			error = SYSCTL_OUT(req, &xt, sizeof xt);
 		} else
