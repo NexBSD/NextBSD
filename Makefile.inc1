@@ -596,10 +596,10 @@ _worldtmp: .PHONY
 .endif
 	mtree -deU -f ${.CURDIR}/etc/mtree/BSD.usr.dist \
 	    -p ${WORLDTMP}/usr >/dev/null
+	mkdir -p ${WORLDTMP}/include
 	mtree -deU -f ${.CURDIR}/etc/mtree/BSD.include.dist \
 	    -p ${WORLDTMP}/usr/include >/dev/null
 	ln -sf ${.CURDIR}/sys ${WORLDTMP}
-	mkdir -p ${WORLDTMP}/include
 	ln -sf ${.CURDIR}/sys/${TARGET}/include ${WORLDTMP}/include/machine
 .if ${MK_DEBUG_FILES} != "no"
 	# We could instead disable debug files for these build stages
