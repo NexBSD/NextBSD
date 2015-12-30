@@ -935,6 +935,7 @@ passout:
 			    m->m_pkthdr.len);
 			ifa_free(&ia6->ia_ifa);
 		}
+
 		error = nd6_output_ifp(ifp, origifp, m, dst, ro);
 		goto done;
 	}

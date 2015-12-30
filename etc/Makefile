@@ -327,6 +327,9 @@ MTREE_FILTER= sed -e 's,\([gu]\)name=,\1id=,g' \
 	-e 's,\(gid=\)[^ ]*$$,\1${_gid},' 
 .else
 MTREE_FILTER= cat
+.if !defined(NO_FSCHG)
+MTREE_FSCHG=	-i
+.endif
 .endif
 
 MTREES=		mtree/BSD.root.dist		/		\
@@ -349,7 +352,19 @@ MTREES+=	mtree/BSD.tests.dist		/usr/lib/debug/${TESTSBASE}
 MTREES+=	../${mtree}			/
 .endfor
 
-distrib-dirs: ${MTREES:N/*}
+# Clean up some directories that where mistakenly created as files that
+# should not have been as part of the nvi update in r281994.
+# This should be removed after 11.0-RELEASE.
+DISTRIB_CLEANUP_SHARE_FILES=	${SHAREDIR}/doc/usd/10.exref ${SHAREDIR}/doc/usd/11.edit
+DISTRIB_CLEANUP_SHARE_FILES+=	${SHAREDIR}/doc/usd/12.vi ${SHAREDIR}/doc/usd/13.viref
+distrib-cleanup: .PHONY
+	for file in ${DISTRIB_CLEANUP_SHARE_FILES}; do \
+		if [ -f ${DESTDIR}/$${file} ]; then \
+			rm -f ${DESTDIR}/$${file}; \
+		fi; \
+	done
+
+distrib-dirs: ${MTREES:N/*} distrib-cleanup .PHONY
 	@set ${MTREES}; \
 	while test $$# -ge 2; do \
 		m=${.CURDIR}/$$1; \
@@ -357,10 +372,11 @@ distrib-dirs: ${MTREES:N/*}
 		d=${DESTDIR}$$1; \
 		shift; \
 		test -d $$d || mkdir -p $$d; \
-		${ECHO} ${MTREE_CMD} -deU ${MTREE_FOLLOWS_SYMLINKS} \
-		    -f $$m -p $$d; \
+		${ECHO} ${MTREE_CMD} -deU ${MTREE_FSCHG} \
+		    ${MTREE_FOLLOWS_SYMLINKS} -f $$m -p $$d; \
 		${MTREE_FILTER} $$m | \
-		${MTREE_CMD} -deU ${MTREE_FOLLOWS_SYMLINKS} -p $$d; \
+		${MTREE_CMD} -deU ${MTREE_FSCHG} ${MTREE_FOLLOWS_SYMLINKS} \
+		    -p $$d; \
 	done; true
 .if defined(NO_ROOT)
 	@set ${MTREES}; \

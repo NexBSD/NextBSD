@@ -26,6 +26,6 @@ DEBUG_FLAGS+= -g -O0
 LDFLAGS+= -pthread
 
 SRCS= syslog.c
-LDADD+= -lutil -lauditd -lbsm -ldispatch -lmach -lBlocksRuntime -llaunch -losxsupport -lxpc -lnotify -lnv -lasl -lsbuf
+LDFLAGS+= -lutil -lauditd -lbsm -ldispatch -lmach -lBlocksRuntime -llaunch -losxsupport -lxpc -lnotify -lnv -lasl -lsbuf
 
 .include <bsd.prog.mk>

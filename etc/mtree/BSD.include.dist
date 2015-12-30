@@ -260,6 +260,7 @@
     libkern
         i386
         ..
+    lib80211
     ..
     libmilter
     ..

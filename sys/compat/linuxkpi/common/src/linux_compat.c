@@ -2,7 +2,7 @@
  * Copyright (c) 2010 Isilon Systems, Inc.
  * Copyright (c) 2010 iX Systems, Inc.
  * Copyright (c) 2010 Panasas, Inc.
- * Copyright (c) 2013, 2014 Mellanox Technologies, Ltd.
+ * Copyright (c) 2013-2015 Mellanox Technologies, Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -64,6 +64,7 @@ __FBSDID("$FreeBSD$");
 #include <linux/vmalloc.h>
 #include <linux/netdevice.h>
 #include <linux/timer.h>
+#include <linux/workqueue.h>
 
 #include <vm/vm_pager.h>
 
@@ -93,7 +94,50 @@ panic_cmp(struct rb_node *one, struct rb_node *two)
 }
 
 RB_GENERATE(linux_root, rb_node, __entry, panic_cmp);
- 
+
+int
+kobject_set_name_vargs(struct kobject *kobj, const char *fmt, va_list args)
+{
+	va_list tmp_va;
+	int len;
+	char *old;
+	char *name;
+	char dummy;
+
+	old = kobj->name;
+
+	if (old && fmt == NULL)
+		return (0);
+
+	/* compute length of string */
+	va_copy(tmp_va, args);
+	len = vsnprintf(&dummy, 0, fmt, tmp_va);
+	va_end(tmp_va);
+
+	/* account for zero termination */
+	len++;
+
+	/* check for error */
+	if (len < 1)
+		return (-EINVAL);
+
+	/* allocate memory for string */
+	name = kzalloc(len, GFP_KERNEL);
+	if (name == NULL)
+		return (-ENOMEM);
+	vsnprintf(name, len, fmt, args);
+	kobj->name = name;
+
+	/* free old string */
+	kfree(old);
+
+	/* filter new string */
+	for (; *name != '\0'; name++)
+		if (*name == '/')
+			*name = '!';
+	return (0);
+}
+
 int
 kobject_set_name(struct kobject *kobj, const char *fmt, ...)
 {
@@ -658,22 +702,20 @@ vmmap_remove(void *addr)
 	return (vmmap);
 }
 
+#if defined(__i386__) || defined(__amd64__)
 void *
 _ioremap_attr(vm_paddr_t phys_addr, unsigned long size, int attr)
 {
 	void *addr;
 
-#if defined(__i386__) || defined(__amd64__)
 	addr = pmap_mapdev_attr(phys_addr, size, attr);
-#else
-	addr = NULL;
-#endif
 	if (addr == NULL)
 		return (NULL);
 	vmmap_add(addr, size);
 
 	return (addr);
 }
+#endif
 
 void
 iounmap(void *addr)
@@ -915,6 +957,50 @@ linux_completion_done(struct completion *c)
 	return (isdone);
 }
 
+void
+linux_delayed_work_fn(void *arg)
+{
+	struct delayed_work *work;
+
+	work = arg;
+	taskqueue_enqueue(work->work.taskqueue, &work->work.work_task);
+}
+
+void
+linux_work_fn(void *context, int pending)
+{
+	struct work_struct *work;
+
+	work = context;
+	work->fn(work);
+}
+
+void
+linux_flush_fn(void *context, int pending)
+{
+}
+
+struct workqueue_struct *
+linux_create_workqueue_common(const char *name, int cpus)
+{
+	struct workqueue_struct *wq;
+
+	wq = kmalloc(sizeof(*wq), M_WAITOK);
+	wq->taskqueue = taskqueue_create(name, M_WAITOK,
+	    taskqueue_thread_enqueue,  &wq->taskqueue);
+	atomic_set(&wq->draining, 0);
+	taskqueue_start_threads(&wq->taskqueue, cpus, PWAIT, "%s", name);
+
+	return (wq);
+}
+
+void
+destroy_workqueue(struct workqueue_struct *wq)
+{
+	taskqueue_free(wq->taskqueue);
+	kfree(wq);
+}
+
 static void
 linux_compat_init(void *arg)
 {
@@ -952,3 +1038,11 @@ linux_compat_uninit(void *arg)
 	kobject_kfree_name(&miscclass.kobj);
 }
 SYSUNINIT(linux_compat, SI_SUB_DRIVERS, SI_ORDER_SECOND, linux_compat_uninit, NULL);
+
+/*
+ * NOTE: Linux frequently uses "unsigned long" for pointer to integer
+ * conversion and vice versa, where in FreeBSD "uintptr_t" would be
+ * used. Assert these types have the same size, else some parts of the
+ * LinuxKPI may not work like expected:
+ */
+CTASSERT(sizeof(unsigned long) == sizeof(uintptr_t));

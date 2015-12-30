@@ -166,18 +166,9 @@ ttm_vm_page_alloc_dma32(int req, vm_memattr_t memattr)
 		    PAGE_SIZE, 0, memattr);
 		if (p != NULL || level > 2)
 			return (p);
-
-		/*
-		 * Before growing the cache see if this is just a normal
-		 * memory shortage.
-		 */
-		VM_WAIT;
-#ifdef VM_LEGACY
-			vm_pageout_grow_cache(level, 0, 0xffffffff);
-#else
-			vm_pageout_reclaim_contig(1, 0, 0xffffffff, PAGE_SIZE, 0, level);
-#endif
-
+		if (!vm_page_reclaim_contig(req, 1, 0, 0xffffffff,
+		    PAGE_SIZE, 0))
+			VM_WAIT;
 	}
 }
 

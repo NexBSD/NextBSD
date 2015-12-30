@@ -30,7 +30,7 @@ notify_ipc.h notify_ipcServer.c: ${.CURDIR}/../../lib/libnotify/notify_ipc.defs
 
 notify_proc: notify_ipcServer.c
 
-LDADD+= -lutil -lauditd -lbsm -ldispatch -lmach -lBlocksRuntime -llaunch -losxsupport -lxpc -lnv -lsbuf -lnotify
+LDFLAGS+= -lutil -lauditd -lbsm -ldispatch -lmach -lBlocksRuntime -llaunch -losxsupport -lxpc -lnv -lsbuf -lnotify
 SRCS=notifyutil.c
 
 

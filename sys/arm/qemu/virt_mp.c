@@ -71,7 +71,7 @@ platform_mp_setmaxid(void)
 	mp_ncpus = ofw_cpu_early_foreach(virt_maxid, true);
 	if (mp_ncpus < 1)
 		mp_ncpus = 1;
-	mp_ncpus = MIN(ncpus, MAXCPU);
+	mp_ncpus = MIN(mp_ncpus, MAXCPU);
 }
 
 static boolean_t
@@ -102,7 +102,7 @@ void
 platform_mp_init_secondary(void)
 {
 
-	arm_pic_init_secondary();
+	intr_pic_init_secondary();
 }
 
 void

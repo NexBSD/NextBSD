@@ -62,10 +62,9 @@ __FBSDID("$FreeBSD$");
 
 MALLOC_DEFINE(M_LLTABLE, "lltable", "link level address tables");
 
-static VNET_DEFINE(SLIST_HEAD(, lltable), lltables);
+static VNET_DEFINE(SLIST_HEAD(, lltable), lltables) =
+    SLIST_HEAD_INITIALIZER(lltables);
 #define	V_lltables	VNET(lltables)
-
-static void vnet_lltable_init(void);
 
 struct rwlock lltable_rwlock;
 RW_SYSINIT(lltable_rwlock, &lltable_rwlock, "lltable_rwlock");
@@ -286,7 +285,51 @@ lltable_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
 	lle->r_hdrlen = linkhdrsize;
 	lle->ll_addr = &lle->r_linkdata[lladdr_off];
 	lle->la_flags |= LLE_VALID;
+	lle->r_flags |= RLLE_VALID;
 }
+
+#if 0
+/*
+ * Tries to update @lle link-level address.
+ * Since update requires AFDATA WLOCK, function
+ * drops @lle lock, acquires AFDATA lock and then acquires
+ * @lle lock to maintain lock order.
+ *
+ * Returns 1 on success.
+ */
+int
+lltable_try_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
+    const char *lladdr)
+{
+
+	/* Perform real LLE update */
+	/* use afdata WLOCK to update fields */
+	LLE_WLOCK_ASSERT(lle);
+	LLE_ADDREF(lle);
+	LLE_WUNLOCK(lle);
+	IF_AFDATA_WLOCK(ifp);
+	LLE_WLOCK(lle);
+
+	
+	/*
+	 * Since we droppped LLE lock, other thread might have deleted
+	 * this lle. Check and return
+	 */
+	if ((lle->la_flags & LLE_DELETED) != 0) {
+		IF_AFDATA_WUNLOCK(ifp);
+		LLE_FREE_LOCKED(lle);
+		return (0);
+	}
+
+	/* Update data */
+
+	IF_AFDATA_WUNLOCK(ifp);
+
+	LLE_REMREF(lle);
+
+	return (1);
+}
+#endif
 
 /*
  * Helper function used to pre-compute full/partial link-layer
@@ -478,7 +521,7 @@ lltable_free(struct lltable *llt)
 	IF_AFDATA_WUNLOCK(llt->llt_ifp);
 
 	LIST_FOREACH_SAFE(lle, &dchain, lle_chain, next) {
-		if (callout_stop(&lle->lle_timer))
+		if (callout_stop(&lle->lle_timer) > 0)
 			LLE_REMREF(lle);
 		llentry_free(lle);
 	}
@@ -731,6 +774,8 @@ lla_rt_output(struct rt_msghdr *rtm, struct rt_addrinfo *info)
 		    lladdr_off);
 		if ((rtm->rtm_flags & RTF_ANNOUNCE))
 			lle->la_flags |= LLE_PUB;
+		lle->la_flags |= LLE_VALID;
+		lle->r_flags |= RLLE_VALID;
 		lle->la_expire = rtm->rtm_rmx.rmx_expire;
 
 		laflags = lle->la_flags;
@@ -787,15 +832,6 @@ lla_rt_output(struct rt_msghdr *rtm, struct rt_addrinfo *info)
 
 	return (error);
 }
-
-static void
-vnet_lltable_init()
-{
-
-	SLIST_INIT(&V_lltables);
-}
-VNET_SYSINIT(vnet_lltable_init, SI_SUB_PSEUDO, SI_ORDER_FIRST,
-    vnet_lltable_init, NULL);
 
 #ifdef DDB
 struct llentry_sa {

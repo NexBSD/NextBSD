@@ -1107,15 +1107,6 @@ lim_hold(struct plimit *limp)
 	return (limp);
 }
 
-#ifdef INVARIANTS
-static __inline int
-lim_shared(struct plimit *limp)
-{
-
-	return (limp->pl_refcnt > 1);
-}
-#endif
-
 void
 lim_fork(struct proc *p1, struct proc *p2)
 {
@@ -1146,7 +1137,7 @@ void
 lim_copy(struct plimit *dst, struct plimit *src)
 {
 
-	KASSERT(!lim_shared(dst), ("lim_copy to shared limit"));
+	KASSERT(dst->pl_refcnt <= 1, ("lim_copy to shared limit"));
 	bcopy(src->pl_rlimit, dst->pl_rlimit, sizeof(src->pl_rlimit));
 }
 
@@ -1356,17 +1347,22 @@ uifree(struct uidinfo *uip)
 #ifdef RACCT
 void
 ui_racct_foreach(void (*callback)(struct racct *racct,
-    void *arg2, void *arg3), void *arg2, void *arg3)
+    void *arg2, void *arg3), void (*pre)(void), void (*post)(void),
+    void *arg2, void *arg3)
 {
 	struct uidinfo *uip;
 	struct uihashhead *uih;
 
 	rw_rlock(&uihashtbl_lock);
+	if (pre != NULL)
+		(pre)();
 	for (uih = &uihashtbl[uihash]; uih >= uihashtbl; uih--) {
 		LIST_FOREACH(uip, uih, ui_hash) {
 			(callback)(uip->ui_racct, arg2, arg3);
 		}
 	}
+	if (post != NULL)
+		(post)();
 	rw_runlock(&uihashtbl_lock);
 }
 #endif

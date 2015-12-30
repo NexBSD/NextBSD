@@ -1013,6 +1013,7 @@ in_lltable_destroy_lle(struct llentry *lle)
 
 	LLE_WUNLOCK(lle);
 	LLE_LOCK_DESTROY(lle);
+	LLE_REQ_DESTROY(lle);
 	free(lle, M_LLTABLE);
 }
 
@@ -1034,6 +1035,7 @@ in_lltable_new(struct in_addr addr4, u_int flags)
 	lle->base.lle_refcnt = 1;
 	lle->base.lle_free = in_lltable_destroy_lle;
 	LLE_LOCK_INIT(&lle->base);
+	LLE_REQ_INIT(&lle->base);
 	callout_init(&lle->base.lle_timer, 1);
 
 	return (&lle->base);
@@ -1093,7 +1095,7 @@ in_lltable_free_entry(struct lltable *llt, struct llentry *lle)
 	}
 
 	/* cancel timer */
-	if (callout_stop(&lle->lle_timer))
+	if (callout_stop(&lle->lle_timer) > 0)
 		LLE_REMREF(lle);
 
 	/* Drop hold queue */
@@ -1260,6 +1262,8 @@ in_lltable_alloc(struct lltable *llt, u_int flags, const struct sockaddr *l3addr
 		return (NULL);
 	}
 	lle->la_flags = flags;
+	if (flags & LLE_STATIC)
+		lle->r_flags |= RLLE_VALID;
 	if ((flags & LLE_IFADDR) == LLE_IFADDR) {
 		linkhdrsize = LLE_MAX_LINKHDR;
 		if (lltable_calc_llheader(ifp, AF_INET, IF_LLADDR(ifp),
@@ -1268,6 +1272,7 @@ in_lltable_alloc(struct lltable *llt, u_int flags, const struct sockaddr *l3addr
 		lltable_set_entry_addr(ifp, lle, linkhdr, linkhdrsize,
 		    lladdr_off);
 		lle->la_flags |= LLE_STATIC;
+		lle->r_flags |= (RLLE_VALID | RLLE_IFADDR);
 	}
 
 	return (lle);
@@ -1290,6 +1295,13 @@ in_lltable_lookup(struct lltable *llt, u_int flags, const struct sockaddr *l3add
 
 	if (lle == NULL)
 		return (NULL);
+
+	KASSERT((flags & (LLE_UNLOCKED|LLE_EXCLUSIVE)) !=
+	    (LLE_UNLOCKED|LLE_EXCLUSIVE),("wrong lle request flags: 0x%X",
+	    flags));
+
+	if (flags & LLE_UNLOCKED)
+		return (lle);
 
 	if (flags & LLE_EXCLUSIVE)
 		LLE_WLOCK(lle);
