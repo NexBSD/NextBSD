@@ -634,7 +634,6 @@ arpresolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
 			arprequest(ifp, NULL, &SIN(dst)->sin_addr, NULL);
 		return (0);
 	}
-	IF_AFDATA_RUNLOCK(ifp);
 
 	return (arpresolve_full(ifp, is_gw, LLE_CREATE, m, dst, desten,pflags));
 }
