@@ -3791,6 +3791,7 @@ iflib_io_tqg_attach(struct grouptask *gt, void *uniq, int cpu, char *name)
 	taskqgroup_attach_cpu(gctx->igc_io_tqg, gt, uniq, cpu, -1, name);
 }
 
+void
 iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask, task_fn_t *fn,
 	char *name)
 {
