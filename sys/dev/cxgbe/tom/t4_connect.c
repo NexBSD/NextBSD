@@ -249,7 +249,7 @@ calc_opt2a(struct socket *so, struct toepcb *toep)
 	if (tp->t_flags & TF_REQ_SCALE)
 		opt2 |= F_WND_SCALE_EN;
 
-	if (V_tcp_do_ecn)
+	if (V_tcp_do_ecn == 2)
 		opt2 |= F_CCTRL_ECN;
 
 	/* RX_COALESCE is always a valid value (M_RX_COALESCE). */
