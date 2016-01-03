@@ -314,6 +314,7 @@ ether_output(struct ifnet *ifp, struct mbuf *m,
 		ro->ro_plen = hlen;
 		memcpy(ro->ro_prepend, phdr, ETHER_HDR_LEN);
 	}
+
 	if ((pflags & RT_L2_ME) != 0) {
 		update_mbuf_csumflags(m, m);
 		return (if_simloop(ifp, m, dst->sa_family, 0));

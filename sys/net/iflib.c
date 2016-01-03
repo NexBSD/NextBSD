@@ -1490,11 +1490,20 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 		if (d->ifsd_flags & RX_SW_DESC_INUSE) {
 			bus_dmamap_unload(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
 			bus_dmamap_destroy(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
-			m_init(d->ifsd_m, zone_mbuf, MLEN,
-				   M_NOWAIT, MT_DATA, 0);
-			uma_zfree(zone_mbuf, d->ifsd_m);
-			uma_zfree(fl->ifl_zone, d->ifsd_cl);
+			if (d->ifsd_m != NULL) {
+				m_init(d->ifsd_m, zone_mbuf, MLEN,
+				       M_NOWAIT, MT_DATA, 0);
+				uma_zfree(zone_mbuf, d->ifsd_m);
+			}
+			if (d->ifsd_cl != NULL)
+				uma_zfree(fl->ifl_zone, d->ifsd_cl);
 		}
+#ifdef INVARIANTS
+		else {
+			MPASS(d->ifsd_cl == NULL);
+			MPASS(d->ifsd_m == NULL);
+		}
+#endif
 		d->ifsd_cl = NULL;
 		d->ifsd_m = NULL;
 		if (++cidx == fl->ifl_size)
@@ -1644,13 +1653,14 @@ static void
 iflib_init_locked(if_ctx_t ctx)
 {
 	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
-	iflib_txq_t txq = ctx->ifc_txqs;
-	iflib_rxq_t rxq = ctx->ifc_rxqs;
-	int i;
+	iflib_fl_t fl;
+	iflib_txq_t txq;
+	iflib_rxq_t rxq;
+	int i, j;
 
 	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
 	IFDI_INTR_DISABLE(ctx);
-	for (i = 0; i < sctx->isc_nqsets; i++, txq++, rxq++) {
+	for (i = 0, txq = ctx->ifc_txqs, rxq = ctx->ifc_rxqs; i < sctx->isc_nqsets; i++, txq++, rxq++) {
 		TX_LOCK(txq);
 		callout_stop(&txq->ift_timer);
 		callout_stop(&txq->ift_db_check);
@@ -1660,6 +1670,15 @@ iflib_init_locked(if_ctx_t ctx)
 	}
 
 	IFDI_INIT(ctx);
+	for (i = 0, rxq = ctx->ifc_rxqs; i < sctx->isc_nqsets; i++, rxq++) {
+		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++) {
+			if (iflib_fl_setup(fl)) {
+				device_printf(ctx->ifc_dev, "freelist setup failed - check cluster settings\n");
+				goto done;
+			}
+		}
+	}
+	done:
 	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_RUNNING, IFF_DRV_OACTIVE);
 	IFDI_INTR_ENABLE(ctx);
 	txq = ctx->ifc_txqs;
@@ -1698,16 +1717,23 @@ static void
 iflib_stop(if_ctx_t ctx)
 {
 	iflib_txq_t txq = ctx->ifc_txqs;
+	iflib_rxq_t rxq = ctx->ifc_rxqs;
 	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
-
-	IFDI_INTR_DISABLE(ctx);
+	iflib_fl_t fl;
+	int i, j;
 
 	/* Tell the stack that the interface is no longer active */
 	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
 
-	/* XXX - Wait for current tx queue users to exit to disarm watchdog timer. */
-	for (int i = 0; i < sctx->isc_nqsets; i++, txq++)
+	IFDI_INTR_DISABLE(ctx);
+
+	/* Wait for current tx queue users to exit to disarm watchdog timer. */
+	for (i = 0; i < sctx->isc_nqsets; i++, txq++, rxq++) {
 		iflib_txq_check_drain(txq, 0);
+		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++)
+			iflib_fl_bufs_free(fl);
+
+	}
 	IFDI_STOP(ctx);
 }
 
@@ -2121,6 +2147,7 @@ retry:
 	pi.ipi_ndescs = 0;
 	pi.ipi_qsidx = txq->ift_id;
 
+	MPASS(pidx >= 0 && pidx < sctx->isc_ntxd);
 	if ((err = ctx->isc_txd_encap(ctx->ifc_softc, &pi)) == 0) {
 		bus_dmamap_sync(txq->ift_ifdi->idi_tag, txq->ift_ifdi->idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
@@ -2136,12 +2163,15 @@ retry:
 		}
 #endif
 		txsd->ifsd_m = pi.ipi_m;
+		MPASS(pi.ipi_new_pidx >= 0 && pi.ipi_new_pidx < sctx->isc_ntxd);
 		if (pi.ipi_new_pidx >= pi.ipi_pidx) {
 			ndesc = pi.ipi_new_pidx - pi.ipi_pidx;
 		} else {
 			ndesc = pi.ipi_new_pidx - pi.ipi_pidx + sctx->isc_ntxd;
 			txq->ift_gen = 1;
 		}
+		MPASS(pi.ipi_new_pidx != pidx);
+		MPASS(ndesc > 0);
 		txq->ift_in_use += ndesc;
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
@@ -3487,16 +3517,10 @@ static int
 iflib_rx_structures_setup(if_ctx_t ctx)
 {
 	iflib_rxq_t rxq = ctx->ifc_rxqs;
-	iflib_fl_t fl;
 	int i,  q, err;
 
 	for (q = 0; q < ctx->ifc_softc_ctx.isc_nqsets; q++, rxq++) {
 		tcp_lro_free(&rxq->ifr_lc);
-		for (i = 0, fl = rxq->ifr_fl; i < rxq->ifr_nfl; i++, fl++)
-			if (iflib_fl_setup(fl)) {
-				err = ENOBUFS;
-				goto fail;
-			}
 		if (ctx->ifc_ifp->if_capenable & IFCAP_LRO) {
 			if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
 				device_printf(ctx->ifc_dev, "LRO Initialization failed!\n");
@@ -3767,6 +3791,13 @@ iflib_io_tqg_attach(struct grouptask *gt, void *uniq, int cpu, char *name)
 	taskqgroup_attach_cpu(gctx->igc_io_tqg, gt, uniq, cpu, -1, name);
 }
 
+iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask, task_fn_t *fn,
+	char *name)
+{
+
+	GROUPTASK_INIT(gtask, 0, fn, ctx);
+	taskqgroup_attach(gctx->igc_config_tqg, gtask, gtask, -1, name);
+}
 
 void
 iflib_link_state_change(if_ctx_t ctx, int link_state)

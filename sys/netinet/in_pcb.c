@@ -550,7 +550,11 @@ in_rt_valid(struct inpcb *inp)
 	 * merely updating the inpcb's routing generation count.
 	 */
 	in_pcbrtalloc(inp);
-	return (inp->inp_rt != NULL && inp->inp_rt->rt_ifp != NULL);
+	if (inp->inp_rt == NULL || inp->inp_rt->rt_ifp == NULL)
+		return (0);
+	if (inp->inp_ip_p == IPPROTO_TCP)
+		tcp_osd_change(inp, inp->inp_rt->rt_osd);
+	return (1);
 }
 
 /*

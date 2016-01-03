@@ -188,6 +188,7 @@ tcp_output(struct tcpcb *tp)
 {
 	struct socket *so = tp->t_inpcb->inp_socket;
 	long len, recwin, sendwin;
+	char linkhdr[ETHER_HDR_LEN];
 	int off, flags, error = 0;	/* Keep compiler happy */
 	struct mbuf *m;
 	struct ip *ip = NULL;
@@ -1090,7 +1091,7 @@ send:
 	 * resend those bits a number of times as per
 	 * RFC 3168.
 	 */
-	if (tp->t_state == TCPS_SYN_SENT && V_tcp_do_ecn) {
+	if (tp->t_state == TCPS_SYN_SENT && (V_tcp_do_ecn == 2 || (tp->t_flags & TF_ECN_ATTEMPT))) {
 		if (tp->t_rxtshift >= 1) {
 			if (tp->t_rxtshift <= V_tcp_ecn_maxretries)
 				flags |= TH_ECE|TH_CWR;
