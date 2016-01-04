@@ -48,7 +48,7 @@ SRCS+= job_forwardUser.c  job_replyUser.c job_replyServer.c notifyServer.c
 SRCS+= internalUser.c
 SRCS+= launchd.c core.c kill2.c ktrace.c ipc.c log.c runtime.c
 SRCS+= init.c
-LDFLAGS+= -lutil -lauditd -lbsm -ldispatch -lmach -lBlocksRuntime -llaunch -losxsupport -lxpc -lnv -lsbuf
+LIBADD.launchd+= -lutil -lauditd -lbsm -ldispatch -lmach -lBlocksRuntime -llaunch -losxsupport -lxpc -lnv -lsbuf
 
 MAN=	launchd.conf.5 launchd.plist.5 launchd.8
 

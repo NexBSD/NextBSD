@@ -27,17 +27,20 @@ _PRIVATELIBS=	\
 
 _INTERNALLIBS=	\
 		amu \
+		BlocksRuntime \
 		bsnmptools \
 		cron \
 		elftc \
 		fifolog \
 		ipf \
+		launch \
 		lpr \
 		netbsd \
 		ntp \
 		ntpevent \
 		openbsd \
 		opts \
+		osxsupport \
 		parse \
 		readline \
 		sl \
@@ -45,7 +48,8 @@ _INTERNALLIBS=	\
 		smdb \
 		smutil \
 		telnet \
-		vers
+		vers \
+		xpc
 
 _LIBRARIES=	\
 		${_PRIVATELIBS} \
@@ -80,6 +84,7 @@ _LIBRARIES=	\
 		devinfo \
 		devstat \
 		dialog \
+		dispatch \
 		dpv \
 		dtrace \
 		dwarf \
@@ -110,6 +115,7 @@ _LIBRARIES=	\
 		l \
 		lzma \
 		m \
+		mach \
 		magic \
 		md \
 		memstat \
@@ -191,6 +197,7 @@ _LIBRARIES+= \
 
 # Each library's LIBADD needs to be duplicated here for static linkage of
 # 2nd+ order consumers.  Auto-generating this would be better.
+_DP_launchd=	util auditd bsm dispatch mach BlocksRuntime launch osxsupport xpc nv sbuf
 _DP_80211=	sbuf bsdxml
 _DP_archive=	z bz2 lzma bsdxml
 .if ${MK_OPENSSL} != "no"
