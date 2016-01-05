@@ -58,6 +58,7 @@ _LIBRARIES=	\
 		auditd \
 		avl \
 		begemot \
+		BlocksRuntime \
 		bluetooth \
 		bsdxml \
 		bsm \
@@ -108,6 +109,7 @@ _LIBRARIES=	\
 		krb5 \
 		kvm \
 		l \
+		launch \
 		lzma \
 		m \
 		magic \
@@ -123,6 +125,7 @@ _LIBRARIES=	\
 		nv \
 		nvpair \
 		opie \
+		osxsupport \
 		pam \
 		panel \
 		panelw \
@@ -191,8 +194,6 @@ _LIBRARIES+= \
 
 # Each library's LIBADD needs to be duplicated here for static linkage of
 # 2nd+ order consumers.  Auto-generating this would be better.
-#_DP_launchproxy= maosxsupport
-#_DP_launchd=	util auditd bsm dispatch mach osxsupport xpc nv sbuf
 _DP_80211=	sbuf bsdxml
 _DP_archive=	z bz2 lzma bsdxml
 .if ${MK_OPENSSL} != "no"
@@ -478,9 +479,14 @@ LIBWINDDIR=	${OBJTOP}/kerberos5/lib/libwind
 LIBALIASDIR=	${OBJTOP}/lib/libalias/libalias
 LIBBLOCKSRUNTIMEDIR=	${OBJTOP}/lib/libblocksruntime
 LIBBSNMPDIR=	${OBJTOP}/lib/libbsnmp/libbsnmp
+LIBDISPATCH?=	${OBJTOP}/lib/libdispatch.a
 LIBBSDXMLDIR=	${OBJTOP}/lib/libexpat
 LIBKVMDIR=	${OBJTOP}/lib/libkvm
+LIBMACH?=	${OBJTOP}/lib/libmach.a
+LIBOSXSUPPORT?=	${OBJTOP}/lib/libosxsupport.a
 LIBPTHREADDIR=	${OBJTOP}/lib/libthr
+LIBLAUNCH?=	${OBJDIR}/lib/liblaunch.a
+LIBXPC?=	${OBJDIR}/lib/libxpc.a
 LIBMDIR=	${OBJTOP}/lib/msun
 LIBFORMDIR=	${OBJTOP}/lib/ncurses/form
 LIBFORMLIBWDIR=	${OBJTOP}/lib/ncurses/formw
