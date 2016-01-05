@@ -19,7 +19,7 @@ CFLAGS+= -DHAVE_INTTYPES_H
 DEBUG_FLAGS+= -g -O0
 
 LDFLAGS+= -static
-LDFLAGS+= -lbsm -lauditd -lBlocksRuntime
+LDFLAGS+= -lbsm -lauditd 
 NO_WERROR=
 
 helper.h launchd_helperServer.h: ${.CURDIR}/helper.defs
@@ -46,8 +46,9 @@ SRCS+= job_forwardUser.c  job_replyUser.c job_replyServer.c notifyServer.c
 SRCS+= internalUser.c
 SRCS+= launchd.c core.c kill2.c ktrace.c ipc.c log.c runtime.c
 SRCS+= init.c
-LIBADD+= auditd bsm  util   nv sbuf pthread
-LDADD+=  -ldispatch -lmach -lBlocksRuntime -llaunch -losxsupport -lxpc 
+LIBADD+= auditd bsm util dispatch mach
+LIBADD+=BlocksRuntime launch osxsupport xpc nv sbuf pthread
+
 
 MAN=	launchd.conf.5 launchd.plist.5 launchd.8
 

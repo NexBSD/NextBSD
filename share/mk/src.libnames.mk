@@ -81,6 +81,7 @@ _LIBRARIES=	\
 		devinfo \
 		devstat \
 		dialog \
+		dispatch \
 		dpv \
 		dtrace \
 		dwarf \
@@ -112,6 +113,7 @@ _LIBRARIES=	\
 		launch \
 		lzma \
 		m \
+		mach \
 		magic \
 		md \
 		memstat \
@@ -167,6 +169,7 @@ _LIBRARIES=	\
 		wind \
 		wrap \
 		xo \
+		xpc \
 		y \
 		ypclnt \
 		z \
@@ -478,6 +481,7 @@ LIBROKENDIR=	${OBJTOP}/kerberos5/lib/libroken
 LIBWINDDIR=	${OBJTOP}/kerberos5/lib/libwind
 LIBALIASDIR=	${OBJTOP}/lib/libalias/libalias
 LIBBLOCKSRUNTIMEDIR=	${OBJTOP}/lib/libblocksruntime
+LIBBLOCKSRUNTIME?=	${OBJTOP}/lib/libBlocksRuntime.a
 LIBBSNMPDIR=	${OBJTOP}/lib/libbsnmp/libbsnmp
 LIBDISPATCH?=	${OBJTOP}/lib/libdispatch.a
 LIBBSDXMLDIR=	${OBJTOP}/lib/libexpat
