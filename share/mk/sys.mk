@@ -422,3 +422,5 @@ __MAKE_SHELL?=/bin/sh
 .endif
 
 .endif # ! Posix
+
+.include <bsd.hardenedbsd.mk>
