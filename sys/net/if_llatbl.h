@@ -61,10 +61,9 @@ struct llentry {
 	} r_l3addr;
 	char			r_linkdata[LLE_MAX_LINKHDR]; /* L2 data */
 	uint8_t			r_hdrlen;	/* length for LL header */
-	uint8_t			spare0;
+	uint8_t			spare0[3];
 	uint16_t		r_flags;	/* LLE runtime flags */
 	uint16_t		r_skip_req;	/* feedback from fast path */
-	uint16_t		spare1;
 
 	struct lltable		 *lle_tbl;
 	struct llentries	 *lle_head;
@@ -196,11 +195,10 @@ MALLOC_DECLARE(M_LLTABLE);
 #define	LLE_PUB		0x0020	/* publish entry ??? */
 #define	LLE_LINKED	0x0040	/* linked to lookup structure */
 /* LLE request flags */
-#define	LLE_UNLOCKED	0x1000	/* return lle unlocked */
 #define	LLE_EXCLUSIVE	0x2000	/* return lle xlocked  */
+#define	LLE_UNLOCKED	0x4000	/* return lle unlocked */
 #define	LLE_ADDRONLY	0x4000	/* return lladdr instead of full header */
 #define	LLE_CREATE	0x8000	/* hint to avoid lle lookup */
-
 
 /* LLE flags used by fastpath code */
 #define	RLLE_VALID	0x0001		/* entry is valid */
@@ -228,11 +226,11 @@ size_t lltable_drop_entry_queue(struct llentry *);
 void lltable_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
     const char *linkhdr, size_t linkhdrsize, int lladdr_off);
 int lltable_try_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
-    const char *lladdr);
+    const char *linkhdr, size_t linkhdrsize, int lladdr_off);
 
 int lltable_calc_llheader(struct ifnet *ifp, int family, char *lladdr,
     char *buf, size_t *bufsize, int *lladdr_off);
-int lltable_update_ifaddr(struct lltable *llt);
+void lltable_update_ifaddr(struct lltable *llt);
 struct llentry *lltable_alloc_entry(struct lltable *llt, u_int flags,
     const struct sockaddr *l4addr);
 void lltable_free_entry(struct lltable *llt, struct llentry *lle);

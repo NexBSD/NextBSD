@@ -281,6 +281,12 @@ arptimer(void *arg)
 	CURVNET_RESTORE();
 }
 
+/*
+ * Stores link-layer header for @ifp in format suitable for if_output()
+ * into buffer @buf. Resulting header length is stored in @bufsize.
+ *
+ * Returns 0 on success.
+ */
 static int
 arp_fillheader(struct ifnet *ifp, struct arphdr *ah, int bcast, u_char *buf,
     size_t *bufsize)
@@ -384,8 +390,9 @@ arprequest(struct ifnet *ifp, const struct in_addr *sip,
 	bzero(&ro, sizeof(ro));
 	linkhdrsize = sizeof(linkhdr);
 	error = arp_fillheader(ifp, ah, 1, linkhdr, &linkhdrsize);
-	if (error != 0) {
-		if_printf(ifp, "Failed to calculate ARP header: %d\n", error);
+	if (error != 0 && error != EAFNOSUPPORT) {
+		ARP_LOG(LOG_ERR, "Failed to calculate ARP header on %s: %d\n",
+		    if_name(ifp), error);
 		return;
 	}
 
@@ -467,17 +474,6 @@ arpresolve_full(struct ifnet *ifp, int is_gw, int flags, struct mbuf *m,
 			ll_len = la->r_hdrlen;
 		}
 		bcopy(lladdr, desten, ll_len);
-		renew = 0;
-		/*
-		 * If entry has an expiry time and it is approaching,
-		 * see if we need to send an ARP request within this
-		 * arpt_down interval.
-		 */
-		if (!(la->la_flags & LLE_STATIC) &&
-		    time_uptime + la->la_preempt > la->la_expire) {
-			renew = 1;
-			la->la_preempt--;
-		}
 
 		/* Check if we have feedback request from arptimer() */
 		if (la->r_skip_req != 0) {
@@ -583,7 +579,6 @@ arpresolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
 	const struct sockaddr *dst, u_char *desten, uint32_t *pflags)
 {
 	struct llentry *la = 0;
-	int renew;
 
 	if (pflags != NULL)
 		*pflags = 0;
@@ -603,39 +598,26 @@ arpresolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
 	}
 
 	IF_AFDATA_RLOCK(ifp);
-	la = lla_lookup(LLTABLE(ifp), 0, dst);
-	IF_AFDATA_RUNLOCK(ifp);
-
-	if (la == NULL)
-		return (arpresolve_full(ifp, is_gw, LLE_CREATE, m, dst, desten,
-		    pflags));
-
-	if ((la->la_flags & LLE_VALID) &&
-	    ((la->la_flags & LLE_STATIC) || la->la_expire > time_uptime)) {
+	la = lla_lookup(LLTABLE(ifp), LLE_UNLOCKED, dst);
+	if (la != NULL && (la->r_flags & RLLE_VALID) != 0) {
+		/* Entry found, let's copy lle info */
 		bcopy(la->r_linkdata, desten, la->r_hdrlen);
-		renew = 0;
-		/*
-		 * If entry has an expiry time and it is approaching,
-		 * see if we need to send an ARP request within this
-		 * arpt_down interval.
-		 */
-		if (!(la->la_flags & LLE_STATIC) &&
-		    time_uptime + la->la_preempt > la->la_expire) {
-			renew = 1;
-			la->la_preempt--;
-		}
-
 		if (pflags != NULL)
-			*pflags = la->la_flags & LLE_IFADDR;
+			*pflags = LLE_VALID | (la->r_flags & RLLE_IFADDR);
+		/* Check if we have feedback request from arptimer() */
+		if (la->r_skip_req != 0) {
+			LLE_REQ_LOCK(la);
+			la->r_skip_req = 0; /* Notify that entry was used */
+			LLE_REQ_UNLOCK(la);
+		}
+		IF_AFDATA_RUNLOCK(ifp);
 
-		LLE_RUNLOCK(la);
-
-		if (renew == 1)
-			arprequest(ifp, NULL, &SIN(dst)->sin_addr, NULL);
 		return (0);
 	}
+	IF_AFDATA_RUNLOCK(ifp);
 
-	return (arpresolve_full(ifp, is_gw, LLE_CREATE, m, dst, desten,pflags));
+	return (arpresolve_full(ifp, is_gw, la == NULL ? LLE_CREATE : 0, m, dst,
+	    desten, pflags));
 }
 
 /*
@@ -778,12 +760,12 @@ in_arpinput(struct mbuf *m)
 	int carped;
 	struct sockaddr_in sin;
 	struct sockaddr *dst;
+	struct nhop4_basic nh4;
 	uint8_t linkhdr[LLE_MAX_LINKHDR];
+	struct route ro;
 	size_t linkhdrsize;
 	int lladdr_off;
-	struct route ro;
 	int error;
-	struct nhop4_basic nh4;
 
 	sin.sin_len = sizeof(struct sockaddr_in);
 	sin.sin_family = AF_INET;
@@ -949,17 +931,27 @@ match:
 	if (la != NULL)
 		arp_check_update_lle(ah, isaddr, ifp, bridged, la);
 	else if (itaddr.s_addr == myaddr.s_addr) {
-		/* Reply to our address, but no lle exists yet. */
-		/* Calculate full link prepend to use in lle */
+		/*
+		 * Request/reply to our address, but no lle exists yet.
+		 * Calculate full link prepend to use in lle.
+		 */
 		linkhdrsize = sizeof(linkhdr);
 		if (lltable_calc_llheader(ifp, AF_INET, ar_sha(ah), linkhdr,
 		    &linkhdrsize, &lladdr_off) != 0)
-			goto drop;
+			goto reply;
 
 		/* Allocate new entry */
 		la = lltable_alloc_entry(LLTABLE(ifp), 0, dst);
-		if (la == NULL)
-			goto drop;
+		if (la == NULL) {
+
+			/*
+			 * lle creation may fail if source address belongs
+			 * to non-directly connected subnet. However, we
+			 * will try to answer the request instead of dropping
+			 * frame.
+			 */
+			goto reply;
+		}
 		lltable_set_entry_addr(ifp, la, linkhdr, linkhdrsize,
 		    lladdr_off);
 
@@ -1098,19 +1090,17 @@ reply:
 	/*
 	 * arp_fillheader() may fail due to lack of support inside encap request
 	 * routing. This is not necessary an error, AF_ARP can/should be handled
-	 * ny if_output().
+	 * by if_output().
 	 */
 	if (error != 0 && error != EAFNOSUPPORT) {
-		printf("Failed to calculate ARP header: %d\n", error);
-		goto drop;
+		ARP_LOG(LOG_ERR, "Failed to calculate ARP header on %s: %d\n",
+		    if_name(ifp), error);
+		return;
 	}
 
-	if (error == 0) {
-		ro.ro_prepend = linkhdr;
-		ro.ro_plen = linkhdrsize;
-		ro.ro_flags = 0;
-		
-	}
+	ro.ro_prepend = linkhdr;
+	ro.ro_plen = linkhdrsize;
+	ro.ro_flags = 0;
 
 	m_clrprotoflags(m);	/* Avoid confusing lower layers. */
 	(*ifp->if_output)(ifp, m, &sa, &ro);
@@ -1183,29 +1173,10 @@ arp_check_update_lle(struct arphdr *ah, struct in_addr isaddr, struct ifnet *ifp
 	/* Check if something has changed */
 	if (memcmp(la->r_linkdata, linkhdr, linkhdrsize) != 0 ||
 	    (la->la_flags & LLE_VALID) == 0) {
-		/* Perform real LLE update */
-		/* use afdata WLOCK to update fields */
-		LLE_ADDREF(la);
-		LLE_WUNLOCK(la);
-		IF_AFDATA_WLOCK(ifp);
-		LLE_WLOCK(la);
-
-		/*
-		 * Since we droppped LLE lock, other thread might have deleted
-		 * this lle. Check and return
-		 */
-		if ((la->la_flags & LLE_DELETED) != 0) {
-			IF_AFDATA_WUNLOCK(ifp);
-			LLE_FREE_LOCKED(la);
+		/* Try to perform LLE update */
+		if (lltable_try_set_entry_addr(ifp, la, linkhdr, linkhdrsize,
+		    lladdr_off) == 0)
 			return;
-		}
-
-		/* Update data */
-		lltable_set_entry_addr(ifp, la, linkhdr, linkhdrsize,
-		    lladdr_off);
-
-		IF_AFDATA_WUNLOCK(ifp);
-		LLE_REMREF(la);
 
 		/* Clear fast path feedback request if set */
 		la->r_skip_req = 0;
@@ -1329,13 +1300,32 @@ arp_announce_ifaddr(struct ifnet *ifp, struct in_addr addr, u_char *enaddr)
 }
 
 /*
- * A handler for interface link layer address change event.
+ * Sends gratuitous ARPs for each ifaddr to notify other
+ * nodes about the address change.
  */
 static __noinline void
+arp_handle_ifllchange(struct ifnet *ifp)
+{
+	struct ifaddr *ifa;
+
+	TAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+		if (ifa->ifa_addr->sa_family == AF_INET)
+			arp_ifinit(ifp, ifa);
+	}
+}
+
+
+/*
+ * A handler for interface link layer address change event.
+ */
+static void
 arp_iflladdr(void *arg __unused, struct ifnet *ifp)
 {
 
 	lltable_update_ifaddr(LLTABLE(ifp));
+
+	if ((ifp->if_flags & IFF_UP) != 0)
+		arp_handle_ifllchange(ifp);
 }
 
 static void

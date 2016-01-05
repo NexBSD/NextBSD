@@ -387,7 +387,6 @@ struct mbuf;
 struct route;
 struct sockaddr;
 struct bpf_if;
-struct if_encap_req;
 
 extern	uint32_t ether_crc32_le(const uint8_t *, size_t);
 extern	uint32_t ether_crc32_be(const uint8_t *, size_t);
@@ -398,7 +397,6 @@ extern	int  ether_ioctl(struct ifnet *, u_long, caddr_t);
 extern	int  ether_output(struct ifnet *, struct mbuf *,
 	    const struct sockaddr *, struct route *);
 extern	int  ether_output_frame(struct ifnet *, struct mbuf *);
-extern int ether_requestencap(struct ifnet *, struct if_encap_req *);
 extern	char *ether_sprintf(const u_int8_t *);
 void	ether_vlan_mtap(struct bpf_if *, struct mbuf *,
 	    void *, u_int);

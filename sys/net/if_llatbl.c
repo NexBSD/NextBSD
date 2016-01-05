@@ -288,7 +288,6 @@ lltable_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
 	lle->r_flags |= RLLE_VALID;
 }
 
-#if 0
 /*
  * Tries to update @lle link-level address.
  * Since update requires AFDATA WLOCK, function
@@ -299,7 +298,7 @@ lltable_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
  */
 int
 lltable_try_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
-    const char *lladdr)
+    const char *linkhdr, size_t linkhdrsize, int lladdr_off)
 {
 
 	/* Perform real LLE update */
@@ -310,7 +309,6 @@ lltable_try_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
 	IF_AFDATA_WLOCK(ifp);
 	LLE_WLOCK(lle);
 
-	
 	/*
 	 * Since we droppped LLE lock, other thread might have deleted
 	 * this lle. Check and return
@@ -322,16 +320,15 @@ lltable_try_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
 	}
 
 	/* Update data */
-
+	lltable_set_entry_addr(ifp, lle, linkhdr, linkhdrsize, lladdr_off);
 	IF_AFDATA_WUNLOCK(ifp);
 
 	LLE_REMREF(lle);
 
 	return (1);
 }
-#endif
 
-/*
+ /*
  * Helper function used to pre-compute full/partial link-layer
  * header data suitable for feeding into if_output().
  */
@@ -397,20 +394,16 @@ llentry_update_ifaddr(struct lltable *llt, struct llentry *lle, void *farg)
 /*
  * Update all calculated headers for given @llt
  */
-int
+void
 lltable_update_ifaddr(struct lltable *llt)
 {
-	int error;
 
 	if (llt->llt_ifp->if_flags & IFF_LOOPBACK)
-		return (0);
-	error = 0;
+		return;
 
 	IF_AFDATA_WLOCK(llt->llt_ifp);
 	lltable_foreach_lle(llt, llentry_update_ifaddr, llt->llt_ifp);
 	IF_AFDATA_WUNLOCK(llt->llt_ifp);
-
-	return (error);
 }
 
 /*
@@ -774,8 +767,6 @@ lla_rt_output(struct rt_msghdr *rtm, struct rt_addrinfo *info)
 		    lladdr_off);
 		if ((rtm->rtm_flags & RTF_ANNOUNCE))
 			lle->la_flags |= LLE_PUB;
-		lle->la_flags |= LLE_VALID;
-		lle->r_flags |= RLLE_VALID;
 		lle->la_expire = rtm->rtm_rmx.rmx_expire;
 
 		laflags = lle->la_flags;

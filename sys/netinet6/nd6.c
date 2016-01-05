@@ -199,7 +199,7 @@ nd6_lle_event(void *arg __unused, struct llentry *lle, int evt)
 /*
  * A handler for interface link layer address change event.
  */
-static __noinline void
+static void
 nd6_iflladdr(void *arg __unused, struct ifnet *ifp)
 {
 
@@ -1210,6 +1210,10 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 {
 	struct nd_prefix *pr;
 	struct ifaddr *dstaddr;
+	struct rt_addrinfo info;
+	struct sockaddr_in6 rt_key;
+	struct sockaddr *dst6;
+	int fibnum;
 
 	/*
 	 * A link-local address is always a neighbor.
@@ -1234,6 +1238,13 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 			return (0);
 	}
 
+	bzero(&rt_key, sizeof(rt_key));
+	bzero(&info, sizeof(info));
+	info.rti_info[RTAX_DST] = (struct sockaddr *)&rt_key;
+
+	/* Always use the default FIB here. XXME - why? */
+	fibnum = RT_DEFAULT_FIB;
+
 	/*
 	 * If the address matches one of our addresses,
 	 * it should be a neighbor.
@@ -1245,12 +1256,13 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 			continue;
 
 		if (!(pr->ndpr_stateflags & NDPRF_ONLINK)) {
-			struct rtentry *rt;
 
 			/* Always use the default FIB here. */
-			rt = in6_rtalloc1((struct sockaddr *)&pr->ndpr_prefix,
-			    0, 0, RT_DEFAULT_FIB);
-			if (rt == NULL)
+			dst6 = (struct sockaddr *)&pr->ndpr_prefix;
+
+			/* Restore length field before retrying lookup */
+			rt_key.sin6_len = sizeof(rt_key);
+			if (rib_lookup_info(fibnum, dst6, 0, 0, &info) != 0)
 				continue;
 			/*
 			 * This is the case where multiple interfaces
@@ -1263,11 +1275,8 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 			 * differ.
 			 */
 			if (!IN6_ARE_ADDR_EQUAL(&pr->ndpr_prefix.sin6_addr,
-			       &((struct sockaddr_in6 *)rt_key(rt))->sin6_addr)) {
-				RTFREE_LOCKED(rt);
+			       &rt_key.sin6_addr))
 				continue;
-			}
-			RTFREE_LOCKED(rt);
 		}
 
 		if (IN6_ARE_MASKED_ADDR_EQUAL(&pr->ndpr_prefix.sin6_addr,
@@ -1966,8 +1975,12 @@ nd6_cache_lladdr(struct ifnet *ifp, struct in6_addr *from, char *lladdr,
 		if (lltable_calc_llheader(ifp, AF_INET6, lladdr,
 		    linkhdr, &linkhdrsize, &lladdr_off) != 0)
 			return;
-		lltable_set_entry_addr(ifp, ln, linkhdr, linkhdrsize,
-		    lladdr_off);
+
+		if (lltable_try_set_entry_addr(ifp, ln, linkhdr, linkhdrsize,
+		    lladdr_off) == 0) {
+			/* Entry was deleted */
+			return;
+		}
 
 		nd6_llinfo_setstate(ln, ND6_LLINFO_STALE);
 
@@ -2168,31 +2181,25 @@ nd6_resolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
 	}
 
 	IF_AFDATA_RLOCK(ifp);
-	ln = nd6_lookup(&dst6->sin6_addr, 0, ifp);
-	IF_AFDATA_RUNLOCK(ifp);
-
-	/*
-	 * Perform fast path for the following cases:
-	 * 1) lle state is REACHABLE
-	 * 2) lle state is DELAY (NS message sent)
-	 *
-	 * Every other case involves lle modification, so we handle
-	 * them separately.
-	 */
-	if (ln == NULL || (ln->ln_state != ND6_LLINFO_REACHABLE &&
-	    ln->ln_state != ND6_LLINFO_DELAY)) {
-		/* Fall back to slow processing path */
-		if (ln != NULL)
-			LLE_RUNLOCK(ln);
-		return (nd6_resolve_slow(ifp, 0, m, dst6, desten, pflags));
+	ln = nd6_lookup(&dst6->sin6_addr, LLE_UNLOCKED, ifp);
+	if (ln != NULL && (ln->r_flags & RLLE_VALID) != 0) {
+		/* Entry found, let's copy lle info */
+		bcopy(ln->r_linkdata, desten, ln->r_hdrlen);
+		if (pflags != NULL)
+			*pflags = LLE_VALID | (ln->r_flags & RLLE_IFADDR);
+		/* Check if we have feedback request from nd6 timer */
+		if (ln->r_skip_req != 0) {
+			LLE_REQ_LOCK(ln);
+			ln->r_skip_req = 0; /* Notify that entry was used */
+			ln->lle_hittime = time_uptime;
+			LLE_REQ_UNLOCK(ln);
+		}
+		IF_AFDATA_RUNLOCK(ifp);
+		return (0);
 	}
 	IF_AFDATA_RUNLOCK(ifp);
 
-	bcopy(ln->r_linkdata, desten, ln->r_hdrlen);
-	if (pflags != NULL)
-		*pflags = ln->la_flags & LLE_IFADDR;
-	LLE_RUNLOCK(ln);
-	return (0);
+	return (nd6_resolve_slow(ifp, 0, m, dst6, desten, pflags));
 }
 
 
