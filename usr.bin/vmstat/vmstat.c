@@ -1094,8 +1094,6 @@ dosum(void)
 		sum.v_active_count);
 	xo_emit("{:inactive-pages/%9u} {N:pages inactive}\n",
 		sum.v_inactive_count);
-	xo_emit("{:vm-cache/%9u} {N:pages in VM cache}\n",
-		sum.v_cache_count);
 	xo_emit("{:wired-pages/%9u} {N:pages wired down}\n",
 		sum.v_wire_count);
 	xo_emit("{:free-pages/%9u} {N:pages free}\n",
