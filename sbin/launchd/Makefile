@@ -19,7 +19,6 @@ CFLAGS+= -DHAVE_INTTYPES_H
 DEBUG_FLAGS+= -g -O0
 
 LDFLAGS+= -static
-LDFLAGS+= -lbsm -lauditd 
 NO_WERROR=
 
 helper.h launchd_helperServer.h: ${.CURDIR}/helper.defs
