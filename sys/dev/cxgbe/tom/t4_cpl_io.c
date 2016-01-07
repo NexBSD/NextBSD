@@ -221,7 +221,7 @@ assign_rxopt(struct tcpcb *tp, unsigned int opt)
 		n = sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
 	else
 		n = sizeof(struct ip) + sizeof(struct tcphdr);
-	tp->t_maxseg = tp->t_maxopd = sc->params.mtus[G_TCPOPT_MSS(opt)] - n;
+	tp->t_maxseg = sc->params.mtus[G_TCPOPT_MSS(opt)] - n;
 
 	CTR4(KTR_CXGBE, "%s: tid %d, mtu_idx %u (%u)", __func__, toep->tid,
 	    G_TCPOPT_MSS(opt), sc->params.mtus[G_TCPOPT_MSS(opt)]);

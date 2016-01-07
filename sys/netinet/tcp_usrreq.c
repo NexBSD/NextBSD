@@ -904,8 +904,7 @@ tcp_usr_send(struct socket *so, int flags, struct mbuf *m,
 			/*
 			 * Do implied connect if not yet connected,
 			 * initialize window to default value, and
-			 * initialize maxseg/maxopd using peer's cached
-			 * MSS.
+			 * initialize maxseg using peer's cached MSS.
 			 */
 #ifdef INET6
 			if (isipv6)
@@ -964,8 +963,7 @@ tcp_usr_send(struct socket *so, int flags, struct mbuf *m,
 			/*
 			 * Do implied connect if not yet connected,
 			 * initialize window to default value, and
-			 * initialize maxseg/maxopd using peer's cached
-			 * MSS.
+			 * initialize maxseg using peer's cached MSS.
 			 */
 #ifdef INET6
 			if (isipv6)
