@@ -199,7 +199,7 @@ nd6_lle_event(void *arg __unused, struct llentry *lle, int evt)
 /*
  * A handler for interface link layer address change event.
  */
-static __noinline void
+static void
 nd6_iflladdr(void *arg __unused, struct ifnet *ifp)
 {
 
@@ -300,6 +300,8 @@ nd6_ifdetach(struct nd_ifinfo *nd)
 void
 nd6_setmtu(struct ifnet *ifp)
 {
+	if (ifp->if_afdata[AF_INET6] == NULL)
+		return;
 
 	nd6_setmtu0(ifp, ND_IFINFO(ifp));
 }
@@ -523,7 +525,7 @@ nd6_llinfo_settimer_locked(struct llentry *ln, long tick)
 			    nd6_llinfo_timer, ln);
 		}
 	}
-	if (canceled)
+	if (canceled > 0)
 		LLE_REMREF(ln);
 }
 
@@ -557,6 +559,107 @@ nd6_llinfo_get_holdsrc(struct llentry *ln, struct in6_addr *src)
 }
 
 /*
+ * Checks if we need to switch from STALE state.
+ *
+ * RFC 4861 requires switching from STALE to DELAY state
+ * on first packet matching entry, waiting V_nd6_delay and
+ * transition to PROBE state (if upper layer confirmation was
+ * not received).
+ *
+ * This code performs a bit differently:
+ * On packet hit we don't change state (but desired state
+ * can be guessed by control plane). However, after V_nd6_delay
+ * seconds code will transition to PROBE state (so DELAY state
+ * is kinda skipped in most situations).
+ *
+ * Typically, V_nd6_gctimer is bigger than V_nd6_delay, so
+ * we perform the following upon entering STALE state:
+ *
+ * 1) Arm timer to run each V_nd6_delay seconds to make sure that
+ * if packet was transmitted at the start of given interval, we
+ * would be able to switch to PROBE state in V_nd6_delay seconds
+ * as user expects.
+ *
+ * 2) Reschedule timer until original V_nd6_gctimer expires keeping
+ * lle in STALE state (remaining timer value stored in lle_remtime).
+ *
+ * 3) Reschedule timer if packet was transmitted less that V_nd6_delay
+ * seconds ago.
+ *
+ * Returns non-zero value if the entry is still STALE (storing
+ * the next timer interval in @pdelay).
+ *
+ * Returns zero value if original timer expired or we need to switch to
+ * PROBE (store that in @do_switch variable).
+ */
+static int
+nd6_is_stale(struct llentry *lle, long *pdelay, int *do_switch)
+{
+	int nd_delay, nd_gctimer, r_skip_req;
+	time_t lle_hittime;
+	long delay;
+
+	*do_switch = 0;
+	nd_gctimer = V_nd6_gctimer;
+	nd_delay = V_nd6_delay;
+
+	LLE_REQ_LOCK(lle);
+	r_skip_req = lle->r_skip_req;
+	lle_hittime = lle->lle_hittime;
+	LLE_REQ_UNLOCK(lle);
+
+	if (r_skip_req > 0) {
+
+		/*
+		 * Nonzero r_skip_req value was set upon entering
+		 * STALE state. Since value was not changed, no
+		 * packets were passed using this lle. Ask for
+		 * timer reschedule and keep STALE state.
+		 */
+		delay = (long)(MIN(nd_gctimer, nd_delay));
+		delay *= hz;
+		if (lle->lle_remtime > delay)
+			lle->lle_remtime -= delay;
+		else {
+			delay = lle->lle_remtime;
+			lle->lle_remtime = 0;
+		}
+
+		if (delay == 0) {
+
+			/*
+			 * The original ng6_gctime timeout ended,
+			 * no more rescheduling.
+			 */
+			return (0);
+		}
+
+		*pdelay = delay;
+		return (1);
+	}
+
+	/*
+	 * Packet received. Verify timestamp
+	 */
+	delay = (long)(time_uptime - lle_hittime);
+	if (delay < nd_delay) {
+
+		/*
+		 * V_nd6_delay still not passed since the first
+		 * hit in STALE state.
+		 * Reshedule timer and return.
+		 */
+		*pdelay = (long)(nd_delay - delay) * hz;
+		return (1);
+	}
+
+	/* Request switching to probe */
+	*do_switch = 1;
+	return (0);
+}
+
+
+/*
  * Switch @lle state to new state optionally arming timers.
  *
  * Set noinline to be dtrace-friendly
@@ -565,9 +668,11 @@ __noinline void
 nd6_llinfo_setstate(struct llentry *lle, int newstate)
 {
 	struct ifnet *ifp;
-	long delay;
+	int nd_gctimer, nd_delay;
+	long delay, remtime;
 
 	delay = 0;
+	remtime = 0;
 
 	switch (newstate) {
 	case ND6_LLINFO_INCOMPLETE:
@@ -581,7 +686,19 @@ nd6_llinfo_setstate(struct llentry *lle, int newstate)
 		}
 		break;
 	case ND6_LLINFO_STALE:
-		delay = (long)V_nd6_gctimer * hz;
+
+		/*
+		 * Notify fast path that we want to know if any packet
+		 * is transmitted by setting r_skip_req.
+		 */
+		LLE_REQ_LOCK(lle);
+		lle->r_skip_req = 1;
+		LLE_REQ_UNLOCK(lle);
+		nd_delay = V_nd6_delay;
+		nd_gctimer = V_nd6_gctimer;
+
+		delay = (long)(MIN(nd_gctimer, nd_delay)) * hz;
+		remtime = (long)nd_gctimer * hz - delay;
 		break;
 	case ND6_LLINFO_DELAY:
 		lle->la_asked = 0;
@@ -592,6 +709,7 @@ nd6_llinfo_setstate(struct llentry *lle, int newstate)
 	if (delay > 0)
 		nd6_llinfo_settimer_locked(lle, delay);
 
+	lle->lle_remtime = remtime;
 	lle->ln_state = newstate;
 }
 
@@ -607,7 +725,8 @@ nd6_llinfo_timer(void *arg)
 	struct in6_addr *dst, *pdst, *psrc, src;
 	struct ifnet *ifp;
 	struct nd_ifinfo *ndi = NULL;
-	int send_ns;
+	int do_switch, send_ns;
+	long delay;
 
 	KASSERT(arg != NULL, ("%s: arg NULL", __func__));
 	ln = (struct llentry *)arg;
@@ -695,13 +814,35 @@ nd6_llinfo_timer(void *arg)
 		break;
 
 	case ND6_LLINFO_STALE:
-		/* Garbage Collection(RFC 2461 5.3) */
-		if (!ND6_LLINFO_PERMANENT(ln)) {
-			EVENTHANDLER_INVOKE(lle_event, ln, LLENTRY_EXPIRED);
-			nd6_free(ln, 1);
-			ln = NULL;
+		if (nd6_is_stale(ln, &delay, &do_switch) != 0) {
+
+			/*
+			 * No packet has used this entry and GC timeout
+			 * has not been passed. Reshedule timer and
+			 * return.
+			 */
+			nd6_llinfo_settimer_locked(ln, delay);
+			break;
 		}
-		break;
+
+		if (do_switch == 0) {
+
+			/*
+			 * GC timer has ended and entry hasn't been used.
+			 * Run Garbage collector (RFC 4861, 5.3)
+			 */
+			if (!ND6_LLINFO_PERMANENT(ln)) {
+				EVENTHANDLER_INVOKE(lle_event, ln,
+				    LLENTRY_EXPIRED);
+				nd6_free(ln, 1);
+				ln = NULL;
+			}
+			break;
+		}
+
+		/* Entry has been used AND delay timer has ended. */
+
+		/* FALLTHROUGH */
 
 	case ND6_LLINFO_DELAY:
 		if (ndi && (ndi->flags & ND6_IFF_PERFORMNUD) != 0) {
@@ -1069,6 +1210,10 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 {
 	struct nd_prefix *pr;
 	struct ifaddr *dstaddr;
+	struct rt_addrinfo info;
+	struct sockaddr_in6 rt_key;
+	struct sockaddr *dst6;
+	int fibnum;
 
 	/*
 	 * A link-local address is always a neighbor.
@@ -1093,6 +1238,13 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 			return (0);
 	}
 
+	bzero(&rt_key, sizeof(rt_key));
+	bzero(&info, sizeof(info));
+	info.rti_info[RTAX_DST] = (struct sockaddr *)&rt_key;
+
+	/* Always use the default FIB here. XXME - why? */
+	fibnum = RT_DEFAULT_FIB;
+
 	/*
 	 * If the address matches one of our addresses,
 	 * it should be a neighbor.
@@ -1104,12 +1256,13 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 			continue;
 
 		if (!(pr->ndpr_stateflags & NDPRF_ONLINK)) {
-			struct rtentry *rt;
 
 			/* Always use the default FIB here. */
-			rt = in6_rtalloc1((struct sockaddr *)&pr->ndpr_prefix,
-			    0, 0, RT_DEFAULT_FIB);
-			if (rt == NULL)
+			dst6 = (struct sockaddr *)&pr->ndpr_prefix;
+
+			/* Restore length field before retrying lookup */
+			rt_key.sin6_len = sizeof(rt_key);
+			if (rib_lookup_info(fibnum, dst6, 0, 0, &info) != 0)
 				continue;
 			/*
 			 * This is the case where multiple interfaces
@@ -1122,11 +1275,8 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 			 * differ.
 			 */
 			if (!IN6_ARE_ADDR_EQUAL(&pr->ndpr_prefix.sin6_addr,
-			       &((struct sockaddr_in6 *)rt_key(rt))->sin6_addr)) {
-				RTFREE_LOCKED(rt);
+			       &rt_key.sin6_addr))
 				continue;
-			}
-			RTFREE_LOCKED(rt);
 		}
 
 		if (IN6_ARE_MASKED_ADDR_EQUAL(&pr->ndpr_prefix.sin6_addr,
@@ -1322,6 +1472,15 @@ nd6_free(struct llentry *ln, int gc)
 	llentry_free(ln);
 }
 
+static int
+nd6_isdynrte(const struct rtentry *rt, void *xap)
+{
+
+	if (rt->rt_flags == (RTF_UP | RTF_HOST | RTF_DYNAMIC))
+		return (1);
+
+	return (0);
+}
 /*
  * Remove the rtentry for the given llentry,
  * both of which were installed by a redirect.
@@ -1330,26 +1489,16 @@ static void
 nd6_free_redirect(const struct llentry *ln)
 {
 	int fibnum;
-	struct rtentry *rt;
-	struct radix_node_head *rnh;
 	struct sockaddr_in6 sin6;
+	struct rt_addrinfo info;
 
 	lltable_fill_sa_entry(ln, (struct sockaddr *)&sin6);
-	for (fibnum = 0; fibnum < rt_numfibs; fibnum++) {
-		rnh = rt_tables_get_rnh(fibnum, AF_INET6);
-		if (rnh == NULL)
-			continue;
+	memset(&info, 0, sizeof(info));
+	info.rti_info[RTAX_DST] = (struct sockaddr *)&sin6;
+	info.rti_filter = nd6_isdynrte;
 
-		RADIX_NODE_HEAD_LOCK(rnh);
-		rt = in6_rtalloc1((struct sockaddr *)&sin6, 0,
-		    RTF_RNH_LOCKED, fibnum);
-		if (rt) {
-			if (rt->rt_flags == (RTF_UP | RTF_HOST | RTF_DYNAMIC))
-				rt_expunge(rnh, rt);
-			RTFREE_LOCKED(rt);
-		}
-		RADIX_NODE_HEAD_UNLOCK(rnh);
-	}
+	for (fibnum = 0; fibnum < rt_numfibs; fibnum++)
+		rtrequest1_fib(RTM_DELETE, &info, NULL, fibnum);
 }
 
 /*
@@ -1605,7 +1754,7 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 		if (ln->la_expire == 0)
 			nbi->expire = 0;
 		else
-			nbi->expire = ln->la_expire +
+			nbi->expire = ln->la_expire + ln->lle_remtime / hz +
 			    (time_second - time_uptime);
 		LLE_RUNLOCK(ln);
 		break;
@@ -1826,8 +1975,12 @@ nd6_cache_lladdr(struct ifnet *ifp, struct in6_addr *from, char *lladdr,
 		if (lltable_calc_llheader(ifp, AF_INET6, lladdr,
 		    linkhdr, &linkhdrsize, &lladdr_off) != 0)
 			return;
-		lltable_set_entry_addr(ifp, ln, linkhdr, linkhdrsize,
-		    lladdr_off);
+
+		if (lltable_try_set_entry_addr(ifp, ln, linkhdr, linkhdrsize,
+		    lladdr_off) == 0) {
+			/* Entry was deleted */
+			return;
+		}
 
 		nd6_llinfo_setstate(ln, ND6_LLINFO_STALE);
 
@@ -2028,31 +2181,25 @@ nd6_resolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
 	}
 
 	IF_AFDATA_RLOCK(ifp);
-	ln = nd6_lookup(&dst6->sin6_addr, 0, ifp);
+	ln = nd6_lookup(&dst6->sin6_addr, LLE_UNLOCKED, ifp);
+	if (ln != NULL && (ln->r_flags & RLLE_VALID) != 0) {
+		/* Entry found, let's copy lle info */
+		bcopy(ln->r_linkdata, desten, ln->r_hdrlen);
+		if (pflags != NULL)
+			*pflags = LLE_VALID | (ln->r_flags & RLLE_IFADDR);
+		/* Check if we have feedback request from nd6 timer */
+		if (ln->r_skip_req != 0) {
+			LLE_REQ_LOCK(ln);
+			ln->r_skip_req = 0; /* Notify that entry was used */
+			ln->lle_hittime = time_uptime;
+			LLE_REQ_UNLOCK(ln);
+		}
+		IF_AFDATA_RUNLOCK(ifp);
+		return (0);
+	}
 	IF_AFDATA_RUNLOCK(ifp);
 
-	/*
-	 * Perform fast path for the following cases:
-	 * 1) lle state is REACHABLE
-	 * 2) lle state is DELAY (NS message sent)
-	 *
-	 * Every other case involves lle modification, so we handle
-	 * them separately.
-	 */
-	if (ln == NULL || (ln->ln_state != ND6_LLINFO_REACHABLE &&
-	    ln->ln_state != ND6_LLINFO_DELAY)) {
-		/* Fall back to slow processing path */
-		if (ln != NULL)
-			LLE_RUNLOCK(ln);
-		return (nd6_resolve_slow(ifp, 0, m, dst6, desten, pflags));
-	}
-
-
-	bcopy(ln->r_linkdata, desten, ln->r_hdrlen);
-	if (pflags != NULL)
-		*pflags = ln->la_flags & LLE_IFADDR;
-	LLE_RUNLOCK(ln);
-	return (0);
+	return (nd6_resolve_slow(ifp, 0, m, dst6, desten, pflags));
 }
 
 
@@ -2252,6 +2399,7 @@ nd6_flush_holdchain(struct ifnet *ifp, struct ifnet *origifp, struct mbuf *chain
 	while (m_head) {
 		m = m_head;
 		m_head = m_head->m_nextpkt;
+
 		/* XXX TODO */
 		error = nd6_output_ifp(ifp, origifp, m, dst, NULL);
 	}

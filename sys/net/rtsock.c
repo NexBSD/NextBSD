@@ -614,11 +614,16 @@ route_output(struct mbuf *m, struct socket *so, ...)
 	 */
 	if (info.rti_info[RTAX_GATEWAY] != NULL &&
 	    info.rti_info[RTAX_GATEWAY]->sa_family != AF_LINK) {
-		struct route gw_ro;
+		struct rt_addrinfo ginfo;
+		struct sockaddr *gdst;
 
-		bzero(&gw_ro, sizeof(gw_ro));
-		gw_ro.ro_dst = *info.rti_info[RTAX_GATEWAY];
-		rtalloc_ign_fib(&gw_ro, 0, fibnum);
+		bzero(&ginfo, sizeof(ginfo));
+		bzero(&ss, sizeof(ss));
+		ss.ss_len = sizeof(ss);
+
+		ginfo.rti_info[RTAX_GATEWAY] = (struct sockaddr *)&ss;
+		gdst = info.rti_info[RTAX_GATEWAY];
+
 		/* 
 		 * A host route through the loopback interface is 
 		 * installed for each interface adddress. In pre 8.0
@@ -629,14 +634,14 @@ route_output(struct mbuf *m, struct socket *so, ...)
 		 * AF_LINK sa_family type of the rt_gateway, and the
 		 * rt_ifp has the IFF_LOOPBACK flag set.
 		 */
-		if (gw_ro.ro_rt != NULL &&
-		    gw_ro.ro_rt->rt_gateway->sa_family == AF_LINK &&
-		    gw_ro.ro_rt->rt_ifp->if_flags & IFF_LOOPBACK) {
-			info.rti_flags &= ~RTF_GATEWAY;
-			info.rti_flags |= RTF_GWFLAG_COMPAT;
+		if (rib_lookup_info(fibnum, gdst, NHR_REF, 0, &ginfo) == 0) {
+			if (ss.ss_family == AF_LINK &&
+			    ginfo.rti_ifp->if_flags & IFF_LOOPBACK) {
+				info.rti_flags &= ~RTF_GATEWAY;
+				info.rti_flags |= RTF_GWFLAG_COMPAT;
+			}
+			rib_free_info(&ginfo);
 		}
-		if (gw_ro.ro_rt != NULL)
-			RTFREE(gw_ro.ro_rt);
 	}
 
 	switch (rtm->rtm_type) {
@@ -924,6 +929,11 @@ rt_getmetrics(const struct rtentry *rt, struct rt_metrics *out)
 	/* Kernel -> userland timebase conversion. */
 	out->rmx_expire = rt->rt_expire ?
 	    rt->rt_expire - time_uptime + time_second : 0;
+#ifdef INET
+	out->rmx_filler[0] = ip_osd_get(rt->rt_osd);
+	out->rmx_filler[1] = tcp_osd_get(rt->rt_osd);
+	out->rmx_filler[2] = udp_osd_get(rt->rt_osd);
+#endif
 }
 
 /*

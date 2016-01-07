@@ -732,9 +732,9 @@ netname(struct sockaddr *sa)
 static void
 set_metric(char *value, int key)
 {
-	int flag = 0;
+	int shift, flag = 0;
 	char *endptr;
-	u_long noval, *valp = &noval;
+	u_long ipbool, noval, *valp = &noval;
 
 	switch (key) {
 #define caseof(x, y, z)	case x: valp = &rt_metrics.z; flag = y; break
@@ -747,6 +747,8 @@ set_metric(char *value, int key)
 	caseof(K_RTT, RTV_RTT, rmx_rtt);
 	caseof(K_RTTVAR, RTV_RTTVAR, rmx_rttvar);
 	caseof(K_WEIGHT, RTV_WEIGHT, rmx_weight);
+	caseof(K_ECN, RTV_IP, rmx_filler[0]);
+	caseof(K_DCTCP, RTV_TCP, rmx_filler[1]);
 	}
 	rtm_inits |= flag;
 	if (lockrest || locking)
@@ -754,11 +756,25 @@ set_metric(char *value, int key)
 	if (locking)
 		locking = 0;
 	errno = 0;
-	*valp = strtol(value, &endptr, 0);
+
+	if (flag & (RTV_IP|RTV_UDP|RTV_TCP)) {
+		ipbool = strtol(value, &endptr, 0);
+		shift = ipbool ? 0 : 16;
+	} else
+		*valp = strtol(value, &endptr, 0);
 	if (errno == 0 && *endptr != '\0')
 		errno = EINVAL;
 	if (errno)
 		err(EX_USAGE, "%s", value);
+
+	if (flag & RTV_IP) {
+		if (key == K_ECN)
+			*valp = (TSS_IP_ECN << shift);
+	}
+	if (flag & RTV_TCP) {
+		if (key == K_DCTCP)
+			*valp = (TSS_TCP_DCTCP << shift);
+	}
 	if (flag & RTV_EXPIRE && (value[0] == '+' || value[0] == '-')) {
 		struct timespec ts;
 

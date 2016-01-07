@@ -271,9 +271,13 @@
                     ..
                 ..
             ..
+            nss
+            ..
             regex
                 data
                 ..
+            ..
+            resolv
             ..
             rpc
             ..
@@ -373,10 +377,20 @@
         file
         ..
         kern
+            acct
+            ..
             execve
+            ..
+            pipe
             ..
         ..
         kqueue
+        ..
+        mac
+            bsdextended
+            ..
+            portacl
+            ..
         ..
         mqueue
         ..
@@ -553,6 +567,8 @@
         jot
         ..
         lastcomm
+        ..
+        limits
         ..
         m4
         ..

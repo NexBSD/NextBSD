@@ -44,16 +44,17 @@
  */
 
 /*
- * A route consists of a destination address, a reference
- * to a routing entry, and a reference to an llentry.  
- * These are often held by protocols in their control
- * blocks, e.g. inpcb.
+ * Struct route consiste of a destination address,
+ * a route entry pointer, link-layer prepend data pointer along
+ * with its length.
  */
 struct route {
 	struct	rtentry *ro_rt;
 	char		*ro_prepend;
 	uint16_t	ro_plen;
 	uint16_t	ro_flags;
+	uint16_t	ro_mtu;	/* saved ro_rt mtu */
+	uint16_t	spare;
 	struct	sockaddr ro_dst;
 };
 
@@ -89,6 +90,9 @@ struct rt_metrics {
  */
 #define	RTM_RTTUNIT	1000000	/* units for rtt, rttvar, as units per sec */
 #define	RTTTOPRHZ(r)	((r) / (RTM_RTTUNIT / PR_SLOWHZ))
+
+/* lle state is exported in rmx_state rt_metrics field */
+#define	rmx_state	rmx_weight
 
 #define	RT_DEFAULT_FIB	0	/* Explicitly mark fib=0 restricted cases */
 #define	RT_ALL_FIBS	-1	/* Announce event for every fib */
@@ -136,6 +140,7 @@ struct rtentry {
 	counter_u64_t	rt_pksent;	/* packets sent using this route */
 	struct mtx	rt_mtx;		/* mutex for routing entry */
 	struct osd	*rt_osd;	/* object specific data for ULPs */
+	struct rtentry	*rt_chain;	/* pointer to next rtentry to delete */
 };
 #endif /* _KERNEL || _WANT_RTENTRY */
 
@@ -184,6 +189,40 @@ struct rtentry {
 #define	TSS_IP_ECN		0x1
 #define	TSS_TCP_DCTCP		0x1
 
+
+/*
+ * fib_ nexthop API flags.
+ */
+
+/* Consumer-visible nexthop info flags */
+#define	NHF_REJECT		0x0010	/* RTF_REJECT */
+#define	NHF_BLACKHOLE		0x0020	/* RTF_BLACKHOLE */
+#define	NHF_REDIRECT		0x0040	/* RTF_DYNAMIC|RTF_MODIFIED */
+#define	NHF_DEFAULT		0x0080	/* Default route */
+#define	NHF_BROADCAST		0x0100	/* RTF_BROADCAST */
+#define	NHF_GATEWAY		0x0200	/* RTF_GATEWAY */
+
+/* Nexthop request flags */
+#define	NHR_IFAIF		0x01	/* Return ifa_ifp interface */
+#define	NHR_REF			0x02	/* For future use */
+
+/* Control plane route request flags */
+#define	NHR_COPY		0x100	/* Copy rte data */
+
+/* rte<>nhop translation */
+static inline uint16_t
+fib_rte_to_nh_flags(int rt_flags)
+{
+	uint16_t res;
+
+	res = (rt_flags & RTF_REJECT) ? NHF_REJECT : 0;
+	res |= (rt_flags & RTF_BLACKHOLE) ? NHF_BLACKHOLE : 0;
+	res |= (rt_flags & (RTF_DYNAMIC|RTF_MODIFIED)) ? NHF_REDIRECT : 0;
+	res |= (rt_flags & RTF_BROADCAST) ? NHF_BROADCAST : 0;
+	res |= (rt_flags & RTF_GATEWAY) ? NHF_GATEWAY : 0;
+
+	return (res);
+}
 
 /*
  * Routing statistics.
@@ -279,14 +318,19 @@ struct rt_msghdr {
 #define RTAX_BRD	7	/* for NEWADDR, broadcast or p-p dest addr */
 #define RTAX_MAX	8	/* size of array to allocate */
 
+typedef int rt_filter_f_t(const struct rtentry *, void *);
+
 struct rt_addrinfo {
-	int	rti_addrs;
-	struct	sockaddr *rti_info[RTAX_MAX];
-	int	rti_flags;
-	struct	ifaddr *rti_ifa;
-	struct	ifnet *rti_ifp;
-	u_long	rti_mflags;
-	struct	rt_metrics *rti_rmx;
+	int	rti_addrs;			/* Route RTF_ flags */
+	int	rti_flags;			/* Route RTF_ flags */
+	struct	sockaddr *rti_info[RTAX_MAX];	/* Sockaddr data */
+	struct	ifaddr *rti_ifa;		/* value of rt_ifa addr */
+	struct	ifnet *rti_ifp;			/* route interface */
+	rt_filter_f_t	*rti_filter;		/* filter function */
+	void	*rti_filterdata;		/* filter paramenters */
+	u_long	rti_mflags;			/* metrics RTV_ flags */
+	u_long	rti_spare;			/* Will be used for fib */
+	struct	rt_metrics *rti_rmx;		/* Pointer to route metrics */
 };
 
 /*
@@ -364,26 +408,6 @@ struct rt_addrinfo {
 } while (0)
 
 
-/* Encap request types */
-typedef enum {
-	IFENCAP_LL = 1			/* pre-calculate link-layer header */
-} ife_type;
-
-struct if_encap_req {
-	u_char		*buf;		/* Destination buffer */
-	size_t		bufsize;	/* pointer to size of provided buffer */
-	ife_type	rtype;		/* request type */
-	uint32_t	flags;		/* Request flags */
-	int		family;		/* Address family */
-	int		lladdr_off;	/* offset from header start (w) */
-	int		lladdr_len;	/* lladdr length */
-	char		*lladdr;	/* link-level address pointer */
-	char		*hdata;		/* Upper layer header data */
-};
-
-#define	IFENCAP_FLAG_BROADCAST	0x02	/* Destination is broadcast */
-int	if_requestencap_default(struct ifnet *ifp, struct if_encap_req *req);
-
 struct radix_node_head *rt_tables_get_rnh(int, int);
 
 struct ifmultiaddr;
@@ -424,6 +448,7 @@ void	rt_updatemtu(struct ifnet *);
 typedef int rt_walktree_f_t(struct rtentry *, void *);
 typedef void rt_setwarg_t(struct radix_node_head *, uint32_t, int, void *);
 void	rt_foreach_fib_walk(int af, rt_setwarg_t *, rt_walktree_f_t *, void *);
+void	rt_foreach_fib_walk_del(int af, rt_filter_f_t *filter_f, void *arg);
 void	rt_flushifroutes(struct ifnet *ifp);
 
 /* XXX MRT COMPAT VERSIONS THAT SET UNIVERSE to 0 */
@@ -452,6 +477,9 @@ void	 rtredirect_fib(struct sockaddr *, struct sockaddr *,
 int	 rtrequest_fib(int, struct sockaddr *,
 	    struct sockaddr *, struct sockaddr *, int, struct rtentry **, u_int);
 int	 rtrequest1_fib(int, struct rt_addrinfo *, struct rtentry **, u_int);
+int	rib_lookup_info(uint32_t, const struct sockaddr *, uint32_t, uint32_t,
+	    struct rt_addrinfo *);
+void	rib_free_info(struct rt_addrinfo *info);
 
 void	ip_osd_set(struct osd *osd, u_long flags);
 u_long	ip_osd_get(struct osd *osd);

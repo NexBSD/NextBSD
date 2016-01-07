@@ -253,7 +253,6 @@ ip_output(struct mbuf *m, struct mbuf *opt, struct route *ro, int flags,
 		(void )flowtable_lookup(AF_INET, m, ro);
 	else {
 		nortfree = 1;
-		ia = ro->ro_ia;
 	}
 #endif
 

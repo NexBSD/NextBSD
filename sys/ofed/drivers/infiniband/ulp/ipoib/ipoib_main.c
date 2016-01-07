@@ -1254,13 +1254,26 @@ ipoib_cleanup_module(void)
 static int
 ipoib_requestencap(struct ifnet *ifp, struct if_encap_req *req)
 {
-	struct ipoib_header *ih;
-	struct arphdr *ah;
+	u_char edst[INFINIBAND_ALEN];
+#if defined(INET) || defined(INET6)
+	struct llentry *lle = NULL;
+#endif
+	struct rtentry *rt0 = NULL;
+	struct ipoib_header *eh;
+	int error = 0, is_gw = 0;
 	short type;
 	const char *lladdr;
 
-	if (req->rtype != IFENCAP_LL)
-		return (EOPNOTSUPP);
+	if (ro != NULL) {
+		rt0 = ro->ro_rt;
+		if (rt0 != NULL && (rt0->rt_flags & RTF_GATEWAY) != 0)
+			is_gw = 1;
+	}
+#ifdef MAC
+	error = mac_ifnet_check_transmit(ifp, m);
+	if (error)
+		goto bad;
+#endif
 
 	if (req->bufsize < sizeof(struct ipoib_header))
 		return (ENOMEM);
@@ -1271,6 +1284,14 @@ ipoib_requestencap(struct ifnet *ifp, struct if_encap_req *req)
 
 	switch (req->family) {
 	case AF_INET:
+		if (lle != NULL && (lle->la_flags & LLE_VALID))
+			memcpy(edst, lle->ll_addr, sizeof(edst));
+		else if (m->m_flags & M_MCAST)
+			ip_ib_mc_map(((struct sockaddr_in *)dst)->sin_addr.s_addr, ifp->if_broadcastaddr, edst);
+		else
+			error = arpresolve(ifp, is_gw, m, dst, edst, NULL);
+		if (error)
+			return (error == EWOULDBLOCK ? 0 : error);
 		type = htons(ETHERTYPE_IP);
 		break;
 	case AF_INET6:
@@ -1341,16 +1362,15 @@ ipoib_resolve_addr(struct ifnet *ifp, struct mbuf *m,
 #endif
 #ifdef INET6
 	case AF_INET6:
-		if ((m->m_flags & M_MCAST) == 0)
-			error = nd6_resolve(ifp, 0, m, dst, phdr, &lleflags);
-		else {
-			const struct in6_addr *a6;
-			a6 = &(((const struct sockaddr_in6 *)dst)->sin6_addr);
-			ipv6_ib_mc_map(a6, ifp->if_broadcastaddr,
-			    (char *)&ih->hwaddr);
-			type = htons(ETHERTYPE_IPV6);
-			memcpy(&ih->proto, &type, sizeof(ih->proto));
-		}
+		if (lle != NULL && (lle->la_flags & LLE_VALID))
+			memcpy(edst, lle->ll_addr, sizeof(edst));
+		else if (m->m_flags & M_MCAST)
+			ipv6_ib_mc_map(&((struct sockaddr_in6 *)dst)->sin6_addr, ifp->if_broadcastaddr, edst);
+		else
+			error = nd6_resolve(ifp, is_gw, m, dst, edst, NULL);
+		if (error)
+			return error;
+		type = htons(ETHERTYPE_IPV6);
 		break;
 #endif
 	default:

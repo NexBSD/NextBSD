@@ -128,7 +128,6 @@ SYSCTL_INT(_net_inet_udp, OID_AUTO, blackhole, CTLFLAG_VNET | CTLFLAG_RW,
     "Do not send port unreachables for refused connects");
 
 u_long	udp_sendspace = 9216;		/* really max datagram size */
-					/* 40 1K datagrams */
 SYSCTL_ULONG(_net_inet_udp, UDPCTL_MAXDGRAM, maxdgram, CTLFLAG_RW,
     &udp_sendspace, 0, "Maximum outgoing UDP datagram size");
 
@@ -138,7 +137,7 @@ u_long	udp_recvspace = 40 * (1024 +
 #else
 				      sizeof(struct sockaddr_in)
 #endif
-				      );
+				      );	/* 40 1K datagrams */
 
 SYSCTL_ULONG(_net_inet_udp, UDPCTL_RECVSPACE, recvspace, CTLFLAG_RW,
     &udp_recvspace, 0, "Maximum space for incoming UDP datagrams");
@@ -287,6 +286,24 @@ udplite_destroy(void)
 #endif
 
 #ifdef INET
+/*
+ * Set / get subnet state (ECN etc)
+ */
+
+void
+udp_osd_set(struct osd *osd, u_long flags)
+{
+	;
+}
+
+u_long
+udp_osd_get(struct osd *osd)
+{
+
+	return (0);
+}
+
+
 /*
  * Subroutine of udp_input(), which appends the provided mbuf chain to the
  * passed pcb/socket.  The caller must provide a sockaddr_in via udp_in that
@@ -1714,6 +1731,7 @@ udp_attach(struct socket *so, int proto, struct thread *td)
 
 	inp = sotoinpcb(so);
 	inp->inp_vflag |= INP_IPV4;
+	inp->inp_ip_p = IPPROTO_UDP;
 	inp->inp_ip_ttl = V_ip_defttl;
 
 	error = udp_newudpcb(inp);

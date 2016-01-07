@@ -5,6 +5,6 @@ BINDIR?= /usr/bin
 
 MK_MAN=no
 CFLAGS+= -D__APPLE__ -I${.CURDIR}/../../../include/apple
-LDADD+= -lmach -pthread
+LDFLAGS+= -lmach -pthread
 
 .include <bsd.prog.mk>

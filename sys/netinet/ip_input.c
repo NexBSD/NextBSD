@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/hhook.h>
 #include <sys/mbuf.h>
 #include <sys/malloc.h>
 #include <sys/domain.h>
@@ -100,6 +101,11 @@ extern void ipreass_slowtimo(void);
 extern void ipreass_destroy(void);
 #endif
 
+static int ip_osd_id;
+static void ip_osd_del(void *iss);
+struct ip_subnet_state {
+	int iss_flags;
+};
 struct rmlock in_ifaddr_lock;
 RM_SYSINIT(in_ifaddr_lock, &in_ifaddr_lock, "in_ifaddr_lock");
 
@@ -318,6 +324,17 @@ ip_init(void)
 		printf("%s: WARNING: unable to register pfil hook, "
 			"error %d\n", __func__, i);
 
+	if (hhook_head_register(HHOOK_TYPE_IPSEC_IN, AF_INET,
+	    &V_ipsec_hhh_in[HHOOK_IPSEC_INET],
+	    HHOOK_WAITOK | HHOOK_HEADISINVNET) != 0)
+		printf("%s: WARNING: unable to register input helper hook\n",
+		    __func__);
+	if (hhook_head_register(HHOOK_TYPE_IPSEC_OUT, AF_INET,
+	    &V_ipsec_hhh_out[HHOOK_IPSEC_INET],
+	    HHOOK_WAITOK | HHOOK_HEADISINVNET) != 0)
+		printf("%s: WARNING: unable to register output helper hook\n",
+		    __func__);
+
 	/* Skip initialization of globals for non-default instances. */
 	if (!IS_DEFAULT_VNET(curvnet))
 		return;
@@ -346,18 +363,31 @@ ip_init(void)
 #ifdef	RSS
 	netisr_register(&ip_direct_nh);
 #endif
+	ip_osd_id = osd_register(OSD_ROUTE, ip_osd_del, NULL);
 }
 
 #ifdef VIMAGE
 void
 ip_destroy(void)
 {
-	int i;
+	int error;
 
-	if ((i = pfil_head_unregister(&V_inet_pfil_hook)) != 0)
+	if ((error = pfil_head_unregister(&V_inet_pfil_hook)) != 0)
 		printf("%s: WARNING: unable to unregister pfil hook, "
-		    "error %d\n", __func__, i);
+		    "error %d\n", __func__, error);
 
+	error = hhook_head_deregister(V_ipsec_hhh_in[HHOOK_IPSEC_INET]);
+	if (error != 0) {
+		printf("%s: WARNING: unable to deregister input helper hook "
+		    "type HHOOK_TYPE_IPSEC_IN, id HHOOK_IPSEC_INET: "
+		    "error %d returned\n", __func__, error);
+	}
+	error = hhook_head_deregister(V_ipsec_hhh_out[HHOOK_IPSEC_INET]);
+	if (error != 0) {
+		printf("%s: WARNING: unable to deregister output helper hook "
+		    "type HHOOK_TYPE_IPSEC_OUT, id HHOOK_IPSEC_INET: "
+		    "error %d returned\n", __func__, error);
+	}
 	/* Cleanup in_ifaddr hash table; should be empty. */
 	hashdestroy(V_in_ifaddrhashtbl, M_IFADDR, V_in_ifaddrhmask);
 
@@ -387,6 +417,51 @@ ip_direct_input(struct mbuf *m)
 	return;
 }
 #endif
+
+
+/*
+ * Set / get subnet state (ECN etc)
+ */
+
+void
+ip_osd_set(struct osd *osd, u_long flags)
+{
+	u_long clear, set;
+	struct ip_subnet_state *iss;
+
+	clear = ((flags >> 16) & 0xffff);
+	set = (flags & 0xffff);
+
+	iss = osd_get(OSD_ROUTE, osd, ip_osd_id);
+
+	if (iss == NULL)
+		iss = malloc(sizeof(*iss), M_DEVBUF, M_ZERO|M_WAITOK);
+
+	iss->iss_flags &= ~clear;
+	iss->iss_flags |= set;
+
+	osd_set(OSD_ROUTE, osd, ip_osd_id, iss);
+}
+
+u_long
+ip_osd_get(struct osd *osd)
+{
+	struct ip_subnet_state *iss;
+
+	iss = osd_get(OSD_ROUTE, osd, ip_osd_id);
+
+	if (iss == NULL)
+		return (0);
+
+	return (iss->iss_flags & 0xffff);
+}
+
+static void
+ip_osd_del(void *iss)
+{
+
+	free(iss, M_DEVBUF);
+}
 
 /*
  * Ip input routine.  Checksum and byte swap header.  If fragmented
@@ -852,33 +927,6 @@ ipproto_unregister(short ipproto)
 	/* Reset the protocol slot to IPPROTO_RAW. */
 	ip_protox[ipproto] = pr - inetsw;
 	return (0);
-}
-
-/*
- * Given address of next destination (final or next hop), return (referenced)
- * internet address info of interface to be used to get there.
- */
-struct in_ifaddr *
-ip_rtaddr(struct in_addr dst, u_int fibnum)
-{
-	struct route sro;
-	struct sockaddr_in *sin;
-	struct in_ifaddr *ia;
-
-	bzero(&sro, sizeof(sro));
-	sin = (struct sockaddr_in *)&sro.ro_dst;
-	sin->sin_family = AF_INET;
-	sin->sin_len = sizeof(*sin);
-	sin->sin_addr = dst;
-	in_rtalloc_ign(&sro, 0, fibnum);
-
-	if (sro.ro_rt == NULL)
-		return (NULL);
-
-	ia = ifatoia(sro.ro_rt->rt_ifa);
-	ifa_ref(&ia->ia_ifa);
-	RTFREE(sro.ro_rt);
-	return (ia);
 }
 
 u_char inetctlerrmap[PRC_NCMDS] = {

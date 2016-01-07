@@ -261,6 +261,8 @@
         i386
         ..
     ..
+    lib80211
+    ..
     libmilter
     ..
     libxo

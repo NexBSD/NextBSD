@@ -50,7 +50,7 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	libdwarf \
 	libedit \
 	${_libelftc} \
-	${_libevent} \
+	libevent \
 	libexecinfo \
 	libexpat \
 	libfetch \
@@ -75,6 +75,7 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	${_libmp} \
 	libmt \
 	${_libnandfs} \
+	lib80211 \
 	libnetbsd \
 	${_libnetgraph} \
 	${_libngatm} \
@@ -95,13 +96,16 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	${_librtld_db} \
 	libsbuf \
 	${_libsdp} \
-	${_libsmb} \
+	${_libsm} \
+	libsmb \
+	${_libsmdb} \
 	${_libsmutil} \
 	libsqlite3 \
 	libstand \
 	libstdbuf \
 	libstdthreads \
 	libSystem \
+	libsysdecode \
 	libtacplus \
 	${_libtelnet} \
 	${_libthr} \
@@ -246,12 +250,7 @@ _libnetgraph=	libnetgraph
 _libypclnt=	libypclnt
 .endif
 
-.if ${MK_PF} != "no"
-_libevent=	libevent
-.endif
-
 .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
-_libsmb=	libsmb
 _libvgl=	libvgl
 _libproc=	libproc
 _librtld_db=	librtld_db
@@ -272,15 +271,9 @@ _librtld_db=	librtld_db
 .if ${MACHINE_CPUARCH} == "powerpc"
 _libproc=	libproc
 _librtld_db=	librtld_db
-_libsmb=	libsmb
-.endif
-
-.if ${MACHINE_CPUARCH} == "sparc64"
-_libsmb=	libsmb
 .endif
 
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "arm"
-_libsmb=	libsmb
 _libproc=	libproc
 _librtld_db=	librtld_db
 .endif
@@ -315,11 +308,6 @@ _libunbound=	libunbound
 .if ${MK_USB} != "no"
 _libusbhid=	libusbhid
 _libusb=	libusb
-.endif
-
-.if !defined(LIBRARIES_ONLY)
-afterinstall:
-	${INSTALL_SYMLINK} ../include ${DESTDIR}/usr/lib/include
 .endif
 
 .if !make(install)
