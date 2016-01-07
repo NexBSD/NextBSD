@@ -2341,6 +2341,10 @@ iflib_txq_drain(struct mp_ring *r, uint32_t cidx, uint32_t pidx)
 	int i, count, pkt_sent, bytes_sent, mcast_sent, avail;
 
 	avail = IDXDIFF(pidx, cidx, r->size);
+	if (avail < (r->size >> 1)) {
+		txq->ift_closed = FALSE;
+		inp_rexmt_start(txq->ift_id, ctx->ifc_softc_ctx.isc_nqsets);
+	}
 	if (ctx->ifc_flags & IFC_QFLUSH) {
 		DBG_COUNTER_INC(txq_drain_flushing);
 		for (i = 0; i < avail; i++) {

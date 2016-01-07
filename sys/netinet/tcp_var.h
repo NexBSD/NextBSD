@@ -182,22 +182,22 @@ struct tcpcb {
 
 	u_int	t_maxopd;		/* mss plus options */
 
-	u_int	t_rcvtime;		/* inactivity time */
-	u_int	t_starttime;		/* time connection was established */
+	sbintime_t	t_rcvtime;		/* inactivity time */
+	sbintime_t	t_starttime;		/* time connection was established */
 	u_int	t_rtttime;		/* RTT measurement start time */
 	tcp_seq	t_rtseq;		/* sequence number being timed */
 
 	u_int	t_bw_spare1;		/* unused */
 	tcp_seq	t_bw_spare2;		/* unused */
 
-	int	t_rxtcur;		/* current retransmit value (ticks) */
+	sbintime_t t_rxtcur;		/* current retransmit value */
 	u_int	t_maxseg;		/* maximum segment size */
-	int	t_srtt;			/* smoothed round-trip time */
-	int	t_rttvar;		/* variance in round-trip time */
+	uint64_t	t_srtt;			/* smoothed round-trip time */
+	uint64_t	t_rttvar;		/* variance in round-trip time */
 
 	int	t_rxtshift;		/* log(2) of rexmt exp. backoff */
-	u_int	t_rttmin;		/* minimum rtt allowed */
-	u_int	t_rttbest;		/* best rtt we've seen */
+	sbintime_t	t_rttmin;		/* minimum rtt allowed */
+	sbintime_t	t_rttbest;		/* best rtt we've seen */
 	u_long	t_rttupdated;		/* number of times rtt sampled */
 	u_long	max_sndwnd;		/* largest window peer has offered */
 
@@ -210,7 +210,7 @@ struct tcpcb {
 	u_char	rcv_scale;		/* window scaling for recv window */
 	u_char	request_r_scale;	/* pending window scaling */
 	u_int32_t  ts_recent;		/* timestamp echo data */
-	u_int	ts_recent_age;		/* when last updated */
+	sbintime_t	ts_recent_age;		/* when last updated */
 	u_int32_t  ts_offset;		/* our timestamp offset */
 
 	tcp_seq	last_ack_sent;
@@ -219,7 +219,7 @@ struct tcpcb {
 	u_long	snd_ssthresh_prev;	/* ssthresh prior to retransmit */
 	tcp_seq	snd_recover_prev;	/* snd_recover prior to retransmit */
 	int	t_sndzerowin;		/* zero-window updates sent */
-	u_int	t_badrxtwin;		/* window for retransmit recovery */
+	sbintime_t	t_badrxtwin;		/* window for retransmit recovery */
 	u_char	snd_limited;		/* segments limited transmitted */
 /* SACK related state */
 	int	snd_numholes;		/* number of holes seen by sender */
@@ -253,6 +253,8 @@ struct tcpcb {
 	u_int	t_tsomaxsegsize;	/* TSO maximum segment size in bytes */
 	u_int	t_pmtud_saved_maxopd;	/* pre-blackhole MSS */
 	u_int	t_flags2;		/* More tcpcb flags storage */
+	u_int	t_delack;		/* delayed ack timer */
+
 #if defined(_KERNEL) && defined(TCP_RFC7413)
 	uint32_t t_ispare[6];		/* 5 UTO, 1 TBD */
 	uint64_t t_tfo_cookie;		/* TCP Fast Open cookie */
@@ -297,6 +299,7 @@ struct tcpcb {
 #define	TF_NEEDFIN	0x000800	/* send FIN (implicit state) */
 #define	TF_NOPUSH	0x001000	/* don't push */
 #define	TF_PREVVALID	0x002000	/* saved values for bad rxmit valid */
+#define	TF_ECN_ATTEMPT	0x004000	/* try to negotiate ECN */
 #define	TF_MORETOCOME	0x010000	/* More data to be appended to sock */
 #define	TF_LQ_OVERFLOW	0x020000	/* listen queue overflow */
 #define	TF_LASTIDLE	0x040000	/* connection was previously idle */
@@ -355,6 +358,7 @@ struct tcpcb {
 #define	TF2_PLPMTU_BLACKHOLE	0x00000001 /* Possible PLPMTUD Black Hole. */
 #define	TF2_PLPMTU_PMTUD	0x00000002 /* Allowed to attempt PLPMTUD. */
 #define	TF2_PLPMTU_MAXSEGSNT	0x00000004 /* Last seg sent was full seg. */
+#define	TF2_ECN_ATTEMPT		0x00000008 /* Try ECN */
 
 /*
  * Structure to hold TCP options that are only used during segment
@@ -427,7 +431,7 @@ struct tcptw {
 	struct ucred	*tw_cred;	/* user credentials */
 	u_int32_t	t_recent;
 	u_int32_t	ts_offset;	/* our timestamp offset */
-	u_int		t_starttime;
+	sbintime_t	t_starttime;
 	int		tw_time;
 	TAILQ_ENTRY(tcptw) tw_2msl;
 	void		*tw_pspare;	/* TCP_SIGNATURE */
@@ -443,15 +447,15 @@ struct tcptw {
  * are stored as fixed point numbers scaled by the values below.
  * For convenience, these scales are also used in smoothing the average
  * (smoothed = (1/scale)sample + ((scale-1)/scale)smoothed).
- * With these scales, srtt has 3 bits to the right of the binary point,
- * and thus an "ALPHA" of 0.875.  rttvar has 2 bits to the right of the
+ * With these scales, srtt has 13 bits to the right of the binary point,
+ * and thus an "ALPHA" of 0.875.  rttvar has 13 bits to the right of the
  * binary point, and is smoothed with an ALPHA of 0.75.
  */
-#define	TCP_RTT_SCALE		32	/* multiplier for srtt; 3 bits frac. */
-#define	TCP_RTT_SHIFT		5	/* shift for srtt; 3 bits frac. */
-#define	TCP_RTTVAR_SCALE	16	/* multiplier for rttvar; 2 bits */
-#define	TCP_RTTVAR_SHIFT	4	/* shift for rttvar; 2 bits */
-#define	TCP_DELTA_SHIFT		2	/* see tcp_input.c */
+#define	TCP_RTT_SCALE		(1<<16)	/* multiplier for srtt; 14 bits frac. */
+#define	TCP_RTT_SHIFT		16	/* shift for srtt; 14 bits frac. */
+#define	TCP_RTTVAR_SCALE	(1<<15)	/* multiplier for rttvar; 2 bits */
+#define	TCP_RTTVAR_SHIFT	15	/* shift for rttvar; 2 bits */
+#define	TCP_DELTA_SHIFT		13	/* see tcp_input.c */
 
 /*
  * The initial retransmission should happen at rtt + 4 * rttvar.
@@ -753,7 +757,6 @@ void	tcp_dropwithreset(struct mbuf *, struct tcphdr *,
 		     struct tcpcb *, int, int);
 void	tcp_pulloutofband(struct socket *,
 		     struct tcphdr *, struct mbuf *, int);
-void	tcp_xmit_timer(struct tcpcb *, int);
 void	tcp_newreno_partial_ack(struct tcpcb *, struct tcphdr *);
 void	cc_ack_received(struct tcpcb *tp, struct tcphdr *th,
 			    uint16_t type);
@@ -811,7 +814,7 @@ void	 tcp_slowtimo(void);
 struct tcptemp *
 	 tcpip_maketemplate(struct inpcb *);
 void	 tcpip_fillheaders(struct inpcb *, void *, void *);
-void	 tcp_timer_activate(struct tcpcb *, uint32_t, u_int);
+void	 tcp_timer_activate(struct tcpcb *, uint32_t, sbintime_t);
 int	 tcp_timer_active(struct tcpcb *, uint32_t);
 void	 tcp_timer_stop(struct tcpcb *, uint32_t);
 void	 tcp_trace(short, short, struct tcpcb *, void *, struct tcphdr *, int);
@@ -840,6 +843,8 @@ void	 tcp_free_sackholes(struct tcpcb *tp);
 int	 tcp_newreno(struct tcpcb *, struct tcphdr *);
 u_long	 tcp_seq_subtract(u_long, u_long );
 int	 tcp_compute_pipe(struct tcpcb *);
+void	 tcp_osd_change(struct inpcb *inp, struct osd *osd);
+int	 tcp_cc_algo_set(struct tcpcb *tcp, char *name);
 
 static inline void
 tcp_fields_to_host(struct tcphdr *th)

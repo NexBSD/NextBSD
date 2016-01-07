@@ -287,6 +287,24 @@ udplite_destroy(void)
 
 #ifdef INET
 /*
+ * Set / get subnet state (ECN etc)
+ */
+
+void
+udp_osd_set(struct osd *osd, u_long flags)
+{
+	;
+}
+
+u_long
+udp_osd_get(struct osd *osd)
+{
+
+	return (0);
+}
+
+
+/*
  * Subroutine of udp_input(), which appends the provided mbuf chain to the
  * passed pcb/socket.  The caller must provide a sockaddr_in via udp_in that
  * contains the source address.  If the socket ends up being an IPv6 socket,
@@ -1713,6 +1731,7 @@ udp_attach(struct socket *so, int proto, struct thread *td)
 
 	inp = sotoinpcb(so);
 	inp->inp_vflag |= INP_IPV4;
+	inp->inp_ip_p = IPPROTO_UDP;
 	inp->inp_ip_ttl = V_ip_defttl;
 
 	error = udp_newudpcb(inp);

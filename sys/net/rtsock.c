@@ -929,6 +929,11 @@ rt_getmetrics(const struct rtentry *rt, struct rt_metrics *out)
 	/* Kernel -> userland timebase conversion. */
 	out->rmx_expire = rt->rt_expire ?
 	    rt->rt_expire - time_uptime + time_second : 0;
+#ifdef INET
+	out->rmx_filler[0] = ip_osd_get(rt->rt_osd);
+	out->rmx_filler[1] = tcp_osd_get(rt->rt_osd);
+	out->rmx_filler[2] = udp_osd_get(rt->rt_osd);
+#endif
 }
 
 /*

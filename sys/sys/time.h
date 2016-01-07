@@ -378,6 +378,8 @@ extern struct bintime tc_tick_bt;
 extern sbintime_t tc_tick_sbt;
 extern struct bintime tick_bt;
 extern sbintime_t tick_sbt;
+extern sbintime_t htick_sbt;
+extern uint64_t tsc_sbt;
 extern int tc_precexp;
 extern int tc_timepercentage;
 extern struct bintime bt_timethreshold;
@@ -448,6 +450,7 @@ int	ratecheck(struct timeval *, const struct timeval *);
 void	timevaladd(struct timeval *t1, const struct timeval *t2);
 void	timevalsub(struct timeval *t1, const struct timeval *t2);
 int	tvtohz(struct timeval *tv);
+uint64_t	tvtohz64(struct timeval *tv);
 
 #define	TC_DEFAULTPERC		5
 

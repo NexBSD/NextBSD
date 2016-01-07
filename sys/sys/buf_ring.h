@@ -41,6 +41,8 @@
 #include <sys/mutex.h>
 #endif
 
+void	if_rexmt_start(int qid, int nqs);
+
 /* cache line align buf ring entries */
 #define BR_FLAGS_ALIGNED 0x1
 
@@ -61,6 +63,9 @@ struct buf_ring {
 	volatile uint32_t	br_cons_tail;
 	int		 	br_cons_size;
 	int              	br_cons_mask;
+	int              	br_id;
+	int              	br_nqs;
+	int              	br_closed;
 #ifdef DEBUG_BUFRING
 	struct mtx		*br_lock;
 #endif
@@ -69,6 +74,9 @@ struct buf_ring {
 	int			br_flags  __aligned(CACHE_LINE_SIZE);
 	struct br_entry_	br_ring[0] __aligned(CACHE_LINE_SIZE);
 };
+
+
+static __inline int buf_ring_count(struct buf_ring *br);
 
 /*
  * ring entry accessors to allow us to make ring entry
@@ -191,6 +199,10 @@ buf_ring_enqueue(struct buf_ring *br, void *buf)
 			    buf, i, br->br_prod_tail, br->br_cons_tail);
 #endif	
 	critical_enter();
+	if (br->br_closed == TRUE) {
+		critical_exit();
+		return (ENOBUFS);
+	}
 	do {
 
 		prod_head = br->br_prod_head;
@@ -206,6 +218,7 @@ buf_ring_enqueue(struct buf_ring *br, void *buf)
 				continue;
 
 			br->br_drops++;
+			br->br_closed = TRUE;
 			critical_exit();
 			return (ENOBUFS);
 		}
@@ -333,7 +346,10 @@ buf_ring_dequeue_sc(struct buf_ring *br)
 		    br->br_cons_tail, cons_head);
 #endif
 	atomic_store_rel_32(&br->br_cons_tail, cons_next);
-
+	if (br->br_closed == TRUE && buf_ring_count(br) < (br->br_prod_size >> 1)) {
+		br->br_closed = FALSE;
+		if_rexmt_start(br->br_id, br->br_nqs);
+	}
 	return ((void *)(uintptr_t)buf);
 }
 
@@ -366,6 +382,10 @@ buf_ring_advance_sc(struct buf_ring *br)
 	 */
 	br->br_ring[cons_head].bre_ptr = NULL;
 	atomic_store_rel_32(&br->br_cons_tail, cons_next);
+	if (br->br_closed == TRUE && buf_ring_count(br) < (br->br_prod_size >> 1)) {
+		br->br_closed = FALSE;
+		if_rexmt_start(br->br_id, br->br_nqs);
+	}
 }
 
 /*
@@ -451,7 +471,7 @@ buf_ring_count(struct buf_ring *br)
 }
 
 struct buf_ring *buf_ring_alloc(int count, struct malloc_type *type, int flags,
-    struct mtx *);
+    struct mtx *, int id, int nqs);
 struct buf_ring *buf_ring_aligned_alloc(int count, struct malloc_type *type, int flags,
     struct mtx *);
 void buf_ring_free(struct buf_ring *br, struct malloc_type *type);

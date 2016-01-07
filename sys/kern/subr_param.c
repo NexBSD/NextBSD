@@ -81,10 +81,13 @@ __FBSDID("$FreeBSD$");
 
 static int sysctl_kern_vm_guest(SYSCTL_HANDLER_ARGS);
 
-int	hz;				/* system clock's frequency */
+int	hz;				/* systems maximum timer frequency */
+int	hardclock_hz;			/* system maximum hardclock frequency */
 int	tick;				/* usec per tick (1000000 / hz) */
 struct bintime tick_bt;			/* bintime per tick (1s / hz) */
+
 sbintime_t tick_sbt;
+sbintime_t htick_sbt;
 int	maxusers;			/* base tunable */
 int	maxproc;			/* maximum # of processes */
 int	maxprocperuid;			/* max # of procs per user */
@@ -107,8 +110,10 @@ u_long	dflssiz;			/* initial stack size limit */
 u_long	maxssiz;			/* max stack size */
 u_long	sgrowsiz;			/* amount to grow stack */
 
+SYSCTL_INT(_kern, OID_AUTO, hardclock_hz, CTLFLAG_RDTUN | CTLFLAG_NOFETCH, &hardclock_hz, 0,
+     "Max clock ticks per second");
 SYSCTL_INT(_kern, OID_AUTO, hz, CTLFLAG_RDTUN | CTLFLAG_NOFETCH, &hz, 0,
-    "Number of clock ticks per second");
+    "max schedulable ticks per second");
 SYSCTL_INT(_kern, OID_AUTO, nbuf, CTLFLAG_RDTUN | CTLFLAG_NOFETCH, &nbuf, 0,
     "Number of buffers in the buffer cache");
 SYSCTL_INT(_kern, OID_AUTO, nswbuf, CTLFLAG_RDTUN | CTLFLAG_NOFETCH, &nswbuf, 0,
@@ -162,12 +167,16 @@ init_param1(void)
 #if !defined(__mips__) && !defined(__arm64__) && !defined(__sparc64__)
 	TUNABLE_INT_FETCH("kern.kstack_pages", &kstack_pages);
 #endif
-	hz = -1;
+	hardclock_hz = hz = -1;
 	TUNABLE_INT_FETCH("kern.hz", &hz);
 	if (hz == -1)
 		hz = vm_guest > VM_GUEST_NO ? HZ_VM : HZ;
-	tick = 1000000 / hz;
+	TUNABLE_INT_FETCH("kern.hardclock_hz", &hardclock_hz);
+	if (hardclock_hz == -1)
+		hardclock_hz = min(hz, HZ);
+	tick = max(1000000 / hz, 1);
 	tick_sbt = SBT_1S / hz;
+	htick_sbt = SBT_1S / hardclock_hz;
 	tick_bt = sbttobt(tick_sbt);
 
 #ifdef VM_SWZONE_SIZE_MAX

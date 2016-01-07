@@ -245,7 +245,8 @@ ip_output(struct mbuf *m, struct mbuf *opt, struct route *ro, int flags,
 	if (ro == NULL) {
 		ro = &iproute;
 		bzero(ro, sizeof (*ro));
-	}
+	} else
+		nortfree = 1;
 
 #ifdef FLOWTABLE
 	if (ro->ro_rt == NULL)

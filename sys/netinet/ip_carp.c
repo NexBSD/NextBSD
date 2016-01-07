@@ -926,7 +926,7 @@ carp_send_ad_locked(struct carp_softc *sc)
 #endif /* INET6 */
 
 resched:
-	callout_reset(&sc->sc_ad_tmo, tvtohz(&tv), carp_send_ad, sc);
+	callout_reset(&sc->sc_ad_tmo, tvtohz64(&tv), carp_send_ad, sc);
 }
 
 static void
@@ -1211,25 +1211,25 @@ carp_setrun(struct carp_softc *sc, sa_family_t af)
 		switch (af) {
 #ifdef INET
 		case AF_INET:
-			callout_reset(&sc->sc_md_tmo, tvtohz(&tv),
+			callout_reset(&sc->sc_md_tmo, tvtohz64(&tv),
 			    carp_master_down, sc);
 			break;
 #endif
 #ifdef INET6
 		case AF_INET6:
-			callout_reset(&sc->sc_md6_tmo, tvtohz(&tv),
+			callout_reset(&sc->sc_md6_tmo, tvtohz64(&tv),
 			    carp_master_down, sc);
 			break;
 #endif
 		default:
 #ifdef INET
 			if (sc->sc_naddrs)
-				callout_reset(&sc->sc_md_tmo, tvtohz(&tv),
+				callout_reset(&sc->sc_md_tmo, tvtohz64(&tv),
 				    carp_master_down, sc);
 #endif
 #ifdef INET6
 			if (sc->sc_naddrs6)
-				callout_reset(&sc->sc_md6_tmo, tvtohz(&tv),
+				callout_reset(&sc->sc_md6_tmo, tvtohz64(&tv),
 				    carp_master_down, sc);
 #endif
 			break;
@@ -1238,7 +1238,7 @@ carp_setrun(struct carp_softc *sc, sa_family_t af)
 	case MASTER:
 		tv.tv_sec = sc->sc_advbase;
 		tv.tv_usec = sc->sc_advskew * 1000000 / 256;
-		callout_reset(&sc->sc_ad_tmo, tvtohz(&tv),
+		callout_reset(&sc->sc_ad_tmo, tvtohz64(&tv),
 		    carp_send_ad, sc);
 		break;
 	}

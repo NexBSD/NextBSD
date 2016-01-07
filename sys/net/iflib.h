@@ -208,7 +208,7 @@ struct ifmedia *iflib_get_media(if_ctx_t ctx);
 if_softc_ctx_t iflib_get_softc_ctx(if_ctx_t ctx);
 if_shared_ctx_t iflib_get_sctx(if_ctx_t ctx);
 
-void iflib_set_mac(if_ctx_t ctx, uint8_t mac[ETHER_ADDR_LEN]);
+void iflib_set_mac(if_ctx_t ctx, uint8_t mac[6/*ETHER_ADDR_LEN*/]);
 
 
 
@@ -245,7 +245,7 @@ void iflib_softirq_alloc_generic(if_ctx_t ctx, int rid, iflib_intr_type_t type, 
 
 void iflib_irq_free(if_ctx_t ctx, if_irq_t irq);
 
-void iflib_io_tqg_attach(struct grouptask *gt, void *uniq, int cpu, char *name);
+void iflib_io_tqg_attach(struct grouptask *gtask, void *uniq, int cpu, char *name);
 
 void iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask,
 			     task_fn_t *fn, char *name);

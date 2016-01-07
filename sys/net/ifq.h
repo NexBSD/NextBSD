@@ -57,6 +57,7 @@ struct	ifqueue {
 	struct	mbuf *ifq_tail;
 	int	ifq_len;
 	int	ifq_maxlen;
+	int	ifq_closed;
 	struct	mtx ifq_mtx;
 };
 
@@ -71,6 +72,7 @@ struct	ifqueue {
 #define IF_UNLOCK(ifq)		mtx_unlock(&(ifq)->ifq_mtx)
 #define	IF_LOCK_ASSERT(ifq)	mtx_assert(&(ifq)->ifq_mtx, MA_OWNED)
 #define	_IF_QFULL(ifq)		((ifq)->ifq_len >= (ifq)->ifq_maxlen)
+#define	_IF_QCLOSED(ifq)	((ifq)->ifq_closed == TRUE)
 #define	_IF_QLEN(ifq)		((ifq)->ifq_len)
 
 #define	_IF_ENQUEUE(ifq, m) do { 				\
@@ -162,12 +164,14 @@ void	if_start(struct ifnet *);
 #define	IFQ_ENQUEUE(ifq, m, err)					\
 do {									\
 	IF_LOCK(ifq);							\
-	if (ALTQ_IS_ENABLED(ifq))					\
+	if (ALTQ_IS_ENABLED(ifq)) {					\
 		ALTQ_ENQUEUE(ifq, m, NULL, err);			\
-	else {								\
-		if (_IF_QFULL(ifq)) {					\
+		(ifq)->ifq_closed = TRUE;				\
+	} else {							\
+		if (_IF_QCLOSED(ifq) || _IF_QFULL(ifq)) {		\
 			m_freem(m);					\
 			(err) = ENOBUFS;				\
+			(ifq)->ifq_closed = TRUE;			\
 		} else {						\
 			_IF_ENQUEUE(ifq, m);				\
 			(err) = 0;					\
@@ -182,8 +186,14 @@ do {									\
 		(m) = tbr_dequeue_ptr(ifq, ALTDQ_REMOVE);		\
 	else if (ALTQ_IS_ENABLED(ifq))					\
 		ALTQ_DEQUEUE(ifq, m);					\
-	else								\
+	else {								\
 		_IF_DEQUEUE(ifq, m);					\
+		if (_IF_QCLOSED(ifq) &&					\
+		    (ifq)->ifq_len < ((ifq)->ifq_maxlen >> 1)) {	\
+			(ifq)->ifq_closed = FALSE;			\
+			if_rexmt_start(0, 1);				\
+		}							\
+	}								\
 } while (0)
 
 #define	IFQ_DEQUEUE(ifq, m)						\
@@ -216,6 +226,7 @@ do {									\
 		ALTQ_PURGE(ifq);					\
 	} else								\
 		_IF_DRAIN(ifq);						\
+	(ifq)->ifq_closed = FALSE;				        \
 } while (0)
 
 #define	IFQ_PURGE(ifq)							\
@@ -329,7 +340,6 @@ drbr_enqueue(struct ifnet *ifp, struct buf_ring *br, struct mbuf *m)
 	error = buf_ring_enqueue(br, m);
 	if (error)
 		m_freem(m);
-
 	return (error);
 }
 

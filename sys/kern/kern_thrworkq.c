@@ -307,15 +307,15 @@ twq_microuptime(void)
 	return ((u_int64_t)t.tv_sec * 1000000 + (u_int64_t)t.tv_usec);
 }
 
-static uint32_t
+static uint64_t
 twq_usecstoticks(uint32_t usec)
 {
 	struct timeval tv;
-	uint32_t tticks;
+	uint64_t tticks;
 
 	tv.tv_sec = usec / 1000000;
 	tv.tv_usec = usec - (tv.tv_sec * 1000000);
-	tticks = tvtohz(&tv);
+	tticks = tvtohz64(&tv);
 
 	return (tticks);
 }
@@ -323,7 +323,7 @@ twq_usecstoticks(uint32_t usec)
 static void
 twq_interval_timer_start(struct thrworkq *wq)
 {
-	uint32_t deadline;
+	uint64_t deadline;
 
 	if (wq->wq_timer_interval == 0)
 		wq->wq_timer_interval = wq_stalled_window_usecs;

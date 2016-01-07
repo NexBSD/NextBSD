@@ -50,7 +50,7 @@ __FBSDID("$FreeBSD$");
 
 
 static struct buf_ring *
-buf_ring_alloc_(int count, struct malloc_type *type, int flags, struct mtx *lock, int brflags)
+buf_ring_alloc_(int count, struct malloc_type *type, int flags, struct mtx *lock, int brflags, int id, int nqs)
 {
 	struct buf_ring *br;
 	int alloc_count;
@@ -70,22 +70,24 @@ buf_ring_alloc_(int count, struct malloc_type *type, int flags, struct mtx *lock
 	br->br_prod_mask = br->br_cons_mask = count-1;
 	br->br_prod_head = br->br_cons_head = 0;
 	br->br_prod_tail = br->br_cons_tail = 0;
+	br->br_id = id;
+	br->br_nqs = nqs;
 
 	return (br);
 }
 
 struct buf_ring *
-buf_ring_alloc(int count, struct malloc_type *type, int flags, struct mtx *lock)
+buf_ring_alloc(int count, struct malloc_type *type, int flags, struct mtx *lock, int id, int nqs)
 {
 
-	return (buf_ring_alloc_(count, type, flags, lock, 0));
+	return (buf_ring_alloc_(count, type, flags, lock, 0, id, nqs));
 }
 
 struct buf_ring *
 buf_ring_aligned_alloc(int count, struct malloc_type *type, int flags, struct mtx *lock)
 {
 
-	return (buf_ring_alloc_(count, type, flags, lock, BR_FLAGS_ALIGNED));
+	return (buf_ring_alloc_(count, type, flags, lock, BR_FLAGS_ALIGNED, 0, 0));
 }
 
 void

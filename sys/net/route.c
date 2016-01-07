@@ -229,7 +229,10 @@ rtentry_zinit(void *mem, int size, int how)
 	rt->rt_pksent = counter_u64_alloc(how);
 	if (rt->rt_pksent == NULL)
 		return (ENOMEM);
-
+	if ((rt->rt_osd = malloc(sizeof(struct osd), M_DEVBUF, M_NOWAIT|M_ZERO)) == NULL) {
+		counter_u64_free(rt->rt_pksent);
+		return (ENOMEM);
+	}
 	RT_LOCK_INIT(rt);
 
 	return (0);
@@ -242,6 +245,8 @@ rtentry_zfini(void *mem, int size)
 
 	RT_LOCK_DESTROY(rt);
 	counter_u64_free(rt->rt_pksent);
+	osd_exit(OSD_ROUTE, rt->rt_osd);
+	free(rt->rt_osd, M_DEVBUF);
 }
 
 static int
@@ -1947,6 +1952,14 @@ rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt)
 	if (info->rti_mflags & RTV_EXPIRE)
 		rt->rt_expire = info->rti_rmx->rmx_expire ?
 		    info->rti_rmx->rmx_expire - time_second + time_uptime : 0;
+#ifdef INET
+	if (info->rti_mflags & RTV_IP)
+		ip_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[0]);
+	if (info->rti_mflags & RTV_TCP)
+		tcp_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[1]);
+	if (info->rti_mflags & RTV_UDP)
+		udp_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[2]);
+#endif
 }
 
 int

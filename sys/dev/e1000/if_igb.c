@@ -3386,7 +3386,8 @@ igb_allocate_queues(struct adapter *adapter)
 #ifndef IGB_LEGACY_TX
 		/* Allocate a buf ring */
 		txr->br = buf_ring_alloc(igb_buf_ring_size, M_DEVBUF,
-		    M_WAITOK, &txr->tx_mtx);
+			M_WAITOK, &txr->tx_mtx, i,
+			adapter->num_queues);
 #endif
 	}
 

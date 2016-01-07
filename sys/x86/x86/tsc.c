@@ -51,11 +51,22 @@ __FBSDID("$FreeBSD$");
 
 #include "cpufreq_if.h"
 
+/*
+ * the number of tsc increments per minimum timestamp
+ */
+#define TSC_FREQ_MINTS (tsc_freq / (1000000000/60))
+
+
 uint64_t	tsc_freq;
+uint64_t	tsc_sbt;
 int		tsc_is_invariant;
 int		tsc_perf_stat;
 
 static eventhandler_tag tsc_levels_tag, tsc_pre_tag, tsc_post_tag;
+
+sbintime_t cpu_tcp_ts_getsbintime_rdtsc(void);
+sbintime_t cpu_tcp_ts_getsbintime_rdtscp(void);
+sbintime_t (*cpu_tcp_ts_getsbintime)(void);
 
 SYSCTL_INT(_kern_timecounter, OID_AUTO, invariant_tsc, CTLFLAG_RDTUN,
     &tsc_is_invariant, 0, "Indicates whether the TSC is P-state invariant");
@@ -581,6 +592,12 @@ init:
 		tsc_timecounter.tc_priv = (void *)(intptr_t)shift;
 		tc_init(&tsc_timecounter);
 	}
+	/* XXX yes this needs to be revisited */
+#if defined(__amd64__)
+	cpu_tcp_ts_getsbintime = cpu_tcp_ts_getsbintime_rdtscp;
+#elif defined(__i386__)
+	cpu_tcp_ts_getsbintime = cpu_tcp_ts_getsbintime_rdtsc;
+#endif
 }
 SYSINIT(tsc_tc, SI_SUB_SMP, SI_ORDER_ANY, init_TSC_tc, NULL);
 
@@ -732,6 +749,21 @@ cpu_fill_vdso_timehands(struct vdso_timehands *vdso_th, struct timecounter *tc)
 	bzero(vdso_th->th_res, sizeof(vdso_th->th_res));
 	return (tc == &tsc_timecounter);
 }
+
+sbintime_t
+cpu_tcp_ts_getsbintime_rdtsc(void)
+{
+
+	return (rdtsc() / TSC_FREQ_MINTS);
+}
+
+sbintime_t
+cpu_tcp_ts_getsbintime_rdtscp(void)
+{
+
+	return (rdtscp() / TSC_FREQ_MINTS);
+}
+
 
 #ifdef COMPAT_FREEBSD32
 uint32_t

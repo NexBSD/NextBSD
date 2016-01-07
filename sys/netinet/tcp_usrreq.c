@@ -520,7 +520,7 @@ tcp_usr_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	    (error = tcp_offload_connect(so, nam)) == 0)
 		goto out;
 #endif
-	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp));
+	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp)*tick_sbt);
 	error = tp->t_fb->tfb_tcp_output(tp);
 out:
 	TCPDEBUG2(PRU_CONNECT);
@@ -608,7 +608,7 @@ tcp6_usr_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	    (error = tcp_offload_connect(so, nam)) == 0)
 		goto out;
 #endif
-	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp));
+	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp)*tick_sbt);
 	error = tp->t_fb->tfb_tcp_output(tp);
 
 out:
@@ -1332,7 +1332,7 @@ tcp_fill_info(struct tcpcb *tp, struct tcp_info *ti)
 	}
 
 	ti->tcpi_rto = tp->t_rxtcur * tick;
-	ti->tcpi_last_data_recv = (long)(ticks - (int)tp->t_rcvtime) * tick;
+	ti->tcpi_last_data_recv = (long)((tcp_ts_getsbintime() - (int)tp->t_rcvtime)/tick_sbt) * tick;
 	ti->tcpi_rtt = ((u_int64_t)tp->t_srtt * tick) >> TCP_RTT_SHIFT;
 	ti->tcpi_rttvar = ((u_int64_t)tp->t_rttvar * tick) >> TCP_RTTVAR_SHIFT;
 
@@ -1480,7 +1480,6 @@ tcp_default_ctloutput(struct socket *so, struct sockopt *sopt, struct inpcb *inp
 	int	error, opt, optval;
 	u_int	ui;
 	struct	tcp_info ti;
-	struct cc_algo *algo;
 	char buf[TCP_CA_NAME_MAX];
 	
 	switch (sopt->sopt_dir) {
@@ -1584,41 +1583,7 @@ unlock_and_done:
 			/*
 			 * Return EINVAL if we can't find the requested cc algo.
 			 */
-			error = EINVAL;
-			CC_LIST_RLOCK();
-			STAILQ_FOREACH(algo, &cc_list, entries) {
-				if (strncmp(buf, algo->name, TCP_CA_NAME_MAX)
-				    == 0) {
-					/* We've found the requested algo. */
-					error = 0;
-					/*
-					 * We hold a write lock over the tcb
-					 * so it's safe to do these things
-					 * without ordering concerns.
-					 */
-					if (CC_ALGO(tp)->cb_destroy != NULL)
-						CC_ALGO(tp)->cb_destroy(tp->ccv);
-					CC_ALGO(tp) = algo;
-					/*
-					 * If something goes pear shaped
-					 * initialising the new algo,
-					 * fall back to newreno (which
-					 * does not require initialisation).
-					 */
-					if (algo->cb_init != NULL)
-						if (algo->cb_init(tp->ccv) > 0) {
-							CC_ALGO(tp) = &newreno_cc_algo;
-							/*
-							 * The only reason init
-							 * should fail is
-							 * because of malloc.
-							 */
-							error = ENOMEM;
-						}
-					break; /* Break the STAILQ_FOREACH. */
-				}
-			}
-			CC_LIST_RUNLOCK();
+			error = tcp_cc_algo_set(tp, buf);
 			goto unlock_and_done;
 
 		case TCP_KEEPIDLE:
@@ -1646,21 +1611,21 @@ unlock_and_done:
 				if ((tp->t_state > TCPS_LISTEN) &&
 				    (tp->t_state <= TCPS_CLOSING))
 					tcp_timer_activate(tp, TT_KEEP,
-					    TP_KEEPIDLE(tp));
+					    TP_KEEPIDLE(tp)*tick_sbt);
 				break;
 			case TCP_KEEPINTVL:
 				tp->t_keepintvl = ui;
 				if ((tp->t_state == TCPS_FIN_WAIT_2) &&
 				    (TP_MAXIDLE(tp) > 0))
 					tcp_timer_activate(tp, TT_2MSL,
-					    TP_MAXIDLE(tp));
+					    TP_MAXIDLE(tp)*tick_sbt);
 				break;
 			case TCP_KEEPINIT:
 				tp->t_keepinit = ui;
 				if (tp->t_state == TCPS_SYN_RECEIVED ||
 				    tp->t_state == TCPS_SYN_SENT)
 					tcp_timer_activate(tp, TT_KEEP,
-					    TP_KEEPINIT(tp));
+					    TP_KEEPINIT(tp)*tick_sbt);
 				break;
 			}
 			goto unlock_and_done;
@@ -1676,7 +1641,7 @@ unlock_and_done:
 			if ((tp->t_state == TCPS_FIN_WAIT_2) &&
 			    (TP_MAXIDLE(tp) > 0))
 				tcp_timer_activate(tp, TT_2MSL,
-				    TP_MAXIDLE(tp));
+				    TP_MAXIDLE(tp)*tick_sbt);
 			goto unlock_and_done;
 
 #ifdef TCPPCAP
@@ -1853,6 +1818,7 @@ tcp_attach(struct socket *so)
 	else
 #endif
 	inp->inp_vflag |= INP_IPV4;
+	inp->inp_ip_p = IPPROTO_TCP;
 	tp = tcp_newtcpcb(inp);
 	if (tp == NULL) {
 		in_pcbdetach(inp);
@@ -1860,6 +1826,8 @@ tcp_attach(struct socket *so)
 		INP_INFO_RUNLOCK(&V_tcbinfo);
 		return (ENOBUFS);
 	}
+	/* determine subnet based protocol options if needed */
+	(void)in_rt_valid(inp);
 	tp->t_state = TCPS_CLOSED;
 	INP_WUNLOCK(inp);
 	INP_INFO_RUNLOCK(&V_tcbinfo);
@@ -1959,7 +1927,7 @@ tcp_usrclosed(struct tcpcb *tp)
 
 			timeout = (tcp_fast_finwait2_recycle) ? 
 			    tcp_finwait2_timeout : TP_MAXIDLE(tp);
-			tcp_timer_activate(tp, TT_2MSL, timeout);
+			tcp_timer_activate(tp, TT_2MSL, timeout*tick_sbt);
 		}
 	}
 }
@@ -2209,7 +2177,7 @@ db_print_tcpcb(struct tcpcb *tp, const char *name, int indent)
 	    "0x%08x\n", tp->snd_ssthresh, tp->snd_recover);
 
 	db_print_indent(indent);
-	db_printf("t_maxopd: %u   t_rcvtime: %u   t_startime: %u\n",
+	db_printf("t_maxopd: %u   t_rcvtime: %zu   t_startime: %zu\n",
 	    tp->t_maxopd, tp->t_rcvtime, tp->t_starttime);
 
 	db_print_indent(indent);
@@ -2217,12 +2185,12 @@ db_print_tcpcb(struct tcpcb *tp, const char *name, int indent)
 	    tp->t_rtttime, tp->t_rtseq);
 
 	db_print_indent(indent);
-	db_printf("t_rxtcur: %d   t_maxseg: %u   t_srtt: %d\n",
+	db_printf("t_rxtcur: %zu   t_maxseg: %u   t_srtt: %zu\n",
 	    tp->t_rxtcur, tp->t_maxseg, tp->t_srtt);
 
 	db_print_indent(indent);
-	db_printf("t_rttvar: %d   t_rxtshift: %d   t_rttmin: %u   "
-	    "t_rttbest: %u\n", tp->t_rttvar, tp->t_rxtshift, tp->t_rttmin,
+	db_printf("t_rttvar: %zu   t_rxtshift: %d   t_rttmin: %zu   "
+	    "t_rttbest: %zu\n", tp->t_rttvar, tp->t_rxtshift, tp->t_rttmin,
 	    tp->t_rttbest);
 
 	db_print_indent(indent);
@@ -2239,7 +2207,7 @@ db_print_tcpcb(struct tcpcb *tp, const char *name, int indent)
 	    tp->snd_scale, tp->rcv_scale, tp->request_r_scale);
 
 	db_print_indent(indent);
-	db_printf("ts_recent: %u   ts_recent_age: %u\n",
+	db_printf("ts_recent: %u   ts_recent_age: %zu\n",
 	    tp->ts_recent, tp->ts_recent_age);
 
 	db_print_indent(indent);
@@ -2248,7 +2216,7 @@ db_print_tcpcb(struct tcpcb *tp, const char *name, int indent)
 
 	db_print_indent(indent);
 	db_printf("snd_ssthresh_prev: %lu   snd_recover_prev: 0x%08x   "
-	    "t_badrxtwin: %u\n", tp->snd_ssthresh_prev,
+	    "t_badrxtwin: %zu\n", tp->snd_ssthresh_prev,
 	    tp->snd_recover_prev, tp->t_badrxtwin);
 
 	db_print_indent(indent);

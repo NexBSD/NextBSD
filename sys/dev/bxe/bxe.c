@@ -6824,7 +6824,7 @@ bxe_alloc_fp_buffers(struct bxe_softc *sc)
 
 #if __FreeBSD_version >= 800000
         fp->tx_br = buf_ring_alloc(BXE_BR_SIZE, M_DEVBUF,
-                                   M_NOWAIT, &fp->tx_mtx);
+                                   M_NOWAIT, &fp->tx_mtx, i, sc->num_queues);
         if (fp->tx_br == NULL) {
             BLOGE(sc, "buf_ring alloc fail for fp[%02d]\n", i);
             goto bxe_alloc_fp_buffers_error;

@@ -1231,7 +1231,8 @@ kern_sigtimedwait(struct thread *td, sigset_t waitset, ksiginfo_t *ksi,
 	struct sigacts *ps;
 	sigset_t saved_mask, new_block;
 	struct proc *p;
-	int error, sig, timo, timevalid = 0;
+	int error, sig, timevalid = 0;
+	uint64_t timo;
 	struct timespec rts, ets, ts;
 	struct timeval tv;
 
@@ -1287,7 +1288,7 @@ kern_sigtimedwait(struct thread *td, sigset_t waitset, ksiginfo_t *ksi,
 			ts = ets;
 			timespecsub(&ts, &rts);
 			TIMESPEC_TO_TIMEVAL(&tv, &ts);
-			timo = tvtohz(&tv);
+			timo = tvtohz64(&tv);
 		} else {
 			timo = 0;
 		}

@@ -508,7 +508,7 @@ toe_connect_failed(struct toedev *tod, struct inpcb *inp, int err)
 			tod->tod_pcb_detach(tod, tp);
 			KASSERT(!(tp->t_flags & TF_TOE),
 			    ("%s: tp %p still offloaded.", __func__, tp));
-			tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp));
+			tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp)*tick_sbt);
 			(void) tp->t_fb->tfb_tcp_output(tp);
 		} else {
 

@@ -1537,7 +1537,7 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 			 * a one-shot timer.
 			 */
 			if ((error = itimerfix(tv)) == 0)
-				d->bd_rtout = tvtohz(tv) - 1;
+				d->bd_rtout = tvtohz64(tv) - 1;
 			break;
 		}
 

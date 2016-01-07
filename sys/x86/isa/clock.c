@@ -470,6 +470,7 @@ startrtclock()
 {
 
 	init_TSC();
+	tsc_sbt = SBT_1S / tsc_freq;
 }
 
 void

@@ -702,8 +702,10 @@ static int
 vtnet_init_txq(struct vtnet_softc *sc, int id)
 {
 	struct vtnet_txq *txq;
+	int npairs;
 
 	txq = &sc->vtnet_txqs[id];
+	npairs = sc->vtnet_max_vq_pairs;
 
 	snprintf(txq->vtntx_name, sizeof(txq->vtntx_name), "%s-tx%d",
 	    device_get_nameunit(sc->vtnet_dev), id);
@@ -718,7 +720,7 @@ vtnet_init_txq(struct vtnet_softc *sc, int id)
 
 #ifndef VTNET_LEGACY_TX
 	txq->vtntx_br = buf_ring_alloc(VTNET_DEFAULT_BUFRING_SIZE, M_DEVBUF,
-	    M_NOWAIT, &txq->vtntx_mtx);
+				       M_NOWAIT, &txq->vtntx_mtx, id, npairs);
 	if (txq->vtntx_br == NULL)
 		return (ENOMEM);
 

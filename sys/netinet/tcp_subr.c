@@ -131,6 +131,14 @@ VNET_DEFINE(int, tcp_v6mssdflt) = TCP6_MSS;
 
 struct rwlock tcp_function_lock;
 
+static void tcp_osd_del(void *osd);
+
+static int tcp_osd_id;
+
+struct tcp_subnet_state {
+	int tss_flags;
+};
+
 static int
 sysctl_net_inet_tcp_mss_check(SYSCTL_HANDLER_ARGS)
 {
@@ -492,6 +500,21 @@ maketcp_hashsize(int size)
 	return (hashsize);
 }
 
+
+#if !defined(__amd64__) && !defined(__i386__)
+sbintime_t (*cpu_tcp_ts_getsbintime)(void);
+
+static sbintime_t
+cpu_tcp_ts_getsbintime_(void)
+{
+	struct bintime bt;
+
+	getbinuptime(&bt);
+	sbt = bt.frac >> SBT_MINTS_SHIFT;
+	return (sbt);
+}
+#endif
+
 int
 register_tcp_functions(struct tcp_function_block *blk, int wait)
 {
@@ -671,7 +694,6 @@ tcp_init(void)
 	tcp_rexmit_min = TCPTV_MIN;
 	if (tcp_rexmit_min < 1)
 		tcp_rexmit_min = 1;
-	tcp_rexmit_slop = TCPTV_CPU_VAR;
 	tcp_finwait2_timeout = TCPTV_FINWAIT2_TIMEOUT;
 	tcp_tcbhashsize = hashsize;
 	/* Setup the tcp function block list */
@@ -707,10 +729,13 @@ tcp_init(void)
 #ifdef TCPPCAP
 	tcp_pcap_init();
 #endif
-
+#if !defined(__amd64__) && !defined(__i386__)
+	cpu_tcp_ts_getsbintime = cpu_tcp_ts_getsbintime_;
+#endif
 #ifdef TCP_RFC7413
 	tcp_fastopen_init();
 #endif
+	tcp_osd_id = osd_register(OSD_ROUTE, tcp_osd_del, NULL);
 }
 
 #ifdef VIMAGE
@@ -1119,11 +1144,12 @@ tcp_newtcpcb(struct inpcb *inp)
 	 */
 	tp->t_srtt = TCPTV_SRTTBASE;
 	tp->t_rttvar = ((TCPTV_RTOBASE - TCPTV_SRTTBASE) << TCP_RTTVAR_SHIFT) / 4;
-	tp->t_rttmin = tcp_rexmit_min;
-	tp->t_rxtcur = TCPTV_RTOBASE;
+	tp->t_rttmin = tcp_rexmit_min*tick_sbt;
+	tp->t_rxtcur = TCPTV_RTOBASE*tick_sbt;
+	tp->t_delack = tcp_delacktime*tick_sbt;
 	tp->snd_cwnd = TCP_MAXWIN << TCP_MAX_WINSHIFT;
 	tp->snd_ssthresh = TCP_MAXWIN << TCP_MAX_WINSHIFT;
-	tp->t_rcvtime = ticks;
+	tp->t_rcvtime = TCP_TS_TO_SBT(tcp_ts_getsbintime());
 	/*
 	 * IPv4 TTL initialization is necessary for an IPv6 socket as well,
 	 * because the socket may be bound to an IPv6 wildcard address,
@@ -2868,4 +2894,145 @@ tcp_state_change(struct tcpcb *tp, int newstate)
 
 	tp->t_state = newstate;
 	TCP_PROBE6(state__change, NULL, tp, NULL, tp, NULL, pstate);
+}
+
+int
+tcp_cc_algo_set(struct tcpcb *tp, char *name)
+{
+	int error = EINVAL;
+	struct cc_algo *algo;
+
+	CC_LIST_RLOCK();
+	STAILQ_FOREACH(algo, &cc_list, entries) {
+		if (strncmp(name, algo->name, TCP_CA_NAME_MAX) == 0) {
+			/* We've found the requested algo. */
+			error = 0;
+			/*
+			 * We hold a write lock over the tcb
+			 * so it's safe to do these things
+			 * without ordering concerns.
+			 */
+			if (CC_ALGO(tp)->cb_destroy != NULL)
+				CC_ALGO(tp)->cb_destroy(tp->ccv);
+			CC_ALGO(tp) = algo;
+			/*
+			 * If something goes pear shaped
+			 * initialising the new algo,
+			 * fall back to newreno (which
+			 * does not require initialisation).
+			 */
+			if (algo->cb_init != NULL)
+				if (algo->cb_init(tp->ccv) > 0) {
+					CC_ALGO(tp) = &newreno_cc_algo;
+					/*
+					 * The only reason init
+					 * should fail is
+					 * because of malloc.
+					 */
+					error = ENOMEM;
+				}
+			break; /* Break the STAILQ_FOREACH. */
+		}
+	}
+	CC_LIST_RUNLOCK();
+	return (error);
+}
+
+void
+tcp_osd_set(struct osd *osd, u_long flags)
+{
+	u_long clear, set;
+	struct tcp_subnet_state *tss;
+
+	clear = ((flags >> 16) & 0xffff);
+	set = (flags & 0xffff);
+
+	tss = osd_get(OSD_ROUTE, osd, tcp_osd_id);
+
+	if (tss == NULL)
+		tss = malloc(sizeof(*tss), M_DEVBUF, M_ZERO|M_WAITOK);
+
+	tss->tss_flags &= ~clear;
+	tss->tss_flags |= set;
+
+	osd_set(OSD_ROUTE, osd, tcp_osd_id, tss);
+}
+
+u_long
+tcp_osd_get(struct osd *osd)
+{
+	struct tcp_subnet_state *tss;
+
+	tss = osd_get(OSD_ROUTE, osd, tcp_osd_id);
+
+	if (tss == NULL)
+		return (0);
+
+	return (tss->tss_flags & 0xffff);
+}
+
+static void
+tcp_osd_del(void *tss)
+{
+
+	free(tss, M_DEVBUF);
+}
+
+static u_long
+tcp_osd_flags_get(struct inpcb *inp)
+{
+	struct cc_algo *algo;
+	u_long flags;
+
+	flags = 0;
+	algo = CC_ALGO((struct tcpcb *)inp->inp_ppcb);
+	if (strcmp(algo->name, "dctcp") == 0)
+		flags |= TSS_TCP_DCTCP;
+
+	return (flags);
+}
+
+static u_long
+ip_osd_flags_get(struct inpcb *inp)
+{
+	struct tcpcb *tp;
+	u_long flags;
+
+	flags = 0;
+	tp = inp->inp_ppcb;
+	if (tp->t_flags & TF_ECN_ATTEMPT)
+		flags |= TSS_IP_ECN;
+	return (flags);
+}
+
+
+void
+tcp_osd_change(struct inpcb *inp, struct osd *osd)
+{
+	u_long new_tcp_flags, old_tcp_flags;
+	u_long new_ip_flags, old_ip_flags;
+	struct tcpcb *tp;
+
+	old_tcp_flags = tcp_osd_flags_get(inp);
+	old_ip_flags = ip_osd_flags_get(inp);
+
+	new_tcp_flags = tcp_osd_get(osd);
+	new_ip_flags = ip_osd_get(osd);
+	tp = inp->inp_ppcb;
+
+	/*
+	 * enable
+	 */
+	if ((new_tcp_flags & ~old_tcp_flags) & TSS_TCP_DCTCP)
+		tcp_cc_algo_set(tp, "dctcp");
+	if ((new_ip_flags & ~old_ip_flags) & TSS_IP_ECN)
+		tp->t_flags |= TF_ECN_ATTEMPT;
+	/*
+	 * clear
+	 */
+	if ((old_tcp_flags & ~new_tcp_flags) & TSS_TCP_DCTCP)
+		tcp_cc_algo_set(tp, "newreno");
+	if ((old_ip_flags & ~new_ip_flags) & TSS_IP_ECN)
+		tp->t_flags &= ~(TF_ECN_ATTEMPT|TF_ECN_PERMIT);
+
 }

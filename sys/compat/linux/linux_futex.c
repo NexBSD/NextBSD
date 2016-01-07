@@ -251,10 +251,10 @@ static void futex_put(struct futex *, struct waiting_proc *);
 static int futex_get0(uint32_t *, struct futex **f, uint32_t);
 static int futex_get(uint32_t *, struct waiting_proc **, struct futex **,
     uint32_t);
-static int futex_sleep(struct futex *, struct waiting_proc *, int);
+static int futex_sleep(struct futex *, struct waiting_proc *, uint64_t);
 static int futex_wake(struct futex *, int, uint32_t);
 static int futex_requeue(struct futex *, int, struct futex *, int);
-static int futex_wait(struct futex *, struct waiting_proc *, int,
+static int futex_wait(struct futex *, struct waiting_proc *, uint64_t,
     uint32_t);
 static int futex_atomic_op(struct thread *, int, uint32_t *);
 static int handle_futex_death(struct linux_emuldata *, uint32_t *,
@@ -439,7 +439,7 @@ futex_get(uint32_t *uaddr, struct waiting_proc **wp, struct futex **f,
 }
 
 static int
-futex_sleep(struct futex *f, struct waiting_proc *wp, int timeout)
+futex_sleep(struct futex *f, struct waiting_proc *wp, uint64_t timeout)
 {
 	int error;
 
@@ -565,7 +565,7 @@ futex_requeue(struct futex *f, int n, struct futex *f2, int n2)
 }
 
 static int
-futex_wait(struct futex *f, struct waiting_proc *wp, int timeout_hz,
+futex_wait(struct futex *f, struct waiting_proc *wp, uint64_t timeout_hz,
     uint32_t bitset)
 {
 	int error;
@@ -673,7 +673,7 @@ linux_sys_futex(struct thread *td, struct linux_sys_futex_args *args)
 	struct l_timespec ltimeout;
 	struct timespec timeout;
 	struct timeval utv, ctv;
-	int timeout_hz;
+	uint64_t timeout_hz;
 	int error;
 	uint32_t flags, val;
 
@@ -743,7 +743,7 @@ linux_sys_futex(struct thread *td, struct linux_sys_futex_args *args)
 			}
 			if (utv.tv_sec < 0)
 				timevalclear(&utv);
-			timeout_hz = tvtohz(&utv);
+			timeout_hz = tvtohz64(&utv);
 		} else
 			timeout_hz = 0;
 

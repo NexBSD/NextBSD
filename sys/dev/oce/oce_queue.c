@@ -45,7 +45,7 @@
  *****************************************************/
 
 static struct oce_wq *oce_wq_init(POCE_SOFTC sc,
-				  uint32_t q_len, uint32_t wq_type);
+				  uint32_t q_len, uint32_t wq_type, int idx);
 static int oce_wq_create(struct oce_wq *wq, struct oce_eq *eq);
 static void oce_wq_free(struct oce_wq *wq);
 static void oce_wq_del(struct oce_wq *wq);
@@ -94,7 +94,7 @@ oce_queue_init_all(POCE_SOFTC sc)
 	/* alloc TX/RX queues */
 	for_all_wq_queues(sc, wq, i) {
 		sc->wq[i] = oce_wq_init(sc, sc->tx_ring_size,
-					 NIC_WQ_TYPE_STANDARD);
+					NIC_WQ_TYPE_STANDARD, i);
 		if (!sc->wq[i]) 
 			goto error;
 		
@@ -202,7 +202,7 @@ oce_queue_release_all(POCE_SOFTC sc)
  * @returns		the pointer to the WQ created or NULL on failure
  */
 static struct
-oce_wq *oce_wq_init(POCE_SOFTC sc, uint32_t q_len, uint32_t wq_type)
+oce_wq *oce_wq_init(POCE_SOFTC sc, uint32_t q_len, uint32_t wq_type, int idx)
 {
 	struct oce_wq *wq;
 	int rc = 0, i;
@@ -258,7 +258,7 @@ oce_wq *oce_wq_init(POCE_SOFTC sc, uint32_t q_len, uint32_t wq_type)
 #if __FreeBSD_version >= 800000
 	/* Allocate buf ring for multiqueue*/
 	wq->br = buf_ring_alloc(4096, M_DEVBUF,
-			M_WAITOK, &wq->tx_lock.mutex);
+				M_WAITOK, &wq->tx_lock.mutex, idx, sc->nwqs);
 	if (!wq->br)
 		goto free_wq;
 #endif

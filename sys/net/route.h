@@ -139,6 +139,7 @@ struct rtentry {
 #define	rt_endzero	rt_pksent
 	counter_u64_t	rt_pksent;	/* packets sent using this route */
 	struct mtx	rt_mtx;		/* mutex for routing entry */
+	struct osd	*rt_osd;	/* object specific data for ULPs */
 	struct rtentry	*rt_chain;	/* pointer to next rtentry to delete */
 };
 #endif /* _KERNEL || _WANT_RTENTRY */
@@ -180,6 +181,14 @@ struct rtentry {
 #define RTF_FMASK	\
 	(RTF_PROTO1 | RTF_PROTO2 | RTF_PROTO3 | RTF_BLACKHOLE | \
 	 RTF_REJECT | RTF_STATIC | RTF_STICKY)
+
+
+/*
+ * ULP state flags
+ */
+#define	TSS_IP_ECN		0x1
+#define	TSS_TCP_DCTCP		0x1
+
 
 /*
  * fib_ nexthop API flags.
@@ -279,6 +288,10 @@ struct rt_msghdr {
 #define RTV_RTT		0x40	/* init or lock _rtt */
 #define RTV_RTTVAR	0x80	/* init or lock _rttvar */
 #define RTV_WEIGHT	0x100	/* init or lock _weight */
+#define	RTV_IP		0x200	/* init IP		*/
+#define	RTV_TCP		0x400	/* init TCP		*/
+#define	RTV_UDP		0x800	/* init UDP		*/
+
 
 /*
  * Bitmask values for rtm_addrs.
@@ -467,6 +480,16 @@ int	 rtrequest1_fib(int, struct rt_addrinfo *, struct rtentry **, u_int);
 int	rib_lookup_info(uint32_t, const struct sockaddr *, uint32_t, uint32_t,
 	    struct rt_addrinfo *);
 void	rib_free_info(struct rt_addrinfo *info);
+
+void	ip_osd_set(struct osd *osd, u_long flags);
+u_long	ip_osd_get(struct osd *osd);
+void	tcp_osd_set(struct osd *osd, u_long flags);
+u_long	tcp_osd_get(struct osd *osd);
+void	udp_osd_set(struct osd *osd, u_long flags);
+u_long	udp_osd_get(struct osd *osd);
+
+
+
 
 #include <sys/eventhandler.h>
 typedef void (*rtevent_redirect_fn)(void *, struct rtentry *, struct rtentry *, struct sockaddr *);

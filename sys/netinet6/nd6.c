@@ -80,8 +80,8 @@ __FBSDID("$FreeBSD$");
 
 #include <security/mac/mac_framework.h>
 
-#define ND6_SLOWTIMER_INTERVAL (60 * 60) /* 1 hour */
-#define ND6_RECALC_REACHTM_INTERVAL (60 * 120) /* 2 hours */
+#define ND6_SLOWTIMER_INTERVAL (60ULL * 60ULL) /* 1 hour */
+#define ND6_RECALC_REACHTM_INTERVAL (60ULL * 120ULL) /* 2 hours */
 
 #define SIN6(s) ((const struct sockaddr_in6 *)(s))
 

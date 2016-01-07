@@ -997,7 +997,7 @@ vmxnet3_init_txq(struct vmxnet3_softc *sc, int q)
 	TASK_INIT(&txq->vxtxq_defrtask, 0, vmxnet3_txq_tq_deferred, txq);
 
 	txq->vxtxq_br = buf_ring_alloc(VMXNET3_DEF_BUFRING_SIZE, M_DEVBUF,
-	    M_NOWAIT, &txq->vxtxq_mtx);
+            M_NOWAIT, &txq->vxtxq_mtx, q, sc->vmx_max_ntxqueues);
 	if (txq->vxtxq_br == NULL)
 		return (ENOMEM);
 #endif

@@ -130,6 +130,13 @@ SYSCTL_INT(_net_inet_tcp, OID_AUTO, sendbuf_max, CTLFLAG_VNET | CTLFLAG_RW,
 	&VNET_NAME(tcp_autosndbuf_max), 0,
 	"Max size of automatic send buffer");
 
+VNET_DEFINE(int, tcp_output_enobufs) = 0;
+#define	V_tcp_output_enobufs	VNET(tcp_output_enobufs)
+SYSCTL_INT(_net_inet_tcp, OID_AUTO, tcp_output_enobufs, CTLFLAG_VNET | CTLFLAG_RW,
+	&VNET_NAME(tcp_output_enobufs), 0,
+	"number of times ENOBUFS returned");
+
+
 static void inline	hhook_run_tcp_est_out(struct tcpcb *tp,
 			    struct tcphdr *th, struct tcpopt *to,
 			    long len, int tso);
@@ -168,6 +175,14 @@ cc_after_idle(struct tcpcb *tp)
 		CC_ALGO(tp)->after_idle(tp->ccv);
 }
 
+
+static void
+tcp_rexmt_output(struct inpcb *inp)
+{
+
+	(void) tcp_output(inp->inp_ppcb);
+}
+
 /*
  * Tcp output routine: figure out what should be sent and send it.
  */
@@ -176,7 +191,6 @@ tcp_output(struct tcpcb *tp)
 {
 	struct socket *so = tp->t_inpcb->inp_socket;
 	long len, recwin, sendwin;
-	char linkhdr[ETHER_HDR_LEN];
 	int off, flags, error = 0;	/* Keep compiler happy */
 	struct mbuf *m;
 	struct ip *ip = NULL;
@@ -794,13 +808,13 @@ send:
 		/* Timestamps. */
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
-			to.to_tsval = tcp_ts_getticks() + tp->ts_offset;
+			to.to_tsval = tcp_ts_getsbintime32() + tp->ts_offset;
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
 			/* Set receive buffer autosizing timestamp. */
 			if (tp->rfbuf_ts == 0 &&
 			    (so->so_rcv.sb_flags & SB_AUTOSIZE))
-				tp->rfbuf_ts = tcp_ts_getticks();
+				tp->rfbuf_ts = tcp_ts_getsbintime();
 		}
 		/* Selective ACK's. */
 		if (tp->t_flags & TF_SACK_PERMIT) {
@@ -1126,7 +1140,7 @@ send:
 	 * resend those bits a number of times as per
 	 * RFC 3168.
 	 */
-	if (tp->t_state == TCPS_SYN_SENT && V_tcp_do_ecn) {
+	if (tp->t_state == TCPS_SYN_SENT && (V_tcp_do_ecn == 2 || (tp->t_flags & TF2_ECN_ATTEMPT))) {
 		if (tp->t_rxtshift >= 1) {
 			if (tp->t_rxtshift <= V_tcp_ecn_maxretries)
 				flags |= TH_ECE|TH_CWR;
@@ -1358,13 +1372,13 @@ send:
 			memcpy(&sin6->sin6_addr.s6_addr, &inp->in6p_faddr.s6_addr, 16);
 			ro.ro_rt = inp->inp_rt;
 			ro.ro_plen = inp->inp_plen;
-			if (ro.ro_plen <= ETHER_HDR_LEN)
-				ro.ro_prepend = linkhdr;
-			else
-				ro.ro_prepend = malloc(ro.ro_plen, M_TEMP, M_NOWAIT);
-			if (ro.ro_prepend != NULL)
+			if (inp->inp_prepend != NULL) {
+				ro.ro_prepend = inp->inp_prepend;
+				ro.ro_plen = inp->inp_plen;
+			}
+			if (ro.ro_rt != NULL)
 				ro.ro_flags |= RT_CACHING_CONTEXT;
-		} 
+		}
 
 		/*
 		 * Set the packet size here for the benefit of DTrace probes.
@@ -1395,6 +1409,12 @@ send:
 
 		if (error == EMSGSIZE && ro.ro_rt != NULL)
 			mtu = ro.ro_rt->rt_mtu;
+		if (inp->inp_prepend != ro.ro_prepend) {
+			if (inp->inp_prepend != NULL)
+				free(inp->inp_prepend, M_TEMP);
+			inp->inp_prepend = ro.ro_prepend;
+			inp->inp_plen = ro.ro_plen;
+		}
 		if (!(ro.ro_flags & RT_CACHING_CONTEXT)) {
 			RO_RTFREE(&ro);
 		}
@@ -1444,17 +1464,24 @@ send:
 		sin->sin_len = sizeof(struct sockaddr_in);
 		sin->sin_addr.s_addr = inp->inp_faddr.s_addr;
 		ro.ro_rt = inp->inp_rt;
-		if (ro.ro_plen <= ETHER_HDR_LEN)
-			ro.ro_prepend = linkhdr;
-		else
-			ro.ro_prepend = malloc(ro.ro_plen, M_TEMP, M_NOWAIT);
-		if (ro.ro_prepend != NULL)
+		if (inp->inp_prepend != NULL) {
+			ro.ro_prepend = inp->inp_prepend;
+			ro.ro_plen = inp->inp_plen;
+		}
+		if (ro.ro_rt != NULL)
 			ro.ro_flags |= RT_CACHING_CONTEXT;
 	}
 
 	error = ip_output(m, tp->t_inpcb->inp_options, &ro,
 	    ((so->so_options & SO_DONTROUTE) ? IP_ROUTETOIF : 0), 0,
 	    tp->t_inpcb);
+
+	if (inp->inp_prepend != ro.ro_prepend) {
+		if (inp->inp_prepend != NULL)
+			free(inp->inp_prepend, M_TEMP);
+		inp->inp_prepend = ro.ro_prepend;
+		inp->inp_plen = ro.ro_plen;
+	}
 
 	if (error == EMSGSIZE && ro.ro_rt != NULL)
 		mtu = ro.ro_rt->rt_mtu;
@@ -1494,7 +1521,7 @@ out:
 			 * not currently timing anything.
 			 */
 			if (tp->t_rtttime == 0) {
-				tp->t_rtttime = ticks;
+				tp->t_rtttime = tcp_ts_getsbintime();
 				tp->t_rtseq = startseq;
 				TCPSTAT_INC(tcps_segstimed);
 			}
@@ -1591,10 +1618,8 @@ timer:
 			tp->t_softerror = error;
 			return (error);
 		case ENOBUFS:
-	                if (!tcp_timer_active(tp, TT_REXMT) &&
-			    !tcp_timer_active(tp, TT_PERSIST))
-	                        tcp_timer_activate(tp, TT_REXMT, tp->t_rxtcur);
-			tp->snd_cwnd = tp->t_maxseg;
+			atomic_add_int(&V_tcp_output_enobufs, 1);
+			inp_rexmt_enqueue(tp->t_inpcb, tcp_rexmt_output);
 			return (0);
 		case EMSGSIZE:
 			/*
@@ -1658,8 +1683,7 @@ timer:
 void
 tcp_setpersist(struct tcpcb *tp)
 {
-	int t = ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1;
-	int tt;
+	uint64_t tt, t = ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1;
 
 	tp->t_flags &= ~TF_PREVVALID;
 	if (tcp_timer_active(tp, TT_REXMT))
@@ -1668,7 +1692,7 @@ tcp_setpersist(struct tcpcb *tp)
 	 * Start/restart persistance timer.
 	 */
 	TCPT_RANGESET(tt, t * tcp_backoff[tp->t_rxtshift],
-		      TCPTV_PERSMIN, TCPTV_PERSMAX);
+		      TCPTV_PERSMIN*tick_sbt, TCPTV_PERSMAX*tick_sbt);
 	tcp_timer_activate(tp, TT_PERSIST, tt);
 	if (tp->t_rxtshift < TCP_MAXRXTSHIFT)
 		tp->t_rxtshift++;

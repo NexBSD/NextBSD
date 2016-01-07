@@ -68,6 +68,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/tcp_fsm.h>
 #include <netinet/tcp_timer.h>
 #include <netinet/tcp_var.h>
+#include <netinet/tcp_seq.h>
 #ifdef INET6
 #include <netinet6/tcp6_var.h>
 #endif
@@ -101,11 +102,6 @@ int	tcp_rexmit_min;
 SYSCTL_PROC(_net_inet_tcp, OID_AUTO, rexmit_min, CTLTYPE_INT|CTLFLAG_RW,
     &tcp_rexmit_min, 0, sysctl_msec_to_ticks, "I",
     "Minimum Retransmission Timeout");
-
-int	tcp_rexmit_slop;
-SYSCTL_PROC(_net_inet_tcp, OID_AUTO, rexmit_slop, CTLTYPE_INT|CTLFLAG_RW,
-    &tcp_rexmit_slop, 0, sysctl_msec_to_ticks, "I",
-    "Retransmission Timer Slop");
 
 static int	always_keepalive = 1;
 SYSCTL_INT(_net_inet_tcp, OID_AUTO, always_keepalive, CTLFLAG_RW,
@@ -356,7 +352,7 @@ tcp_timer_2msl(void *xtp)
 		TCPSTAT_INC(tcps_finwait2_drops);
 		tp = tcp_close(tp);             
 	} else {
-		if (ticks - tp->t_rcvtime <= TP_MAXIDLE(tp)) {
+		if (tcp_ts_getsbintime() - tp->t_rcvtime <= TP_MAXIDLE(tp)) {
 			if (!callout_reset(&tp->t_timers->tt_2msl,
 			   TP_KEEPINTVL(tp), tcp_timer_2msl, tp)) {
 				tp->t_timers->tt_flags &= ~TT_2MSL_RST;
@@ -421,7 +417,7 @@ tcp_timer_keep(void *xtp)
 		goto dropit;
 	if ((always_keepalive || inp->inp_socket->so_options & SO_KEEPALIVE) &&
 	    tp->t_state <= TCPS_CLOSING) {
-		if (ticks - tp->t_rcvtime >= TP_KEEPIDLE(tp) + TP_MAXIDLE(tp))
+		if (tcp_ts_getsbintime() - tp->t_rcvtime >= TP_KEEPIDLE(tp) + TP_MAXIDLE(tp))
 			goto dropit;
 		/*
 		 * Send a packet designed to force a response
@@ -484,6 +480,7 @@ tcp_timer_persist(void *xtp)
 {
 	struct tcpcb *tp = xtp;
 	struct inpcb *inp;
+	sbintime_t t;
 	CURVNET_SET(tp->t_vnet);
 #ifdef TCPDEBUG
 	int ostate;
@@ -524,9 +521,11 @@ tcp_timer_persist(void *xtp)
 	 * (no responses to probes) reaches the maximum
 	 * backoff that we would use if retransmitting.
 	 */
+
+        t = tcp_ts_getsbintime() - tp->t_rcvtime;
 	if (tp->t_rxtshift == TCP_MAXRXTSHIFT &&
-	    (ticks - tp->t_rcvtime >= tcp_maxpersistidle ||
-	     ticks - tp->t_rcvtime >= TCP_REXMTVAL(tp) * tcp_totbackoff)) {
+	    (t >= tcp_maxpersistidle*tick_sbt ||
+	     t >= TCP_REXMTVAL(tp) * tcp_totbackoff * tick_sbt)) {
 		TCPSTAT_INC(tcps_persistdrop);
 		tp = tcp_drop(tp, ETIMEDOUT);
 		goto out;
@@ -536,7 +535,7 @@ tcp_timer_persist(void *xtp)
 	 * connection after a much reduced timeout.
 	 */
 	if (tp->t_state > TCPS_CLOSE_WAIT &&
-	    (ticks - tp->t_rcvtime) >= TCPTV_PERSMAX) {
+	    t >= TCPTV_PERSMAX*tick_sbt) {
 		TCPSTAT_INC(tcps_persistdrop);
 		tp = tcp_drop(tp, ETIMEDOUT);
 		goto out;
@@ -638,7 +637,7 @@ tcp_timer_rexmt(void * xtp)
 			tp->t_flags |= TF_WASCRECOVERY;
 		else
 			tp->t_flags &= ~TF_WASCRECOVERY;
-		tp->t_badrxtwin = ticks + (tp->t_srtt >> (TCP_RTT_SHIFT + 1));
+		tp->t_badrxtwin = tcp_ts_getsbintime() + (tp->t_srtt >> (TCP_RTT_SHIFT + 1));
 		tp->t_flags |= TF_PREVVALID;
 	} else
 		tp->t_flags &= ~TF_PREVVALID;
@@ -648,8 +647,10 @@ tcp_timer_rexmt(void * xtp)
 		rexmt = TCPTV_RTOBASE * tcp_syn_backoff[tp->t_rxtshift];
 	else
 		rexmt = TCP_REXMTVAL(tp) * tcp_backoff[tp->t_rxtshift];
-	TCPT_RANGESET(tp->t_rxtcur, rexmt,
-		      tp->t_rttmin, TCPTV_REXMTMAX);
+	TCPT_RANGESET(tp->t_rxtcur, rexmt*tick_sbt,
+		      tp->t_rttmin, TCPTV_REXMTMAX*tick_sbt);
+	/*  1 < delack < tcp_delacktime - and should scale down with RTO/2 */
+	TCPT_RANGESET(tp->t_delack, (rexmt >> 1)*tick_sbt, 1, tcp_delacktime*tick_sbt);
 
 	/*
 	 * We enter the path for PLMTUD if connection is established or, if
@@ -816,13 +817,14 @@ out:
 }
 
 void
-tcp_timer_activate(struct tcpcb *tp, uint32_t timer_type, u_int delta)
+tcp_timer_activate(struct tcpcb *tp, uint32_t timer_type, sbintime_t delta)
 {
 	struct callout *t_callout;
 	timeout_t *f_callout;
 	struct inpcb *inp = tp->t_inpcb;
 	int cpu = inp_to_cpuid(inp);
 	uint32_t f_reset;
+	sbintime_t f_precision;
 
 #ifdef TCP_OFFLOAD
 	if (tp->t_flags & TF_TOE)
@@ -837,26 +839,31 @@ tcp_timer_activate(struct tcpcb *tp, uint32_t timer_type, u_int delta)
 			t_callout = &tp->t_timers->tt_delack;
 			f_callout = tcp_timer_delack;
 			f_reset = TT_DELACK_RST;
+			f_precision = tick_sbt;
 			break;
 		case TT_REXMT:
 			t_callout = &tp->t_timers->tt_rexmt;
 			f_callout = tcp_timer_rexmt;
 			f_reset = TT_REXMT_RST;
+			f_precision = tick_sbt;
 			break;
 		case TT_PERSIST:
 			t_callout = &tp->t_timers->tt_persist;
 			f_callout = tcp_timer_persist;
 			f_reset = TT_PERSIST_RST;
+			f_precision = SBT_1S;
 			break;
 		case TT_KEEP:
 			t_callout = &tp->t_timers->tt_keep;
 			f_callout = tcp_timer_keep;
 			f_reset = TT_KEEP_RST;
+			f_precision = SBT_1S;
 			break;
 		case TT_2MSL:
 			t_callout = &tp->t_timers->tt_2msl;
 			f_callout = tcp_timer_2msl;
 			f_reset = TT_2MSL_RST;
+			f_precision = SBT_1S;
 			break;
 		default:
 			if (tp->t_fb->tfb_tcp_timer_activate) {
@@ -874,10 +881,10 @@ tcp_timer_activate(struct tcpcb *tp, uint32_t timer_type, u_int delta)
 	} else {
 		if ((tp->t_timers->tt_flags & timer_type) == 0) {
 			tp->t_timers->tt_flags |= (timer_type | f_reset);
-			callout_reset_on(t_callout, delta, f_callout, tp, cpu);
+			callout_reset_sbt_on(t_callout, delta, f_precision, f_callout, tp, cpu, 0);
 		} else {
 			/* Reset already running callout on the same CPU. */
-			if (!callout_reset(t_callout, delta, f_callout, tp)) {
+			if (!callout_reset_sbt(t_callout, delta, f_precision, f_callout, tp, 0)) {
 				/*
 				 * Callout not cancelled, consider it as not
 				 * properly restarted. */
@@ -1006,5 +1013,5 @@ tcp_timer_to_xtimer(struct tcpcb *tp, struct tcp_timer *timer,
 		xtimer->tt_keep = (timer->tt_keep.c_time - now) / SBT_1MS;
 	if (callout_active(&timer->tt_2msl))
 		xtimer->tt_2msl = (timer->tt_2msl.c_time - now) / SBT_1MS;
-	xtimer->t_rcvtime = ticks_to_msecs(ticks - tp->t_rcvtime);
+	xtimer->t_rcvtime = ticks_to_msecs((tcp_ts_getsbintime() - tp->t_rcvtime)/tick_sbt);
 }
