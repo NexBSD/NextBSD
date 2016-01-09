@@ -1372,10 +1372,7 @@ send:
 			memcpy(&sin6->sin6_addr.s6_addr, &inp->in6p_faddr.s6_addr, 16);
 			ro.ro_rt = inp->inp_rt;
 			ro.ro_plen = inp->inp_plen;
-			if (inp->inp_prepend != NULL) {
-				ro.ro_prepend = inp->inp_prepend;
-				ro.ro_plen = inp->inp_plen;
-			}
+			ro.ro_prepend = inp->inp_prepend;
 			if (ro.ro_rt != NULL)
 				ro.ro_flags |= RT_CACHING_CONTEXT;
 		}
@@ -1409,7 +1406,7 @@ send:
 
 		if (error == EMSGSIZE && ro.ro_rt != NULL)
 			mtu = ro.ro_rt->rt_mtu;
-		if (inp->inp_prepend != ro.ro_prepend) {
+		if (inp->inp_prepend != ro.ro_prepend && ro.ro_prepend != NULL) {
 			if (inp->inp_prepend != NULL)
 				free(inp->inp_prepend, M_TEMP);
 			inp->inp_prepend = ro.ro_prepend;
@@ -1464,10 +1461,8 @@ send:
 		sin->sin_len = sizeof(struct sockaddr_in);
 		sin->sin_addr.s_addr = inp->inp_faddr.s_addr;
 		ro.ro_rt = inp->inp_rt;
-		if (inp->inp_prepend != NULL) {
-			ro.ro_prepend = inp->inp_prepend;
-			ro.ro_plen = inp->inp_plen;
-		}
+		ro.ro_prepend = inp->inp_prepend;
+		ro.ro_plen = inp->inp_plen;
 		if (ro.ro_rt != NULL)
 			ro.ro_flags |= RT_CACHING_CONTEXT;
 	}
@@ -1476,7 +1471,7 @@ send:
 	    ((so->so_options & SO_DONTROUTE) ? IP_ROUTETOIF : 0), 0,
 	    tp->t_inpcb);
 
-	if (inp->inp_prepend != ro.ro_prepend) {
+	if (inp->inp_prepend != ro.ro_prepend && ro.ro_prepend != NULL) {
 		if (inp->inp_prepend != NULL)
 			free(inp->inp_prepend, M_TEMP);
 		inp->inp_prepend = ro.ro_prepend;
