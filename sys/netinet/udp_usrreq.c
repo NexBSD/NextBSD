@@ -290,10 +290,10 @@ udplite_destroy(void)
  * Set / get subnet state (ECN etc)
  */
 
-void
+int
 udp_osd_set(struct osd *osd, u_long flags)
 {
-	;
+	return (0);;
 }
 
 u_long

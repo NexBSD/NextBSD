@@ -2938,7 +2938,7 @@ tcp_cc_algo_set(struct tcpcb *tp, char *name)
 	return (error);
 }
 
-void
+int
 tcp_osd_set(struct osd *osd, u_long flags)
 {
 	u_long clear, set;
@@ -2950,12 +2950,15 @@ tcp_osd_set(struct osd *osd, u_long flags)
 	tss = osd_get(OSD_ROUTE, osd, tcp_osd_id);
 
 	if (tss == NULL)
-		tss = malloc(sizeof(*tss), M_DEVBUF, M_ZERO|M_WAITOK);
+		tss = malloc(sizeof(*tss), M_DEVBUF, M_ZERO|M_NOWAIT);
 
+	if (tss == NULL)
+		return (ENOMEM);
 	tss->tss_flags &= ~clear;
 	tss->tss_flags |= set;
 
 	osd_set(OSD_ROUTE, osd, tcp_osd_id, tss);
+	return (0);
 }
 
 u_long
@@ -3020,6 +3023,11 @@ tcp_osd_change(struct inpcb *inp, struct osd *osd)
 	new_ip_flags = ip_osd_get(osd);
 	tp = inp->inp_ppcb;
 
+
+#ifdef INVARIANTS	
+	printf("%s: old_tcp_flags: %08lx new_tcp_flags: %08lx\n",
+	       __FUNCTION__, old_tcp_flags, new_tcp_flags);
+#endif	
 	/*
 	 * enable
 	 */
