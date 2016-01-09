@@ -854,11 +854,11 @@ send:
 
 	/*
 	 * Adjust data length if insertion of options will
-	 * bump the packet length beyond the t_maxopd length.
+	 * bump the packet length beyond the t_maxseg length.
 	 * Clear the FIN bit because we cut off the tail of
 	 * the segment.
 	 */
-	if (len + optlen + ipoptlen > tp->t_maxopd) {
+	if (len + optlen + ipoptlen > tp->t_maxseg) {
 		flags &= ~TH_FIN;
 
 		if (tso) {
@@ -961,7 +961,7 @@ send:
 			 * fractional unless the send sockbuf can be
 			 * emptied:
 			 */
-			max_len = (tp->t_maxopd - optlen);
+			max_len = (tp->t_maxseg - optlen);
 			if ((off + len) < sbavail(&so->so_snd)) {
 				moff = len % max_len;
 				if (moff != 0) {
@@ -991,7 +991,7 @@ send:
 				sendalot = 1;
 
 		} else {
-			len = tp->t_maxopd - optlen - ipoptlen;
+			len = tp->t_maxseg - optlen - ipoptlen;
 			sendalot = 1;
 		}
 	} else
@@ -1301,10 +1301,10 @@ send:
 	 * The TCP pseudo header checksum is always provided.
 	 */
 	if (tso) {
-		KASSERT(len > tp->t_maxopd - optlen,
+		KASSERT(len > tp->t_maxseg - optlen,
 		    ("%s: len <= tso_segsz", __func__));
 		m->m_pkthdr.csum_flags |= CSUM_TSO;
-		m->m_pkthdr.tso_segsz = tp->t_maxopd - optlen;
+		m->m_pkthdr.tso_segsz = tp->t_maxseg - optlen;
 	}
 
 #ifdef IPSEC
@@ -1384,7 +1384,7 @@ send:
 		 */
 		ip6->ip6_plen = htons(m->m_pkthdr.len - sizeof(*ip6));
 
-		if (V_path_mtu_discovery && tp->t_maxopd > V_tcp_minmss)
+		if (V_path_mtu_discovery && tp->t_maxseg > V_tcp_minmss)
 			tp->t_flags2 |= TF2_PLPMTU_PMTUD;
 		else
 			tp->t_flags2 &= ~TF2_PLPMTU_PMTUD;
@@ -1438,7 +1438,7 @@ send:
 	 *
 	 * NB: Don't set DF on small MTU/MSS to have a safe fallback.
 	 */
-	if (V_path_mtu_discovery && tp->t_maxopd > V_tcp_minmss) {
+	if (V_path_mtu_discovery && tp->t_maxseg > V_tcp_minmss) {
 		ip->ip_off |= htons(IP_DF);
 		tp->t_flags2 |= TF2_PLPMTU_PMTUD;
 	} else {

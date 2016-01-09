@@ -194,6 +194,7 @@ struct tcpcb {
 	u_int	t_maxseg;		/* maximum segment size */
 	uint64_t	t_srtt;			/* smoothed round-trip time */
 	uint64_t	t_rttvar;		/* variance in round-trip time */
+	u_int	t_pmtud_saved_maxseg;	/* pre-blackhole MSS */
 
 	int	t_rxtshift;		/* log(2) of rexmt exp. backoff */
 	sbintime_t	t_rttmin;		/* minimum rtt allowed */
@@ -251,7 +252,6 @@ struct tcpcb {
 	u_int	t_tsomax;		/* TSO total burst length limit in bytes */
 	u_int	t_tsomaxsegcount;	/* TSO maximum segment count */
 	u_int	t_tsomaxsegsize;	/* TSO maximum segment size in bytes */
-	u_int	t_pmtud_saved_maxopd;	/* pre-blackhole MSS */
 	u_int	t_flags2;		/* More tcpcb flags storage */
 	u_int	t_delack;		/* delayed ack timer */
 
@@ -780,6 +780,7 @@ int tcp_default_ctloutput(struct socket *so, struct sockopt *sopt, struct inpcb 
 
 u_long	 tcp_maxmtu(struct in_conninfo *, struct tcp_ifcap *);
 u_long	 tcp_maxmtu6(struct in_conninfo *, struct tcp_ifcap *);
+u_int	 tcp_maxseg(const struct tcpcb *);
 void	 tcp_mss_update(struct tcpcb *, int, int, struct hc_metrics_lite *,
 	    struct tcp_ifcap *);
 void	 tcp_mss(struct tcpcb *, int);
