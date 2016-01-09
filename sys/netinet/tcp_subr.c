@@ -2987,6 +2987,11 @@ tcp_cc_algo_set(struct tcpcb *tp, char *name)
 			break; /* Break the STAILQ_FOREACH. */
 		}
 	}
+	/* special case dctcp */
+	if (algo != NULL && strncmp(algo->name, "dctcp", TCP_CA_NAME_MAX) == 0) {
+		tp->t_flags2 |= (TF2_ECN_DCTCP|TF2_ECN_ATTEMPT);
+	}
+
 	CC_LIST_RUNLOCK();
 	return (error);
 }
