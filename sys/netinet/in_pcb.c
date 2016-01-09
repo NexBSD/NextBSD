@@ -537,6 +537,11 @@ in_rt_valid(struct inpcb *inp)
 		return (0);
 	if (inp->inp_socket->so_options & SO_DONTROUTE)
 		return (0);
+	if (inp->inp_faddr.s_addr == inp->inp_laddr.s_addr ||
+	    (ntohl(inp->inp_faddr.s_addr) >> IN_CLASSA_NSHIFT) == IN_LOOPBACKNET ||
+	    (ntohl(inp->inp_laddr.s_addr) >> IN_CLASSA_NSHIFT) == IN_LOOPBACKNET)
+		return (0);
+
 	if (inp->inp_vflag & INP_IPV6PROTO)
 		rnh = rt_tables_get_rnh(0, AF_INET6);
 	else
@@ -550,8 +555,9 @@ in_rt_valid(struct inpcb *inp)
 	 * merely updating the inpcb's routing generation count.
 	 */
 	in_pcbrtalloc(inp);
-	if (inp->inp_rt == NULL || inp->inp_rt->rt_ifp == NULL)
+	if (inp->inp_rt == NULL || inp->inp_rt->rt_ifp == NULL) {
 		return (0);
+	}
 	if (inp->inp_ip_p == IPPROTO_TCP)
 		tcp_osd_change(inp, inp->inp_rt->rt_osd);
 	return (1);
@@ -615,7 +621,6 @@ in_pcbrtalloc(struct inpcb *inp)
 	    inp->inp_rt_gen == rnh->rnh_gen) {
 		KASSERT(inp->inp_rt->rt_flags & RTF_UP,
 		    ("gen count unchanged but route invalid"));
-		rt = inp->inp_rt;
 		return;
 	}
 resolve:

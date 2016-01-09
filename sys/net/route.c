@@ -143,7 +143,7 @@ static VNET_DEFINE(uma_zone_t, rtzone);		/* Routing table UMA zone. */
 
 static int rtrequest1_fib_change(struct radix_node_head *, struct rt_addrinfo *,
     struct rtentry **, u_int);
-static void rt_setmetrics(const struct rt_addrinfo *, struct rtentry *);
+static void rt_setmetrics(const struct rt_addrinfo *, struct rtentry *, struct radix_node_head *rnh);
 static int rt_ifdelroute(const struct rtentry *rt, void *arg);
 static struct rtentry *rt_unlinkrte(struct radix_node_head *rnh,
     struct rt_addrinfo *info, int *perror);
@@ -578,7 +578,7 @@ rtredirect_fib(struct sockaddr *dst,
 	struct sockaddr *src,
 	u_int fibnum)
 {
-	struct rtentry *rt, *rt0 = NULL;
+	struct rtentry *rt;
 	int error = 0;
 	short *stat = NULL;
 	struct rt_addrinfo info;
@@ -637,7 +637,7 @@ rtredirect_fib(struct sockaddr *dst,
 			 * Create new route, rather than smashing route to net.
 			 */
 		create:
-			rt0 = rt;
+			RTFREE(rt);
 			rt = NULL;
 		
 			flags |= RTF_DYNAMIC;
@@ -647,21 +647,14 @@ rtredirect_fib(struct sockaddr *dst,
 			info.rti_info[RTAX_NETMASK] = netmask;
 			info.rti_ifa = ifa;
 			info.rti_flags = flags;
-			if (rt0 != NULL)
-				RT_UNLOCK(rt0);	/* drop lock to avoid LOR with RNH */
 			error = rtrequest1_fib(RTM_ADD, &info, &rt, fibnum);
 			if (rt != NULL) {
 				RT_LOCK(rt);
-				if (rt0 != NULL)
-					EVENTHANDLER_INVOKE(route_redirect_event, rt0, rt, dst);
 				flags = rt->rt_flags;
 			}
-			if (rt0 != NULL)
-				RTFREE(rt0);
 			
 			stat = &V_rtstat.rts_dynamic;
 		} else {
-			struct rtentry *gwrt;
 
 			/*
 			 * Smash the current notion of the gateway to
@@ -679,11 +672,7 @@ rtredirect_fib(struct sockaddr *dst,
 			RADIX_NODE_HEAD_LOCK(rnh);
 			RT_LOCK(rt);
 			rt_setgate(rt, rt_key(rt), gateway);
-			gwrt = rtalloc1(gateway, 1, RTF_RNH_LOCKED);
 			RADIX_NODE_HEAD_UNLOCK(rnh);
-			EVENTHANDLER_INVOKE(route_redirect_event, rt, gwrt, dst);
-			if (gwrt)
-				RTFREE_LOCKED(gwrt);
 		}
 	} else
 		error = EHOSTUNREACH;
@@ -868,7 +857,7 @@ rt_exportinfo(struct rtentry *rt, struct rt_addrinfo *info, int flags)
 		src = rt_key(rt);
 		dst = info->rti_info[RTAX_DST];
 		sa_len = src->sa_len;
-		if (src != NULL && dst != NULL) {
+		if (dst != NULL) {
 			if (src->sa_len > dst->sa_len)
 				return (ENOMEM);
 			memcpy(dst, src, src->sa_len);
@@ -1630,7 +1619,6 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 			rt_maskedcopy(dst, (struct sockaddr *)&mdst, netmask);
 			dst = (struct sockaddr *)&mdst;
 		}
-
 		RADIX_NODE_HEAD_LOCK(rnh);
 		rt = rt_unlinkrte(rnh, info, &error);
 		RADIX_NODE_HEAD_UNLOCK(rnh);
@@ -1707,8 +1695,8 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 		rt->rt_ifa = ifa;
 		rt->rt_ifp = ifa->ifa_ifp;
 		rt->rt_weight = 1;
-
-		rt_setmetrics(info, rt);
+		/* XXX pass up return and fail for ENOMEM*/
+		rt_setmetrics(info, rt, rnh);
 
 		RADIX_NODE_HEAD_LOCK(rnh);
 		RT_LOCK(rt);
@@ -1850,7 +1838,7 @@ rtrequest1_fib_change(struct radix_node_head *rnh, struct rt_addrinfo *info,
 
 	RT_LOCK(rt);
 
-	rt_setmetrics(info, rt);
+	rt_setmetrics(info, rt, rnh);
 
 	/*
 	 * New gateway could require new ifaddr, ifp;
@@ -1926,7 +1914,7 @@ bad:
 }
 
 static void
-rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt)
+rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt, struct radix_node_head *rnh)
 {
 
 	if (info->rti_mflags & RTV_MTU) {
@@ -1960,6 +1948,9 @@ rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt)
 		tcp_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[1]);
 	if (info->rti_mflags & RTV_UDP)
 		udp_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[2]);
+
+	if (info->rti_mflags & (RTV_IP|RTV_TCP|RTV_UDP))
+		atomic_add_int(&rnh->rnh_gen, 1);
 #endif
 }
 

@@ -359,6 +359,7 @@ struct tcpcb {
 #define	TF2_PLPMTU_PMTUD	0x00000002 /* Allowed to attempt PLPMTUD. */
 #define	TF2_PLPMTU_MAXSEGSNT	0x00000004 /* Last seg sent was full seg. */
 #define	TF2_ECN_ATTEMPT		0x00000008 /* Try ECN */
+#define	TF2_ECN_DCTCP		0x00000010 /* Mark ECT for _all_ DCTCP */
 
 /*
  * Structure to hold TCP options that are only used during segment
@@ -757,6 +758,7 @@ void	tcp_dropwithreset(struct mbuf *, struct tcphdr *,
 		     struct tcpcb *, int, int);
 void	tcp_pulloutofband(struct socket *,
 		     struct tcphdr *, struct mbuf *, int);
+void	tcp_xmit_timer(struct tcpcb *, sbintime_t);
 void	tcp_newreno_partial_ack(struct tcpcb *, struct tcphdr *);
 void	cc_ack_received(struct tcpcb *tp, struct tcphdr *th,
 			    uint16_t type);

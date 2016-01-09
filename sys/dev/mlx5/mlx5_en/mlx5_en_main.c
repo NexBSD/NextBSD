@@ -977,7 +977,7 @@ mlx5e_create_sq(struct mlx5e_channel *c,
 	sq->tc = tc;
 
 	sq->br = buf_ring_alloc(MLX5E_SQ_TX_QUEUE_SIZE, M_MLX5EN,
-	    M_WAITOK, &sq->lock);
+				M_WAITOK, &sq->lock, tc, c->num_tc);
 	if (sq->br == NULL) {
 		if_printf(c->ifp, "%s: Failed allocating sq drbr buffer\n",
 		    __func__);
