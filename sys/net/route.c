@@ -143,7 +143,7 @@ static VNET_DEFINE(uma_zone_t, rtzone);		/* Routing table UMA zone. */
 
 static int rtrequest1_fib_change(struct radix_node_head *, struct rt_addrinfo *,
     struct rtentry **, u_int);
-static void rt_setmetrics(const struct rt_addrinfo *, struct rtentry *);
+static void rt_setmetrics(const struct rt_addrinfo *, struct rtentry *, struct radix_node_head *rnh);
 static int rt_ifdelroute(const struct rtentry *rt, void *arg);
 static struct rtentry *rt_unlinkrte(struct radix_node_head *rnh,
     struct rt_addrinfo *info, int *perror);
@@ -1710,8 +1710,8 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 		rt->rt_ifa = ifa;
 		rt->rt_ifp = ifa->ifa_ifp;
 		rt->rt_weight = 1;
-
-		rt_setmetrics(info, rt);
+		/* XXX pass up return and fail for ENOMEM*/
+		rt_setmetrics(info, rt, rnh);
 
 #ifdef RADIX_MPATH
 		/* do not permit exactly the same dst/mask/gw pair */
@@ -1849,7 +1849,7 @@ rtrequest1_fib_change(struct radix_node_head *rnh, struct rt_addrinfo *info,
 
 	RT_LOCK(rt);
 
-	rt_setmetrics(info, rt);
+	rt_setmetrics(info, rt, rnh);
 
 	/*
 	 * New gateway could require new ifaddr, ifp;
@@ -1925,7 +1925,7 @@ bad:
 }
 
 static void
-rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt)
+rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt, struct radix_node_head *rnh)
 {
 
 	if (info->rti_mflags & RTV_MTU) {
@@ -1959,6 +1959,9 @@ rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt)
 		tcp_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[1]);
 	if (info->rti_mflags & RTV_UDP)
 		udp_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[2]);
+
+	if (info->rti_mflags & (RTV_IP|RTV_TCP|RTV_UDP))
+		atomic_add_int(&rnh->rnh_gen, 1);
 #endif
 }
 
