@@ -359,6 +359,7 @@ struct tcpcb {
 #define	TF2_PLPMTU_PMTUD	0x00000002 /* Allowed to attempt PLPMTUD. */
 #define	TF2_PLPMTU_MAXSEGSNT	0x00000004 /* Last seg sent was full seg. */
 #define	TF2_ECN_ATTEMPT		0x00000008 /* Try ECN */
+#define	TF2_ECN_DCTCP		0x00000010 /* Mark ECT for _all_ DCTCP */
 
 /*
  * Structure to hold TCP options that are only used during segment
