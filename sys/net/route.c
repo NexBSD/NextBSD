@@ -1630,7 +1630,6 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 			rt_maskedcopy(dst, (struct sockaddr *)&mdst, netmask);
 			dst = (struct sockaddr *)&mdst;
 		}
-
 		RADIX_NODE_HEAD_LOCK(rnh);
 		rt = rt_unlinkrte(rnh, info, &error);
 		RADIX_NODE_HEAD_UNLOCK(rnh);
