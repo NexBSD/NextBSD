@@ -933,6 +933,8 @@ newroute(int argc, char **argv)
 					nrflags &= ~F_ISHOST;
 				}
 				break;
+			case K_DCTCP:
+			case K_ECN:
 			case K_MTU:
 			case K_HOPCOUNT:
 			case K_EXPIRE:

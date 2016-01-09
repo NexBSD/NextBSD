@@ -423,7 +423,7 @@ ip_direct_input(struct mbuf *m)
  * Set / get subnet state (ECN etc)
  */
 
-void
+int
 ip_osd_set(struct osd *osd, u_long flags)
 {
 	u_long clear, set;
@@ -435,12 +435,15 @@ ip_osd_set(struct osd *osd, u_long flags)
 	iss = osd_get(OSD_ROUTE, osd, ip_osd_id);
 
 	if (iss == NULL)
-		iss = malloc(sizeof(*iss), M_DEVBUF, M_ZERO|M_WAITOK);
+		iss = malloc(sizeof(*iss), M_DEVBUF, M_ZERO|M_NOWAIT);
 
+	if (iss == NULL)
+		return (ENOMEM);
 	iss->iss_flags &= ~clear;
 	iss->iss_flags |= set;
 
 	osd_set(OSD_ROUTE, osd, ip_osd_id, iss);
+	return (0);
 }
 
 u_long

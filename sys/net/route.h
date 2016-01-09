@@ -355,8 +355,9 @@ struct rt_addrinfo {
 				 || (ifp)->if_link_state == LINK_STATE_UP)
 
 #define	RT_LOCK_INIT(_rt) \
-	mtx_init(&(_rt)->rt_mtx, "rtentry", NULL, MTX_DEF | MTX_DUPOK)
+	mtx_init(&(_rt)->rt_mtx, "rtentry", NULL, MTX_DEF | MTX_DUPOK | MTX_RECURSE)
 #define	RT_LOCK(_rt)		mtx_lock(&(_rt)->rt_mtx)
+#define	RT_LOCKED(_rt)		mtx_owned(&(_rt)->rt_mtx)
 #define	RT_UNLOCK(_rt)		mtx_unlock(&(_rt)->rt_mtx)
 #define	RT_LOCK_DESTROY(_rt)	mtx_destroy(&(_rt)->rt_mtx)
 #define	RT_LOCK_ASSERT(_rt)	mtx_assert(&(_rt)->rt_mtx, MA_OWNED)
@@ -481,11 +482,11 @@ int	rib_lookup_info(uint32_t, const struct sockaddr *, uint32_t, uint32_t,
 	    struct rt_addrinfo *);
 void	rib_free_info(struct rt_addrinfo *info);
 
-void	ip_osd_set(struct osd *osd, u_long flags);
+int	ip_osd_set(struct osd *osd, u_long flags);
 u_long	ip_osd_get(struct osd *osd);
-void	tcp_osd_set(struct osd *osd, u_long flags);
+int	tcp_osd_set(struct osd *osd, u_long flags);
 u_long	tcp_osd_get(struct osd *osd);
-void	udp_osd_set(struct osd *osd, u_long flags);
+int	udp_osd_set(struct osd *osd, u_long flags);
 u_long	udp_osd_get(struct osd *osd);
 
 
