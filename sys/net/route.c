@@ -759,7 +759,7 @@ ifa_ifwithroute(int flags, const struct sockaddr *dst, struct sockaddr *gateway,
 	if (ifa == NULL)
 		ifa = ifa_ifwithnet(gateway, 0, fibnum);
 	if (ifa == NULL) {
-		struct rtentry *rt = rtalloc1_fib(gateway, 0, RTF_RNH_LOCKED, fibnum);
+		struct rtentry *rt = rtalloc1_fib(gateway, 0, 0, fibnum);
 		if (rt == NULL)
 			return (NULL);
 		/*
@@ -1582,7 +1582,7 @@ int
 rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 				u_int fibnum)
 {
-	int error = 0, needlock = 0;
+	int error = 0;
 	struct rtentry *rt, *rt_old;
 #ifdef FLOWTABLE
 	struct rtentry *rt0;
@@ -1592,9 +1592,9 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 	struct ifaddr *ifa;
 	struct sockaddr *ndst;
 	struct sockaddr_storage mdst;
-#define senderr(x) { error = x ; goto bad; }
 
 	KASSERT((fibnum < rt_numfibs), ("rtrequest1_fib: bad fibnum"));
+	KASSERT((flags & RTF_RNH_LOCKED) == 0, ("rtrequest1_fib: locked"));
 	switch (dst->sa_family) {
 	case AF_INET6:
 	case AF_INET:
@@ -1611,12 +1611,7 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 	rnh = rt_tables_get_rnh(fibnum, dst->sa_family);
 	if (rnh == NULL)
 		return (EAFNOSUPPORT);
-	needlock = ((flags & RTF_RNH_LOCKED) == 0);
-	flags &= ~RTF_RNH_LOCKED;
-	if (needlock)
-		RADIX_NODE_HEAD_LOCK(rnh);
-	else
-		RADIX_NODE_HEAD_LOCK_ASSERT(rnh);
+
 	/*
 	 * If we are adding a host route then we don't want to put
 	 * a netmask in the tree, nor do we want to clone it.
@@ -1630,9 +1625,11 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 			rt_maskedcopy(dst, (struct sockaddr *)&mdst, netmask);
 			dst = (struct sockaddr *)&mdst;
 		}
+		RADIX_NODE_HEAD_LOCK(rnh);
 		rt = rt_unlinkrte(rnh, info, &error);
+		RADIX_NODE_HEAD_UNLOCK(rnh);
 		if (error != 0)
-			goto bad;
+			return (error);
 
 		rt_notifydelete(rt, info);
 
@@ -1655,33 +1652,32 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 		break;
 	case RTM_ADD:
 		if ((flags & RTF_GATEWAY) && !gateway)
-			senderr(EINVAL);
+			return (EINVAL);
 		if (dst && gateway && (dst->sa_family != gateway->sa_family) && 
 		    (gateway->sa_family != AF_UNSPEC) && (gateway->sa_family != AF_LINK))
-			senderr(EINVAL);
+			return (EINVAL);
 
 		if (info->rti_ifa == NULL) {
 			error = rt_getifa_fib(info, fibnum);
 			if (error)
-				senderr(error);
+				return (error);
 		} else
 			ifa_ref(info->rti_ifa);
 		ifa = info->rti_ifa;
 		rt = uma_zalloc(V_rtzone, M_NOWAIT);
 		if (rt == NULL) {
 			ifa_free(ifa);
-			senderr(ENOBUFS);
+			return (ENOBUFS);
 		}
 		rt->rt_flags = RTF_UP | flags;
 		rt->rt_fibnum = fibnum;
 		/*
 		 * Add the gateway. Possibly re-malloc-ing the storage for it.
 		 */
-		RT_LOCK(rt);
 		if ((error = rt_setgate(rt, dst, gateway)) != 0) {
 			ifa_free(ifa);
 			uma_zfree(V_rtzone, rt);
-			senderr(error);
+			return (error);
 		}
 
 		/*
@@ -1708,14 +1704,18 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 
 		rt_setmetrics(info, rt);
 
+		RADIX_NODE_HEAD_LOCK(rnh);
+		RT_LOCK(rt);
 #ifdef RADIX_MPATH
 		/* do not permit exactly the same dst/mask/gw pair */
 		if (rn_mpath_capable(rnh) &&
 			rt_mpath_conflict(rnh, rt, netmask)) {
+			RADIX_NODE_HEAD_UNLOCK(rnh);
+
 			ifa_free(rt->rt_ifa);
 			R_Free(rt_key(rt));
 			uma_zfree(V_rtzone, rt);
-			senderr(EEXIST);
+			return (EEXIST);
 		}
 #endif
 
@@ -1747,6 +1747,7 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 				atomic_add_int(&rnh->rnh_gen, 1);
 			}
 		}
+		RADIX_NODE_HEAD_UNLOCK(rnh);
 
 		if (rt_old != NULL)
 			RT_UNLOCK(rt_old);
@@ -1763,7 +1764,7 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 			if (rt0 != NULL)
 				RTFREE(rt0);
 #endif
-			senderr(EEXIST);
+			return (EEXIST);
 		} 
 #ifdef FLOWTABLE
 		else if (rt0 != NULL) {
@@ -1795,16 +1796,15 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 		RT_UNLOCK(rt);
 		break;
 	case RTM_CHANGE:
+		RADIX_NODE_HEAD_LOCK(rnh);
 		error = rtrequest1_fib_change(rnh, info, ret_nrt, fibnum);
+		RADIX_NODE_HEAD_UNLOCK(rnh);
 		break;
 	default:
 		error = EOPNOTSUPP;
 	}
-bad:
-	if (needlock)
-		RADIX_NODE_HEAD_UNLOCK(rnh);
+
 	return (error);
-#undef senderr
 }
 
 #undef dst
@@ -1954,15 +1954,7 @@ rt_setgate(struct rtentry *rt, struct sockaddr *dst, struct sockaddr *gate)
 {
 	/* XXX dst may be overwritten, can we move this to below */
 	int dlen = SA_SIZE(dst), glen = SA_SIZE(gate);
-#ifdef INVARIANTS
-	struct radix_node_head *rnh;
 
-	rnh = rt_tables_get_rnh(rt->rt_fibnum, dst->sa_family);
-#endif
-
-	RT_LOCK_ASSERT(rt);
-	RADIX_NODE_HEAD_LOCK_ASSERT(rnh);
-	
 	/*
 	 * Prepare to store the gateway in rt->rt_gateway.
 	 * Both dst and gateway are stored one after the other in the same
