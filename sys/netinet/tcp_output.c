@@ -1140,7 +1140,7 @@ send:
 	 * resend those bits a number of times as per
 	 * RFC 3168.
 	 */
-	if (tp->t_state == TCPS_SYN_SENT && (V_tcp_do_ecn == 2 || (tp->t_flags & TF2_ECN_ATTEMPT))) {
+	if (tp->t_state == TCPS_SYN_SENT && (V_tcp_do_ecn == 2 || (tp->t_flags2 & TF2_ECN_ATTEMPT))) {
 		if (tp->t_rxtshift >= 1) {
 			if (tp->t_rxtshift <= V_tcp_ecn_maxretries)
 				flags |= TH_ECE|TH_CWR;
@@ -1156,7 +1156,7 @@ send:
 		 * Ignore pure ack packets, retransmissions and window probes.
 		 */
 		if (len > 0 && SEQ_GEQ(tp->snd_nxt, tp->snd_max) &&
-		    !((tp->t_flags & TF_FORCEDATA) && len == 1)) {
+		    (!((tp->t_flags & TF_FORCEDATA) && len == 1) || (tp->t_flags2 & TF2_ECN_DCTCP))) {
 #ifdef INET6
 			if (isipv6)
 				ip6->ip6_flow |= htonl(IPTOS_ECN_ECT0 << 20);
