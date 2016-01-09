@@ -247,8 +247,6 @@ VNET_PCPUSTAT_SYSUNINIT(tcpstat);
 #endif /* VIMAGE */
 
 
-static void	tcp_xmit_timer(struct tcpcb *, sbintime_t);
-
 /*
  * Kernel module interface for updating tcpstat.  The argument is an index
  * into tcpstat treated as an array.
@@ -1718,10 +1716,8 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				 * timestamps of 0 or we could calculate a
 				 * huge RTT and blow up the retransmit timer.
 				 */
-				if ((to.to_flags & TOF_TS) != 0 &&
-				    to.to_tsecr) {
+				if ((to.to_flags & TOF_TS) != 0 && to.to_tsecr) {
 					u_int t, curts;
-
 
 					curts = tcp_ts_getsbintime32();
 					/*
@@ -1733,8 +1729,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 						t = UINT_MAX - to.to_tsecr + curts;
 					if (!tp->t_rttlow || tp->t_rttlow > t)
 						tp->t_rttlow = t;
-					tcp_xmit_timer(tp,
-					    TCP_TS_TO_SBT(t) + 1);
+					tcp_xmit_timer(tp, TCP_TS_TO_SBT(t) + 1);
 				} else if (tp->t_rtttime &&
 					   SEQ_GT(th->th_ack, tp->t_rtseq)) {
 					sbintime_t t;
@@ -3440,7 +3435,7 @@ tcp_pulloutofband(struct socket *so, struct tcphdr *th, struct mbuf *m,
  * Collect new round-trip time estimate
  * and update averages and current timeout.
  */
-static void
+void
 tcp_xmit_timer(struct tcpcb *tp, sbintime_t rtt)
 {
 	uint64_t delta;

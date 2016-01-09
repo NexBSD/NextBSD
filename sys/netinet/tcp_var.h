@@ -757,6 +757,7 @@ void	tcp_dropwithreset(struct mbuf *, struct tcphdr *,
 		     struct tcpcb *, int, int);
 void	tcp_pulloutofband(struct socket *,
 		     struct tcphdr *, struct mbuf *, int);
+void	tcp_xmit_timer(struct tcpcb *, sbintime_t);
 void	tcp_newreno_partial_ack(struct tcpcb *, struct tcphdr *);
 void	cc_ack_received(struct tcpcb *tp, struct tcphdr *th,
 			    uint16_t type);
