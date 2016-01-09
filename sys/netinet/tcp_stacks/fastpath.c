@@ -65,6 +65,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/module.h>
 #include <sys/kernel.h>
 #include <sys/hhook.h>
+#include <sys/limits.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/proc.h>		/* for proc0 declaration */
@@ -180,6 +181,7 @@ tcp_do_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	       struct tcpcb *tp, struct tcpopt *to, int drop_hdrlen, int tlen, 
 	       int ti_locked, u_long tiwin)
 {
+	sbintime_t t;
 	int acked;
 	int winup_only=0;
 #ifdef TCPDEBUG
@@ -222,7 +224,7 @@ tcp_do_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	if ((to->to_flags & TOF_TS) != 0 &&
 	    SEQ_LEQ(th->th_seq, tp->last_ack_sent)) {
-		tp->ts_recent_age = tcp_ts_getticks();
+		tp->ts_recent_age = tcp_ts_getsbintime();
 		tp->ts_recent = to->to_tsval;
 	}
 	/*
@@ -238,12 +240,10 @@ tcp_do_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	/*
 	 * "bad retransmit" recovery.
 	 */
-	if (tp->t_rxtshift == 1 &&
-	    tp->t_flags & TF_PREVVALID &&
-	    (int)(ticks - tp->t_badrxtwin) < 0) {
+	t = tcp_ts_getsbintime();
+	if (tp->t_rxtshift == 1 && tp->t_flags & TF_PREVVALID &&
+	    (int)(t - tp->t_badrxtwin) < 0)
 		cc_cong_signal(tp, th, CC_RTO_ERR);
-	}
-
 	/*
 	 * Recalculate the transmit timer / rtt.
 	 *
@@ -254,20 +254,18 @@ tcp_do_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	if ((to->to_flags & TOF_TS) != 0 &&
 	    to->to_tsecr) {
-		u_int t;
+		u_int t_;
 
-		t = tcp_ts_getticks() - to->to_tsecr;
-		if (!tp->t_rttlow || tp->t_rttlow > t)
-			tp->t_rttlow = t;
-		tcp_xmit_timer(tp,
-			       TCP_TS_TO_TICKS(t) + 1);
+		t_ = ((uint32_t)t) - to->to_tsecr;
+		if (!tp->t_rttlow || tp->t_rttlow > t_)
+			tp->t_rttlow = t_;
+		tcp_xmit_timer(tp, TCP_TS_TO_SBT(t) + 1);
 	} else if (tp->t_rtttime &&
 		   SEQ_GT(th->th_ack, tp->t_rtseq)) {
 		if (!tp->t_rttlow ||
-		    tp->t_rttlow > ticks - tp->t_rtttime)
-			tp->t_rttlow = ticks - tp->t_rtttime;
-		tcp_xmit_timer(tp,
-			       ticks - tp->t_rtttime);
+		    tp->t_rttlow > t - tp->t_rtttime)
+			tp->t_rttlow = t - tp->t_rtttime;
+		tcp_xmit_timer(tp, TCP_TS_TO_SBT(t - tp->t_rtttime));
 	}
 	if (winup_only == 0) {
 		acked = BYTES_THIS_ACK(tp, th);
@@ -368,7 +366,7 @@ tcp_do_fastnewdata(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	if ((to->to_flags & TOF_TS) != 0 &&
 	    SEQ_LEQ(th->th_seq, tp->last_ack_sent)) {
-		tp->ts_recent_age = tcp_ts_getticks();
+		tp->ts_recent_age = tcp_ts_getsbintime();
 		tp->ts_recent = to->to_tsval;
 	}
 
@@ -507,6 +505,7 @@ tcp_do_slowpath(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		struct tcpcb *tp, struct tcpopt *to, int drop_hdrlen, int tlen, 
 		int ti_locked, u_long tiwin, int thflags)
 {
+	sbintime_t t;
 	int  acked, ourfinisacked, needoutput = 0;
 	int rstreason, todrop, win;
 	char *s;
@@ -620,7 +619,7 @@ tcp_do_slowpath(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			 *	SYN_SENT  --> ESTABLISHED
 			 *	SYN_SENT* --> FIN_WAIT_1
 			 */
-			tp->t_starttime = ticks;
+			tp->t_starttime = tcp_ts_getsbintime();
 			if (tp->t_flags & TF_NEEDFIN) {
 				tcp_state_change(tp, TCPS_FIN_WAIT_1);
 				tp->t_flags &= ~TF_NEEDFIN;
@@ -793,7 +792,7 @@ tcp_do_slowpath(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    TSTMP_LT(to->to_tsval, tp->ts_recent)) {
 
 		/* Check to see if ts_recent is over 24 days old.  */
-		if (tcp_ts_getticks() - tp->ts_recent_age > TCP_PAWS_IDLE) {
+		if (tcp_ts_getsbintime() - tp->ts_recent_age > TCP_PAWS_IDLE) {
 			/*
 			 * Invalidate ts_recent.  If this segment updates
 			 * ts_recent, the age will be reset later and ts_recent
@@ -947,7 +946,7 @@ tcp_do_slowpath(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    SEQ_LEQ(th->th_seq, tp->last_ack_sent) &&
 	    SEQ_LEQ(tp->last_ack_sent, th->th_seq + tlen +
 		((thflags & (TH_SYN|TH_FIN)) != 0))) {
-		tp->ts_recent_age = tcp_ts_getticks();
+		tp->ts_recent_age = tcp_ts_getsbintime();
 		tp->ts_recent = to->to_tsval;
 	}
 
@@ -991,7 +990,7 @@ tcp_do_slowpath(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		 *      SYN-RECEIVED  -> ESTABLISHED
 		 *      SYN-RECEIVED* -> FIN-WAIT-1
 		 */
-		tp->t_starttime = ticks;
+		tp->t_starttime = tcp_ts_getsbintime();
 		if (tp->t_flags & TF_NEEDFIN) {
 			tcp_state_change(tp, TCPS_FIN_WAIT_1);
 			tp->t_flags &= ~TF_NEEDFIN;
@@ -1275,8 +1274,9 @@ process_ACK:
 		 * original cwnd and ssthresh, and proceed to transmit where
 		 * we left off.
 		 */
+		t = tcp_ts_getsbintime();
 		if (tp->t_rxtshift == 1 && tp->t_flags & TF_PREVVALID &&
-		    (int)(ticks - tp->t_badrxtwin) < 0)
+		    (int)(t - tp->t_badrxtwin) < 0)
 			cc_cong_signal(tp, th, CC_RTO_ERR);
 
 		/*
@@ -1294,16 +1294,19 @@ process_ACK:
 		 * huge RTT and blow up the retransmit timer.
 		 */
 		if ((to->to_flags & TOF_TS) != 0 && to->to_tsecr) {
-			u_int t;
+			u_int t_;
 
-			t = tcp_ts_getticks() - to->to_tsecr;
-			if (!tp->t_rttlow || tp->t_rttlow > t)
-				tp->t_rttlow = t;
-			tcp_xmit_timer(tp, TCP_TS_TO_TICKS(t) + 1);
+			t_ = ((uint32_t)t) - to->to_tsecr;
+			if (!tp->t_rttlow || tp->t_rttlow > t_)
+				tp->t_rttlow = t_;
+			tcp_xmit_timer(tp, TCP_TS_TO_SBT(t) + 1);
 		} else if (tp->t_rtttime && SEQ_GT(th->th_ack, tp->t_rtseq)) {
-			if (!tp->t_rttlow || tp->t_rttlow > ticks - tp->t_rtttime)
-				tp->t_rttlow = ticks - tp->t_rtttime;
-			tcp_xmit_timer(tp, ticks - tp->t_rtttime);
+			u_int t_;
+
+			t_ = ((uint32_t)t);
+			if (!tp->t_rttlow || tp->t_rttlow > t_ - tp->t_rtttime)
+				tp->t_rttlow = t_ - tp->t_rtttime;
+			tcp_xmit_timer(tp, TCP_TS_TO_SBT(t_ - tp->t_rtttime));
 		}
 
 		/*
@@ -1613,7 +1616,7 @@ dodata:							/* XXX */
 		 * enter the CLOSE_WAIT state.
 		 */
 		case TCPS_SYN_RECEIVED:
-			tp->t_starttime = ticks;
+			tp->t_starttime = tcp_ts_getsbintime();
 			/* FALLTHROUGH */
 		case TCPS_ESTABLISHED:
 			tcp_state_change(tp, TCPS_CLOSE_WAIT);
@@ -1806,7 +1809,7 @@ tcp_do_segment_fastslow(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * XXX: This should be done after segment
 	 * validation to ignore broken/spoofed segs.
 	 */
-	tp->t_rcvtime = ticks;
+	tp->t_rcvtime = tcp_ts_getsbintime();
 	if (TCPS_HAVEESTABLISHED(tp->t_state))
 		tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp));
 
@@ -1855,7 +1858,7 @@ tcp_do_segment_fastslow(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	if ((to.to_flags & TOF_TS) && (to.to_tsecr != 0)) {
 		to.to_tsecr -= tp->ts_offset;
-		if (TSTMP_GT(to.to_tsecr, tcp_ts_getticks()))
+		if (TSTMP_GT(to.to_tsecr, tcp_ts_getsbintime32()))
 			to.to_tsecr = 0;
 	}
 	/*
@@ -1898,7 +1901,7 @@ tcp_do_segment_fastslow(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		if (to.to_flags & TOF_TS) {
 			tp->t_flags |= TF_RCVD_TSTMP;
 			tp->ts_recent = to.to_tsval;
-			tp->ts_recent_age = tcp_ts_getticks();
+			tp->ts_recent_age = tcp_ts_getsbintime();
 		}
 		if (to.to_flags & TOF_MSS)
 			tcp_mss(tp, to.to_mss);
@@ -2070,7 +2073,7 @@ tcp_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	if ((to->to_flags & TOF_TS) != 0 &&
 	    SEQ_LEQ(th->th_seq, tp->last_ack_sent)) {
-		tp->ts_recent_age = tcp_ts_getticks();
+		tp->ts_recent_age = tcp_ts_getsbintime();
 		tp->ts_recent = to->to_tsval;
 	}
 	/*
@@ -2088,7 +2091,7 @@ tcp_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	if (tp->t_rxtshift == 1 &&
 	    tp->t_flags & TF_PREVVALID &&
-	    (int)(ticks - tp->t_badrxtwin) < 0) {
+	    (int)(tcp_ts_getsbintime() - tp->t_badrxtwin) < 0) {
 		cc_cong_signal(tp, th, CC_RTO_ERR);
 	}
 
@@ -2100,23 +2103,31 @@ tcp_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * timestamps of 0 or we could calculate a
 	 * huge RTT and blow up the retransmit timer.
 	 */
-	if ((to->to_flags & TOF_TS) != 0 &&
-	    to->to_tsecr) {
-		u_int t;
+	if ((to->to_flags & TOF_TS) != 0 && to->to_tsecr) {
+		u_int t, curts;
 
-		t = tcp_ts_getticks() - to->to_tsecr;
+		curts = tcp_ts_getsbintime32();
+		/*
+		 * cope with hourly wrap
+		 */
+		if (__predict_true(curts > to->to_tsecr))
+			t = curts - to->to_tsecr;
+		else
+			t = UINT_MAX - to->to_tsecr + curts;
 		if (!tp->t_rttlow || tp->t_rttlow > t)
 			tp->t_rttlow = t;
-		tcp_xmit_timer(tp,
-			       TCP_TS_TO_TICKS(t) + 1);
+		tcp_xmit_timer(tp, TCP_TS_TO_SBT(t) + 1);
 	} else if (tp->t_rtttime &&
 		   SEQ_GT(th->th_ack, tp->t_rtseq)) {
+		sbintime_t t;
+		
+		t = tcp_ts_getsbintime();
 		if (!tp->t_rttlow ||
-		    tp->t_rttlow > ticks - tp->t_rtttime)
-			tp->t_rttlow = ticks - tp->t_rtttime;
-		tcp_xmit_timer(tp,
-			       ticks - tp->t_rtttime);
+		    tp->t_rttlow > t - tp->t_rtttime)
+			tp->t_rttlow = t - tp->t_rtttime;
+		tcp_xmit_timer(tp, t - tp->t_rtttime);
 	}
+
 	if (winup_only == 0) {
 		acked = BYTES_THIS_ACK(tp, th);
 
@@ -2247,7 +2258,7 @@ tcp_do_segment_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * XXX: This should be done after segment
 	 * validation to ignore broken/spoofed segs.
 	 */
-	tp->t_rcvtime = ticks;
+	tp->t_rcvtime = tcp_ts_getsbintime();
 	if (TCPS_HAVEESTABLISHED(tp->t_state))
 		tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp));
 
@@ -2296,7 +2307,7 @@ tcp_do_segment_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	if ((to.to_flags & TOF_TS) && (to.to_tsecr != 0)) {
 		to.to_tsecr -= tp->ts_offset;
-		if (TSTMP_GT(to.to_tsecr, tcp_ts_getticks()))
+		if (TSTMP_GT(to.to_tsecr, tcp_ts_getsbintime32()))
 			to.to_tsecr = 0;
 	}
 	/*
@@ -2339,7 +2350,7 @@ tcp_do_segment_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		if (to.to_flags & TOF_TS) {
 			tp->t_flags |= TF_RCVD_TSTMP;
 			tp->ts_recent = to.to_tsval;
-			tp->ts_recent_age = tcp_ts_getticks();
+			tp->ts_recent_age = tcp_ts_getsbintime();
 		}
 		if (to.to_flags & TOF_MSS)
 			tcp_mss(tp, to.to_mss);
