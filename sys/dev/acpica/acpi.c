@@ -1107,6 +1107,7 @@ acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
 int
 acpi_parse_pxm(device_t dev, int *domain)
 {
+#if MAXMEMDOM > 1
 	ACPI_HANDLE h;
 	int d, pxm;
 
@@ -1120,7 +1121,7 @@ acpi_parse_pxm(device_t dev, int *domain)
 		*domain = d;
 		return (1);
 	}
-
+#endif
 	return (0);
 }
 
@@ -2599,8 +2600,11 @@ acpi_ReqSleepState(struct acpi_softc *sc, int state)
     if (!acpi_sleep_states[state])
 	return (EOPNOTSUPP);
 
-    /* If a suspend request is already in progress, just return. */
-    if (sc->acpi_next_sstate != 0) {
+    /*
+     * If a reboot/shutdown/suspend request is already in progress or
+     * suspend is blocked due to an upcoming shutdown, just return.
+     */
+    if (rebooting || sc->acpi_next_sstate != 0 || suspend_blocked) {
 	return (0);
     }
 

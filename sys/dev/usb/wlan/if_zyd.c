@@ -334,7 +334,8 @@ zyd_attach(device_t dev)
 	struct usb_attach_arg *uaa = device_get_ivars(dev);
 	struct zyd_softc *sc = device_get_softc(dev);
 	struct ieee80211com *ic = &sc->sc_ic;
-	uint8_t iface_index, bands;
+	uint8_t bands[howmany(IEEE80211_MODE_MAX, 8)];
+	uint8_t iface_index;
 	int error;
 
 	if (uaa->info.bcdDevice < 0x4330) {
@@ -387,10 +388,10 @@ zyd_attach(device_t dev)
 	        | IEEE80211_C_WPA		/* 802.11i */
 		;
 
-	bands = 0;
-	setbit(&bands, IEEE80211_MODE_11B);
-	setbit(&bands, IEEE80211_MODE_11G);
-	ieee80211_init_channels(ic, NULL, &bands);
+	memset(bands, 0, sizeof(bands));
+	setbit(bands, IEEE80211_MODE_11B);
+	setbit(bands, IEEE80211_MODE_11G);
+	ieee80211_init_channels(ic, NULL, bands);
 
 	ieee80211_ifattach(ic);
 	ic->ic_raw_xmit = zyd_raw_xmit;
@@ -420,6 +421,22 @@ detach:
 	return (ENXIO);			/* failure */
 }
 
+static void
+zyd_drain_mbufq(struct zyd_softc *sc)
+{
+	struct mbuf *m;
+	struct ieee80211_node *ni;
+
+	ZYD_LOCK_ASSERT(sc, MA_OWNED);
+	while ((m = mbufq_dequeue(&sc->sc_snd)) != NULL) {
+		ni = (struct ieee80211_node *)m->m_pkthdr.rcvif;
+		m->m_pkthdr.rcvif = NULL;
+		ieee80211_free_node(ni);
+		m_freem(m);
+	}
+}
+
+
 static int
 zyd_detach(device_t dev)
 {
@@ -433,6 +450,7 @@ zyd_detach(device_t dev)
 	 */
 	ZYD_LOCK(sc);
 	sc->sc_flags |= ZYD_FLAG_DETACHED;
+	zyd_drain_mbufq(sc);
 	STAILQ_INIT(&sc->tx_q);
 	STAILQ_INIT(&sc->tx_free);
 	ZYD_UNLOCK(sc);
@@ -451,7 +469,6 @@ zyd_detach(device_t dev)
 
 	if (ic->ic_softc == sc)
 		ieee80211_ifdetach(ic);
-	mbufq_drain(&sc->sc_snd);
 	mtx_destroy(&sc->sc_mtx);
 
 	return (0);
@@ -2443,7 +2460,6 @@ zyd_tx_start(struct zyd_softc *sc, struct mbuf *m0, struct ieee80211_node *ni)
 	if (wh->i_fc[1] & IEEE80211_FC1_PROTECTED) {
 		k = ieee80211_crypto_encap(ni, m0);
 		if (k == NULL) {
-			m_freem(m0);
 			return (ENOBUFS);
 		}
 		/* packet header may have moved, reset our local pointer */
@@ -2555,6 +2571,7 @@ zyd_start(struct zyd_softc *sc)
 		ni = (struct ieee80211_node *)m->m_pkthdr.rcvif;
 		if (zyd_tx_start(sc, m, ni) != 0) {
 			ieee80211_free_node(ni);
+			m_freem(m);
 			if_inc_counter(ni->ni_vap->iv_ifp,
 			    IFCOUNTER_OERRORS, 1);
 			break;
@@ -2574,13 +2591,11 @@ zyd_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 	if (!(sc->sc_flags & ZYD_FLAG_RUNNING)) {
 		ZYD_UNLOCK(sc);
 		m_freem(m);
-		ieee80211_free_node(ni);
 		return (ENETDOWN);
 	}
 	if (sc->tx_nfree == 0) {
 		ZYD_UNLOCK(sc);
 		m_freem(m);
-		ieee80211_free_node(ni);
 		return (ENOBUFS);		/* XXX */
 	}
 
@@ -2591,7 +2606,7 @@ zyd_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 	 */
 	if (zyd_tx_start(sc, m, ni) != 0) {
 		ZYD_UNLOCK(sc);
-		ieee80211_free_node(ni);
+		m_freem(m);
 		return (EIO);
 	}
 	ZYD_UNLOCK(sc);
@@ -2738,6 +2753,7 @@ zyd_stop(struct zyd_softc *sc)
 	ZYD_LOCK_ASSERT(sc, MA_OWNED);
 
 	sc->sc_flags &= ~ZYD_FLAG_RUNNING;
+	zyd_drain_mbufq(sc);
 
 	/*
 	 * Drain all the transfers, if not already drained:
@@ -2878,3 +2894,4 @@ DRIVER_MODULE(zyd, uhub, zyd_driver, zyd_devclass, NULL, 0);
 MODULE_DEPEND(zyd, usb, 1, 1, 1);
 MODULE_DEPEND(zyd, wlan, 1, 1, 1);
 MODULE_VERSION(zyd, 1);
+USB_PNP_HOST_INFO(zyd_devs);

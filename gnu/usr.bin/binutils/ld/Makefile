@@ -1,11 +1,13 @@
 # $FreeBSD$
 
+ELF_SCR_EXT=	x xbn xc xd xdc xdw xn xr xs xsc xsw xu xw
 .include "../Makefile.inc0"
 .include <src.opts.mk>
 
 .PATH: ${SRCDIR}/ld
 
-PROG=	ld
+PROG=	ld.bfd
+MAN=	ld.1
 SCRIPTDIR= /usr/libdata/ldscripts
 SRCS+=	ldcref.c \
 	ldctor.c \
@@ -47,12 +49,13 @@ CLEANFILES+=	ldemul-list.h stringify.sed
 
 FILES=		${LDSCRIPTS:S|^|ldscripts/|}
 FILESDIR=	${SCRIPTDIR}
+LINKS=		${BINDIR}/ld.bfd ${BINDIR}/ld
 
 HOST=		${TARGET_TUPLE}
-LIBSEARCHPATH=	\"${TOOLS_PREFIX}/lib\":\"${TOOLS_PREFIX}/usr/lib\"
-ELF_SCR_EXT=	x xbn xc xd xdc xdw xn xr xs xsc xsw xu xw
+LIBSEARCHPATH=	\"=/lib\":\"=/usr/lib\"
 .for ext in ${ELF_SCR_EXT}
 LDSCRIPTS+=	${NATIVE_EMULATION}.${ext}
+ldscripts/${NATIVE_EMULATION}.${ext}: e${NATIVE_EMULATION}.c
 .endfor
 
 EMXFR=
@@ -66,8 +69,8 @@ ldemul-list.h:
 	echo "${EMXFR}" > ${.TARGET}
 	echo "#define EMULATION_LIST ${EMLST} 0" >> ${.TARGET}
 
-stringify.sed:
-	ln -sf ${SRCDIR}/ld/emultempl/astring.sed ${.TARGET}
+stringify.sed: ${SRCDIR}/ld/emultempl/astring.sed .NOMETA
+	ln -sf ${.ALLSRC} ${.TARGET}
 
 GENDIRDEPS_FILTER.host+= Nusr.bin/yacc
 

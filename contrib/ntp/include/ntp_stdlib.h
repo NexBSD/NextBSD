@@ -31,6 +31,7 @@ extern	int	mvsnprintf(char *, size_t, const char *, va_list)
 extern	int	msnprintf(char *, size_t, const char *, ...)
 			NTP_PRINTF(3, 4);
 extern	void	msyslog(int, const char *, ...) NTP_PRINTF(2, 3);
+extern	void	mvsyslog(int, const char *, va_list) NTP_PRINTF(2, 0);
 extern	void	init_logging	(const char *, u_int32, int);
 extern	int	change_logfile	(const char *, int);
 extern	void	setup_logfile	(const char *);
@@ -64,8 +65,8 @@ typedef void (*ctrl_c_fn)(void);
 /* authkeys.c */
 extern	void	auth_delkeys	(void);
 extern	int	auth_havekey	(keyid_t);
-extern	int	authdecrypt	(keyid_t, u_int32 *, int, int);
-extern	int	authencrypt	(keyid_t, u_int32 *, int);
+extern	int	authdecrypt	(keyid_t, u_int32 *, size_t, size_t);
+extern	size_t	authencrypt	(keyid_t, u_int32 *, size_t);
 extern	int	authhavekey	(keyid_t);
 extern	int	authistrusted	(keyid_t);
 extern	int	authreadkeys	(const char *);
@@ -94,8 +95,8 @@ extern	void	auth_prealloc_symkeys(int);
 extern	int	ymd2yd		(int, int, int);
 
 /* a_md5encrypt.c */
-extern	int	MD5authdecrypt	(int, u_char *, u_int32 *, int, int);
-extern	int	MD5authencrypt	(int, u_char *, u_int32 *, int);
+extern	int	MD5authdecrypt	(int, const u_char *, u_int32 *, size_t, size_t);
+extern	size_t	MD5authencrypt	(int, const u_char *, u_int32 *, size_t);
 extern	void	MD5auth_setkey	(keyid_t, int, const u_char *, size_t);
 extern	u_int32	addr2refid	(sockaddr_u *);
 

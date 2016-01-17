@@ -478,6 +478,12 @@ typedef struct {
 /* Flags for section groups. */
 #define	GRP_COMDAT	0x1	/* COMDAT semantics. */
 
+/*
+ * Flags / mask for .gnu.versym sections.
+ */
+#define	VERSYM_VERSION	0x7fff
+#define	VERSYM_HIDDEN	0x8000
+
 /* Values for p_type. */
 #define	PT_NULL		0	/* Unused entry. */
 #define	PT_LOAD		1	/* Loadable segment. */
@@ -720,6 +726,11 @@ typedef struct {
 #define	LL_EXPORTS		0x8
 #define	LL_DELAY_LOAD		0x10
 #define	LL_DELTA		0x20
+
+/* Values for n_type used in executables. */
+#define	NT_FREEBSD_ABI_TAG	1
+#define	NT_FREEBSD_NOINIT_TAG	2
+#define	NT_FREEBSD_ARCH_TAG	3
 
 /* Values for n_type.  Used in core files. */
 #define	NT_PRSTATUS	1	/* Process status. */

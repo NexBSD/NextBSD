@@ -1,7 +1,7 @@
 .include <bsd.own.mk>
 
 PROG= launchctl
-MAN=
+MAN= launchctl.1
 
 BASE_INCLUDE= -I${.CURDIR}/../../include/apple
 
@@ -11,8 +11,8 @@ CFLAGS+= -I${.CURDIR}/../../include/mach
 LDFLAGS+= -llaunch -lmach -ldispatch
 LDFLAGS+= -losxsupport -lBlocksRuntime -pthread
 DPADD+= ${LIBJANSSON}
-LDADD+= -lutil
-LDADD+= -ljansson
+LDFLAGS+= -lutil
+LDFLAGS+= -ljansson
 SRCS= launchctl.c
 
 .include <bsd.prog.mk>

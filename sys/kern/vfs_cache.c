@@ -288,7 +288,7 @@ static u_long nummiss; STATNODE(CTLFLAG_RD, nummiss, &nummiss,
     "Number of cache misses");
 static u_long nummisszap; STATNODE(CTLFLAG_RD, nummisszap, &nummisszap,
     "Number of cache misses we do not want to cache");
-static u_long numposzaps; STATNODE(CTLFLAG_RD, numposzaps, &numposzaps, 
+static u_long numposzaps; STATNODE(CTLFLAG_RD, numposzaps, &numposzaps,
     "Number of cache hits (positive) we do not want to cache");
 static u_long numposhits; STATNODE(CTLFLAG_RD, numposhits, &numposhits,
     "Number of cache hits (positive)");
@@ -302,8 +302,6 @@ static u_long numupgrades; STATNODE(CTLFLAG_RD, numupgrades, &numupgrades,
 SYSCTL_OPAQUE(_vfs_cache, OID_AUTO, nchstats, CTLFLAG_RD | CTLFLAG_MPSAFE,
     &nchstats, sizeof(nchstats), "LU",
     "VFS cache effectiveness statistics");
-
-
 
 static void cache_zap(struct namecache *ncp);
 static int vn_vptocnp_locked(struct vnode **vp, struct ucred *cred, char *buf,
@@ -410,22 +408,19 @@ SYSCTL_PROC(_debug_hashstat, OID_AUTO, nchash, CTLTYPE_INT|CTLFLAG_RD|
  *   pointer to a vnode or if it is just a negative cache entry.
  */
 static void
-cache_zap(ncp)
-	struct namecache *ncp;
+cache_zap(struct namecache *ncp)
 {
 	struct vnode *vp;
 
 	rw_assert(&cache_lock, RA_WLOCKED);
 	CTR2(KTR_VFS, "cache_zap(%p) vp %p", ncp, ncp->nc_vp);
-#ifdef KDTRACE_HOOKS
 	if (ncp->nc_vp != NULL) {
-		SDT_PROBE(vfs, namecache, zap, done, ncp->nc_dvp,
-		    nc_get_name(ncp), ncp->nc_vp, 0, 0);
+		SDT_PROBE3(vfs, namecache, zap, done, ncp->nc_dvp,
+		    nc_get_name(ncp), ncp->nc_vp);
 	} else {
-		SDT_PROBE(vfs, namecache, zap_negative, done, ncp->nc_dvp,
-		    nc_get_name(ncp), 0, 0, 0);
+		SDT_PROBE2(vfs, namecache, zap_negative, done, ncp->nc_dvp,
+		    nc_get_name(ncp));
 	}
-#endif
 	vp = NULL;
 	LIST_REMOVE(ncp, nc_hash);
 	if (ncp->nc_flag & NCF_ISDOTDOT) {
@@ -448,7 +443,7 @@ cache_zap(ncp)
 	}
 	numcache--;
 	cache_free(ncp);
-	if (vp)
+	if (vp != NULL)
 		vdrop(vp);
 }
 
@@ -470,12 +465,8 @@ cache_zap(ncp)
  */
 
 int
-cache_lookup(dvp, vpp, cnp, tsp, ticksp)
-	struct vnode *dvp;
-	struct vnode **vpp;
-	struct componentname *cnp;
-	struct timespec *tsp;
-	int *ticksp;
+cache_lookup(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp,
+    struct timespec *tsp, int *ticksp)
 {
 	struct namecache *ncp;
 	uint32_t hash;
@@ -498,8 +489,7 @@ retry_wlocked:
 			CTR2(KTR_VFS, "cache_lookup(%p, %s) found via .",
 			    dvp, cnp->cn_nameptr);
 			dothits++;
-			SDT_PROBE(vfs, namecache, lookup, hit, dvp, ".",
-			    *vpp, 0, 0);
+			SDT_PROBE3(vfs, namecache, lookup, hit, dvp, ".", *vpp);
 			if (tsp != NULL)
 				timespecclear(tsp);
 			if (ticksp != NULL)
@@ -509,8 +499,8 @@ retry_wlocked:
 		if (cnp->cn_namelen == 2 && cnp->cn_nameptr[1] == '.') {
 			dotdothits++;
 			if (dvp->v_cache_dd == NULL) {
-				SDT_PROBE(vfs, namecache, lookup, miss, dvp,
-				    "..", NULL, 0, 0);
+				SDT_PROBE3(vfs, namecache, lookup, miss, dvp,
+				    "..", NULL);
 				goto unlock;
 			}
 			if ((cnp->cn_flags & MAKEENTRY) == 0) {
@@ -532,8 +522,8 @@ retry_wlocked:
 				goto negative_success;
 			CTR3(KTR_VFS, "cache_lookup(%p, %s) found %p via ..",
 			    dvp, cnp->cn_nameptr, *vpp);
-			SDT_PROBE(vfs, namecache, lookup, hit, dvp, "..",
-			    *vpp, 0, 0);
+			SDT_PROBE3(vfs, namecache, lookup, hit, dvp, "..",
+			    *vpp);
 			cache_out_ts(ncp, tsp, ticksp);
 			if ((ncp->nc_flag & (NCF_ISDOTDOT | NCF_DTS)) ==
 			    NCF_DTS && tsp != NULL)
@@ -554,8 +544,8 @@ retry_wlocked:
 
 	/* We failed to find an entry */
 	if (ncp == NULL) {
-		SDT_PROBE(vfs, namecache, lookup, miss, dvp, cnp->cn_nameptr,
-		    NULL, 0, 0);
+		SDT_PROBE3(vfs, namecache, lookup, miss, dvp, cnp->cn_nameptr,
+		    NULL);
 		if ((cnp->cn_flags & MAKEENTRY) == 0) {
 			nummisszap++;
 		} else {
@@ -583,8 +573,8 @@ retry_wlocked:
 		*vpp = ncp->nc_vp;
 		CTR4(KTR_VFS, "cache_lookup(%p, %s) found %p via ncp %p",
 		    dvp, cnp->cn_nameptr, *vpp, ncp);
-		SDT_PROBE(vfs, namecache, lookup, hit, dvp, nc_get_name(ncp),
-		    *vpp, 0, 0);
+		SDT_PROBE3(vfs, namecache, lookup, hit, dvp, nc_get_name(ncp),
+		    *vpp);
 		cache_out_ts(ncp, tsp, ticksp);
 		goto success;
 	}
@@ -615,8 +605,8 @@ negative_success:
 	nchstats.ncs_neghits++;
 	if (ncp->nc_flag & NCF_WHITE)
 		cnp->cn_flags |= ISWHITEOUT;
-	SDT_PROBE(vfs, namecache, lookup, hit__negative, dvp, nc_get_name(ncp),
-	    0, 0, 0);
+	SDT_PROBE2(vfs, namecache, lookup, hit__negative, dvp,
+	    nc_get_name(ncp));
 	cache_out_ts(ncp, tsp, ticksp);
 	CACHE_WUNLOCK();
 	return (ENOENT);
@@ -704,12 +694,8 @@ unlock:
  * Add an entry to the cache.
  */
 void
-cache_enter_time(dvp, vp, cnp, tsp, dtsp)
-	struct vnode *dvp;
-	struct vnode *vp;
-	struct componentname *cnp;
-	struct timespec *tsp;
-	struct timespec *dtsp;
+cache_enter_time(struct vnode *dvp, struct vnode *vp, struct componentname *cnp,
+    struct timespec *tsp, struct timespec *dtsp)
 {
 	struct namecache *ncp, *n2;
 	struct namecache_ts *n3;
@@ -769,8 +755,7 @@ cache_enter_time(dvp, vp, cnp, tsp, dtsp)
 				return;
 			}
 			dvp->v_cache_dd = NULL;
-			SDT_PROBE(vfs, namecache, enter, done, dvp, "..", vp,
-			    0, 0);
+			SDT_PROBE3(vfs, namecache, enter, done, dvp, "..", vp);
 			CACHE_WUNLOCK();
 			flag = NCF_ISDOTDOT;
 		}
@@ -840,9 +825,9 @@ cache_enter_time(dvp, vp, cnp, tsp, dtsp)
 		 * has populated v_cache_dd pointer already.
 		 */
 		if (dvp->v_cache_dd != NULL) {
-		    CACHE_WUNLOCK();
-		    cache_free(ncp);
-		    return;
+			CACHE_WUNLOCK();
+			cache_free(ncp);
+			return;
 		}
 		KASSERT(vp == NULL || vp->v_type == VDIR,
 		    ("wrong vnode type %p", vp));
@@ -850,7 +835,7 @@ cache_enter_time(dvp, vp, cnp, tsp, dtsp)
 	}
 
 	numcache++;
-	if (!vp) {
+	if (vp == NULL) {
 		numneg++;
 		if (cnp->cn_flags & ISWHITEOUT)
 			ncp->nc_flag |= NCF_WHITE;
@@ -888,14 +873,14 @@ cache_enter_time(dvp, vp, cnp, tsp, dtsp)
 	 * "negative" cache queue, otherwise, we place it into the
 	 * destination vnode's cache entries queue.
 	 */
-	if (vp) {
+	if (vp != NULL) {
 		TAILQ_INSERT_HEAD(&vp->v_cache_dst, ncp, nc_dst);
-		SDT_PROBE(vfs, namecache, enter, done, dvp, nc_get_name(ncp),
-		    vp, 0, 0);
+		SDT_PROBE3(vfs, namecache, enter, done, dvp, nc_get_name(ncp),
+		    vp);
 	} else {
 		TAILQ_INSERT_TAIL(&ncneg, ncp, nc_dst);
-		SDT_PROBE(vfs, namecache, enter_negative, done, dvp,
-		    nc_get_name(ncp), 0, 0, 0);
+		SDT_PROBE2(vfs, namecache, enter_negative, done, dvp,
+		    nc_get_name(ncp));
 	}
 	if (numneg * ncnegfactor > numcache) {
 		ncp = TAILQ_FIRST(&ncneg);
@@ -979,12 +964,11 @@ cache_changesize(int newmaxvnodes)
  * Invalidate all entries to a particular vnode.
  */
 void
-cache_purge(vp)
-	struct vnode *vp;
+cache_purge(struct vnode *vp)
 {
 
 	CTR1(KTR_VFS, "cache_purge(%p)", vp);
-	SDT_PROBE(vfs, namecache, purge, done, vp, 0, 0, 0, 0);
+	SDT_PROBE1(vfs, namecache, purge, done, vp);
 	CACHE_WLOCK();
 	while (!LIST_EMPTY(&vp->v_cache_src))
 		cache_zap(LIST_FIRST(&vp->v_cache_src));
@@ -1003,13 +987,12 @@ cache_purge(vp)
  * Invalidate all negative entries for a particular directory vnode.
  */
 void
-cache_purge_negative(vp)
-	struct vnode *vp;
+cache_purge_negative(struct vnode *vp)
 {
 	struct namecache *cp, *ncp;
 
 	CTR1(KTR_VFS, "cache_purge_negative(%p)", vp);
-	SDT_PROBE(vfs, namecache, purge_negative, done, vp, 0, 0, 0, 0);
+	SDT_PROBE1(vfs, namecache, purge_negative, done, vp);
 	CACHE_WLOCK();
 	LIST_FOREACH_SAFE(cp, &vp->v_cache_src, nc_src, ncp) {
 		if (cp->nc_vp == NULL)
@@ -1022,14 +1005,13 @@ cache_purge_negative(vp)
  * Flush all entries referencing a particular filesystem.
  */
 void
-cache_purgevfs(mp)
-	struct mount *mp;
+cache_purgevfs(struct mount *mp)
 {
 	struct nchashhead *ncpp;
 	struct namecache *ncp, *nnp;
 
 	/* Scan hash tables for applicable entries */
-	SDT_PROBE(vfs, namecache, purgevfs, done, mp, 0, 0, 0, 0);
+	SDT_PROBE1(vfs, namecache, purgevfs, done, mp);
 	CACHE_WLOCK();
 	for (ncpp = &nchashtbl[nchash]; ncpp >= nchashtbl; ncpp--) {
 		LIST_FOREACH_SAFE(ncp, ncpp, nc_hash, nnp) {
@@ -1046,12 +1028,7 @@ cache_purgevfs(mp)
  */
 
 int
-vfs_cache_lookup(ap)
-	struct vop_lookup_args /* {
-		struct vnode *a_dvp;
-		struct vnode **a_vpp;
-		struct componentname *a_cnp;
-	} */ *ap;
+vfs_cache_lookup(struct vop_lookup_args *ap)
 {
 	struct vnode *dvp;
 	int error;
@@ -1092,9 +1069,7 @@ SYSCTL_INT(_debug, OID_AUTO, disablecwd, CTLFLAG_RW, &disablecwd, 0,
 
 /* Implementation of the getcwd syscall. */
 int
-sys___getcwd(td, uap)
-	struct thread *td;
-	struct __getcwd_args *uap;
+sys___getcwd(struct thread *td, struct __getcwd_args *uap)
 {
 
 	return (kern___getcwd(td, uap->buf, UIO_USERSPACE, uap->buflen,
@@ -1253,14 +1228,14 @@ vn_vptocnp_locked(struct vnode **vp, struct ucred *cred, char *buf,
 			vrele(*vp);
 			numfullpathfail4++;
 			error = ENOMEM;
-			SDT_PROBE(vfs, namecache, fullpath, return, error,
-			    vp, NULL, 0, 0);
+			SDT_PROBE3(vfs, namecache, fullpath, return, error,
+			    vp, NULL);
 			return (error);
 		}
 		*buflen -= ncp->nc_nlen;
 		memcpy(buf + *buflen, nc_get_name(ncp), ncp->nc_nlen);
-		SDT_PROBE(vfs, namecache, fullpath, hit, ncp->nc_dvp,
-		    nc_get_name(ncp), vp, 0, 0);
+		SDT_PROBE3(vfs, namecache, fullpath, hit, ncp->nc_dvp,
+		    nc_get_name(ncp), vp);
 		dvp = *vp;
 		*vp = ncp->nc_dvp;
 		vref(*vp);
@@ -1269,7 +1244,7 @@ vn_vptocnp_locked(struct vnode **vp, struct ucred *cred, char *buf,
 		CACHE_RLOCK();
 		return (0);
 	}
-	SDT_PROBE(vfs, namecache, fullpath, miss, vp, 0, 0, 0, 0);
+	SDT_PROBE1(vfs, namecache, fullpath, miss, vp);
 
 	CACHE_RUNLOCK();
 	vn_lock(*vp, LK_SHARED | LK_RETRY);
@@ -1277,8 +1252,7 @@ vn_vptocnp_locked(struct vnode **vp, struct ucred *cred, char *buf,
 	vput(*vp);
 	if (error) {
 		numfullpathfail2++;
-		SDT_PROBE(vfs, namecache, fullpath, return,  error, vp,
-		    NULL, 0, 0);
+		SDT_PROBE3(vfs, namecache, fullpath, return,  error, vp, NULL);
 		return (error);
 	}
 
@@ -1289,8 +1263,7 @@ vn_vptocnp_locked(struct vnode **vp, struct ucred *cred, char *buf,
 		CACHE_RUNLOCK();
 		vrele(dvp);
 		error = ENOENT;
-		SDT_PROBE(vfs, namecache, fullpath, return, error, vp,
-		    NULL, 0, 0);
+		SDT_PROBE3(vfs, namecache, fullpath, return, error, vp, NULL);
 		return (error);
 	}
 	/*
@@ -1318,7 +1291,7 @@ vn_fullpath1(struct thread *td, struct vnode *vp, struct vnode *rdir,
 	error = 0;
 	slash_prefixed = 0;
 
-	SDT_PROBE(vfs, namecache, fullpath, entry, vp, 0, 0, 0, 0);
+	SDT_PROBE1(vfs, namecache, fullpath, entry, vp);
 	numfullpathcalls++;
 	vref(vp);
 	CACHE_RLOCK();
@@ -1340,8 +1313,8 @@ vn_fullpath1(struct thread *td, struct vnode *vp, struct vnode *rdir,
 				CACHE_RUNLOCK();
 				vrele(vp);
 				error = ENOENT;
-				SDT_PROBE(vfs, namecache, fullpath, return,
-				    error, vp, NULL, 0, 0);
+				SDT_PROBE3(vfs, namecache, fullpath, return,
+				    error, vp, NULL);
 				break;
 			}
 			vp1 = vp->v_mount->mnt_vnodecovered;
@@ -1357,8 +1330,8 @@ vn_fullpath1(struct thread *td, struct vnode *vp, struct vnode *rdir,
 			vrele(vp);
 			numfullpathfail1++;
 			error = ENOTDIR;
-			SDT_PROBE(vfs, namecache, fullpath, return,
-			    error, vp, NULL, 0, 0);
+			SDT_PROBE3(vfs, namecache, fullpath, return,
+			    error, vp, NULL);
 			break;
 		}
 		error = vn_vptocnp_locked(&vp, td->td_ucred, buf, &buflen);
@@ -1368,8 +1341,8 @@ vn_fullpath1(struct thread *td, struct vnode *vp, struct vnode *rdir,
 			CACHE_RUNLOCK();
 			vrele(vp);
 			error = ENOMEM;
-			SDT_PROBE(vfs, namecache, fullpath, return, error,
-			    startvp, NULL, 0, 0);
+			SDT_PROBE3(vfs, namecache, fullpath, return, error,
+			    startvp, NULL);
 			break;
 		}
 		buf[--buflen] = '/';
@@ -1382,8 +1355,8 @@ vn_fullpath1(struct thread *td, struct vnode *vp, struct vnode *rdir,
 			CACHE_RUNLOCK();
 			vrele(vp);
 			numfullpathfail4++;
-			SDT_PROBE(vfs, namecache, fullpath, return, ENOMEM,
-			    startvp, NULL, 0, 0);
+			SDT_PROBE3(vfs, namecache, fullpath, return, ENOMEM,
+			    startvp, NULL);
 			return (ENOMEM);
 		}
 		buf[--buflen] = '/';
@@ -1392,8 +1365,7 @@ vn_fullpath1(struct thread *td, struct vnode *vp, struct vnode *rdir,
 	CACHE_RUNLOCK();
 	vrele(vp);
 
-	SDT_PROBE(vfs, namecache, fullpath, return, 0, startvp, buf + buflen,
-	    0, 0);
+	SDT_PROBE3(vfs, namecache, fullpath, return, 0, startvp, buf + buflen);
 	*retbuf = buf + buflen;
 	return (0);
 }

@@ -2,24 +2,43 @@
 
 MAN=
 
-.include <bsd.own.mk>
-
-# In-tree GCC does not support __attribute__((ms_abi)).
-.if ${COMPILER_TYPE} != "gcc"
+.include <src.opts.mk>
 
 MK_SSP=		no
 
 PROG=		boot1.sym
 INTERNALPROG=
+WARNS?=		6
+
+.if ${MK_ZFS} != "no"
+# Disable warnings that are currently incompatible with the zfs boot code
+CWARNFLAGS.zfs_module.c += -Wno-array-bounds
+CWARNFLAGS.zfs_module.c += -Wno-cast-align
+CWARNFLAGS.zfs_module.c += -Wno-cast-qual
+CWARNFLAGS.zfs_module.c += -Wno-missing-prototypes
+CWARNFLAGS.zfs_module.c += -Wno-sign-compare
+CWARNFLAGS.zfs_module.c += -Wno-unused-parameter
+CWARNFLAGS.zfs_module.c += -Wno-unused-function
+.endif
 
 # architecture-specific loader code
-SRCS=	boot1.c self_reloc.c start.S
+SRCS=	boot1.c self_reloc.c start.S ufs_module.c
+.if ${MK_ZFS} != "no"
+SRCS+=		zfs_module.c
+.endif
 
 CFLAGS+=	-I.
 CFLAGS+=	-I${.CURDIR}/../include
 CFLAGS+=	-I${.CURDIR}/../include/${MACHINE}
 CFLAGS+=	-I${.CURDIR}/../../../contrib/dev/acpica/include
 CFLAGS+=	-I${.CURDIR}/../../..
+CFLAGS+=	-DEFI_UFS_BOOT
+
+.if ${MK_ZFS} != "no"
+CFLAGS+=	-I${.CURDIR}/../../zfs/
+CFLAGS+=	-I${.CURDIR}/../../../cddl/boot/zfs/
+CFLAGS+=	-DEFI_ZFS_BOOT
+.endif
 
 # Always add MI sources and REGULAR efi loader bits
 .PATH:		${.CURDIR}/../loader/arch/${MACHINE}
@@ -41,14 +60,13 @@ CFLAGS+=	-fPIC
 LDFLAGS+=	-Wl,-znocombreloc
 .endif
 
-.if ${MACHINE_CPUARCH} == "arm" || ${MACHINE_CPUARCH} == "i386"
 #
 # Add libstand for the runtime functions used by the compiler - for example
 # __aeabi_* (arm) or __divdi3 (i386).
+# as well as required string and memory functions for all platforms.
 #
 DPADD+=		${LIBSTAND}
 LDADD+=		-lstand
-.endif
 
 DPADD+=		${LDSCRIPT}
 
@@ -79,8 +97,15 @@ boot1.o: ${.CURDIR}/../../common/ufsread.c
 # created by generate-fat.sh
 
 .include "${.CURDIR}/Makefile.fat"
+BOOT1_MAXSIZE?=	131072
 
 boot1.efifat: boot1.efi
+	@set -- `ls -l boot1.efi`; \
+	x=$$(($$5-${BOOT1_MAXSIZE})); \
+	if [ $$x -ge 0 ]; then \
+	    echo "boot1 $$x bytes too large; regenerate FAT templates?" >&2 ;\
+	    exit 1; \
+	fi
 	echo ${.OBJDIR}
 	/usr/bin/uudecode ${.CURDIR}/fat-${MACHINE}.tmpl.bz2.uu
 	mv fat-${MACHINE}.tmpl.bz2 ${.TARGET}.bz2
@@ -88,8 +113,6 @@ boot1.efifat: boot1.efi
 	/bin/dd if=boot1.efi of=${.TARGET} seek=${BOOT1_OFFSET} conv=notrunc
 
 CLEANFILES= boot1.efi boot1.efifat
-
-.endif # ${COMPILER_TYPE} != "gcc"
 
 .include <bsd.prog.mk>
 

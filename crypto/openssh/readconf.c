@@ -1,5 +1,4 @@
 /* $OpenBSD: readconf.c,v 1.218 2014/02/23 20:11:36 djm Exp $ */
-/* $FreeBSD$ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -155,9 +154,6 @@ typedef enum {
 	oCanonicalizeFallbackLocal, oCanonicalizePermittedCNAMEs,
 	oIgnoredUnknownOption,
 	oHPNDisabled, oHPNBufferSize, oTcpRcvBufPoll, oTcpRcvBuf,
-#ifdef NONE_CIPHER_ENABLED
-	oNoneEnabled, oNoneSwitch,
-#endif
 	oVersionAddendum, oDeprecated, oUnsupported
 } OpCodes;
 
@@ -275,10 +271,6 @@ static struct {
 	{ "hpnbuffersize", oHPNBufferSize },
 	{ "tcprcvbufpoll", oTcpRcvBufPoll },
 	{ "tcprcvbuf", oTcpRcvBuf },
-#ifdef	NONE_CIPHER_ENABLED
-	{ "noneenabled", oNoneEnabled },
-	{ "noneswitch", oNoneSwitch },
-#endif
 	{ "versionaddendum", oVersionAddendum },
 
 	{ NULL, oBadOption }
@@ -1376,31 +1368,6 @@ parse_int:
 		intptr = &options->tcp_rcv_buf;
 		goto parse_int;
 
-#ifdef	NONE_CIPHER_ENABLED
-	case oNoneEnabled:
-		intptr = &options->none_enabled;
-		goto parse_flag;
-
-	/*
-	 * We check to see if the command comes from the command line or not.
-	 * If it does then enable it otherwise fail.  NONE must never be a
-	 * default configuration.
-	 */
-	case oNoneSwitch:
-		if (strcmp(filename,"command-line") == 0) {
-			intptr = &options->none_switch;
-			goto parse_flag;
-		} else {
-			debug("NoneSwitch directive found in %.200s.",
-			    filename);
-			error("NoneSwitch is found in %.200s.\n"
-			    "You may only use this configuration option "
-			    "from the command line", filename);
-			error("Continuing...");
-			return 0;
-		}
-#endif
-
 	case oVersionAddendum:
 		if (s == NULL)
 			fatal("%.200s line %d: Missing argument.", filename,
@@ -1643,7 +1610,7 @@ initialize_options(Options * options)
 	options->tun_remote = -1;
 	options->local_command = NULL;
 	options->permit_local_command = -1;
-	options->use_roaming = -1;
+	options->use_roaming = 0;
 	options->visual_host_key = -1;
 	options->ip_qos_interactive = -1;
 	options->ip_qos_bulk = -1;
@@ -1660,10 +1627,6 @@ initialize_options(Options * options)
 	options->hpn_buffer_size = -1;
 	options->tcp_rcv_buf_poll = -1;
 	options->tcp_rcv_buf = -1;
-#ifdef NONE_CIPHER_ENABLED
-	options->none_enabled = -1;
-	options->none_switch = -1;
-#endif
 }
 
 /*
@@ -1825,8 +1788,7 @@ fill_default_options(Options * options)
 		options->tun_remote = SSH_TUNID_ANY;
 	if (options->permit_local_command == -1)
 		options->permit_local_command = 0;
-	if (options->use_roaming == -1)
-		options->use_roaming = 1;
+	options->use_roaming = 0;
 	if (options->visual_host_key == -1)
 		options->visual_host_key = 0;
 	if (options->ip_qos_interactive == -1)
@@ -1884,11 +1846,6 @@ fill_default_options(Options * options)
 		options->tcp_rcv_buf *= 1024;
 	if (options->tcp_rcv_buf_poll == -1)
 		options->tcp_rcv_buf_poll = 1;
-#ifdef	NONE_CIPHER_ENABLED
-	/* options->none_enabled must not be set by default */
-	if (options->none_switch == -1)
-		options->none_switch = 0;
-#endif
 }
 
 /*

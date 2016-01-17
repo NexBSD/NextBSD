@@ -37,13 +37,13 @@ static void ixgbe_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused
 static int ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx);
 static int ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri);
 
-static int ixgbe_tso_setup(struct tx_ring *, struct mbuf *, u32 *, u32 *);
-static int ixgbe_tx_ctx_setup(struct tx_ring *txr, struct mbuf *mp, u32 *cmd_type_len, u32 *olinfo_status, int pidx, int *offload);
+static int ixgbe_tso_setup(struct tx_ring *txr, int ctxd, struct mbuf *mp, u32 *cmd_type_len, u32 *olinfo_status);
+static int ixgbe_tx_ctx_setup(struct adapter *adapter, struct tx_ring *txr, struct mbuf *mp, u32 *cmd_type_len, u32 *olinfo_status, int pidx, int *offload);
 
 static void ixgbe_rx_checksum(u32 staterr, if_rxd_info_t ri, u32 ptype);
-int ixgbe_intr(void *arg);
 
 extern void ixgbe_if_enable_intr(if_ctx_t ctx);
+extern int ixgbe_intr(void *arg);
 
 struct if_txrx ixgbe_txrx  = {
 	ixgbe_isc_txd_encap,
@@ -60,45 +60,13 @@ extern if_shared_ctx_t ixgbe_sctx;
 
 /*********************************************************************
  *
- *  Legacy Interrupt Service routine
- *
- **********************************************************************/
-int 
-ixgbe_intr(void *arg)
-{
-	struct adapter *adapter = arg;
-	struct ixgbe_hw *hw = &adapter->hw;
-	if_ctx_t ctx = adapter->ctx; 
-    u32 reg_eicr; 
-	
-	    reg_eicr = IXGBE_READ_REG(hw, IXGBE_EICR);
-		if (reg_eicr == 0) {
-			ixgbe_if_enable_intr(ctx);
-		return (FILTER_HANDLED);
-		}
-
-		/* Check for fan failure */
-		if ((hw->device_id == IXGBE_DEV_ID_82598AT) &&
-			(reg_eicr & IXGBE_EICR_GPI_SDP1)) {
-			device_printf(adapter->dev, "\nCRITICAL: FAN FAILURE!! "
-						  "REPLACE IMMEDIATELY!!\n");
-			IXGBE_WRITE_REG(hw, IXGBE_EIMS, IXGBE_EICR_GPI_SDP1_BY_MAC(hw));
-		}
-		
-		/* External PHY interrupt --- NEED TO FINISH */
-        return (FILTER_SCHEDULE_THREAD); 		
-}
-
-/*********************************************************************
- *
  *  Advanced Context Descriptor setup for VLAN, CSUM or TSO
  *
  **********************************************************************/
 static int
-ixgbe_tx_ctx_setup(struct tx_ring *txr, struct mbuf *mp,
+ixgbe_tx_ctx_setup(struct adapter *adapter, struct tx_ring *txr, struct mbuf *mp,
 		   u32 *cmd_type_len, u32 *olinfo_status, int pidx, int *offload)
 {
-	struct adapter *adapter = txr->adapter;
 	struct ixgbe_adv_tx_context_desc *TXD;
 	struct ether_vlan_header *eh;
 	struct ip *ip;
@@ -108,12 +76,12 @@ ixgbe_tx_ctx_setup(struct tx_ring *txr, struct mbuf *mp,
 	u16	etype;
 	u8	ipproto = 0;
 	u16	vtag = 0;
-	int     ctxd = txr->next_avail_desc; 
-
+	int     ctxd = pidx;
+  	
 	*offload = TRUE;
 	/* First check if TSO is to be used */
 	if (mp->m_pkthdr.csum_flags & CSUM_TSO)
-		return (ixgbe_tso_setup(txr, mp, cmd_type_len, olinfo_status));
+	  return (ixgbe_tso_setup(txr, ctxd, mp, cmd_type_len, olinfo_status));
 
 	if ((mp->m_pkthdr.csum_flags & CSUM_OFFLOAD) == 0)
 		*offload = FALSE;
@@ -220,14 +188,14 @@ no_offloads:
  *
  **********************************************************************/
 static int
-ixgbe_tso_setup(struct tx_ring *txr, struct mbuf *mp,
+ixgbe_tso_setup(struct tx_ring *txr, int ctxd, struct mbuf *mp,
     u32 *cmd_type_len, u32 *olinfo_status)
 {
 	struct ixgbe_adv_tx_context_desc *TXD;
 	u32 vlan_macip_lens = 0, type_tucmd_mlhl = 0;
 	u32 mss_l4len_idx = 0, paylen;
 	u16 vtag = 0, eh_type;
-	int ctxd, ehdrlen, ip_hlen, tcp_hlen;
+	int ehdrlen, ip_hlen, tcp_hlen;
 	struct ether_vlan_header *eh;
 #ifdef INET6
 	struct ip6_hdr *ip6;
@@ -286,9 +254,7 @@ ixgbe_tso_setup(struct tx_ring *txr, struct mbuf *mp,
 		break;
 	}
 
-	ctxd = txr->next_avail_desc;
 	TXD = (struct ixgbe_adv_tx_context_desc *) &txr->tx_base[ctxd];
-
 	tcp_hlen = th->th_off << 2;
 
 	/* This is used in the transmit desc in encap */
@@ -316,15 +282,11 @@ ixgbe_tso_setup(struct tx_ring *txr, struct mbuf *mp,
 
 	TXD->seqnum_seed = htole32(0);
 
-	if (++ctxd == txr->num_desc)
-		ctxd = 0;
-
-	txr->tx_avail--;
-	txr->next_avail_desc = ctxd;
 	*cmd_type_len |= IXGBE_ADVTXD_DCMD_TSE;
 	*olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
 	*olinfo_status |= paylen << IXGBE_ADVTXD_PAYLEN_SHIFT;
 	++txr->tso_tx;
+	
 	return (0);
 }
 
@@ -356,18 +318,22 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
    * Set up the appropriate offload context
    * this will consume the first descriptor
    *********************************************/
-  error = ixgbe_tx_ctx_setup(txr, m_head, &cmd, &olinfo_status, first, &offload);
-  if (error)
-    return error; 
+  error = ixgbe_tx_ctx_setup(sc, txr, m_head, &cmd, &olinfo_status, first, &offload);
   
+  if (error) {
+    printf("ixgbe_tx_ctx_setup ERROR\n"); 
+    return error; 
+  }
+    
   if (offload)
-    i++;
+    ++i;
 
   for (j = 0; j < nsegs; j++) {
     bus_size_t seglen;
     bus_addr_t segaddr;
 
     txd = &txr->tx_base[i];
+    buf = &txr->tx_buffers[i]; 
     seglen = segs[j].ds_len;
     segaddr = htole64(segs[j].ds_addr);
 
@@ -376,8 +342,9 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 			    cmd |seglen);
     txd->read.olinfo_status = htole32(olinfo_status);
 
-    if (++i == ixgbe_sctx->isc_ntxd)
+    if (++i == ixgbe_sctx->isc_ntxd) {
       i = 0;
+    }
   }
 
   txd->read.cmd_type_len |=
@@ -386,10 +353,14 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
   /* Set the EOP descriptor that will be marked done */
   buf = &txr->tx_buffers[first];
   buf->eop = txd;
+
+  txr->bytes += m_head->m_pkthdr.len;
+  pi->ipi_pidx = pi->ipi_new_pidx = i;
+  ++pi->ipi_new_pidx;
+
   ++txr->total_packets;
-  pi->ipi_new_pidx = i; 
   
-  return (0); 
+    return (0); 
 }
   
 static void
@@ -410,11 +381,10 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx)
   struct tx_ring   *txr = &que->txr;
 	
   u32			work, processed = 0;
+  u32                   limit = sc->tx_process_limit;
   struct ixgbe_tx_buf	*buf;
   union ixgbe_adv_tx_desc *txd;
-  int limit;
   
-  limit = ixgbe_sctx->isc_ntxd - 1;
   /* Get work starting point */
   work = cidx;
   buf = &txr->tx_buffers[work];
@@ -470,7 +440,6 @@ static void ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unuse
   struct adapter *sc       = arg;
   struct ix_queue *que     = &sc->queues[rxqid];
   struct rx_ring *rxr      = &que->rxr;
-
   int			i;
   uint32_t next_pidx;
 
@@ -505,14 +474,17 @@ static int ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
     staterr = le32toh(rxd->wb.upper.status_error);
     pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
 
-    if ((staterr & IXGBE_RXD_STAT_DD) == 0)
+    if ((staterr & IXGBE_RXD_STAT_DD) == 0) {
+      printf("staterr & IXGBE_RXD_STAT_DD == 0\n");
       break;
+    }
     cnt++; 
     
-    if (++i == ixgbe_sctx->isc_nrxd)
-      i = 0; 
+    if (++i == ixgbe_sctx->isc_nrxd) {
+      i = 0;
+    }
   }
-  
+
   return (cnt); 
 }
 
@@ -529,28 +501,28 @@ ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
   struct adapter           *adapter = arg;
   struct ix_queue          *que = &adapter->queues[ri->iri_qsidx];
   struct rx_ring           *rxr = &que->rxr;
-  struct ifnet             *ifp = adapter->ifp; 
+  struct ifnet             *ifp = iflib_get_ifp(adapter->ctx);
   union ixgbe_adv_rx_desc  *rxd;
+
   u16                      pkt_info, len;
   u16                      vtag = 0; 
   u32                      ptype;
-  u32                      staterr = 0; 
+  u32                      staterr = 0;
   bool                     eop;
   
-  ri->iri_qidx = 0; 
   rxd = &rxr->rx_base[ri->iri_cidx];
   staterr = le32toh(rxd->wb.upper.status_error);
   pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
 
    /* Error Checking then decrement count */
-  MPASS ((staterr & IXGBE_RXD_STAT_DD) == 0);
+  MPASS ((staterr & IXGBE_RXD_STAT_DD) != 0);
 
     len = le16toh(rxd->wb.upper.length);
     ptype = le32toh(rxd->wb.lower.lo_dword.data) &
 		IXGBE_RXDADV_PKTTYPE_MASK;
    
     ri->iri_len = len;
-    rxr->rx_bytes += len;
+    rxr->bytes += len;
 
     rxd->wb.upper.status_error = 0;
     eop = ((staterr & IXGBE_RXD_STAT_EOP) != 0);

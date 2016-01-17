@@ -59,7 +59,6 @@
 #include <net/if_dl.h>
 #include <net/if_media.h>
 
-#include <net/bpf.h>
 #include <net/if_types.h>
 #include <net/if_vlan_var.h>
 #include <net/iflib.h>
@@ -142,12 +141,6 @@
 #define DBA_ALIGN	128
 
 /*
- * This parameter controls the maximum no of times the driver will loop in
- * the isr. Minimum Value = 1
- */
-#define MAX_LOOP	10
-
-/*
  * This is the max watchdog interval, ie. the time that can
  * pass between any two TX clean operations, such only happening
  * when the TX hardware is functioning.
@@ -163,9 +156,11 @@
 
 /* These defines are used in MTU calculations */
 #define IXGBE_MAX_FRAME_SIZE	9728
-#define IXGBE_MTU_HDR		(ETHER_HDR_LEN + ETHER_CRC_LEN + \
+#define IXGBE_MTU_HDR		(ETHER_HDR_LEN + ETHER_CRC_LEN)
+#define IXGBE_MTU_HDR_VLAN	(ETHER_HDR_LEN + ETHER_CRC_LEN + \
 				 ETHER_VLAN_ENCAP_LEN)
 #define IXGBE_MAX_MTU		(IXGBE_MAX_FRAME_SIZE - IXGBE_MTU_HDR)
+#define IXGBE_MAX_MTU_VLAN	(IXGBE_MAX_FRAME_SIZE - IXGBE_MTU_HDR_VLAN)
 
 /* Flow control constants */
 #define IXGBE_FC_PAUSE		0xFFFF
@@ -182,6 +177,9 @@
  * modern Intel CPUs, results in 40 bytes wasted and a significant drop
  * in observed efficiency of the optimization, 97.9% -> 81.8%.
  */
+#if __FreeBSD_version < 1002000
+#define MPKTHSIZE			(sizeof(struct m_hdr) + sizeof(struct pkthdr))
+#endif
 #define IXGBE_RX_COPY_HDR_PADDED	((((MPKTHSIZE - 1) / 32) + 1) * 32)
 #define IXGBE_RX_COPY_LEN		(MSIZE - IXGBE_RX_COPY_HDR_PADDED)
 #define IXGBE_RX_COPY_ALIGN		(IXGBE_RX_COPY_HDR_PADDED - MPKTHSIZE)
@@ -212,7 +210,6 @@
 #define MSIX_82598_BAR			3
 #define MSIX_82599_BAR			4
 #define IXGBE_TSO_SIZE			262140
-#define IXGBE_TX_BUFFER_SIZE		((u32) 1514)
 #define IXGBE_RX_HDR			128
 #define IXGBE_VFTA_SIZE			128
 #define IXGBE_BR_SIZE			4096
@@ -222,8 +219,12 @@
 
 #define IXV_EITR_DEFAULT		128
 
-/* Offload bits in mbuf flag */
-#if __FreeBSD_version >= 800000
+/* Supported offload bits in mbuf flag */
+#if __FreeBSD_version >= 1000000
+#define CSUM_OFFLOAD		(CSUM_IP_TSO|CSUM_IP6_TSO|CSUM_IP| \
+				 CSUM_IP_UDP|CSUM_IP_TCP|CSUM_IP_SCTP| \
+				 CSUM_IP6_UDP|CSUM_IP6_TCP|CSUM_IP6_SCTP)
+#elif __FreeBSD_version >= 800000
 #define CSUM_OFFLOAD		(CSUM_IP|CSUM_TCP|CSUM_UDP|CSUM_SCTP)
 #else
 #define CSUM_OFFLOAD		(CSUM_IP|CSUM_TCP|CSUM_UDP)
@@ -244,7 +245,11 @@
 #define IXGBE_LOW_LATENCY	128
 #define IXGBE_AVE_LATENCY	400
 #define IXGBE_BULK_LATENCY	1200
-#define IXGBE_LINK_ITR		2000
+
+/* Using 1FF (the max value), the interval is ~1.05ms */
+#define IXGBE_LINK_ITR_QUANTA	0x1FF
+#define IXGBE_LINK_ITR		((IXGBE_LINK_ITR_QUANTA << 3) & \
+				    IXGBE_EITR_ITR_INT_MASK)
 
 /* MAC type macros */
 #define IXGBE_IS_X550VF(_adapter) \
@@ -347,7 +352,6 @@ struct tx_ring {
 	volatile u16		tx_avail;
 	u16			next_avail_desc;
 	u16			next_to_clean;
-	u16			process_limit;
 	u16			num_desc;
 	u32			txd_cmd;
 	bus_dma_tag_t		txtag;
@@ -386,7 +390,6 @@ struct rx_ring {
 	bool			hw_rsc;
 	bool			vtag_strip;
 	u16			mbuf_sz;
-	u16			process_limit;
 	char			mtx_name[16];
 	bus_dma_tag_t		ptag;
 
@@ -457,8 +460,8 @@ struct adapter {
 #define intr_type shared->isc_intr
 	struct ifnet		*ifp;
 	struct ixgbe_hw		hw;
-
 	struct ixgbe_osdep	osdep;
+
 	struct device		*dev;
 
 	struct resource		*pci_mem;
@@ -505,20 +508,20 @@ struct adapter {
 
 	/* Support for pluggable optics */
 	bool			sfp_probe;
-#if 0
-	struct task     	mod_task;   /* SFP tasklet */
-	struct task     	msf_task;   /* Multispeed Fiber */
-#endif	
+
+	struct grouptask     	mod_task;   /* SFP tasklet */
+	struct grouptask     	msf_task;   /* Multispeed Fiber */
+
 #ifdef PCI_IOV
-	struct task		mbx_task;   /* VF -> PF mailbox interrupt */
+	struct grouptask		mbx_task;   /* VF -> PF mailbox interrupt */
 #endif /* PCI_IOV */
 #ifdef IXGBE_FDIR
 	int			fdir_reinit;
-	struct task     	fdir_task;
+	struct grouptask     	fdir_task;
 #endif
-#if 0
-	struct task		phy_task;   /* PHY intr tasklet */
-#endif	
+
+	struct grouptask		phy_task;   /* PHY intr tasklet */
+
 	/*
 	** Queues: 
 	**   This is the irq holder, it has
@@ -526,18 +529,21 @@ struct adapter {
 	**   with it.
 	*/
 	struct ix_queue		*queues;
+	u64			active_queues;
 
 	/*
 	 * Transmit rings:
 	 *	Allocated at run time, an array of rings.
 	 */
 	struct tx_ring		*tx_rings;
+	u32			tx_process_limit;
+
 	/*
 	 * Receive rings:
 	 *	Allocated at run time, an array of rings.
 	 */
 	struct rx_ring		*rx_rings;
-	u64			active_queues;
+	u32			rx_process_limit;
 
 	/* Multicast array memory */
 	struct ixgbe_mc_addr	*mta;
@@ -552,6 +558,7 @@ struct adapter {
 #endif
 
 	/* Misc stats maintained by the driver */
+        unsigned long           rx_mbuf_sz;
 	unsigned long   	dropped_pkts;
 	unsigned long   	mbuf_defrag_failed;
 	unsigned long   	mbuf_header_failed;

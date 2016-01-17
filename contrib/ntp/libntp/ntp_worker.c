@@ -150,7 +150,8 @@ available_blocking_child_slot(void)
 					  prev_octets);
 	blocking_children_alloc = new_alloc;
 
-	return prev_alloc;
+	/* assume we'll never have enough workers to overflow u_int */
+	return (u_int)prev_alloc;
 }
 
 
@@ -278,7 +279,7 @@ blocking_child_common(
 		req = receive_blocking_req_internal(c);
 		if (NULL == req) {
 			say_bye = TRUE;
-			break;
+			continue;
 		}
 
 		DEBUG_REQUIRE(BLOCKING_REQ_MAGIC == req->magic_sig);

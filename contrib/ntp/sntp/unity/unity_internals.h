@@ -82,22 +82,22 @@
 // UNITY_INT_WIDTH.
 #ifndef UNITY_POINTER_WIDTH
   #ifdef UINTPTR_MAX
-    #if (UINTPTR_MAX <= 0xFFFF)
+    #if (UINTPTR_MAX+0 <= 0xFFFF)
       #define UNITY_POINTER_WIDTH (16)
-    #elif (UINTPTR_MAX <= 0xFFFFFFFF)
+    #elif (UINTPTR_MAX+0 <= 0xFFFFFFFF)
       #define UNITY_POINTER_WIDTH (32)
-    #elif (UINTPTR_MAX <= 0xFFFFFFFFFFFFFFFF)
+    #elif (UINTPTR_MAX+0 <= 0xFFFFFFFFFFFFFFFF)
       #define UNITY_POINTER_WIDTH (64)
     #endif
   #endif
 #endif
 #ifndef UNITY_POINTER_WIDTH
   #ifdef INTPTR_MAX
-    #if (INTPTR_MAX <= 0x7FFF)
+    #if (INTPTR_MAX+0 <= 0x7FFF)
       #define UNITY_POINTER_WIDTH (16)
-    #elif (INTPTR_MAX <= 0x7FFFFFFF)
+    #elif (INTPTR_MAX+0 <= 0x7FFFFFFF)
       #define UNITY_POINTER_WIDTH (32)
-    #elif (INTPTR_MAX <= 0x7FFFFFFFFFFFFFFF)
+    #elif (INTPTR_MAX+0 <= 0x7FFFFFFFFFFFFFFF)
       #define UNITY_POINTER_WIDTH (64)
     #endif
   #endif
@@ -305,6 +305,18 @@ extern int UNITY_OUTPUT_CHAR(int);
 #   undef UNITY_WEAK_PRAGMA
 #endif
 
+#if !defined(UNITY_NORETURN_ATTRIBUTE)
+#   ifdef __GNUC__ // includes clang
+#       if !(defined(__WIN32__) && defined(__clang__))
+#           define UNITY_NORETURN_ATTRIBUTE __attribute__((noreturn))
+#       endif
+#   endif
+#endif
+
+#ifndef UNITY_NORETURN_ATTRIBUTE
+#   define UNITY_NORETURN_ATTRIBUTE
+#endif
+
 
 //-------------------------------------------------------
 // Internal Structs Needed
@@ -465,7 +477,7 @@ void UnityAssertNumbersWithin(const _U_SINT delta,
                               const UNITY_LINE_TYPE lineNumber,
                               const UNITY_DISPLAY_STYLE_T style);
 
-void UnityFail(const char* message, const UNITY_LINE_TYPE line);
+void UnityFail(const char* message, const UNITY_LINE_TYPE line) UNITY_NORETURN_ATTRIBUTE;
 
 void UnityIgnore(const char* message, const UNITY_LINE_TYPE line);
 
