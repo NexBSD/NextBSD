@@ -105,11 +105,9 @@ typedef struct iflib_filter_info {
 
 struct iflib_ctx {
 	KOBJ_FIELDS;
-
-	/*
+   /*
    * Pointer to hardware driver's softc
    */
-
 	void *ifc_softc;
 	device_t ifc_dev;
 	if_t ifc_ifp;
@@ -124,7 +122,7 @@ struct iflib_ctx {
 	iflib_qset_t ifc_qsets;
 	uint32_t ifc_if_flags;
 	uint32_t ifc_flags;
-	int			ifc_in_detach;
+	int ifc_in_detach;
 
 	int ifc_link_state;
 	int ifc_link_irq;
@@ -305,7 +303,7 @@ struct iflib_fl {
 	uint32_t	ifl_size;
 	uint32_t	ifl_credits;
 	uint32_t	ifl_buf_size;
-	int			ifl_cltype;
+	int		ifl_cltype;
 	uma_zone_t	ifl_zone;
 
 	iflib_sd_t	ifl_sds;
@@ -517,7 +515,7 @@ SYSCTL_INT(_net_iflib, OID_AUTO, rxd_flush, CTLFLAG_RD,
 #define DBG_COUNTER_INC(name)
 #endif
 
-#define IFLIB_DEBUG 0
+#define IFLIB_DEBUG 1
 
 static void iflib_tx_structures_free(if_ctx_t ctx);
 static void iflib_rx_structures_free(if_ctx_t ctx);
@@ -554,8 +552,6 @@ if_dbg_malloc(unsigned long size, struct malloc_type *type, int flags)
 
 #define malloc if_dbg_malloc
 #endif
-
-
 
 #ifdef DEV_NETMAP
 #include <sys/selinfo.h>
@@ -1106,7 +1102,7 @@ _iflib_irq_alloc(if_ctx_t ctx, if_irq_t irq, int rid,
 	MPASS(rid < 512);
 	irq->ii_rid = rid;
 	res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &irq->ii_rid,
-	    RF_SHAREABLE | RF_ACTIVE);
+				     RF_SHAREABLE | RF_ACTIVE);
 	if (res == NULL) {
 		device_printf(dev,
 		    "failed to allocate IRQ for rid %d, name %s.\n", rid, name);
@@ -1257,7 +1253,6 @@ iflib_txq_setup(iflib_txq_t txq)
 	if_ctx_t ctx = txq->ift_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	iflib_qset_t qset = &ctx->ifc_qsets[txq->ift_id];
-	iflib_sd_t txsd;
 	iflib_dma_info_t di;
 	int i;
 
@@ -1268,11 +1263,6 @@ iflib_txq_setup(iflib_txq_t txq)
 	txq->ift_cidx_processed = txq->ift_pidx = txq->ift_cidx = txq->ift_npending = 0;
 	txq->ift_size = sctx->isc_ntxd;
 
-	/* Free any existing tx buffers. */
-	txsd = txq->ift_sds;
-	for (int i = 0; i < sctx->isc_ntxd; i++, txsd++) {
-		iflib_txsd_free(ctx, txq, txsd);
-	}
 	for (i = 0, di = qset->ifq_ifdi; i < qset->ifq_nhwqs; i++, di++)
 		bzero((void *)di->idi_vaddr, di->idi_size);
 
@@ -1721,7 +1711,11 @@ iflib_stop(if_ctx_t ctx)
 {
 	iflib_txq_t txq = ctx->ifc_txqs;
 	iflib_rxq_t rxq = ctx->ifc_rxqs;
-	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
+	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
+	if_shared_ctx_t sctx = ctx->ifc_sctx;
+	iflib_qset_t qset;
+	iflib_dma_info_t di;
+	iflib_sd_t txsd;
 	iflib_fl_t fl;
 	int i, j;
 
@@ -1731,11 +1725,18 @@ iflib_stop(if_ctx_t ctx)
 	IFDI_INTR_DISABLE(ctx);
 
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
-	for (i = 0; i < sctx->isc_nqsets; i++, txq++, rxq++) {
+	for (i = 0; i < scctx->isc_nqsets; i++, txq++, rxq++) {
+		/* Free any existing tx buffers. */
+		txsd = txq->ift_sds;
+		for (int j = 0; j < sctx->isc_ntxd; i++, txsd++) {
+			iflib_txsd_free(ctx, txq, txsd);
+		}
+		qset = &ctx->ifc_qsets[txq->ift_id];
+		for (i = 0, di = qset->ifq_ifdi; i < qset->ifq_nhwqs; i++, di++)
+			bzero((void *)di->idi_vaddr, di->idi_size);
 		iflib_txq_check_drain(txq, 0);
 		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++)
 			iflib_fl_bufs_free(fl);
-
 	}
 	IFDI_STOP(ctx);
 }
