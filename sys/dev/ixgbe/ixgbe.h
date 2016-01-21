@@ -526,18 +526,7 @@ struct adapter {
 	struct ix_queue		*queues;
 	u64			active_queues;
 
-	/*
-	 * Transmit rings:
-	 *	Allocated at run time, an array of rings.
-	 */
-	struct tx_ring		*tx_rings;
-	u32			tx_process_limit;
-
-	/*
-	 * Receive rings:
-	 *	Allocated at run time, an array of rings.
-	 */
-	struct rx_ring		*rx_rings;
+        u32                     tx_process_limit;
 	u32			rx_process_limit;
 
 	/* Multicast array memory */
@@ -578,7 +567,6 @@ struct adapter {
 	u64			noproto;
 #endif
 };
-
 
 /* Precision Time Sync (IEEE 1588) defines */
 #define ETHERTYPE_IEEE1588      0x88F7
