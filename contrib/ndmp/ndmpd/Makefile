@@ -77,6 +77,7 @@ OBJS= \
 	$(NDMP_OBJ:%.o=$(NDMP_DIR)/%.o) $(TLM_OBJ:%.o=$(TLM_DIR)/%.o)
 
 NDMP_OBJ = \
+	ndmpd_base64.o \
 	ndmpd_callbacks.o \
 	ndmpd_chkpnt.o \
 	ndmpd_comm.o \
@@ -86,13 +87,17 @@ NDMP_OBJ = \
 	ndmpd_door.o \
 	ndmpd_dtime.o \
 	ndmpd_fhistory.o \
+	ndmpd_func.o \
 	ndmpd_handler.o \
+	ndmpd_info.o \
 	ndmpd_log.o \
 	ndmpd_main.o \
 	ndmpd_mark.o \
 	ndmpd_mover.o \
 	ndmpd_prop.o \
 	ndmpd_scsi.o \
+	ndmpd_snapshot.o \
+	ndmpd_table.o \
 	ndmpd_tape.o \
 	ndmpd_tar.o \
 	ndmpd_tar3.o \
@@ -103,9 +108,11 @@ TLM_OBJ = \
 	tlm_backup_reader.o \
 	tlm_bitmap.o \
 	tlm_buffers.o \
+	tlm_hardlink.o \
 	tlm_info.o \
 	tlm_init.o \
 	tlm_lib.o \
+	tlm_proto.o \
 	tlm_restore_writer.o \
 	tlm_traverse.o \
 	tlm_util.o \
