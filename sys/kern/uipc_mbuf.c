@@ -338,6 +338,9 @@ mb_free_ext(struct mbuf *m)
 	case EXT_SFBUF:
 		sf_ext_free(m->m_ext.ext_arg1, m->m_ext.ext_arg2);
 		break;
+	case EXT_SFBUF_NOCACHE:
+		sf_ext_free_nocache(m->m_ext.ext_arg1, m->m_ext.ext_arg2);
+		break;
 	default:
 		KASSERT(m->m_ext.ext_cnt != NULL,
 		    ("%s: no refcounting pointer on %p", __func__, m));
@@ -395,7 +398,7 @@ mb_free_ext(struct mbuf *m)
  * Attach the cluster from *m to *n, set up m_ext in *n
  * and bump the refcount of the cluster.
  */
-static void
+void
 mb_dupcl(struct mbuf *n, const struct mbuf *m)
 {
 
@@ -404,6 +407,7 @@ mb_dupcl(struct mbuf *n, const struct mbuf *m)
 
 	switch (m->m_ext.ext_type) {
 	case EXT_SFBUF:
+	case EXT_SFBUF_NOCACHE:
 		sf_ext_ref(m->m_ext.ext_arg1, m->m_ext.ext_arg2);
 		break;
 	default:
@@ -1034,8 +1038,6 @@ bad:
  * the amount of empty space before the data in the new mbuf to be specified
  * (in the event that the caller expects to prepend later).
  */
-int MSFail;
-
 struct mbuf *
 m_copyup(struct mbuf *n, int len, int dstoff)
 {
@@ -1072,7 +1074,6 @@ m_copyup(struct mbuf *n, int len, int dstoff)
 	return (m);
  bad:
 	m_freem(n);
-	MSFail++;
 	return (NULL);
 }
 
@@ -1869,6 +1870,11 @@ m_unshare(struct mbuf *m0, int how)
 		if (n == NULL) {
 			m_freem(m0);
 			return (NULL);
+		}
+		if (m->m_flags & M_PKTHDR) {
+			KASSERT(mprev == NULL, ("%s: m0 %p, m %p has M_PKTHDR",
+			    __func__, m0, m));
+			m_move_pkthdr(n, m);
 		}
 		len = m->m_len;
 		off = 0;

@@ -11,8 +11,7 @@ DEBUG_FLAGS=-g -O0
 CFLAGS+= ${BASE_INCLUDE}
 CFLAGS+= -I${.CURDIR}/../../lib/liblaunch
 CFLAGS+= -I${.CURDIR}/../../include/mach
-LDFLAGS+= -pthread
-LDADD+= -llaunch -lmach -ldispatch -losxsupport -lBlocksRuntime
+LDFLAGS+= -pthread -llaunch -lmach -ldispatch -losxsupport -lBlocksRuntime
 SRCS= launchproxy.c
 
 .include <bsd.prog.mk>

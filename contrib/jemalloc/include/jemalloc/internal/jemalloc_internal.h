@@ -253,6 +253,9 @@ typedef unsigned szind_t;
 #  ifdef __powerpc__
 #    define LG_QUANTUM		4
 #  endif
+#  ifdef __riscv__
+#    define LG_QUANTUM		4
+#  endif
 #  ifdef __s390__
 #    define LG_QUANTUM		4
 #  endif
@@ -313,6 +316,10 @@ typedef unsigned szind_t;
 #endif
 #define	PAGE		((size_t)(1U << LG_PAGE))
 #define	PAGE_MASK	((size_t)(PAGE - 1))
+
+/* Return the page base address for the page containing address a. */
+#define	PAGE_ADDR2BASE(a)						\
+	((void *)((uintptr_t)(a) & ~PAGE_MASK))
 
 /* Return the smallest pagesize multiple that is >= s. */
 #define	PAGE_CEILING(s)							\

@@ -401,6 +401,7 @@ DRIVER_MODULE(ural, uhub, ural_driver, ural_devclass, NULL, 0);
 MODULE_DEPEND(ural, usb, 1, 1, 1);
 MODULE_DEPEND(ural, wlan, 1, 1, 1);
 MODULE_VERSION(ural, 1);
+USB_PNP_HOST_INFO(ural_devs);
 
 static int
 ural_match(device_t self)
@@ -423,7 +424,8 @@ ural_attach(device_t self)
 	struct usb_attach_arg *uaa = device_get_ivars(self);
 	struct ural_softc *sc = device_get_softc(self);
 	struct ieee80211com *ic = &sc->sc_ic;
-	uint8_t iface_index, bands;
+	uint8_t bands[howmany(IEEE80211_MODE_MAX, 8)];
+	uint8_t iface_index;
 	int error;
 
 	device_set_usb_desc(self);
@@ -472,12 +474,12 @@ ural_attach(device_t self)
 	    | IEEE80211_C_WPA		/* 802.11i */
 	    ;
 
-	bands = 0;
-	setbit(&bands, IEEE80211_MODE_11B);
-	setbit(&bands, IEEE80211_MODE_11G);
+	memset(bands, 0, sizeof(bands));
+	setbit(bands, IEEE80211_MODE_11B);
+	setbit(bands, IEEE80211_MODE_11G);
 	if (sc->rf_rev == RAL_RF_5222)
-		setbit(&bands, IEEE80211_MODE_11A);
-	ieee80211_init_channels(ic, NULL, &bands);
+		setbit(bands, IEEE80211_MODE_11A);
+	ieee80211_init_channels(ic, NULL, bands);
 
 	ieee80211_ifattach(ic);
 	ic->ic_update_promisc = ural_update_promisc;
@@ -698,12 +700,9 @@ ural_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 		ni = ieee80211_ref_node(vap->iv_bss);
 
 		if (vap->iv_opmode != IEEE80211_M_MONITOR) {
-			if (ic->ic_bsschan == IEEE80211_CHAN_ANYC) {
-				RAL_UNLOCK(sc);
-				IEEE80211_LOCK(ic);
-				ieee80211_free_node(ni);
-				return (-1);
-			}
+			if (ic->ic_bsschan == IEEE80211_CHAN_ANYC)
+				goto fail;
+
 			ural_update_slot(sc);
 			ural_set_txpreamble(sc);
 			ural_set_basicrates(sc, ic->ic_bsschan);
@@ -713,23 +712,17 @@ ural_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 
 		if (vap->iv_opmode == IEEE80211_M_HOSTAP ||
 		    vap->iv_opmode == IEEE80211_M_IBSS) {
-			m = ieee80211_beacon_alloc(ni, &vap->iv_bcn_off);
+			m = ieee80211_beacon_alloc(ni);
 			if (m == NULL) {
 				device_printf(sc->sc_dev,
 				    "could not allocate beacon\n");
-				RAL_UNLOCK(sc);
-				IEEE80211_LOCK(ic);
-				ieee80211_free_node(ni);
-				return (-1);
+				goto fail;
 			}
 			ieee80211_ref_node(ni);
 			if (ural_tx_bcn(sc, m, ni) != 0) {
 				device_printf(sc->sc_dev,
 				    "could not send beacon\n");
-				RAL_UNLOCK(sc);
-				IEEE80211_LOCK(ic);
-				ieee80211_free_node(ni);
-				return (-1);
+				goto fail;
 			}
 		}
 
@@ -755,6 +748,12 @@ ural_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 	RAL_UNLOCK(sc);
 	IEEE80211_LOCK(ic);
 	return (uvp->newstate(vap, nstate, arg));
+
+fail:
+	RAL_UNLOCK(sc);
+	IEEE80211_LOCK(ic);
+	ieee80211_free_node(ni);
+	return (-1);
 }
 
 
@@ -1773,7 +1772,7 @@ ural_update_slot(struct ural_softc *sc)
 	struct ieee80211com *ic = &sc->sc_ic;
 	uint16_t slottime, sifs, eifs;
 
-	slottime = (ic->ic_flags & IEEE80211_F_SHSLOT) ? 9 : 20;
+	slottime = IEEE80211_GET_SLOTTIME(ic);
 
 	/*
 	 * These settings may sound a bit inconsistent but this is what the
@@ -2126,13 +2125,11 @@ ural_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 	if (!sc->sc_running) {
 		RAL_UNLOCK(sc);
 		m_freem(m);
-		ieee80211_free_node(ni);
 		return ENETDOWN;
 	}
 	if (sc->tx_nfree < RAL_TX_MINFREE) {
 		RAL_UNLOCK(sc);
 		m_freem(m);
-		ieee80211_free_node(ni);
 		return EIO;
 	}
 
@@ -2155,7 +2152,6 @@ ural_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 	return 0;
 bad:
 	RAL_UNLOCK(sc);
-	ieee80211_free_node(ni);
 	return EIO;		/* XXX */
 }
 

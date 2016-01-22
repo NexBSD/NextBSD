@@ -47,6 +47,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/in_systm.h>
 #include <netinet/in_pcb.h>
 #include <netinet/ip.h>
+#include <netinet/in_fib.h>
 #include <netinet/ip_var.h>
 #include <netinet/tcp_var.h>
 #include <netinet/tcp.h>
@@ -86,8 +87,8 @@ static void __state_set(struct c4iw_ep_common *epc, enum c4iw_ep_state tostate);
 static void state_set(struct c4iw_ep_common *epc, enum c4iw_ep_state tostate);
 static void *alloc_ep(int size, gfp_t flags);
 void __free_ep(struct c4iw_ep_common *epc);
-static struct rtentry * find_route(__be32 local_ip, __be32 peer_ip, __be16 local_port,
-		__be16 peer_port, u8 tos);
+static int find_route(__be32 local_ip, __be32 peer_ip, __be16 local_port,
+		__be16 peer_port, u8 tos, struct nhop4_extended *pnh4);
 static int close_socket(struct c4iw_ep_common *epc, int close);
 static int shutdown_socket(struct c4iw_ep_common *epc);
 static void abort_socket(struct c4iw_ep *ep);
@@ -99,7 +100,7 @@ static int abort_connection(struct c4iw_ep *ep);
 static void peer_close_upcall(struct c4iw_ep *ep);
 static void peer_abort_upcall(struct c4iw_ep *ep);
 static void connect_reply_upcall(struct c4iw_ep *ep, int status);
-static void connect_request_upcall(struct c4iw_ep *ep);
+static int connect_request_upcall(struct c4iw_ep *ep);
 static void established_upcall(struct c4iw_ep *ep);
 static void process_mpa_reply(struct c4iw_ep *ep);
 static void process_mpa_request(struct c4iw_ep *ep);
@@ -201,23 +202,21 @@ done:
 
 }
 
-static struct rtentry *
+static int
 find_route(__be32 local_ip, __be32 peer_ip, __be16 local_port,
-		__be16 peer_port, u8 tos)
+		__be16 peer_port, u8 tos, struct nhop4_extended *pnh4)
 {
-	struct route iproute;
-	struct sockaddr_in *dst = (struct sockaddr_in *)&iproute.ro_dst;
+	struct in_addr addr;
+	int err;
 
 	CTR5(KTR_IW_CXGBE, "%s:frtB %x, %x, %d, %d", __func__, local_ip,
 	    peer_ip, ntohs(local_port), ntohs(peer_port));
-	bzero(&iproute, sizeof iproute);
-	dst->sin_family = AF_INET;
-	dst->sin_len = sizeof *dst;
-	dst->sin_addr.s_addr = peer_ip;
 
-	rtalloc(&iproute);
-	CTR2(KTR_IW_CXGBE, "%s:frtE %p", __func__, (uint64_t)iproute.ro_rt);
-	return iproute.ro_rt;
+	addr.s_addr = peer_ip;
+	err = fib4_lookup_nh_ext(RT_DEFAULT_FIB, addr, NHR_REF, 0, pnh4);
+
+	CTR2(KTR_IW_CXGBE, "%s:frtE %d", __func__, err);
+	return err;
 }
 
 static int
@@ -474,7 +473,7 @@ process_conn_error(struct c4iw_ep *ep)
 	if (state != ABORTING) {
 
 		CTR2(KTR_IW_CXGBE, "%s:pce1 %p", __func__, ep);
-		close_socket(&ep->com, 1);
+		close_socket(&ep->com, 0);
 		state_set(&ep->com, DEAD);
 		c4iw_put_ep(&ep->com);
 	}
@@ -808,13 +807,8 @@ SYSCTL_INT(_hw_iw_cxgbe, OID_AUTO, ep_timeout_secs, CTLFLAG_RWTUN, &ep_timeout_s
 		"CM Endpoint operation timeout in seconds (default = 60)");
 
 static int mpa_rev = 1;
-#ifdef IW_CM_MPAV2
 SYSCTL_INT(_hw_iw_cxgbe, OID_AUTO, mpa_rev, CTLFLAG_RWTUN, &mpa_rev, 0,
-		"MPA Revision, 0 supports amso1100, 1 is RFC0544 spec compliant, 2 is IETF MPA Peer Connect Draft compliant (default = 1)");
-#else
-SYSCTL_INT(_hw_iw_cxgbe, OID_AUTO, mpa_rev, CTLFLAG_RWTUN, &mpa_rev, 0,
-		"MPA Revision, 0 supports amso1100, 1 is RFC0544 spec compliant (default = 1)");
-#endif
+		"MPA Revision, 0 supports amso1100, 1 is RFC5044 spec compliant, 2 is IETF MPA Peer Connect Draft compliant (default = 1)");
 
 static int markers_enabled;
 SYSCTL_INT(_hw_iw_cxgbe, OID_AUTO, markers_enabled, CTLFLAG_RWTUN, &markers_enabled, 0,
@@ -1216,7 +1210,6 @@ static int abort_connection(struct c4iw_ep *ep)
 	int err;
 
 	CTR2(KTR_IW_CXGBE, "%s:abB %p", __func__, ep);
-	close_complete_upcall(ep, -ECONNRESET);
 	state_set(&ep->com, ABORTING);
 	abort_socket(ep);
 	err = close_socket(&ep->com, 0);
@@ -1319,9 +1312,10 @@ static void connect_reply_upcall(struct c4iw_ep *ep, int status)
 	CTR2(KTR_IW_CXGBE, "%s:cruE %p", __func__, ep);
 }
 
-static void connect_request_upcall(struct c4iw_ep *ep)
+static int connect_request_upcall(struct c4iw_ep *ep)
 {
 	struct iw_cm_event event;
+	int ret;
 
 	CTR3(KTR_IW_CXGBE, "%s: ep %p, mpa_v1 %d", __func__, ep,
 	    ep->tried_with_mpa_v1);
@@ -1335,10 +1329,8 @@ static void connect_request_upcall(struct c4iw_ep *ep)
 
 	if (!ep->tried_with_mpa_v1) {
 		/* this means MPA_v2 is used */
-#ifdef IW_CM_MPAV2
 		event.ord = ep->ord;
 		event.ird = ep->ird;
-#endif
 		event.private_data_len = ep->plen -
 			sizeof(struct mpa_v2_conn_params);
 		event.private_data = ep->mpa_pkt + sizeof(struct mpa_message) +
@@ -1346,19 +1338,21 @@ static void connect_request_upcall(struct c4iw_ep *ep)
 	} else {
 
 		/* this means MPA_v1 is used. Send max supported */
-#ifdef IW_CM_MPAV2
 		event.ord = c4iw_max_read_depth;
 		event.ird = c4iw_max_read_depth;
-#endif
 		event.private_data_len = ep->plen;
 		event.private_data = ep->mpa_pkt + sizeof(struct mpa_message);
 	}
 
 	c4iw_get_ep(&ep->com);
-	ep->parent_ep->com.cm_id->event_handler(ep->parent_ep->com.cm_id,
+	ret = ep->parent_ep->com.cm_id->event_handler(ep->parent_ep->com.cm_id,
 	    &event);
+	if(ret)
+		c4iw_put_ep(&ep->com);
+
 	set_bit(CONNREQ_UPCALL, &ep->com.history);
 	c4iw_put_ep(&ep->parent_ep->com);
+	return ret;
 }
 
 static void established_upcall(struct c4iw_ep *ep)
@@ -1368,10 +1362,9 @@ static void established_upcall(struct c4iw_ep *ep)
 	CTR2(KTR_IW_CXGBE, "%s:euB %p", __func__, ep);
 	memset(&event, 0, sizeof(event));
 	event.event = IW_CM_EVENT_ESTABLISHED;
-#ifdef IW_CM_MPAV2
 	event.ird = ep->ird;
 	event.ord = ep->ord;
-#endif
+
 	if (ep->com.cm_id) {
 
 		CTR2(KTR_IW_CXGBE, "%s:eu1 %p", __func__, ep);
@@ -1835,9 +1828,11 @@ abort:
 
 	/* drive upcall */
 	mutex_lock(&ep->parent_ep->com.mutex);
-	if (ep->parent_ep->com.state != DEAD)
-		connect_request_upcall(ep);
-	else
+	if (ep->parent_ep->com.state != DEAD) {
+		if(connect_request_upcall(ep)) {
+			abort_connection(ep);
+		}
+	}else
 		abort_connection(ep);
 	mutex_unlock(&ep->parent_ep->com.mutex);
 }
@@ -2016,7 +2011,7 @@ int c4iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 	int err = 0;
 	struct c4iw_dev *dev = to_c4iw_dev(cm_id->device);
 	struct c4iw_ep *ep = NULL;
-	struct rtentry *rt;
+	struct nhop4_extended nh4;
 	struct toedev *tdev;
 
 	CTR2(KTR_IW_CXGBE, "%s:ccB %p", __func__, cm_id);
@@ -2072,13 +2067,13 @@ int c4iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 	init_sock(&ep->com);
 
 	/* find a route */
-	rt = find_route(
+	err = find_route(
 		cm_id->local_addr.sin_addr.s_addr,
 		cm_id->remote_addr.sin_addr.s_addr,
 		cm_id->local_addr.sin_port,
-		cm_id->remote_addr.sin_port, 0);
+		cm_id->remote_addr.sin_port, 0, &nh4);
 
-	if (!rt) {
+	if (err) {
 
 		CTR2(KTR_IW_CXGBE, "%s:cc7 %p", __func__, ep);
 		printk(KERN_ERR MOD "%s - cannot find route.\n", __func__);
@@ -2086,7 +2081,7 @@ int c4iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 		goto fail2;
 	}
 
-	if (!(rt->rt_ifp->if_capenable & IFCAP_TOE)) {
+	if (!(nh4.nh_ifp->if_capenable & IFCAP_TOE)) {
 
 		CTR2(KTR_IW_CXGBE, "%s:cc8 %p", __func__, ep);
 		printf("%s - interface not TOE capable.\n", __func__);
@@ -2094,7 +2089,7 @@ int c4iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 		err = -ENOPROTOOPT;
 		goto fail3;
 	}
-	tdev = TOEDEV(rt->rt_ifp);
+	tdev = TOEDEV(nh4.nh_ifp);
 
 	if (tdev == NULL) {
 
@@ -2102,7 +2097,7 @@ int c4iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 		printf("%s - No toedev for interface.\n", __func__);
 		goto fail3;
 	}
-	RTFREE(rt);
+	fib4_free_nh_ext(RT_DEFAULT_FIB, &nh4);
 
 	state_set(&ep->com, CONNECTING);
 	ep->tos = 0;
@@ -2121,7 +2116,7 @@ int c4iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 
 fail3:
 	CTR2(KTR_IW_CXGBE, "%s:ccb %p", __func__, ep);
-	RTFREE(rt);
+	fib4_free_nh_ext(RT_DEFAULT_FIB, &nh4);
 fail2:
 	cm_id->rem_ref(cm_id);
 	c4iw_put_ep(&ep->com);
@@ -2213,7 +2208,7 @@ int c4iw_ep_disconnect(struct c4iw_ep *ep, int abrupt, gfp_t gfp)
 
 		CTR2(KTR_IW_CXGBE, "%s:ced1 %p", __func__, ep);
 		fatal = 1;
-		close_complete_upcall(ep, -EIO);
+		close_complete_upcall(ep, -ECONNRESET);
 		ep->com.state = DEAD;
 	}
 	CTR3(KTR_IW_CXGBE, "%s:ced2 %p %s", __func__, ep,
@@ -2370,15 +2365,18 @@ static int fw6_cqe_handler(struct adapter *sc, const __be64 *rpl)
 
 static int terminate(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m)
 {
-
 	struct adapter *sc = iq->adapter;
-
-	const struct cpl_rdma_terminate *rpl = (const void *)(rss + 1);
-	unsigned int tid = GET_TID(rpl);
+	const struct cpl_rdma_terminate *cpl = mtod(m, const void *);
+	unsigned int tid = GET_TID(cpl);
 	struct c4iw_qp_attributes attrs;
 	struct toepcb *toep = lookup_tid(sc, tid);
-	struct socket *so = inp_inpcbtosocket(toep->inp);
-	struct c4iw_ep *ep = so->so_rcv.sb_upcallarg;
+	struct socket *so;
+	struct c4iw_ep *ep;
+
+	INP_WLOCK(toep->inp);
+	so = inp_inpcbtosocket(toep->inp);
+	ep = so->so_rcv.sb_upcallarg;
+	INP_WUNLOCK(toep->inp);
 
 	CTR2(KTR_IW_CXGBE, "%s:tB %p %d", __func__, ep);
 

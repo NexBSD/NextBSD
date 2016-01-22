@@ -35,6 +35,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
+#include <sys/types.h>
+#include <sys/sysctl.h>
 #include <sys/kernel.h>
 #include <sys/rman.h>
 #include <sys/module.h>
@@ -47,6 +49,7 @@ __FBSDID("$FreeBSD$");
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcib_private.h>
+#include <dev/pci/pci_private.h>
 #include <machine/cpu.h>
 #include <machine/bus.h>
 #include <machine/intr.h>
@@ -89,12 +92,21 @@ __FBSDID("$FreeBSD$");
 #define	PCI_ADDR_CELL_SIZE	2
 
 struct thunder_pcie_softc {
-	struct pcie_range	ranges[MAX_RANGES_TUPLES];
+	struct pcie_range	ranges[RANGES_TUPLES_MAX];
 	struct rman		mem_rman;
 	struct resource		*res;
 	int			ecam;
 	device_t		dev;
 };
+
+/*
+ * ThunderX supports up to 4 ethernet interfaces, so it's good
+ * value to use as default for numbers of VFs, since each eth
+ * interface represents separate virtual function.
+ */
+static int thunder_pcie_max_vfs = 4;
+SYSCTL_INT(_hw, OID_AUTO, thunder_pcie_max_vfs, CTLFLAG_RWTUN,
+    &thunder_pcie_max_vfs, 0, "Max VFs supported by ThunderX internal PCIe");
 
 /* Forward prototypes */
 static struct resource *thunder_pcie_alloc_resource(device_t,
@@ -120,7 +132,8 @@ thunder_pcie_probe(device_t dev)
 	if (!ofw_bus_status_okay(dev))
 		return (ENXIO);
 
-	if (ofw_bus_is_compatible(dev, "cavium,thunder-pcie")) {
+	if (ofw_bus_is_compatible(dev, "cavium,thunder-pcie") ||
+	    ofw_bus_is_compatible(dev, "cavium,pci-host-thunder-ecam")) {
 		device_set_desc(dev, "Cavium Integrated PCI/PCI-E Controller");
 		return (BUS_PROBE_DEFAULT);
 	}
@@ -168,7 +181,7 @@ thunder_pcie_attach(device_t dev)
 		return (error);
 	}
 
-	for (tuple = 0; tuple < MAX_RANGES_TUPLES; tuple++) {
+	for (tuple = 0; tuple < RANGES_TUPLES_MAX; tuple++) {
 		base = sc->ranges[tuple].phys_base;
 		size = sc->ranges[tuple].size;
 		if ((base == 0) || (size == 0))
@@ -233,8 +246,7 @@ parse_pci_mem_ranges(struct thunder_pcie_softc *sc)
 
 	tuples_count = cells_count /
 	    (pci_addr_cells + parent_addr_cells + size_cells);
-	if ((tuples_count > MAX_RANGES_TUPLES) ||
-	    (tuples_count < MIN_RANGES_TUPLES)) {
+	if (tuples_count > RANGES_TUPLES_MAX) {
 		device_printf(sc->dev,
 		    "Unexpected number of 'ranges' tuples in FDT\n");
 		rv = ENXIO;
@@ -284,7 +296,7 @@ parse_pci_mem_ranges(struct thunder_pcie_softc *sc)
 		}
 
 	}
-	for (; tuple < MAX_RANGES_TUPLES; tuple++) {
+	for (; tuple < RANGES_TUPLES_MAX; tuple++) {
 		/* zero-fill remaining tuples to mark empty elements in array */
 		sc->ranges[tuple].phys_base = 0;
 		sc->ranges[tuple].size = 0;
@@ -424,6 +436,7 @@ thunder_pcie_alloc_resource(device_t dev, device_t child, int type, int *rid,
 	struct thunder_pcie_softc *sc = device_get_softc(dev);
 	struct rman *rm = NULL;
 	struct resource *res;
+	pci_addr_t map, testval;
 
 	switch (type) {
 	case SYS_RES_IOPORT:
@@ -438,9 +451,32 @@ thunder_pcie_alloc_resource(device_t dev, device_t child, int type, int *rid,
 	};
 
 	if ((start == 0UL) && (end == ~0UL)) {
-		device_printf(dev,
-		    "Cannot allocate resource with unspecified range\n");
-		goto fail;
+
+		/* Read BAR manually to get resource address and size */
+		pci_read_bar(child, *rid, &map, &testval, NULL);
+
+		/* Mask the information bits */
+		if (PCI_BAR_MEM(map))
+			map &= PCIM_BAR_MEM_BASE;
+		else
+			map &= PCIM_BAR_IO_BASE;
+
+		if (PCI_BAR_MEM(testval))
+			testval &= PCIM_BAR_MEM_BASE;
+		else
+			testval &= PCIM_BAR_IO_BASE;
+
+		start = map;
+		count = (~testval) + 1;
+		/*
+		 * Internal ThunderX devices supports up to 3 64-bit BARs.
+		 * If we're allocating anything above, that means upper layer
+		 * wants us to allocate VF-BAR. In that case reserve bigger
+		 * slice to make a room for other VFs adjacent to this one.
+		 */
+		if (*rid > PCIR_BAR(5))
+			count = count * thunder_pcie_max_vfs;
+		end = start + count - 1;
 	}
 
 	/* Convert input BUS address to required PHYS */
@@ -535,11 +571,12 @@ static device_method_t thunder_pcie_methods[] = {
 	DEVMETHOD(bus_deactivate_resource,	bus_generic_deactivate_resource),
 	DEVMETHOD(bus_setup_intr,		bus_generic_setup_intr),
 	DEVMETHOD(bus_teardown_intr,		bus_generic_teardown_intr),
-	DEVMETHOD(pcib_map_msi,			thunder_common_map_msi),
-	DEVMETHOD(pcib_alloc_msix,		thunder_common_alloc_msix),
-	DEVMETHOD(pcib_release_msix,		thunder_common_release_msix),
-	DEVMETHOD(pcib_alloc_msi,		thunder_common_alloc_msi),
-	DEVMETHOD(pcib_release_msi,		thunder_common_release_msi),
+
+	DEVMETHOD(pcib_map_msi,			arm_map_msi),
+	DEVMETHOD(pcib_alloc_msix,		arm_alloc_msix),
+	DEVMETHOD(pcib_release_msix,		arm_release_msix),
+	DEVMETHOD(pcib_alloc_msi,		arm_alloc_msi),
+	DEVMETHOD(pcib_release_msi,		arm_release_msi),
 
 	DEVMETHOD_END
 };

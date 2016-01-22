@@ -31,7 +31,7 @@
 
 #include <sys/param.h>
 #include <sys/bus_dma.h>
-#include <x86/include/busdma_impl.h>
+#include <x86/busdma_impl.h>
 
 struct bus_dma_tag {
 	struct bus_dma_tag_common common;

@@ -12,7 +12,8 @@ SUBDIR= ${_toolkit}
 _toolkit=	toolkit
 .endif
 
-SCRIPTS=	disklatency \
+SCRIPTS=	blocking \
+		disklatency \
 		disklatencycmd \
 		hotopen \
 		nfsattrstats \
@@ -21,10 +22,11 @@ SCRIPTS=	disklatency \
 		tcpconn \
 		tcpstate \
 		tcptrack \
-		udptrack
+		udptrack \
+		watch_execve \
+		watch_kill \
+		watch_vop_remove
 
 SCRIPTSDIR= ${SHAREDIR}/dtrace
-
-NO_OBJ=
 
 .include <bsd.prog.mk>

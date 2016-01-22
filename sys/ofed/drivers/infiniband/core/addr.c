@@ -207,7 +207,6 @@ static int addr_resolve(struct sockaddr *src_in,
 	u_char edst[MAX_ADDR_LEN];
 	int multi;
 	int bcast;
-	int is_gw = 0;
 	int error = 0;
 	/*
 	 * Determine whether the address is unicast, multicast, or broadcast
@@ -281,8 +280,6 @@ static int addr_resolve(struct sockaddr *src_in,
 			RTFREE_LOCKED(rte);
 		return -EHOSTUNREACH;
 	}
-	if (rte->rt_flags & RTF_GATEWAY)
-		is_gw = 1;
 	/*
 	 * If it's not multicast or broadcast and the route doesn't match the
 	 * requested interface return unreachable.  Otherwise fetch the
@@ -325,20 +322,18 @@ mcast:
 	 * Resolve the link local address.
 	 */
 	switch (dst_in->sa_family) {
-#ifdef INET
 	case AF_INET:
-		error = arpresolve(ifp, is_gw, NULL, dst_in, edst, NULL);
+		error = arpresolve_addr(ifp, 0, dst_in, edst, NULL);
 		break;
-#endif
-#ifdef INET6
 	case AF_INET6:
-		error = nd6_resolve(ifp, is_gw, NULL, dst_in, edst, NULL);
+		error = nd6_resolve_addr(ifp, 0, dst_in, edst, NULL);
 		break;
-#endif
 	default:
 		/* XXX: Shouldn't happen. */
 		error = -EINVAL;
 	}
+	if (error == EHOSTDOWN && (rte->rt_flags & RTF_GATEWAY))
+		error = EHOSTUNREACH;
 	RTFREE(rte);
 	if (error == 0) {
 		memcpy(src_in, ifa->ifa_addr, ip_addr_size(ifa->ifa_addr));

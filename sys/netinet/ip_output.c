@@ -222,7 +222,7 @@ ip_output(struct mbuf *m, struct mbuf *opt, struct route *ro, int flags,
 	struct sockaddr_in *dst;
 	const struct sockaddr_in *gw;
 	struct in_ifaddr *ia;
-	int isbroadcast;
+	int isbroadcast, nortfree;
 	uint16_t ip_len, ip_off;
 	struct route iproute;
 	struct rtentry *rte;	/* cache for ro->ro_rt */
@@ -250,6 +250,9 @@ ip_output(struct mbuf *m, struct mbuf *opt, struct route *ro, int flags,
 #ifdef FLOWTABLE
 	if (ro->ro_rt == NULL)
 		(void )flowtable_lookup(AF_INET, m, ro);
+	else {
+		nortfree = 1;
+	}
 #endif
 
 	if (opt) {
@@ -355,6 +358,7 @@ again:
 			in_rtalloc_ign(ro, 0, fibnum);
 #endif
 			rte = ro->ro_rt;
+			nortfree = 0;
 		}
 		if (rte == NULL ||
 		    (rte->rt_flags & RTF_UP) == 0 ||
@@ -376,6 +380,7 @@ again:
 		ia = ifatoia(rte->rt_ifa);
 		ifp = rte->rt_ifp;
 		counter_u64_add(rte->rt_pksent, 1);
+		rt_update_ro_flags(ro);
 		if (rte->rt_flags & RTF_GATEWAY)
 			gw = (struct sockaddr_in *)rte->rt_gateway;
 		if (rte->rt_flags & RTF_HOST)
@@ -567,7 +572,7 @@ sendit:
 			RO_RTFREE(ro);
 			if (have_ia_ref)
 				ifa_free(&ia->ia_ifa);
-			ro->ro_lle = NULL;
+			ro->ro_prepend = NULL;
 			rte = NULL;
 			gw = dst;
 			ip = mtod(m, struct ip *);
@@ -681,7 +686,7 @@ sendit:
 		IPSTAT_INC(ips_fragmented);
 
 done:
-	if (ro == &iproute)
+	if (ro == &iproute && !nortfree)
 		RO_RTFREE(ro);
 	else if (rte == NULL)
 		/*

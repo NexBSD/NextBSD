@@ -36,7 +36,11 @@
 
 #else
 # define ARM_EABI_FNALIAS(aeabi_name, name)
-# define COMPILER_RT_ABI
+# if defined(__arm__) && defined(_WIN32)
+#   define COMPILER_RT_ABI __attribute__((pcs("aapcs")))
+# else
+#   define COMPILER_RT_ABI
+# endif
 #endif
 
 #if defined(__NetBSD__) && (defined(_KERNEL) || defined(_STANDALONE))
@@ -70,11 +74,13 @@
  * global header to prevent other C files from making the detour
  * through __c?zdi2() as well.
  *
- * This problem has only been observed on FreeBSD for sparc64 and
- * mips64 with GCC 4.2.1.
+ * This problem has been observed on FreeBSD for sparc64 and
+ * mips64 with GCC 4.2.1, and for riscv with GCC 5.2.0.
+ * Presumably it's any version of GCC, and targeting an arch that
+ * does not have dedicated bit counting instructions.
  */
 #if defined(__FreeBSD__) && (defined(__sparc64__) || \
-    defined(__mips_n64) || defined(__mips_o64))
+    defined(__mips_n64) || defined(__mips_o64) || defined(__riscv__))
 si_int __clzsi2(si_int);
 si_int __ctzsi2(si_int);
 #define	__builtin_clz __clzsi2

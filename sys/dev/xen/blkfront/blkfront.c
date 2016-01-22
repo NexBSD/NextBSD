@@ -162,7 +162,7 @@ xbd_free_command(struct xbd_command *cm)
 static void
 xbd_mksegarray(bus_dma_segment_t *segs, int nsegs,
     grant_ref_t * gref_head, int otherend_id, int readonly,
-    grant_ref_t * sg_ref, blkif_request_segment_t * sg)
+    grant_ref_t * sg_ref, struct blkif_request_segment *sg)
 {
 	struct blkif_request_segment *last_block_sg = sg + nsegs;
 	vm_paddr_t buffer_ma;
@@ -170,6 +170,11 @@ xbd_mksegarray(bus_dma_segment_t *segs, int nsegs,
 	int ref;
 
 	while (sg < last_block_sg) {
+		KASSERT(segs->ds_addr % (1 << XBD_SECTOR_SHFT) == 0,
+		    ("XEN disk driver I/O must be sector aligned"));
+		KASSERT(segs->ds_len % (1 << XBD_SECTOR_SHFT) == 0,
+		    ("XEN disk driver I/Os must be a multiple of "
+		    "the sector length"));
 		buffer_ma = segs->ds_addr;
 		fsect = (buffer_ma & PAGE_MASK) >> XBD_SECTOR_SHFT;
 		lsect = fsect + (segs->ds_len  >> XBD_SECTOR_SHFT) - 1;
@@ -293,8 +298,12 @@ xbd_queue_request(struct xbd_softc *sc, struct xbd_command *cm)
 {
 	int error;
 
-	error = bus_dmamap_load(sc->xbd_io_dmat, cm->cm_map, cm->cm_data,
-	    cm->cm_datalen, xbd_queue_cb, cm, 0);
+	if (cm->cm_bp != NULL)
+		error = bus_dmamap_load_bio(sc->xbd_io_dmat, cm->cm_map,
+		    cm->cm_bp, xbd_queue_cb, cm, 0);
+	else
+		error = bus_dmamap_load(sc->xbd_io_dmat, cm->cm_map,
+		    cm->cm_data, cm->cm_datalen, xbd_queue_cb, cm, 0);
 	if (error == EINPROGRESS) {
 		/*
 		 * Maintain queuing order by freezing the queue.  The next
@@ -354,8 +363,6 @@ xbd_bio_command(struct xbd_softc *sc)
 	}
 
 	cm->cm_bp = bp;
-	cm->cm_data = bp->bio_data;
-	cm->cm_datalen = bp->bio_bcount;
 	cm->cm_sector_number = (blkif_sector_t)bp->bio_pblkno;
 
 	switch (bp->bio_cmd) {
@@ -1009,7 +1016,7 @@ xbd_instance_create(struct xbd_softc *sc, blkif_sector_t sectors,
 
 	sc->xbd_disk->d_mediasize = sectors * sector_size;
 	sc->xbd_disk->d_maxsize = sc->xbd_max_request_size;
-	sc->xbd_disk->d_flags = 0;
+	sc->xbd_disk->d_flags = DISKFLAG_UNMAPPED_BIO;
 	if ((sc->xbd_flags & (XBDF_FLUSH|XBDF_BARRIER)) != 0) {
 		sc->xbd_disk->d_flags |= DISKFLAG_CANFLUSHCACHE;
 		device_printf(sc->xbd_dev,

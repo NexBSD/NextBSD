@@ -12,6 +12,8 @@
             _types
             ..
         ..
+        uuid
+        ..
     ..
     arpa
     ..
@@ -195,6 +197,8 @@
         4.2
         ..
     ..
+    gen
+    ..
     geom
         cache
         ..
@@ -257,6 +261,8 @@
         i386
         ..
     ..
+    lib80211
+    ..
     libmilter
     ..
     libxo
@@ -294,6 +300,8 @@
         ..
     ..
     netinet
+        cc
+        ..
     ..
     netinet6
     ..

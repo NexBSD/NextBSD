@@ -96,6 +96,7 @@ device		uart
 # Networking
 device		mge			# Marvell Gigabit Ethernet controller
 device		mii
+device		mdio
 device		e1000phy
 
 # USB
@@ -146,6 +147,9 @@ options 	IPDIVERT
 device		pf
 device		pflog
 device		pfsync
+
+# GPIO
+device		gpio
 
 # ALTQ, required for PF
 options 	ALTQ			# Basic ALTQ support

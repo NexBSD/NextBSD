@@ -36,6 +36,7 @@
 
 static	int ipoib_resolvemulti(struct ifnet *, struct sockaddr **,
 		struct sockaddr *);
+static int ipoib_requestencap(struct ifnet *, struct if_encap_req *);
 
 
 #include <linux/module.h>
@@ -876,6 +877,7 @@ ipoib_intf_alloc(const char *name)
 	dev->if_output = ipoib_output;
 	dev->if_input = ipoib_input;
 	dev->if_resolvemulti = ipoib_resolvemulti;
+	dev->if_requestencap = ipoib_requestencap;
 	dev->if_baudrate = IF_Gbps(10);
 	dev->if_broadcastaddr = priv->broadcastaddr;
 	dev->if_snd.ifq_maxlen = ipoib_sendq_size * 2;
@@ -1249,6 +1251,145 @@ ipoib_cleanup_module(void)
 	destroy_workqueue(ipoib_workqueue);
 }
 
+static int
+ipoib_requestencap(struct ifnet *ifp, struct if_encap_req *req)
+{
+	u_char edst[INFINIBAND_ALEN];
+#if defined(INET) || defined(INET6)
+	struct llentry *lle = NULL;
+#endif
+	struct ipoib_header *eh;
+	int error = 0, is_gw = 0;
+	short type;
+	const char *lladdr;
+
+	if (ro != NULL)
+		is_gw = (ro->ro_flags & RT_HAS_GW) != 0;
+#ifdef MAC
+	error = mac_ifnet_check_transmit(ifp, m);
+	if (error)
+		goto bad;
+#endif
+
+	if (req->bufsize < sizeof(struct ipoib_header))
+		return (ENOMEM);
+
+	ih = (struct ipoib_header *)req->buf;
+	lladdr = req->lladdr;
+	req->lladdr_off = offsetof(struct ipoib_header, hwaddr);
+
+	switch (req->family) {
+	case AF_INET:
+		if (lle != NULL && (lle->la_flags & LLE_VALID))
+			memcpy(edst, lle->ll_addr, sizeof(edst));
+		else if (m->m_flags & M_MCAST)
+			ip_ib_mc_map(((struct sockaddr_in *)dst)->sin_addr.s_addr, ifp->if_broadcastaddr, edst);
+		else
+			error = arpresolve(ifp, is_gw, m, dst, edst, NULL);
+		if (error)
+			return (error == EWOULDBLOCK ? 0 : error);
+		type = htons(ETHERTYPE_IP);
+		break;
+	case AF_INET6:
+		type = htons(ETHERTYPE_IPV6);
+		break;
+	case AF_ARP:
+		ah = (struct arphdr *)req->hdata;
+		ah->ar_hrd = htons(ARPHRD_INFINIBAND);
+
+		switch(ntohs(ah->ar_op)) {
+		case ARPOP_REVREQUEST:
+		case ARPOP_REVREPLY:
+			type = htons(ETHERTYPE_REVARP);
+			break;
+		case ARPOP_REQUEST:
+		case ARPOP_REPLY:
+		default:
+			type = htons(ETHERTYPE_ARP);
+			break;
+		}
+
+		if (req->flags & IFENCAP_FLAG_BROADCAST)
+			lladdr = ifp->if_broadcastaddr;
+		break;
+	default:
+		return (EAFNOSUPPORT);
+	}
+
+	memcpy(&ih->proto , &type, sizeof(ih->proto));
+	memcpy(ih->hwaddr, lladdr, INFINIBAND_ALEN);
+	req->bufsize = sizeof(struct ipoib_header);
+
+	return (0);
+}
+
+static inline int
+ipoib_resolve_addr(struct ifnet *ifp, struct mbuf *m,
+	const struct sockaddr *dst, struct route *ro, char *phdr,
+	uint32_t *pflags)
+{
+	struct ipoib_header *ih;
+	uint32_t lleflags = 0;
+	struct rtentry *rt;
+	short type;
+	int error = 0;
+
+	ih = (struct ipoib_header *)phdr;
+
+	switch (dst->sa_family) {
+#ifdef INET
+	case AF_INET:
+		if ((m->m_flags & (M_BCAST | M_MCAST)) == 0)
+			error = arpresolve(ifp, 0, m, dst, phdr, &lleflags);
+		else {
+			if (m->m_flags & M_BCAST)
+				memcpy(&ih->hwaddr, ifp->if_broadcastaddr,
+				    INFINIBAND_ALEN);
+			else {
+				const struct in_addr *a;
+				a = &(((const struct sockaddr_in *)dst)->sin_addr);
+				ip_ib_mc_map(a->s_addr, ifp->if_broadcastaddr,
+				    (char *)&ih->hwaddr);
+			}
+			type = htons(ETHERTYPE_IP);
+			memcpy(&ih->proto, &type, sizeof(ih->proto));
+		}
+		break;
+#endif
+#ifdef INET6
+	case AF_INET6:
+		if (lle != NULL && (lle->la_flags & LLE_VALID))
+			memcpy(edst, lle->ll_addr, sizeof(edst));
+		else if (m->m_flags & M_MCAST)
+			ipv6_ib_mc_map(&((struct sockaddr_in6 *)dst)->sin6_addr, ifp->if_broadcastaddr, edst);
+		else
+			error = nd6_resolve(ifp, is_gw, m, dst, edst, NULL);
+		if (error)
+			return error;
+		type = htons(ETHERTYPE_IPV6);
+		break;
+#endif
+	default:
+		if_printf(ifp, "can't handle af%d\n", dst->sa_family);
+		if (m != NULL)
+			m_freem(m);
+		return (EAFNOSUPPORT);
+	}
+
+	if (error == EHOSTDOWN) {
+		rt = (ro != NULL) ? ro->ro_rt : NULL;
+		if (rt != NULL && (rt->rt_flags & RTF_GATEWAY) != 0)
+			error = EHOSTUNREACH;
+	}
+
+	if (error != 0)
+		return (error);
+
+	*pflags = ((!!(lleflags & LLE_IFADDR)) << RT_L2_ME_BIT) | RT_MAY_LOOP;
+
+	return (0);
+}
+
 /*
  * Infiniband output routine.
  */
@@ -1256,19 +1397,18 @@ static int
 ipoib_output(struct ifnet *ifp, struct mbuf *m,
 	const struct sockaddr *dst, struct route *ro)
 {
-	u_char edst[INFINIBAND_ALEN];
-	struct llentry *lle = NULL;
-	struct rtentry *rt0 = NULL;
-	struct ipoib_header *eh;
-	int error = 0, is_gw = 0;
-	short type;
+	char linkhdr[IPOIB_HEADER_LEN], *phdr;
+	struct ipoib_header *ih;
+	int hlen;	/* link layer header length */
+	int error = 0;
+	uint32_t pflags;
 
+	phdr = NULL;
+	pflags = 0;
 	if (ro != NULL) {
-		if (!(m->m_flags & (M_BCAST | M_MCAST)))
-			lle = ro->ro_lle;
-		rt0 = ro->ro_rt;
-		if (rt0 != NULL && (rt0->rt_flags & RTF_GATEWAY) != 0)
-			is_gw = 1;
+		phdr = ro->ro_prepend;
+		hlen = ro->ro_plen;
+		pflags = ro->ro_flags;
 	}
 #ifdef MAC
 	error = mac_ifnet_check_transmit(ifp, m);
@@ -1287,77 +1427,28 @@ ipoib_output(struct ifnet *ifp, struct mbuf *m,
 		goto bad;
 	}
 
-	switch (dst->sa_family) {
-#ifdef INET
-	case AF_INET:
-		if (lle != NULL && (lle->la_flags & LLE_VALID))
-			memcpy(edst, &lle->ll_addr.mac8, sizeof(edst));
-		else if (m->m_flags & M_MCAST)
-			ip_ib_mc_map(((struct sockaddr_in *)dst)->sin_addr.s_addr, ifp->if_broadcastaddr, edst);
-		else
-			error = arpresolve(ifp, is_gw, m, dst, edst, NULL);
-		if (error)
+	if (phdr == NULL) {
+		/* No prepend data supplied. Try to calculate ourselves. */
+		phdr = linkhdr;
+		hlen = IPOIB_HEADER_LEN;
+		error = ipoib_resolve_addr(ifp, m, dst, ro, phdr, &pflags);
+		if (error != 0)
 			return (error == EWOULDBLOCK ? 0 : error);
-		type = htons(ETHERTYPE_IP);
-		break;
-	case AF_ARP:
-	{
-		struct arphdr *ah;
-		ah = mtod(m, struct arphdr *);
-		ah->ar_hrd = htons(ARPHRD_INFINIBAND);
-
-		switch(ntohs(ah->ar_op)) {
-		case ARPOP_REVREQUEST:
-		case ARPOP_REVREPLY:
-			type = htons(ETHERTYPE_REVARP);
-			break;
-		case ARPOP_REQUEST:
-		case ARPOP_REPLY:
-		default:
-			type = htons(ETHERTYPE_ARP);
-			break;
-		}
-
-		if (m->m_flags & M_BCAST)
-			bcopy(ifp->if_broadcastaddr, edst, INFINIBAND_ALEN);
-		else
-			bcopy(ar_tha(ah), edst, INFINIBAND_ALEN);
-
-	}
-	break;
-#endif
-#ifdef INET6
-	case AF_INET6:
-		if (lle != NULL && (lle->la_flags & LLE_VALID))
-			memcpy(edst, &lle->ll_addr.mac8, sizeof(edst));
-		else if (m->m_flags & M_MCAST)
-			ipv6_ib_mc_map(&((struct sockaddr_in6 *)dst)->sin6_addr, ifp->if_broadcastaddr, edst);
-		else
-			error = nd6_resolve(ifp, is_gw, m, dst, edst, NULL);
-		if (error)
-			return error;
-		type = htons(ETHERTYPE_IPV6);
-		break;
-#endif
-
-	default:
-		if_printf(ifp, "can't handle af%d\n", dst->sa_family);
-		error = EAFNOSUPPORT;
-		goto bad;
 	}
 
 	/*
 	 * Add local net header.  If no space in first mbuf,
 	 * allocate another.
 	 */
-	M_PREPEND(m, IPOIB_HEADER_LEN, M_NOWAIT);
+	M_PREPEND(m, hlen, M_NOWAIT);
 	if (m == NULL) {
 		error = ENOBUFS;
 		goto bad;
 	}
-	eh = mtod(m, struct ipoib_header *);
-	(void)memcpy(&eh->proto, &type, sizeof(eh->proto));
-	(void)memcpy(&eh->hwaddr, edst, sizeof (edst));
+	if ((pflags & RT_HAS_HEADER) == 0) {
+		ih = mtod(m, struct ipoib_header *);
+		memcpy(ih, phdr, hlen);
+	}
 
 	/*
 	 * Queue message on interface, update output statistics if
@@ -1541,4 +1632,4 @@ static moduledata_t ipoib_mod = {
 
 DECLARE_MODULE(ipoib, ipoib_mod, SI_SUB_SMP, SI_ORDER_ANY);
 MODULE_DEPEND(ipoib, ibcore, 1, 1, 1);
-MODULE_DEPEND(ipoib, linuxapi, 1, 1, 1);
+MODULE_DEPEND(ipoib, linuxkpi, 1, 1, 1);
