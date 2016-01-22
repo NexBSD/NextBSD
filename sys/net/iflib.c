@@ -1728,7 +1728,7 @@ iflib_stop(if_ctx_t ctx)
 	for (i = 0; i < scctx->isc_nqsets; i++, txq++, rxq++) {
 		/* Free any existing tx buffers. */
 		txsd = txq->ift_sds;
-		for (int j = 0; j < sctx->isc_ntxd; i++, txsd++) {
+		for (j = 0; j < sctx->isc_ntxd; j++, txsd++) {
 			iflib_txsd_free(ctx, txq, txsd);
 		}
 		qset = &ctx->ifc_qsets[txq->ift_id];
