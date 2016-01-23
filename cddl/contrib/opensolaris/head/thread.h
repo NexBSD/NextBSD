@@ -63,6 +63,7 @@ typedef pthread_rwlock_t rwlock_t;
 #define	cond_init(l,f,a)	pthread_cond_init(l,NULL)
 #define	cond_destroy(l)		pthread_cond_destroy(l)
 #define	cond_wait(l,m)		pthread_cond_wait(l,m)
+#define	cond_reltimedwait(l, m, t) pthread_cond_timedwait(l, m, t)
 #define	cond_signal(l)		pthread_cond_signal(l)
 #define	cond_broadcast(l)	pthread_cond_broadcast(l)
 

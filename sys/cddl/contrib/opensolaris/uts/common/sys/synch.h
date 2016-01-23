@@ -31,7 +31,6 @@
 
 #ifndef _ASM
 #include <sys/types.h>
-#include <sys/int_types.h>
 #endif /* _ASM */
 
 #ifdef	__cplusplus
@@ -128,8 +127,10 @@ typedef struct _lwp_rwlock {
 /*
  * Definitions of synchronization types.
  */
+#ifdef _KERNEL	
 #define	USYNC_THREAD	0x00		/* private to a process */
 #define	USYNC_PROCESS	0x01		/* shared by processes */
+#endif
 
 /* Keep the following values in sync with pthread.h */
 #define	LOCK_NORMAL		0x00		/* same as USYNC_THREAD */

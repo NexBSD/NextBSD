@@ -40,13 +40,13 @@
 
 #ifndef _RPC_SVC_AUTH_H
 #define _RPC_SVC_AUTH_H
-
+#ifdef _KERNEL
 /*
  * Server side authenticator
  */
+#ifdef _KERNEL
 __BEGIN_DECLS
 extern enum auth_stat _authenticate(struct svc_req *, struct rpc_msg *);
-#ifdef _KERNEL
 extern int svc_auth_reg(int,
     enum auth_stat (*)(struct svc_req *, struct rpc_msg *),
     int (*)(struct svc_req *, struct ucred **, int *));
@@ -74,5 +74,5 @@ extern int svc_getcred(struct svc_req *, struct ucred **, int *);
  */
 
 __END_DECLS
-
+#endif
 #endif /* !_RPC_SVC_AUTH_H */
