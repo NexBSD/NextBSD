@@ -101,7 +101,9 @@ _LIBRARIES=	\
 		heimsqlite \
 		hx509 \
 		ipsec \
+		intl \
 		jail \
+		jansson \
 		kadm5clnt \
 		kadm5srv \
 		kafs5 \
@@ -122,6 +124,7 @@ _LIBRARIES=	\
 		nandfs \
 		ncurses \
 		ncursesw \
+		ndmp \
 		netgraph \
 		ngatm \
 		nv \
