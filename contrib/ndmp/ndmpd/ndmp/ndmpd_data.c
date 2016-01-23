@@ -1373,8 +1373,12 @@ ndmpd_tar_start_backup_v3(ndmpd_session_t *session, char *bu_type,
 	ndmp_lbr_params_t *nlp;
 	ndmpd_module_params_t *params;
 	ndmp_data_start_backup_reply_v3 reply;
+	pthread_t tid;
+	pthread_attr_t attr;
 
+	pthread_attr_init(&attr);
 	(void) memset((void*)&reply, 0, sizeof (reply));
+
 
 	err = ndmpd_save_env(session, env_val, env_len);
 	if (err != NDMP_NO_ERR)
@@ -1465,7 +1469,7 @@ ndmpd_tar_start_backup_v3(ndmpd_session_t *session, char *bu_type,
 	 * Cannot wait for the thread to exit as we are replying to the
 	 * client request here.
 	 */
-	err = pthread_create(NULL, NULL,
+	err = pthread_create(&tid, &attr,
 	    (funct_t)session->ns_data.dd_module.dm_start_func,
 	    params);
 	if (err != 0) {
@@ -1502,7 +1506,10 @@ ndmpd_tar_start_recover_v3(ndmpd_session_t *session,
 	ndmpd_module_params_t *params;
 	ndmp_lbr_params_t *nlp;
 	int err;
+	pthread_t tid;
+	pthread_attr_t attr;
 
+	pthread_attr_init(&attr);
 	(void) memset((void*)&reply, 0, sizeof (reply));
 
 	nlp = ndmp_get_nlp(session);
@@ -1594,7 +1601,7 @@ ndmpd_tar_start_recover_v3(ndmpd_session_t *session,
 	 * Cannot wait for the thread to exit as we are replying to the
 	 * client request here.
 	 */
-	err = pthread_create(NULL, NULL,
+	err = pthread_create(&tid, &attr,
 	    (funct_t)session->ns_data.dd_module.dm_start_func,
 	    params);
 
@@ -1613,11 +1620,13 @@ ndmpd_zfs_start_op(ndmpd_session_t *session, ndmp_pval *env_val,
 	ndmpd_zfs_args_t *ndmpd_zfs_args = &session->ns_ndmpd_zfs_args;
 	ndmp_data_start_backup_reply_v3 backup_reply;
 	ndmp_data_start_recover_reply_v3 recover_reply;
-	pthread_t tid;
 	void *reply;
 	char str[8];
 	int err;
+	pthread_t tid;
+	pthread_attr_t attr;
 
+	pthread_attr_init(&attr);
 	if (ndmpd_zfs_init(session) != 0)
 		return (NDMP_UNDEFINED_ERR);
 
@@ -1691,7 +1700,7 @@ ndmpd_zfs_start_op(ndmpd_session_t *session, ndmp_pval *env_val,
 		return (NDMP_NO_ERR);
 	}
 
-	err = pthread_create(&tid, NULL,
+	err = pthread_create(&tid, &attr,
 	    (funct_t)session->ns_data.dd_module.dm_start_func, ndmpd_zfs_args);
 
 	if (err) {
@@ -2068,7 +2077,10 @@ ndmpd_tar_start_backup_v2(ndmpd_session_t *session, char *bu_type,
 	ndmpd_module_params_t *params;
 	ndmp_lbr_params_t *nlp;
 	int err;
+	pthread_t tid;
+	pthread_attr_t attr;
 
+	pthread_attr_init(&attr);
 	if (session->ns_data.dd_state != NDMP_DATA_STATE_IDLE) {
 		NDMP_LOG(LOG_ERR, "Can't start new backup in current state.");
 		return (NDMP_ILLEGAL_STATE_ERR);
@@ -2184,7 +2196,7 @@ ndmpd_tar_start_backup_v2(ndmpd_session_t *session, char *bu_type,
 	 * Cannot wait for the thread to exit as we are replying to the
 	 * client request here.
 	 */
-	(void) pthread_create(NULL, NULL,
+	(void) pthread_create(&tid, &attr,
 	    (funct_t)session->ns_data.dd_module.dm_start_func,
 	    params);
 
@@ -2217,7 +2229,10 @@ ndmpd_tar_start_recover_v2(ndmpd_session_t *session, char *bu_type,
 	ndmpd_module_params_t *params;
 	ndmp_lbr_params_t *nlp;
 	int err;
+	pthread_t tid;
+	pthread_attr_t attr;
 
+	pthread_attr_init(&attr);
 	if (session->ns_data.dd_state != NDMP_DATA_STATE_IDLE) {
 		NDMP_LOG(LOG_ERR, "Can't start new recover in current state.");
 		return (NDMP_ILLEGAL_STATE_ERR);
@@ -2321,7 +2336,7 @@ ndmpd_tar_start_recover_v2(ndmpd_session_t *session, char *bu_type,
 	 * Cannot wait for the thread to exit as we are replying to the
 	 * client request here.
 	 */
-	(void) pthread_create(NULL, NULL,
+	(void) pthread_create(&tid, &attr,
 	    (funct_t)session->ns_data.dd_module.dm_start_func,
 	    params);
 
