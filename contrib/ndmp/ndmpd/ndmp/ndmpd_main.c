@@ -41,7 +41,9 @@
 #include <errno.h>
 #include <signal.h>
 #include <libgen.h>
+#if 0
 #include <libscf.h>
+#endif
 #include <libintl.h>
 #include <sys/wait.h>
 #include <zone.h>

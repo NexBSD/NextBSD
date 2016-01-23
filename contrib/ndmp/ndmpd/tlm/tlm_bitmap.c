@@ -77,7 +77,7 @@
  */
 #define	BMAP_BPW	(BMAP_WSIZE * 8)
 #define	BMAP_BPW_SHIFT	5
-#define	BMAP_BPW_MASK	(~(~0 << BMAP_BPW_SHIFT))
+#define	BMAP_BPW_MASK	(~(~(0UL) << BMAP_BPW_SHIFT))
 
 
 /*

@@ -44,6 +44,7 @@ CFLAGS+= -I${.CURDIR}/../../sys/cddl/compat/opensolaris
 CFLAGS+= -I${.CURDIR}/../../cddl/compat/opensolaris/include
 CFLAGS+= -I${.CURDIR}/../../cddl/compat/opensolaris/lib/libumem
 CFLAGS+= -I${.CURDIR}/../../cddl/contrib/opensolaris/lib/libnvpair
+CFLAGS+= -I${.CURDIR}/../../cddl/contrib/opensolaris/lib/libbsm
 CFLAGS+= -I${.CURDIR}/../../cddl/contrib/opensolaris/lib/libuutil/common
 CFLAGS+= -I${.CURDIR}/../../cddl/contrib/opensolaris/lib/libinetutil/common
 CFLAGS+= -I${.CURDIR}/../../cddl/contrib/opensolaris/lib/libbsm/common
@@ -71,6 +72,8 @@ CFLAGS+= -DNETINET6
 
 WARNS?=	1
 
-LDADD= -lnvpair -luutil -lgeom -lbsm -lzfs -lzpool -lndmp -ljansson
+LIBADD+= nvpair util geom bsm zfs zpool md pthread
+LDADD= -lndmp -ljansson
+MAN=
 
 .include <bsd.prog.mk>

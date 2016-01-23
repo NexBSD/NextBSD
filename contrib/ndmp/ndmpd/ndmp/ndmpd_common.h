@@ -53,8 +53,11 @@
 #include <sys/stat.h>
 #include <stdio.h>
 
+#if 0
 #include <adt.h>
 #include <adt_event.h>
+#endif
+
 #undef mutex_init
 #define mutex_init(mp, a, b) zmutex_init((kmutex_t *)mp)
 
@@ -66,6 +69,7 @@
 #define	KILOBYTE	1024
 
 #define	INT_MAXCMD	12
+#define ADT_FAIL_PAM 0
 
 extern mutex_t ndmpd_zfs_fd_lock;
 
@@ -86,8 +90,9 @@ typedef struct ndmp_connection {
 	ushort_t conn_version;
 	void *conn_client_data;
 	mutex_t conn_lock;
-
+#if 0
 	adt_session_data_t *conn_ah;
+#endif	
 } ndmp_connection_t;
 
 typedef void (*ndmp_con_handler_func_t) (struct ndmp_connection *);
