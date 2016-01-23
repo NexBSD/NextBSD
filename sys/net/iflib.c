@@ -487,6 +487,8 @@ static int iflib_rx_if_input;
 static int iflib_rx_mbuf_null;
 static int iflib_rxd_flush;
 
+static int iflib_verbose_debug;
+
 SYSCTL_INT(_net_iflib, OID_AUTO, intr_link, CTLFLAG_RD,
 		   &iflib_intr_link, 0, "# intr link calls");
 SYSCTL_INT(_net_iflib, OID_AUTO, intr_msix, CTLFLAG_RD,
@@ -508,11 +510,15 @@ SYSCTL_INT(_net_iflib, OID_AUTO, rx_if_input, CTLFLAG_RD,
 SYSCTL_INT(_net_iflib, OID_AUTO, rx_mbuf_null, CTLFLAG_RD,
 		   &iflib_rx_mbuf_null, 0, "# times rxeof got null mbuf");
 SYSCTL_INT(_net_iflib, OID_AUTO, rxd_flush, CTLFLAG_RD,
-		   &iflib_rxd_flush, 0, "# times rxd_flush called");
+	         &iflib_rxd_flush, 0, "# times rxd_flush called");
+SYSCTL_INT(_net_iflib, OID_AUTO, verbose_debug, CTLFLAG_RW,
+		   &iflib_verbose_debug, 0, "enable verbose debugging");
 
 #define DBG_COUNTER_INC(name) atomic_add_int(&(iflib_ ## name), 1)
+
 #else
 #define DBG_COUNTER_INC(name)
+
 #endif
 
 #define IFLIB_DEBUG 1
@@ -1142,9 +1148,13 @@ iflib_txsd_alloc(iflib_txq_t txq)
 	iflib_sd_t txsd;
 	int err, i, nsegments;
 
+	if (ctx->ifc_softc_ctx.isc_tx_nsegments > sctx->isc_ntxd / 12)
+		ctx->ifc_softc_ctx.isc_tx_nsegments = max(1, sctx->isc_ntxd / 12);
+
 	nsegments = ctx->ifc_softc_ctx.isc_tx_nsegments;
 	MPASS(sctx->isc_ntxd > 0);
 	MPASS(nsegments > 0);
+
 	/*
 	 * Setup DMA descriptor areas.
 	 */
@@ -1680,8 +1690,6 @@ iflib_init_locked(if_ctx_t ctx)
 			txq->ift_timer.c_cpu);
 }
 
-#define FLOG printf("%s called\n", __FUNCTION__)
-
 static int
 iflib_media_change(if_t ifp)
 {
@@ -2181,7 +2189,6 @@ retry:
 		txq->ift_npending += pi.ipi_ndescs;
 	} else {
 		DBG_COUNTER_INC(encap_txd_encap_fail);
-		printf("encap failed\n"); 
 	}
 	return (err);
 }
@@ -2269,9 +2276,17 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 	iflib_tx_credits_update(ctx, txq);
 	reclaim = DESC_RECLAIMABLE(txq);
 
-	if (reclaim <= thresh /* + MAX_TX_DESC(txq->ift_ctx) */)
-		return (0);
+	if (reclaim <= thresh /* + MAX_TX_DESC(txq->ift_ctx) */) {
+#ifdef INVARIANTS
+		if (iflib_verbose_debug) {
+			printf("%s processed=%d cleaned=%d tx_nsegments=%d reclaim=%d thresh=%d\n", __FUNCTION__,
+			       txq->ift_processed, txq->ift_cleaned, txq->ift_ctx->ifc_softc_ctx.isc_tx_nsegments,
+			       reclaim, thresh);
 
+		}
+#endif
+		return (0);
+	}
 	iflib_tx_desc_free(txq, reclaim);
 	txq->ift_cleaned += reclaim;
 	txq->ift_in_use -= reclaim;
@@ -2334,7 +2349,6 @@ iflib_txq_can_drain(struct mp_ring *r)
 static uint32_t
 iflib_txq_drain(struct mp_ring *r, uint32_t cidx, uint32_t pidx)
 {
-  printf("iflib_txq_drain called\n"); 
 	iflib_txq_t txq = r->cookie;
 	if_ctx_t ctx = txq->ift_ctx;
 	if_t ifp = ctx->ifc_ifp;
