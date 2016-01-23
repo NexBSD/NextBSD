@@ -231,12 +231,13 @@ ndmp_close(ndmp_connection_t *connection_handle)
 int
 ndmp_start_worker(ndmpd_worker_arg_t *argp)
 {
+	pthread_t tid;
 	pthread_attr_t tattr;
 	int rc;
 
 	(void) pthread_attr_init(&tattr);
 	(void) pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED);
-	rc = pthread_create(NULL, &tattr, ndmpd_worker, (void *)argp);
+	rc = pthread_create(&tid, &tattr, ndmpd_worker, (void *)argp);
 	(void) pthread_attr_destroy(&tattr);
 	return (rc);
 }

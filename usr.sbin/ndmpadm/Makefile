@@ -24,7 +24,9 @@ CFLAGS+= -L/usr/local/lib
 
 WARNS?= 1
 
-LDADD= -lndmp -ljansson -lintl -lpthread
+LDADD= -lndmp -ljansson -lintl 
+LIBADD+= pthread
+MAN=
 
 .include <bsd.prog.mk>
 

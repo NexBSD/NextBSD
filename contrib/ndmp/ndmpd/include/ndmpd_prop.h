@@ -40,7 +40,9 @@
 #define	_NDMPD_PROP_H
 
 #include <sys/types.h>
+#if 0
 #include <libscf.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {

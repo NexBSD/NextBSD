@@ -915,7 +915,7 @@ ndmpd_zfs_restore_recv_write(ndmpd_zfs_args_t *ndmpd_zfs_args)
 		flags.force = B_TRUE;
 
 	err = zfs_receive(ndmpd_zfs_args->nz_zlibh, ndmpd_zfs_args->nz_dataset,
-	    &flags, ndmpd_zfs_args->nz_pipe_fd[PIPE_ZFS], NULL);
+			  NULL, &flags, ndmpd_zfs_args->nz_pipe_fd[PIPE_ZFS], NULL);
 
 	if (err && !session->ns_data.dd_abort)
 		NDMPD_ZFS_LOG_ZERR(ndmpd_zfs_args, "zfs_receive: %d", err);
@@ -1198,7 +1198,7 @@ ndmpd_zfs_backup_pathvalid(ndmpd_zfs_args_t *ndmpd_zfs_args)
 			return (-1);
 		}
 
-		if (propstr && ndmpd_zfs_snapshot_ndmpd_generated(propstr)) {
+		if (ndmpd_zfs_snapshot_ndmpd_generated(propstr)) {
 			ndmpd_zfs_dma_log(ndmpd_zfs_args, NDMP_LOG_ERROR,
 			    "cannot use an ndmpd-generated snapshot\n");
 			return (B_FALSE);

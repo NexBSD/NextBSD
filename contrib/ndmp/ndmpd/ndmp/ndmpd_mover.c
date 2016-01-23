@@ -2757,7 +2757,10 @@ start_mover_for_restore(ndmpd_session_t *session)
 	tlm_commands_t *cmds;
 	long xfer_size;
 	int rc;
+	pthread_t tid;
+	pthread_attr_t attr;
 
+	pthread_attr_init(&attr);
 	if ((nlp = ndmp_get_nlp(session)) == NULL) {
 		NDMP_LOG(LOG_DEBUG, "nlp == NULL");
 		return (-1);
@@ -2780,7 +2783,7 @@ start_mover_for_restore(ndmpd_session_t *session)
 	 * must be sent to the client before probable errors are sent
 	 * to the client.
 	 */
-	rc = pthread_create(NULL, NULL, (funct_t)mover_tape_reader, session);
+	rc = pthread_create(&tid, &attr, (funct_t)mover_tape_reader, session);
 	if (rc == 0) {
 		tlm_cmd_wait(cmds->tcs_command, TLM_TAPE_READER);
 	} else {
@@ -2789,7 +2792,7 @@ start_mover_for_restore(ndmpd_session_t *session)
 		return (-1);
 	}
 
-	rc = pthread_create(NULL, NULL, (funct_t)mover_socket_writer, session);
+	rc = pthread_create(&tid, &attr, (funct_t)mover_socket_writer, session);
 	if (rc == 0) {
 		tlm_cmd_wait(cmds->tcs_command, TLM_SOCK_WRITER);
 	} else {
@@ -3128,7 +3131,10 @@ start_mover_for_backup(ndmpd_session_t *session)
 	ndmp_lbr_params_t *nlp;
 	tlm_commands_t *cmds;
 	int rc;
+	pthread_t tid;
+	pthread_attr_t attr;
 
+	pthread_attr_init(&attr);
 	if ((nlp = ndmp_get_nlp(session)) == NULL) {
 		NDMP_LOG(LOG_DEBUG, "nlp == NULL");
 		return (-1);
@@ -3151,7 +3157,7 @@ start_mover_for_backup(ndmpd_session_t *session)
 	 * must be sent to the client before probable errors are sent
 	 * to the client.
 	 */
-	rc = pthread_create(NULL, NULL, (funct_t)mover_socket_reader, session);
+	rc = pthread_create(&tid, &attr, (funct_t)mover_socket_reader, session);
 	if (rc == 0) {
 		tlm_cmd_wait(cmds->tcs_command, TLM_SOCK_READER);
 	} else {
@@ -3160,7 +3166,7 @@ start_mover_for_backup(ndmpd_session_t *session)
 		return (-1);
 	}
 
-	rc = pthread_create(NULL, NULL, (funct_t)mover_tape_writer, session);
+	rc = pthread_create(&tid, &attr, (funct_t)mover_tape_writer, session);
 	if (rc == 0) {
 		tlm_cmd_wait(cmds->tcs_command, TLM_TAPE_WRITER);
 	} else {
