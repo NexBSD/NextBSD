@@ -2223,7 +2223,6 @@ load_needed_objects(Obj_Entry *first, int flags)
 {
     Obj_Entry *obj;
 
-    for (obj = first;  obj != NULL;  obj = obj->next) {
 #ifdef HARDENEDBSD
         if ((pax_flags & (PAX_NOTE_NOSHLIBRANDOM | PAX_NOTE_SHLIBRANDOM)) !=
 	  PAX_NOTE_NOSHLIBRANDOM)
