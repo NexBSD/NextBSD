@@ -207,7 +207,6 @@ static int addr_resolve(struct sockaddr *src_in,
 	u_char edst[MAX_ADDR_LEN];
 	int multi;
 	int bcast;
-	int is_gw = 0;
 	int error = 0;
 	/*
 	 * Determine whether the address is unicast, multicast, or broadcast

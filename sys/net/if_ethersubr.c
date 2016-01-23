@@ -113,6 +113,7 @@ static	int ether_resolvemulti(struct ifnet *, struct sockaddr **,
 #ifdef VIMAGE
 static	void ether_reassign(struct ifnet *, struct vnet *, char *);
 #endif
+static	int ether_requestencap(struct ifnet *, struct if_encap_req *);
 
 #define	ETHER_IS_BROADCAST(addr) \
 	(bcmp(etherbroadcastaddr, (addr), ETHER_ADDR_LEN) == 0)
@@ -138,7 +139,7 @@ update_mbuf_csumflags(struct mbuf *src, struct mbuf *dst)
 /*
  * Handle link-layer encapsulation requests.
  */
-int
+static int
 ether_requestencap(struct ifnet *ifp, struct if_encap_req *req)
 {
 	struct ether_header *eh;
@@ -195,16 +196,17 @@ ether_requestencap(struct ifnet *ifp, struct if_encap_req *req)
 }
 
 
-static inline int
+static int
 ether_resolve_addr(struct ifnet *ifp, struct mbuf *m,
 	const struct sockaddr *dst, struct route *ro, u_char *phdr,
 	uint32_t *pflags)
 {
 	struct ether_header *eh;
-	struct rtentry *rt;
 	uint32_t lleflags = 0;
-	uint16_t etype;
 	int error = 0;
+#if defined(INET) || defined(INET6)
+	uint16_t etype;
+#endif
 
 	eh = (struct ether_header *)phdr;
 
@@ -250,15 +252,16 @@ ether_resolve_addr(struct ifnet *ifp, struct mbuf *m,
 	}
 
 	if (error == EHOSTDOWN) {
-		rt = (ro != NULL) ? ro->ro_rt : NULL;
-		if (rt != NULL && (rt->rt_flags & RTF_GATEWAY) != 0)
+		if (ro != NULL && (ro->ro_flags & RT_HAS_GW) != 0)
 			error = EHOSTUNREACH;
 	}
 
 	if (error != 0)
 		return (error);
 
-	*pflags = ((!!(lleflags & LLE_IFADDR)) << RT_L2_ME_BIT) | RT_MAY_LOOP;
+	*pflags = RT_MAY_LOOP;
+	if (lleflags & LLE_IFADDR)
+		*pflags |= RT_L2_ME;
 
 	return (0);
 }
@@ -319,6 +322,10 @@ ether_output(struct ifnet *ifp, struct mbuf *m,
 	/*
 	 * Add local net header.  If no space in first mbuf,
 	 * allocate another.
+	 *
+	 * Note that we do prepend regardless of RT_HAS_HEADER flag.
+	 * This is done because BPF code shifts m_data pointer
+	 * to the end of ethernet header prior to calling if_output().
 	 */
 	M_PREPEND(m, hlen, M_NOWAIT);
 	if (m == NULL)
