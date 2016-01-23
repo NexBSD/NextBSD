@@ -521,7 +521,7 @@ SYSCTL_INT(_net_iflib, OID_AUTO, verbose_debug, CTLFLAG_RW,
 
 #endif
 
-#define IFLIB_DEBUG 1
+#define IFLIB_DEBUG 0
 
 static void iflib_tx_structures_free(if_ctx_t ctx);
 static void iflib_rx_structures_free(if_ctx_t ctx);
