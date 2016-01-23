@@ -103,7 +103,7 @@ static void ixgbe_if_vlan_unregister(if_ctx_t ctx, u16 vtag);
 int ixgbe_intr(void *arg);
 
 #if __FreeBSD_version >= 1100036
-static uint64_t	ixgbe_get_counter(struct ifnet *, ift_counter);
+static uint64_t	ixgbe_if_get_counter(if_ctx_t, ift_counter);
 #endif
 
 static void ixgbe_enable_queue(struct adapter *adapter, u32 vector);
@@ -244,6 +244,7 @@ static device_method_t ixgbe_if_methods[] = {
 	DEVMETHOD(ifdi_timer, ixgbe_if_timer),
 	DEVMETHOD(ifdi_vlan_register, ixgbe_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, ixgbe_if_vlan_unregister),
+	DEVMETHOD(ifdi_get_counter, ixgbe_if_get_counter),
 	DEVMETHOD_END
 };
 
@@ -354,8 +355,10 @@ SYSCTL_INT(_dev_netmap, OID_AUTO, ix_crcstrip,
 static int allow_unsupported_sfp = FALSE;
 TUNABLE_INT("hw.ix.unsupported_sfp", &allow_unsupported_sfp);
 
+#if 0
 /* Keep running tab on them for sanity check */
 static int ixgbe_total_ports;
+#endif
 
 #ifdef IXGBE_FDIR
 /* 
@@ -1009,11 +1012,9 @@ static int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 		u64 buffer_addr = txr->tx_base[j].read.buffer_addr;
 		u32 cmd_type_len = txr->tx_base[j].read.cmd_type_len;
 		u32 olinfo_status = txr->tx_base[j].read.olinfo_status;
-		sbuf_printf(sb, "\tTXD[%d] addr: %08lx Cmd Len:%d  olinfo_status:%d eop: %p\n", j, buffer_addr, cmd_type_len, olinfo_status, buf->eop);
-	}
-	for (j = 0; j < adapter->num_queues; j++) {
-		u32 head = *((u32 *)(txr->tx_base + ixgbe_sctx->isc_ntxd));
-		sbuf_printf(sb, "\t txd[%d]head: %d\n", j, head);
+		sbuf_printf(sb, "\tTXD[%d] addr: %08lx Cmd Len:%d  olinfo_status:%d eop: %p DD=%d\n",
+			    j, buffer_addr, cmd_type_len, olinfo_status, buf->eop,
+			    buf->eop != NULL ? buf->eop->wb.status & IXGBE_TXD_STAT_DD : 0);
 	}
 	/* X540 specific DCB registers
 	regs_buff[1137] = IXGBE_READ_REG(hw, IXGBE_RTTQCNCR);
@@ -1665,9 +1666,10 @@ ixgbe_interface_setup(if_ctx_t ctx)
 
 #if __FreeBSD_version >= 1100036
 static uint64_t
-ixgbe_get_counter(struct ifnet *ifp, ift_counter cnt)
+ixgbe_if_get_counter(if_ctx_t ctx, ift_counter cnt)
 {
 	struct adapter *adapter;
+	if_t ifp = iflib_get_ifp(ctx);
 
 	adapter = if_getsoftc(ifp);
 
