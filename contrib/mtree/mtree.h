@@ -45,6 +45,7 @@ typedef struct _node {
 	off_t	st_size;			/* size */
 	struct timespec	st_mtimespec;		/* last modification time */
 	char	*slink;				/* symbolic link reference */
+	char	*acl;				/* Access Control List */
 	uid_t	st_uid;				/* uid */
 	gid_t	st_gid;				/* gid */
 #define	MBITS	(S_ISUID|S_ISGID|S_ISTXT|S_IRWXU|S_IRWXG|S_IRWXO)
@@ -76,6 +77,7 @@ typedef struct _node {
 #define	F_MODE		0x00000200		/* mode */
 #define	F_NLINK		0x00000400		/* number of links */
 #define	F_OPT		0x00000800		/* existence optional */
+#define F_ACL		0x400000		/* Access Control List */
 #define	F_RMD160	0x00001000		/* RMD-160 digest */
 #define	F_SHA1		0x00002000		/* SHA1 digest */
 #define	F_SIZE		0x00004000		/* size */

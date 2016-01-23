@@ -60,6 +60,7 @@ __RCSID("$NetBSD: create.c,v 1.73 2014/04/24 17:22:41 christos Exp $");
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/acl.h>
 
 #ifndef NO_MD5
 #include <md5.h>
@@ -301,6 +302,24 @@ statf(FILE *fp, int indent, FTSENT *p)
 	    (p->fts_info == FTS_SL || p->fts_info == FTS_SLNONE))
 		output(fp, indent, &offset, "link=%s",
 		    vispath(rlink(p->fts_accpath)));
+ 	if (keys & F_ACL) {
+ 		char *acl_text;
+ 		acl_t acl;
+ 		size_t i;
+ 
+ 		acl = acl_get_file(p->fts_accpath, ACL_TYPE_ACCESS);
+ 		acl_text = acl_to_text(acl, NULL);
+ 		if (!acl_text)
+ 			err(1, "%s", p->fts_accpath);
+ 		for(i = 0; acl_text[++i] != '\0';){
+ 			if (acl_text[i] == '\n')
+ 				acl_text[i] = ',';
+ 		}
+ 		acl_text[i-1] = '\0';
+ 		output(indent, &offset, "acl=%s", acl_text);
+ 		acl_free(acl);
+ 		acl_free(acl_text);
+ 	}
 #if HAVE_STRUCT_STAT_ST_FLAGS
 	if (keys & F_FLAGS && p->fts_statp->st_flags != flags) {
 		char *str = flags_to_string(p->fts_statp->st_flags, "none");

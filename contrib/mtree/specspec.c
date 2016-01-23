@@ -97,6 +97,8 @@ shownode(NODE *n, int f, char const *path)
 		printf(" %s=%s", SHA384KEY, n->sha384digest);
 	if (f & F_SHA512)
 		printf(" %s=%s", SHA512KEY, n->sha512digest);
+        if (f & F_ACL)
+                printf(" acl=%s", n->acl);
 	if (f & F_FLAGS)
 		printf(" flags=%s", flags_to_string(n->st_flags, "none"));
 	printf("\n");

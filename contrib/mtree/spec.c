@@ -573,6 +573,10 @@ set(char *t, NODE *ip)
 			    != 0)
 				mtree_err("invalid flag `%s'", val);
 			break;
+                case F_ACL:
+                        ip->acl = strdup(val);
+                        if(!ip->acl)
+                                errx(1, "strdup");
 		case F_GID:
 			ip->st_gid = (gid_t)strtoul(val, &ep, 10);
 			if (*ep)
