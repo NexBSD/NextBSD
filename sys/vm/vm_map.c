@@ -1556,7 +1556,7 @@ again:
  *
  *	The map must be locked.
  *
- *	This routine guarentees that the passed entry remains valid (though
+ *	This routine guarantees that the passed entry remains valid (though
  *	possibly extended).  When merging, this routine may delete one or
  *	both neighbors.
  */
