@@ -103,6 +103,7 @@ LIBMTHCA?=	${DESTDIR}${LIBDIR}/libmthca.a
 LIBNANDFS?=	${DESTDIR}${LIBDIR}/libnandfs.a
 LIBNCURSES?=	${DESTDIR}${LIBDIR}/libncurses.a
 LIBNCURSESW?=	${DESTDIR}${LIBDIR}/libncursesw.a
+LIBNDMP?= 	${DESTDIR}${LIBDIR}/libndmp.a
 LIBNETGRAPH?=	${DESTDIR}${LIBDIR}/libnetgraph.a
 LIBNGATM?=	${DESTDIR}${LIBDIR}/libngatm.a
 LIBNV?=		${DESTDIR}${LIBDIR}/libnv.a

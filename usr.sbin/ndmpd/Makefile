@@ -72,8 +72,7 @@ CFLAGS+= -DNETINET6
 
 WARNS?=	1
 
-LIBADD+= nvpair util geom bsm zfs zpool md pthread
-LDADD= -lndmp -ljansson
+LIBADD+= nvpair util geom bsm zfs zpool md pthread ndmp jansson
 MAN=
 
 .include <bsd.prog.mk>
