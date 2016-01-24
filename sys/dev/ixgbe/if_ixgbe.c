@@ -1391,7 +1391,7 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	dev = iflib_get_dev(ctx);
 	adapter = iflib_get_softc(ctx);
 	adapter->ctx = ctx; 
-	adapter->dev = adapter->osdep.dev = dev;
+	adapter->dev = dev;
 	adapter->shared = iflib_get_softc_ctx(ctx);
 	adapter->media = iflib_get_media(ctx);
 	hw = &adapter->hw;
@@ -2000,8 +2000,6 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 
-		struct lro_ctrl *lro = &rxr->lro;
-
 		snprintf(namebuf, QUEUE_NAME_LEN, "queue%d", i);
 		queue_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf, 
 					    CTLFLAG_RD, NULL, "Queue Name");
@@ -2024,12 +2022,6 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "rx_copies",
 				CTLFLAG_RD, &rxr->rx_copies,
 				"Copied RX Frames");
-		SYSCTL_ADD_INT(ctx, queue_list, OID_AUTO, "lro_queued",
-				CTLFLAG_RD, &lro->lro_queued, 0,
-				"LRO Queued");
-		SYSCTL_ADD_INT(ctx, queue_list, OID_AUTO, "lro_flushed",
-				CTLFLAG_RD, &lro->lro_flushed, 0,
-				"LRO Flushed");
 	}
 
 	/* MAC stats get the own sub node */
@@ -2348,7 +2340,7 @@ ixgbe_setup_vlan_hw_support(if_ctx_t ctx)
 static void
 ixgbe_get_slot_info(struct ixgbe_hw *hw)
 {
-	device_t		dev = ((struct ixgbe_osdep *)hw->back)->dev;
+	device_t		dev = ((struct adapter *)hw->back)->dev;
 	struct ixgbe_mac_info	*mac = &hw->mac;
 	u16			link;
 	u32			offset;
@@ -3155,8 +3147,7 @@ ixgbe_allocate_pci_resources(if_ctx_t ctx)
 		rman_get_bushandle(adapter->pci_mem);
 	adapter->hw.hw_addr = (u8 *) &adapter->osdep.mem_bus_space_handle;
 
-	/* Legacy defaults */
-	adapter->hw.back = &adapter->osdep;
+	adapter->hw.back = adapter;
 	return (0);
 }
 
