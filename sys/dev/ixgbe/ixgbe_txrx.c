@@ -5,25 +5,6 @@
 #include <netinet/in_rss.h>
 #endif
 
-inline u16
-ixgbe_read_pci_cfg(struct ixgbe_hw *hw, u32 reg)
-{
-	u16 value;
-
-	value = pci_read_config(((struct ixgbe_osdep *)hw->back)->dev,
-	    reg, 2);
-
-	return (value);
-}
-
-inline void
-ixgbe_write_pci_cfg(struct ixgbe_hw *hw, u32 reg, u16 value)
-{
-	pci_write_config(((struct ixgbe_osdep *)hw->back)->dev,
-	    reg, value, 2);
-
-	return;
-}
 /*********************************************************************
  *  Local Function prototypes
  *********************************************************************/
