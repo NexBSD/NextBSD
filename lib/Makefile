@@ -76,6 +76,7 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	libmt \
 	${_libnandfs} \
 	lib80211 \
+	libndmp \
 	libnetbsd \
 	${_libnetgraph} \
 	${_libngatm} \
