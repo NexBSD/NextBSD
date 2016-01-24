@@ -11,7 +11,7 @@ SHLIB_MAJOR=	1
 .PATH:          ${.CURDIR}/../../contrib/ndmp/libndmp/common
 
 CFLAGS+= -DNEED_SOLARIS_BOOLEAN -g -O0
-CFLAGS+=	-I/usr/local/include 
+#CFLAGS+=	-I/usr/local/include 
 CFLAGS+= -I../../contrib/ndmp/libndmp/common
 CFLAGS+= -I../../cddl/contrib/opensolaris/lib/libnvpair
 CFLAGS+= -I../../sys/cddl/contrib/opensolaris/uts/common
