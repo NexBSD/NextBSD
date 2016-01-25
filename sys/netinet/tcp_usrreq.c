@@ -1479,8 +1479,6 @@ tcp_default_ctloutput(struct socket *so, struct sockopt *sopt, struct inpcb *inp
 	int	error, opt, optval;
 	u_int	ui;
 	struct	tcp_info ti;
-	char buf[TCP_CA_NAME_MAX];
-	
 	struct cc_algo *algo;
 	char	*buf;
 
