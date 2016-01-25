@@ -5,25 +5,6 @@
 #include <netinet/in_rss.h>
 #endif
 
-inline u16
-ixgbe_read_pci_cfg(struct ixgbe_hw *hw, u32 reg)
-{
-	u16 value;
-
-	value = pci_read_config(((struct ixgbe_osdep *)hw->back)->dev,
-	    reg, 2);
-
-	return (value);
-}
-
-inline void
-ixgbe_write_pci_cfg(struct ixgbe_hw *hw, u32 reg, u16 value)
-{
-	pci_write_config(((struct ixgbe_osdep *)hw->back)->dev,
-	    reg, value, 2);
-
-	return;
-}
 /*********************************************************************
  *  Local Function prototypes
  *********************************************************************/
@@ -355,12 +336,11 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
   buf->eop = txd;
 
   txr->bytes += m_head->m_pkthdr.len;
-  pi->ipi_pidx = pi->ipi_new_pidx = i;
-  ++pi->ipi_new_pidx;
+  pi->ipi_new_pidx = i;
 
   ++txr->total_packets;
   
-    return (0); 
+    return (0);
 }
   
 static void
@@ -374,118 +354,119 @@ ixgbe_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx)
 }
 
 static int
-ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx)
+ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
 {
-  struct adapter   *sc = arg;
-  struct ix_queue  *que = &sc->queues[txqid];
-  struct tx_ring   *txr = &que->txr;
+	struct adapter   *sc = arg;
+	struct ix_queue  *que = &sc->queues[txqid];
+	struct tx_ring   *txr = &que->txr;
 	
-  u32			work, processed = 0;
-  u32                   limit = sc->tx_process_limit;
-  struct ixgbe_tx_buf	*buf;
-  union ixgbe_adv_tx_desc *txd;
-  
-  /* Get work starting point */
-  work = cidx;
-  buf = &txr->tx_buffers[work];
-  txd = &txr->tx_base[work];
-  /* The distance to ring end */
-  work -= ixgbe_sctx->isc_ntxd;
-  
-  do {
-    union ixgbe_adv_tx_desc *eop= buf->eop;
-    if (eop == NULL) /* No work */
-      break;
+	u32		    cidx, processed = 0;
+	u32               limit = sc->tx_process_limit;
+
+	struct ixgbe_tx_buf	*buf;
+	union ixgbe_adv_tx_desc *txd;
+
+	cidx = cidx_init;
+
+	buf = &txr->tx_buffers[cidx];
+	txd = &txr->tx_base[cidx];
+
+	do {
+
+		union ixgbe_adv_tx_desc *eop = buf->eop;
+		if (eop == NULL) { /* No work */
+			break;
+		}
     
-    if ((eop->wb.status & IXGBE_TXD_STAT_DD) == 0)
-      break;	/* I/O not complete */
+		if ((eop->wb.status & IXGBE_TXD_STAT_DD) == 0) {
+			break;	/* I/O not complete */
+		}
     
-    buf->eop = NULL; /* clear indicate processed */
+		buf->eop = NULL; /* clear indicate processed */
     
-    /* We clean the range if multi segment */
-    while (txd != eop) {
-      ++txd;
-      ++buf;
-      ++work;
-      /* wrap the ring? */
-      if (__predict_false(!work)) {
-	work -= ixgbe_sctx->isc_ntxd;
-	buf = txr->tx_buffers;
-	txd = txr->tx_base;
-      }
-      buf->eop = NULL;
-    }
-    ++txr->packets;
-    ++processed;
+		/* We clean the range if multi segment */
+		while (txd != eop) {
+			++txd;
+			++buf;
+			cidx++;
+			processed++;
+			/* wrap the ring? */
+			if (cidx == ixgbe_sctx->isc_ntxd) {
+				buf = txr->tx_buffers;
+				txd = txr->tx_base;
+				cidx = 0;
+			}
+			buf->eop = NULL;
+		}
+		++txr->packets;
+		++processed;
     
-    /* Try the next packet */
-    ++txd;
-    ++buf;
-    ++work;
-    /* reset with a wrap */
-    if (__predict_false(!work)) {
-      work -= ixgbe_sctx->isc_ntxd;
-      buf = txr->tx_buffers;
-      txd = txr->tx_base;
-    }
-    prefetch(txd);
-  } while (__predict_true(--limit));
-  
-  return (processed);
+		/* Try the next packet */
+		txd++;
+		buf++;
+		cidx++;
+		/* reset with a wrap */
+		if (__predict_false(cidx == ixgbe_sctx->isc_ntxd)) {
+			cidx = 0;
+			buf = txr->tx_buffers;
+			txd = txr->tx_base;
+		}
+		prefetch(txd);
+	} while (__predict_true(--limit) && cidx != cidx_init);
+
+	return (processed);
 }
 
 static void ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
-				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count)
+				 uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count)
 {
-  struct adapter *sc       = arg;
-  struct ix_queue *que     = &sc->queues[rxqid];
-  struct rx_ring *rxr      = &que->rxr;
-  int			i;
-  uint32_t next_pidx;
+	struct adapter *sc       = arg;
+	struct ix_queue *que     = &sc->queues[rxqid];
+	struct rx_ring *rxr      = &que->rxr;
+	int			i;
+	uint32_t next_pidx;
 
-  for (i = 0, next_pidx = pidx; i < count; i++) {
-    rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
-    if (++next_pidx == ixgbe_sctx->isc_nrxd)
-      next_pidx = 0;
-  }
+	for (i = 0, next_pidx = pidx; i < count; i++) {
+		rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
+		if (++next_pidx == ixgbe_sctx->isc_nrxd)
+			next_pidx = 0;
+	}
 }
 
 static void ixgbe_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx)
 {
-  struct adapter *sc       = arg;
-  struct ix_queue *que     = &sc->queues[rxqid];
-  struct rx_ring *rxr      = &que->rxr;
+	struct adapter *sc       = arg;
+	struct ix_queue *que     = &sc->queues[rxqid];
+	struct rx_ring *rxr      = &que->rxr;
 
-  IXGBE_WRITE_REG(&sc->hw, rxr->tail, pidx);
+	IXGBE_WRITE_REG(&sc->hw, rxr->tail, pidx);
 }
 
 static int ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 {
-  struct adapter *sc       = arg;
-  struct ix_queue *que     = &sc->queues[rxqid];
-  struct rx_ring *rxr      = &que->rxr;
-  union ixgbe_adv_rx_desc *rxd;
-  u16                      pkt_info;
-  u32                      staterr = 0; 
-  int                      cnt, i;
+	struct adapter *sc       = arg;
+	struct ix_queue *que     = &sc->queues[rxqid];
+	struct rx_ring *rxr      = &que->rxr;
+	union ixgbe_adv_rx_desc *rxd;
+	u16                      pkt_info;
+	u32                      staterr = 0;
+	int                      cnt, i;
   
-  for (cnt = 0, i = idx; cnt < ixgbe_sctx->isc_nrxd;) {
-    rxd = &rxr->rx_base[i];
-    staterr = le32toh(rxd->wb.upper.status_error);
-    pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
+	for (cnt = 0, i = idx; cnt < ixgbe_sctx->isc_nrxd;) {
+		rxd = &rxr->rx_base[i];
+		staterr = le32toh(rxd->wb.upper.status_error);
+		pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
 
-    if ((staterr & IXGBE_RXD_STAT_DD) == 0) {
-      printf("staterr & IXGBE_RXD_STAT_DD == 0\n");
-      break;
-    }
-    cnt++; 
-    
-    if (++i == ixgbe_sctx->isc_nrxd) {
-      i = 0;
-    }
-  }
+		if ((staterr & IXGBE_RXD_STAT_DD) == 0) {
+			break;
+		}
+		cnt++;
+		if (++i == ixgbe_sctx->isc_nrxd) {
+			i = 0;
+		}
+	}
 
-  return (cnt); 
+	return (cnt);
 }
 
 /****************************************************************
@@ -498,78 +479,78 @@ static int ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 static int
 ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 {
-  struct adapter           *adapter = arg;
-  struct ix_queue          *que = &adapter->queues[ri->iri_qsidx];
-  struct rx_ring           *rxr = &que->rxr;
-  struct ifnet             *ifp = iflib_get_ifp(adapter->ctx);
-  union ixgbe_adv_rx_desc  *rxd;
+	struct adapter           *adapter = arg;
+	struct ix_queue          *que = &adapter->queues[ri->iri_qsidx];
+	struct rx_ring           *rxr = &que->rxr;
+	struct ifnet             *ifp = iflib_get_ifp(adapter->ctx);
+	union ixgbe_adv_rx_desc  *rxd;
 
-  u16                      pkt_info, len;
-  u16                      vtag = 0; 
-  u32                      ptype;
-  u32                      staterr = 0;
-  bool                     eop;
+	u16                      pkt_info, len;
+	u16                      vtag = 0;
+	u32                      ptype;
+	u32                      staterr = 0;
+	bool                     eop;
   
-  rxd = &rxr->rx_base[ri->iri_cidx];
-  staterr = le32toh(rxd->wb.upper.status_error);
-  pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
+	rxd = &rxr->rx_base[ri->iri_cidx];
+	staterr = le32toh(rxd->wb.upper.status_error);
+	pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
 
-   /* Error Checking then decrement count */
-  MPASS ((staterr & IXGBE_RXD_STAT_DD) != 0);
+	/* Error Checking then decrement count */
+	MPASS ((staterr & IXGBE_RXD_STAT_DD) != 0);
 
-    len = le16toh(rxd->wb.upper.length);
-    ptype = le32toh(rxd->wb.lower.lo_dword.data) &
+	len = le16toh(rxd->wb.upper.length);
+	ptype = le32toh(rxd->wb.lower.lo_dword.data) &
 		IXGBE_RXDADV_PKTTYPE_MASK;
    
-    ri->iri_len = len;
-    rxr->bytes += len;
+	ri->iri_len = len;
+	rxr->bytes += len;
 
-    rxd->wb.upper.status_error = 0;
-    eop = ((staterr & IXGBE_RXD_STAT_EOP) != 0);
-    if (staterr & IXGBE_RXD_STAT_VP) {
-	vtag = le16toh(rxd->wb.upper.vlan);
-    } else {
-      vtag = 0; 
-    }
+	rxd->wb.upper.status_error = 0;
+	eop = ((staterr & IXGBE_RXD_STAT_EOP) != 0);
+	if (staterr & IXGBE_RXD_STAT_VP) {
+		vtag = le16toh(rxd->wb.upper.vlan);
+	} else {
+		vtag = 0;
+	}
 	
-    /* Make sure bad packets are discarded */
-    if (eop && (staterr & IXGBE_RXDADV_ERR_FRAME_ERR_MASK) != 0) {
+	/* Make sure bad packets are discarded */
+	if (eop && (staterr & IXGBE_RXDADV_ERR_FRAME_ERR_MASK) != 0) {
 
-        #if __FreeBSD_version >= 1100036
-          if (IXGBE_IS_VF(adapter))
-          if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
-         #endif
+#if __FreeBSD_version >= 1100036
+		if (IXGBE_IS_VF(adapter))
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+#endif
 
-         rxr->rx_discarded++;
-	 return (EBADMSG);
-    }
+		rxr->rx_discarded++;
+		return (EBADMSG);
+	}
 
-    /* Prefetch the next buffer */
-     if (!eop) {
-       ri->iri_next_offset = 1; 
-     } else {
-       rxr->rx_packets++;
-       rxr->packets++;
+	/* Prefetch the next buffer */
+	if (!eop) {
+		ri->iri_next_offset = 1;
+	} else {
+		rxr->rx_packets++;
+		rxr->packets++;
 
-	   if ((ifp->if_capenable & IFCAP_RXCSUM) != 0)
-		   ixgbe_rx_checksum(staterr, ri,  ptype);
+		if ((ifp->if_capenable & IFCAP_RXCSUM) != 0)
+			ixgbe_rx_checksum(staterr, ri,  ptype);
 
 #ifdef RSS
-        ri->iri_flowid =
-	   le32toh(rxd->wb.lower.hi_dword.rss);
-	ri->iri_rsstype = ixgbe_determine_rsstype(pkt_info);
+		ri->iri_flowid =
+			le32toh(rxd->wb.lower.hi_dword.rss);
+		ri->iri_rsstype = ixgbe_determine_rsstype(pkt_info);
 #else
-	ri->iri_flowid = que->msix;
-	ri->iri_rsstype = M_HASHTYPE_OPAQUE;
+		ri->iri_flowid = que->msix;
+		ri->iri_rsstype = M_HASHTYPE_OPAQUE;
 #endif	
        
-        if (vtag) {
-	  ri->iri_vtag = vtag;
-	  ri->iri_flags |= M_VLANTAG;
+		if (vtag) {
+			ri->iri_vtag = vtag;
+			ri->iri_flags |= M_VLANTAG;
+		}
+		ri->iri_next_offset = 0;
 	}
-	ri->iri_next_offset = 0;
-     }
-     return (0); 
+	return (0);
 }
 
 /*********************************************************************
@@ -620,18 +601,18 @@ ixgbe_rx_checksum(u32 staterr, if_rxd_info_t ri, u32 ptype)
 static int 
 ixgbe_determine_rsstype(u16 pkt_info)
 {
-     switch (pkt_info & IXGBE_RXDADV_RSSTYPE_MASK) {  
-     case IXGBE_RXDADV_RSSTYPE_IPV4_TCP:
-       return M_HASHTYPE_RSS_TCP_IPV4;
-     case IXGBE_RXDADV_RSSTYPE_IPV4:
-       return M_HASHTYPE_RSS_IPV4;
-     case IXGBE_RXDADV_RSSTYPE_IPV6_TCP:
-       return M_HASHTYPE_RSS_TCP_IPV6;
-     case IXGBE_RXDADV_RSSTYPE_IPV6_EX:
-       return M_HASHTYPE_RSS_IPV6_EX;
-     case IXGBE_RXDADV_RSSTYPE_IPV6:
-       return M_HASHTYPE_RSS_IPV6;
-     case IXGBE_RXDADV_RSSTYPE_IPV6_TCP_EX:
+	switch (pkt_info & IXGBE_RXDADV_RSSTYPE_MASK) {
+	case IXGBE_RXDADV_RSSTYPE_IPV4_TCP:
+		return M_HASHTYPE_RSS_TCP_IPV4;
+	case IXGBE_RXDADV_RSSTYPE_IPV4:
+		return M_HASHTYPE_RSS_IPV4;
+	case IXGBE_RXDADV_RSSTYPE_IPV6_TCP:
+		return M_HASHTYPE_RSS_TCP_IPV6;
+	case IXGBE_RXDADV_RSSTYPE_IPV6_EX:
+		return M_HASHTYPE_RSS_IPV6_EX;
+	case IXGBE_RXDADV_RSSTYPE_IPV6:
+		return M_HASHTYPE_RSS_IPV6;
+	case IXGBE_RXDADV_RSSTYPE_IPV6_TCP_EX:
        return M_HASHTYPE_RSS_TCP_IPV6_EX;
      case IXGBE_RXDADV_RSSTYPE_IPV4_UDP:
        return M_HASHTYPE_RSS_UDP_IPV4;

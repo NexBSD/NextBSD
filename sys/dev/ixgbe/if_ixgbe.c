@@ -103,7 +103,7 @@ static void ixgbe_if_vlan_unregister(if_ctx_t ctx, u16 vtag);
 int ixgbe_intr(void *arg);
 
 #if __FreeBSD_version >= 1100036
-static uint64_t	ixgbe_get_counter(struct ifnet *, ift_counter);
+static uint64_t	ixgbe_if_get_counter(if_ctx_t, ift_counter);
 #endif
 
 static void ixgbe_enable_queue(struct adapter *adapter, u32 vector);
@@ -144,6 +144,8 @@ static void ixgbe_config_gpie(struct adapter *adapter);
 static void ixgbe_config_delay_values(struct adapter *adapter);
 
 /* Sysctl handlers */
+static void ixgbe_set_sysctl_value(struct adapter *adapter, const char *name,
+		       const char *description, int *limit, int value);
 static int ixgbe_set_flowcntl(SYSCTL_HANDLER_ARGS);
 static int ixgbe_set_advertise(SYSCTL_HANDLER_ARGS);
 static int ixgbe_sysctl_interrupt_rate_handler(SYSCTL_HANDLER_ARGS);
@@ -199,6 +201,11 @@ static device_method_t ixgbe_methods[] = {
 	DEVMETHOD(device_shutdown, iflib_device_shutdown),
 	DEVMETHOD(device_suspend, iflib_device_suspend),
 	DEVMETHOD(device_resume, iflib_device_resume),
+#ifdef PCI_IOV
+	DEVMETHOD(pci_iov_init, ixgbe_init_iov),
+	DEVMETHOD(pci_iov_uninit, ixgbe_uninit_iov),
+	DEVMETHOD(pci_iov_add_vf, ixgbe_add_vf),
+#endif /* PCI_IOV */
 	DEVMETHOD_END
 };
 
@@ -237,6 +244,7 @@ static device_method_t ixgbe_if_methods[] = {
 	DEVMETHOD(ifdi_timer, ixgbe_if_timer),
 	DEVMETHOD(ifdi_vlan_register, ixgbe_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, ixgbe_if_vlan_unregister),
+	DEVMETHOD(ifdi_get_counter, ixgbe_if_get_counter),
 	DEVMETHOD_END
 };
 
@@ -347,8 +355,10 @@ SYSCTL_INT(_dev_netmap, OID_AUTO, ix_crcstrip,
 static int allow_unsupported_sfp = FALSE;
 TUNABLE_INT("hw.ix.unsupported_sfp", &allow_unsupported_sfp);
 
+#if 0
 /* Keep running tab on them for sanity check */
 static int ixgbe_total_ports;
+#endif
 
 #ifdef IXGBE_FDIR
 /* 
@@ -510,6 +520,7 @@ static int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	struct ixgbe_hw *hw = &adapter->hw;
 	struct ix_queue *que = &adapter->queues[0];
 	struct rx_ring *rxr = &que->rxr;
+	struct tx_ring *txr = &que->txr;
 
 	struct sbuf *sb;
 	u32 *regs_buff = (u32 *)malloc(sizeof(u32) * IXGBE_REGS_LEN, M_DEVBUF, M_NOWAIT);
@@ -980,8 +991,8 @@ static int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	regs_buff[1129] = IXGBE_READ_REG(hw, IXGBE_RTRUP2TC);
 	regs_buff[1130] = IXGBE_READ_REG(hw, IXGBE_RTTUP2TC);
 	for (i = 0; i < 4; i++) {
-	  regs_buff[1131 + i] = IXGBE_READ_REG(hw, IXGBE_TXLLQ(i));
-	  sbuf_printf(sb, "\tIXGBE_TXLLQ(%2d)\t %08x\n", i, regs_buff[1131+i]);
+		regs_buff[1131 + i] = IXGBE_READ_REG(hw, IXGBE_TXLLQ(i));
+		sbuf_printf(sb, "\tIXGBE_TXLLQ(%2d)\t %08x\n", i, regs_buff[1131+i]);
 	}
 	regs_buff[1135] = IXGBE_READ_REG(hw, IXGBE_RTTBCNRM);
 	/* same as RTTQCNRM */
@@ -991,11 +1002,20 @@ static int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	sbuf_printf(sb, "\tIXGBE_RTTBCNRD\t %08x\n", regs_buff[1136]);
 
 	for (j = 0; j < 64; j++) {
-	  u32 staterr = le32toh(rxr->rx_base[j].wb.upper.status_error);
-	  u32 length =  le32toh(rxr->rx_base[j].wb.upper.length);
-	  sbuf_printf(sb, "\tReceive Descriptor Address %d: %08lx  Error:%d  Length:%d\n", j, rxr->rx_base[j].read.pkt_addr, staterr, length);
+		u32 staterr = le32toh(rxr->rx_base[j].wb.upper.status_error);
+		u32 length =  le32toh(rxr->rx_base[j].wb.upper.length);
+		sbuf_printf(sb, "\tReceive Descriptor Address %d: %08lx  Error:%d  Length:%d\n", j, rxr->rx_base[j].read.pkt_addr, staterr, length);
 	}
 
+	for (j = 0; j < 64; j++) {
+		struct ixgbe_tx_buf *buf = &txr->tx_buffers[j];
+		u64 buffer_addr = txr->tx_base[j].read.buffer_addr;
+		u32 cmd_type_len = txr->tx_base[j].read.cmd_type_len;
+		u32 olinfo_status = txr->tx_base[j].read.olinfo_status;
+		sbuf_printf(sb, "\tTXD[%d] addr: %08lx Cmd Len:%d  olinfo_status:%d eop: %p DD=%d\n",
+			    j, buffer_addr, cmd_type_len, olinfo_status, buf->eop,
+			    buf->eop != NULL ? buf->eop->wb.status & IXGBE_TXD_STAT_DD : 0);
+	}
 	/* X540 specific DCB registers
 	regs_buff[1137] = IXGBE_READ_REG(hw, IXGBE_RTTQCNCR);
 	regs_buff[1138] = IXGBE_READ_REG(hw, IXGBE_RTTQCNTG); */
@@ -1337,7 +1357,7 @@ ixgbe_register(device_t dev)
 	} else {
 		ixgbe_sctx->isc_ntxd = ixgbe_txd;
 	}
-  
+	ixgbe_tx_process_limit = min(ixgbe_sctx->isc_ntxd, ixgbe_txd);
 	ixgbe_sctx->isc_qsizes[0] = roundup2((ixgbe_sctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc)) +
 										 sizeof(u32), DBA_ALIGN);
 	ixgbe_sctx->isc_qsizes[1] = roundup2(ixgbe_rxd *
@@ -1363,7 +1383,7 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	struct adapter *adapter;
 	struct ixgbe_hw *hw;
 	uint16_t csum;
-	int error;
+	int error = 0;
   
 	INIT_DEBUGOUT("ixgbe_attach: begin");
 
@@ -1371,13 +1391,10 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	dev = iflib_get_dev(ctx);
 	adapter = iflib_get_softc(ctx);
 	adapter->ctx = ctx; 
-	adapter->dev = adapter->osdep.dev = dev;
+	adapter->dev = dev;
 	adapter->shared = iflib_get_softc_ctx(ctx);
 	adapter->media = iflib_get_media(ctx);
 	hw = &adapter->hw;
-
-	/* Sysctls */
-	ixgbe_add_device_sysctls(ctx);
 
 	/* Identify hardware revision */
 	ixgbe_identify_hardware(ctx);
@@ -1391,27 +1408,24 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 		adapter->shared->isc_msix_bar = PCIR_BAR(MSIX_82599_BAR);
 	}
 
+	/* Sysctls */
+	ixgbe_add_device_sysctls(ctx);
+
 	/* Do base PCI setup - map BAR0 */
 	if (ixgbe_allocate_pci_resources(ctx)) {
 		device_printf(dev, "Allocation of PCI resources failed\n");
 		return (ENXIO);
 	}
-	  
-	/*
-	** With many RX rings it is easy to exceed the
-	** system mbuf allocation. Tuning nmbclusters
-	** can alleviate this.
-	*/
-	if (nmbclusters > 0) {
-		int s;
-		s = (ixgbe_rxd * adapter->num_queues) * ixgbe_total_ports;
-		if (s > nmbclusters) {
-			device_printf(dev, "RX Descriptors exceed "
-						  "system mbuf max, using default instead!\n");
-			ixgbe_rxd = DEFAULT_RXD;
-		}
-	}
-  
+
+	/* Sysctls for limiting the amount of work done in the taskqueues */
+	ixgbe_set_sysctl_value(adapter, "rx_processing_limit",
+			       "max number of rx packets to process",
+	    &adapter->rx_process_limit, ixgbe_rx_process_limit);
+
+	ixgbe_set_sysctl_value(adapter, "tx_processing_limit",
+	    "max number of tx packets to process",
+	&adapter->tx_process_limit, ixgbe_tx_process_limit);
+
 	if (((ixgbe_rxd * sizeof(union ixgbe_adv_rx_desc)) % DBA_ALIGN) != 0 ||
 		ixgbe_rxd < MIN_RXD || ixgbe_rxd > MAX_RXD) {
 		device_printf(dev, "RXD config issue, using default!\n");
@@ -1478,7 +1492,6 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 		break;
 	}
 
-	
 	/* Detect and set physical type */
 	ixgbe_setup_optics(adapter);
 
@@ -1653,9 +1666,10 @@ ixgbe_interface_setup(if_ctx_t ctx)
 
 #if __FreeBSD_version >= 1100036
 static uint64_t
-ixgbe_get_counter(struct ifnet *ifp, ift_counter cnt)
+ixgbe_if_get_counter(if_ctx_t ctx, ift_counter cnt)
 {
 	struct adapter *adapter;
+	if_t ifp = iflib_get_ifp(ctx);
 
 	adapter = if_getsoftc(ifp);
 
@@ -1986,8 +2000,6 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 
-		struct lro_ctrl *lro = &rxr->lro;
-
 		snprintf(namebuf, QUEUE_NAME_LEN, "queue%d", i);
 		queue_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf, 
 					    CTLFLAG_RD, NULL, "Queue Name");
@@ -2010,12 +2022,6 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "rx_copies",
 				CTLFLAG_RD, &rxr->rx_copies,
 				"Copied RX Frames");
-		SYSCTL_ADD_INT(ctx, queue_list, OID_AUTO, "lro_queued",
-				CTLFLAG_RD, &lro->lro_queued, 0,
-				"LRO Queued");
-		SYSCTL_ADD_INT(ctx, queue_list, OID_AUTO, "lro_flushed",
-				CTLFLAG_RD, &lro->lro_flushed, 0,
-				"LRO Flushed");
 	}
 
 	/* MAC stats get the own sub node */
@@ -2334,7 +2340,7 @@ ixgbe_setup_vlan_hw_support(if_ctx_t ctx)
 static void
 ixgbe_get_slot_info(struct ixgbe_hw *hw)
 {
-	device_t		dev = ((struct ixgbe_osdep *)hw->back)->dev;
+	device_t		dev = ((struct adapter *)hw->back)->dev;
 	struct ixgbe_mac_info	*mac = &hw->mac;
 	u16			link;
 	u32			offset;
@@ -3059,10 +3065,6 @@ ixgbe_identify_hardware(if_ctx_t ctx)
 	    pci_read_config(dev, PCIR_SUBVEND_0, 2);
 	hw->subsystem_device_id =
 	    pci_read_config(dev, PCIR_SUBDEV_0, 2);
-	/*
-	** Make sure BUSMASTER is set
-	*/
-	pci_enable_busmaster(dev);
 
 	/* We need this here to set the num_segs in the code that follows */
 	ixgbe_set_mac_type(hw);
@@ -3121,7 +3123,6 @@ ixgbe_setup_optics(struct adapter *adapter)
 
 	/* If we get here just set the default */
 	adapter->optics = IFM_ETHER | IFM_AUTO;
-
 }
  
 static int
@@ -3146,8 +3147,7 @@ ixgbe_allocate_pci_resources(if_ctx_t ctx)
 		rman_get_bushandle(adapter->pci_mem);
 	adapter->hw.hw_addr = (u8 *) &adapter->osdep.mem_bus_space_handle;
 
-	/* Legacy defaults */
-	adapter->hw.back = &adapter->osdep;
+	adapter->hw.back = adapter;
 	return (0);
 }
 
@@ -4288,6 +4288,16 @@ ixgbe_free_pci_resources(if_ctx_t ctx)
 	if (adapter->pci_mem != NULL)
 		bus_release_resource(dev, SYS_RES_MEMORY,
 							 PCIR_BAR(0), adapter->pci_mem);
+}
+
+static void
+ixgbe_set_sysctl_value(struct adapter *adapter, const char *name,
+    const char *description, int *limit, int value)
+{
+	*limit = value;
+	SYSCTL_ADD_INT(device_get_sysctl_ctx(adapter->dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(adapter->dev)),
+	    OID_AUTO, name, CTLFLAG_RW, limit, value, description);
 }
 
 /* Sysctls */

@@ -59,7 +59,6 @@
 #include <net/if_dl.h>
 #include <net/if_media.h>
 
-#include <net/bpf.h>
 #include <net/if_types.h>
 #include <net/if_vlan_var.h>
 #include <net/iflib.h>
@@ -464,7 +463,6 @@ struct adapter {
 	struct ixgbe_osdep	osdep;
 
 	struct device		*dev;
-	struct ifnet		*ifp;
 
 	struct resource		*pci_mem;
 
@@ -533,18 +531,7 @@ struct adapter {
 	struct ix_queue		*queues;
 	u64			active_queues;
 
-	/*
-	 * Transmit rings:
-	 *	Allocated at run time, an array of rings.
-	 */
-	struct tx_ring		*tx_rings;
-	u32			tx_process_limit;
-
-	/*
-	 * Receive rings:
-	 *	Allocated at run time, an array of rings.
-	 */
-	struct rx_ring		*rx_rings;
+        u32                     tx_process_limit;
 	u32			rx_process_limit;
 
 	/* Multicast array memory */
@@ -585,7 +572,6 @@ struct adapter {
 	u64			noproto;
 #endif
 };
-
 
 /* Precision Time Sync (IEEE 1588) defines */
 #define ETHERTYPE_IEEE1588      0x88F7
