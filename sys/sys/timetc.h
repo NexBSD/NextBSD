@@ -81,7 +81,7 @@ void	tc_init(struct timecounter *tc);
 void	tc_setclock(struct timespec *ts);
 void	tc_ticktock(int cnt);
 void	cpu_tick_calibration(void);
-
+void	cpu_ts_hardclock_cpu(void);
 #ifdef SYSCTL_DECL
 SYSCTL_DECL(_kern_timecounter);
 #endif
