@@ -53,7 +53,6 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/route.h>
-#include <net/ethernet.h>
 #include <net/vnet.h>
 
 #include <netinet/in.h>
@@ -197,13 +196,6 @@ tcp_output(struct tcpcb *tp)
 	struct ip *ip = NULL;
 	struct ipovly *ipov = NULL;
 	struct tcphdr *th;
-#ifdef INET
-	struct sockaddr_in *sin;
-#endif
-#ifdef INET6
-	struct sockaddr_in6 *sin6;
-#endif
-	struct inpcb *inp;
 	u_char opt[TCP_MAXOLEN];
 	unsigned ipoptlen, optlen, hdrlen;
 #ifdef IPSEC
@@ -224,8 +216,7 @@ tcp_output(struct tcpcb *tp)
 	isipv6 = (tp->t_inpcb->inp_vflag & INP_IPV6) != 0;
 #endif
 
-	inp = tp->t_inpcb;
-	INP_WLOCK_ASSERT(inp);
+	INP_WLOCK_ASSERT(tp->t_inpcb);
 
 #ifdef TCP_OFFLOAD
 	if (tp->t_flags & TF_TOE)
@@ -1481,9 +1472,7 @@ send:
 
 	if (error == EMSGSIZE && ro.ro_rt != NULL)
 		mtu = ro.ro_rt->rt_mtu;
-	if (!(ro.ro_flags & RT_CACHING_CONTEXT)) {
-		RO_RTFREE(&ro);
-	}
+	RO_RTFREE(&ro);
     }
 #endif /* INET */
 

@@ -402,7 +402,7 @@ struct rt_addrinfo {
 
 #define	RO_RTFREE(_ro) do {					\
 	if ((_ro)->ro_rt) {					\
-		if ((_ro)->ro_flags & RT_NORTREF ) {	\
+		if ((_ro)->ro_flags & RT_NORTREF) {		\
 			(_ro)->ro_flags &= ~RT_NORTREF;		\
 			(_ro)->ro_rt = NULL;			\
 		} else {					\
@@ -411,9 +411,6 @@ struct rt_addrinfo {
 		}						\
 	}							\
 } while (0)
-
-
-struct radix_node_head *rt_tables_get_rnh(int, int);
 
 struct ifmultiaddr;
 struct rib_head;
