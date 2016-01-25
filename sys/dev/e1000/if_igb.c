@@ -43,6 +43,7 @@
 #endif
 
 #include "if_igb.h"
+#include "ifdi_if.h"
 
 /*********************************************************************
  *  Driver version:
@@ -62,47 +63,47 @@ char igb_driver_version[] = "2.5.2";
 
 static igb_vendor_info_t igb_vendor_info_array[] =
 {
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82575EB_COPPER, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82575EB_FIBER_SERDES, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82575GB_QUAD_COPPER, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_NS, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_NS_SERDES, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_FIBER,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_SERDES, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_SERDES_QUAD, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_QUAD_COPPER, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_QUAD_COPPER_ET2, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_VF, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_COPPER, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_FIBER,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_SERDES, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_SGMII,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_COPPER_DUAL, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_QUAD_FIBER, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_DH89XXCC_SERDES, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_DH89XXCC_SGMII, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_DH89XXCC_SFP, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_DH89XXCC_BACKPLANE, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_COPPER,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_FIBER,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_SERDES,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_SGMII,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_VF, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_COPPER,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_COPPER_IT, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_COPPER_OEM1, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_COPPER_FLASHLESS, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_SERDES_FLASHLESS, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_FIBER,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_SERDES,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_SGMII,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I211_COPPER,	0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I354_BACKPLANE_1GBPS, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I354_BACKPLANE_2_5GBPS, 0, 0, 0},
-	{IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I354_SGMII,	0, 0, 0},
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82575EB_COPPER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82575EB_FIBER_SERDES, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82575GB_QUAD_COPPER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_NS, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_NS_SERDES, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_FIBER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_SERDES, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_SERDES_QUAD, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_QUAD_COPPER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_QUAD_COPPER_ET2, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82576_VF, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_COPPER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_FIBER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_SERDES, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_SGMII, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_COPPER_DUAL, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_82580_QUAD_FIBER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_DH89XXCC_SERDES, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_DH89XXCC_SGMII, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_DH89XXCC_SFP, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_DH89XXCC_BACKPLANE, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_COPPER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_FIBER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_SERDES, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_SGMII, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I350_VF, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_COPPER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_COPPER_IT, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_COPPER_OEM1, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_COPPER_FLASHLESS, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_SERDES_FLASHLESS, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_FIBER, "Intel(R) PRO/10GbE PCI-Express Network Driver"), 
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_SERDES, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I210_SGMII, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I211_COPPER, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I354_BACKPLANE_1GBPS, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I354_BACKPLANE_2_5GBPS, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
+	PVID(IGB_INTEL_VENDOR_ID, E1000_DEV_ID_I354_SGMII, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
 	/* required last entry */
-	{0, 0, 0, 0, 0}
+        PVID_END
 };
 
 /*********************************************************************
@@ -116,7 +117,6 @@ static char *igb_strings[] = {
 /*********************************************************************
  *  Function prototypes
  *********************************************************************/
-static int	igb_probe(device_t);
 static int	igb_attach(device_t);
 static int	igb_detach(device_t);
 static int	igb_shutdown(device_t);
@@ -233,12 +233,13 @@ static poll_handler_t igb_poll;
 
 static device_method_t igb_methods[] = {
 	/* Device interface */
-	DEVMETHOD(device_probe, igb_probe),
-	DEVMETHOD(device_attach, igb_attach),
-	DEVMETHOD(device_detach, igb_detach),
-	DEVMETHOD(device_shutdown, igb_shutdown),
-	DEVMETHOD(device_suspend, igb_suspend),
-	DEVMETHOD(device_resume, igb_resume),
+	DEVMETHOD(device_register, igb_register),
+	DEVMETHOD(device_probe, iflib_device_probe),
+	DEVMETHOD(device_attach, iflib_device_attach),
+	DEVMETHOD(device_detach, iflib_device_detach),
+	DEVMETHOD(device_shutdown, iflib_device_shutdown),
+	DEVMETHOD(device_suspend, iflib_device_suspend),
+	DEVMETHOD(device_resume, iflib_device_resume),
 	DEVMETHOD_END
 };
 
@@ -345,54 +346,57 @@ SYSCTL_INT(_hw_igb, OID_AUTO, tx_process_limit, CTLFLAG_RDTUN,
 #ifdef DEV_NETMAP	/* see ixgbe.c for details */
 #include <dev/netmap/if_igb_netmap.h>
 #endif /* DEV_NETMAP */
-/*********************************************************************
- *  Device identification routine
- *
- *  igb_probe determines if the driver should be loaded on
- *  adapter based on PCI vendor/device id of the adapter.
- *
- *  return BUS_PROBE_DEFAULT on success, positive on failure
- *********************************************************************/
 
-static int
-igb_probe(device_t dev)
+extern struct if_txrx igb_txrx;
+
+static struct if_shared_ctx igb_sctx_init = {
+   	.isc_magic = IFLIB_MAGIC,
+	.isc_q_align =  PAGE_SIZE,/* max(DBA_ALIGN, PAGE_SIZE) */,
+	.isc_tx_maxsize = IGB_TSO_SIZE,
+	.isc_tx_maxsegsize = 
+	.isc_rx_maxsize = 
+	.isc_rx_nsegments = 
+	.isc_rx_maxsegsize = 
+	.isc_ntxd = IGB_DEFAULT_TXD,
+	.isc_nrxd = IGB_DEFAULT_RXD,
+	.isc_nfl = 
+	.isc_qsizes[0] = 
+	.isc_qsizes[1] = 
+	.isc_nqs = 
+
+	.isc_admin_intrcnt = 
+	.isc_vendor_info = igb_vendor_info_array,
+	.isc_driver_version = igb_driver_version,
+	.isc_txrx = &igb_txrx,
+	.isc_driver = &igb_driver,
+};
+
+if_shared_ctx_t igb_sctx = &igb_sctx_init; 
+
+static void *
+igb_register(device_t dev)
 {
-	char		adapter_name[256];
-	uint16_t	pci_vendor_id = 0;
-	uint16_t	pci_device_id = 0;
-	uint16_t	pci_subvendor_id = 0;
-	uint16_t	pci_subdevice_id = 0;
-	igb_vendor_info_t *ent;
+    /*
+	 * Validate number of transmit and receive descriptors. It
+	 * must not exceed hardware maximum, and must be multiple
+	 * of E1000_DBA_ALIGN.
+	 */
+	if (((igb_txd * sizeof(struct e1000_tx_desc)) % IGB_DBA_ALIGN) != 0 ||
+	    (igb_txd > IGB_MAX_TXD) || (igb_txd < IGB_MIN_TXD)) {
+		device_printf(dev, "Using %d TX descriptors instead of %d!\n",
+		    IGB_DEFAULT_TXD, igb_txd);
+		igb_sctx->isc_ntxd = IGB_DEFAULT_TXD;
+	} else
+	        igb_sctx->isc_ntxd = igb_txd;
+	if (((igb_rxd * sizeof(struct e1000_rx_desc)) % IGB_DBA_ALIGN) != 0 ||
+	    (igb_rxd > IGB_MAX_RXD) || (igb_rxd < IGB_MIN_RXD)) {
+		device_printf(dev, "Using %d RX descriptors instead of %d!\n",
+		    IGB_DEFAULT_RXD, igb_rxd);
+		igb_sctx->isc_nrxd = IGB_DEFAULT_RXD;
+	} else
+		igb_sctx->isc_nrxd = igb_rxd;
 
-	INIT_DEBUGOUT("igb_probe: begin");
-
-	pci_vendor_id = pci_get_vendor(dev);
-	if (pci_vendor_id != IGB_INTEL_VENDOR_ID)
-		return (ENXIO);
-
-	pci_device_id = pci_get_device(dev);
-	pci_subvendor_id = pci_get_subvendor(dev);
-	pci_subdevice_id = pci_get_subdevice(dev);
-
-	ent = igb_vendor_info_array;
-	while (ent->vendor_id != 0) {
-		if ((pci_vendor_id == ent->vendor_id) &&
-		    (pci_device_id == ent->device_id) &&
-
-		    ((pci_subvendor_id == ent->subvendor_id) ||
-		    (ent->subvendor_id == 0)) &&
-
-		    ((pci_subdevice_id == ent->subdevice_id) ||
-		    (ent->subdevice_id == 0))) {
-			sprintf(adapter_name, "%s, Version - %s",
-				igb_strings[ent->index],
-				igb_driver_version);
-			device_set_desc_copy(dev, adapter_name);
-			return (BUS_PROBE_DEFAULT);
-		}
-		ent++;
-	}
-	return (ENXIO);
+	return (igb_sctx); 
 }
 
 /*********************************************************************
@@ -406,22 +410,27 @@ igb_probe(device_t dev)
  *********************************************************************/
 
 static int
-igb_attach(device_t dev)
+igb_if_attach_pre(if_ctx_t ctx)
 {
+	device_t dev; 
 	struct adapter	*adapter;
 	int		error = 0;
 	u16		eeprom_data;
 
-	INIT_DEBUGOUT("igb_attach: begin");
+	INIT_DEBUGOUT("igb_if_attach: begin");
 
+        dev = iflib_get_dev(ctx);
+	adapter = iflib_get_softc(ctx);
+	
 	if (resource_disabled("igb", device_get_unit(dev))) {
 		device_printf(dev, "Disabled by device hint\n");
 		return (ENXIO);
 	}
 
-	adapter = device_get_softc(dev);
+	adapter->ctx = ctx; 
 	adapter->dev = adapter->osdep.dev = dev;
-	IGB_CORE_LOCK_INIT(adapter, device_get_nameunit(dev));
+	adapter->shared = iflib_get_softc_ctx(ctx);
+        adapter->media = iflib_get_media(ctx);
 
 	/* SYSCTLs */
 	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
@@ -438,13 +447,12 @@ igb_attach(device_t dev)
 	    OID_AUTO, "fc", CTLTYPE_INT|CTLFLAG_RW,
 	    adapter, 0, igb_set_flowcntl, "I", "Flow Control");
 
-	callout_init_mtx(&adapter->timer, &adapter->core_mtx, 0);
-
-	/* Determine hardware and mac info */
-	igb_identify_hardware(adapter);
-
+	/* Determine hardware and mac info & set isc_msix_bar */
+	igb_identify_hardware(ctx);
+	adapter->shared->isc_msix_bar = PCIR_BAR(IGB_MSIX_BAR);
+       	
 	/* Setup PCI resources */
-	if (igb_allocate_pci_resources(adapter)) {
+	if (igb_allocate_pci_resources(ctx)) {
 		device_printf(dev, "Allocation of PCI resources failed\n");
 		error = ENXIO;
 		goto err_pci;
@@ -467,26 +475,6 @@ igb_attach(device_t dev)
 	igb_set_sysctl_value(adapter, "tx_processing_limit",
 	    "max number of tx packets to process",
 	    &adapter->tx_process_limit, igb_tx_process_limit);
-
-	/*
-	 * Validate number of transmit and receive descriptors. It
-	 * must not exceed hardware maximum, and must be multiple
-	 * of E1000_DBA_ALIGN.
-	 */
-	if (((igb_txd * sizeof(struct e1000_tx_desc)) % IGB_DBA_ALIGN) != 0 ||
-	    (igb_txd > IGB_MAX_TXD) || (igb_txd < IGB_MIN_TXD)) {
-		device_printf(dev, "Using %d TX descriptors instead of %d!\n",
-		    IGB_DEFAULT_TXD, igb_txd);
-		adapter->num_tx_desc = IGB_DEFAULT_TXD;
-	} else
-		adapter->num_tx_desc = igb_txd;
-	if (((igb_rxd * sizeof(struct e1000_rx_desc)) % IGB_DBA_ALIGN) != 0 ||
-	    (igb_rxd > IGB_MAX_RXD) || (igb_rxd < IGB_MIN_RXD)) {
-		device_printf(dev, "Using %d RX descriptors instead of %d!\n",
-		    IGB_DEFAULT_RXD, igb_rxd);
-		adapter->num_rx_desc = IGB_DEFAULT_RXD;
-	} else
-		adapter->num_rx_desc = igb_rxd;
 
 	adapter->hw.mac.autoneg = DO_AUTO_NEG;
 	adapter->hw.phy.autoneg_wait_to_complete = FALSE;
@@ -626,20 +614,12 @@ igb_attach(device_t dev)
 	if (eeprom_data)
 		adapter->wol = E1000_WUFC_MAG;
 
-	/* Register for VLAN events */
-	adapter->vlan_attach = EVENTHANDLER_REGISTER(vlan_config,
-	     igb_register_vlan, adapter, EVENTHANDLER_PRI_FIRST);
-	adapter->vlan_detach = EVENTHANDLER_REGISTER(vlan_unconfig,
-	     igb_unregister_vlan, adapter, EVENTHANDLER_PRI_FIRST);
 
 	igb_add_hw_stats(adapter);
 
 	/* Tell the stack that the interface is not active */
 	adapter->ifp->if_drv_flags &= ~IFF_DRV_RUNNING;
 	adapter->ifp->if_drv_flags |=  IFF_DRV_OACTIVE;
-
-	adapter->led_dev = led_create(igb_led_func, adapter,
-	    device_get_nameunit(dev));
 
 	/* 
 	** Configure Interrupts
@@ -684,33 +664,17 @@ err_pci:
  *********************************************************************/
 
 static int
-igb_detach(device_t dev)
+igb_if_detach(ifc_ctx_t ctx)
 {
-	struct adapter	*adapter = device_get_softc(dev);
-	struct ifnet	*ifp = adapter->ifp;
+	struct adapter	*adapter = iflib_get_softc(ctx);
+	struct ifnet	*ifp = iflib_get_ifp(ctx); 
 
 	INIT_DEBUGOUT("igb_detach: begin");
-
-	/* Make sure VLANS are not using driver */
-	if (adapter->ifp->if_vlantrunk != NULL) {
-		device_printf(dev,"Vlan in use, detach first\n");
-		return (EBUSY);
-	}
-
-	ether_ifdetach(adapter->ifp);
-
-	if (adapter->led_dev != NULL)
-		led_destroy(adapter->led_dev);
 
 #ifdef DEVICE_POLLING
 	if (ifp->if_capenable & IFCAP_POLLING)
 		ether_poll_deregister(ifp);
 #endif
-
-	IGB_CORE_LOCK(adapter);
-	adapter->in_detach = 1;
-	igb_stop(adapter);
-	IGB_CORE_UNLOCK(adapter);
 
 	e1000_phy_hw_reset(&adapter->hw);
 
@@ -724,27 +688,12 @@ igb_detach(device_t dev)
 		igb_enable_wakeup(dev);
 	}
 
-	/* Unregister VLAN events */
-	if (adapter->vlan_attach != NULL)
-		EVENTHANDLER_DEREGISTER(vlan_config, adapter->vlan_attach);
-	if (adapter->vlan_detach != NULL)
-		EVENTHANDLER_DEREGISTER(vlan_unconfig, adapter->vlan_detach);
+	igb_free_pci_resources(ctx);
 
-	callout_drain(&adapter->timer);
-
-#ifdef DEV_NETMAP
-	netmap_detach(adapter->ifp);
-#endif /* DEV_NETMAP */
-	igb_free_pci_resources(adapter);
-	bus_generic_detach(dev);
-	if_free(ifp);
-
-	igb_free_transmit_structures(adapter);
-	igb_free_receive_structures(adapter);
+/*	igb_free_transmit_structures(adapter);
+	igb_free_receive_structures(adapter); */
 	if (adapter->mta != NULL)
 		free(adapter->mta, M_DEVBUF);
-
-	IGB_CORE_LOCK_DESTROY(adapter);
 
 	return (0);
 }
@@ -755,21 +704,19 @@ igb_detach(device_t dev)
  *
  **********************************************************************/
 
-static int
-igb_shutdown(device_t dev)
+static void
+igb_if_shutdown(if_ctx_t ctx)
 {
-	return igb_suspend(dev);
+	igb_if_suspend(ctx);
 }
 
 /*
  * Suspend/resume device methods.
  */
-static int
-igb_suspend(device_t dev)
+static void
+igb_if_suspend(if_ctx_t ctx)
 {
-	struct adapter *adapter = device_get_softc(dev);
-
-	IGB_CORE_LOCK(adapter);
+	struct adapter *adapter = iflib_get_softc(ctx);
 
 	igb_stop(adapter);
 
@@ -781,10 +728,6 @@ igb_suspend(device_t dev)
                 E1000_WRITE_REG(&adapter->hw, E1000_WUFC, adapter->wol);
                 igb_enable_wakeup(dev);
         }
-
-	IGB_CORE_UNLOCK(adapter);
-
-	return bus_generic_suspend(dev);
 }
 
 static int
@@ -2270,14 +2213,11 @@ igb_stop(void *arg)
  *
  **********************************************************************/
 static void
-igb_identify_hardware(struct adapter *adapter)
+igb_identify_hardware(ifc_ctx_t ctx)
 {
-	device_t dev = adapter->dev;
-
-	/* Make sure our PCI config space has the necessary stuff set */
-	pci_enable_busmaster(dev);
-	adapter->hw.bus.pci_cmd_word = pci_read_config(dev, PCIR_COMMAND, 2);
-
+	device_t dev = iflib_get_dev(ctx); 
+        struct adapter *adapter = iflib_get_softc(ctx);
+	
 	/* Save off the information about this board */
 	adapter->hw.vendor_id = pci_get_vendor(dev);
 	adapter->hw.device_id = pci_get_device(dev);
@@ -2299,28 +2239,24 @@ igb_identify_hardware(struct adapter *adapter)
 }
 
 static int
-igb_allocate_pci_resources(struct adapter *adapter)
+igb_allocate_pci_resources(ifc_ctx_t ctx)
 {
-	device_t	dev = adapter->dev;
-	int		rid;
+	device_t	dev = iflib_get_dev(ctx);
+	int             rid;
 
 	rid = PCIR_BAR(0);
 	adapter->pci_mem = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-	    &rid, RF_ACTIVE);
+						  &rid, RF_ACTIVE);
 	if (adapter->pci_mem == NULL) {
 		device_printf(dev, "Unable to allocate bus resource: memory\n");
 		return (ENXIO);
 	}
+	
 	adapter->osdep.mem_bus_space_tag =
 	    rman_get_bustag(adapter->pci_mem);
 	adapter->osdep.mem_bus_space_handle =
 	    rman_get_bushandle(adapter->pci_mem);
 	adapter->hw.hw_addr = (u8 *)&adapter->osdep.mem_bus_space_handle;
-
-	adapter->num_queues = 1; /* Defaults for Legacy or MSI */
-
-	/* This will setup either MSI/X or MSI */
-	adapter->msix = igb_setup_msix(adapter);
 	adapter->hw.back = &adapter->osdep;
 
 	return (0);
@@ -2392,12 +2328,14 @@ igb_allocate_legacy(struct adapter *adapter)
  *
  **********************************************************************/
 static int
-igb_allocate_msix(struct adapter *adapter)
+igb_if_msix_intr_assign(if_ctx_t ctx, int msix) 
 {
-	device_t		dev = adapter->dev;
+	device_t		dev = iflib_get_dev(ctx);
+	struct                  adapter *adapter = iflib_get_softc(ctx); 
 	struct igb_queue	*que = adapter->queues;
 	int			error, rid, vector = 0;
 	int			cpu_id = 0;
+
 #ifdef	RSS
 	cpuset_t cpu_mask;
 #endif
@@ -2406,49 +2344,22 @@ igb_allocate_msix(struct adapter *adapter)
 	E1000_WRITE_REG(&adapter->hw, E1000_IMC, ~0);
 	E1000_WRITE_FLUSH(&adapter->hw);
 
-#ifdef	RSS
-	/*
-	 * If we're doing RSS, the number of queues needs to
-	 * match the number of RSS buckets that are configured.
-	 *
-	 * + If there's more queues than RSS buckets, we'll end
-	 *   up with queues that get no traffic.
-	 *
-	 * + If there's more RSS buckets than queues, we'll end
-	 *   up having multiple RSS buckets map to the same queue,
-	 *   so there'll be some contention.
-	 */
-	if (adapter->num_queues != rss_getnumbuckets()) {
-		device_printf(dev,
-		    "%s: number of queues (%d) != number of RSS buckets (%d)"
-		    "; performance will be impacted.\n",
-		    __func__,
-		    adapter->num_queues,
-		    rss_getnumbuckets());
-	}
-#endif
-
 	for (int i = 0; i < adapter->num_queues; i++, vector++, que++) {
+		char buf[16];
 		rid = vector +1;
-		que->res = bus_alloc_resource_any(dev,
-		    SYS_RES_IRQ, &rid, RF_SHAREABLE | RF_ACTIVE);
-		if (que->res == NULL) {
-			device_printf(dev,
-			    "Unable to allocate bus resource: "
-			    "MSIX Queue Interrupt\n");
-			return (ENXIO);
-		}
-		error = bus_setup_intr(dev, que->res,
-	    	    INTR_TYPE_NET | INTR_MPSAFE, NULL,
-		    igb_msix_que, que, &que->tag);
+
+		snprintf(buf, sizeof(buf), "rxq%d", i); 
+                error = iflib_irq_alloc_generic(ctx, &que->que_irq, rid, IFLIB_INTR_RX, igb_msix_que, que, que->me, buf);  
+
 		if (error) {
-			que->res = NULL;
-			device_printf(dev, "Failed to register Queue handler");
-			return (error);
+			device_printf(iflib_get_dev(ctx), "Failed to allocate que int %d err: %d", i, error);
+			adapter->num_queues = i + 1;
+			goto fail;
 		}
-#if __FreeBSD_version >= 800504
-		bus_describe_intr(dev, que->res, que->tag, "que %d", i);
-#endif
+
+		snprintf(buf, sizeof(buf), "txq%d", i);
+		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, que, que->me, buf);
+			
 		que->msix = vector;
 		if (adapter->hw.mac.type == e1000_82575)
 			que->eims = E1000_EICR_TX_QUEUE0 << i;
@@ -2529,25 +2440,14 @@ igb_allocate_msix(struct adapter *adapter)
 			igb_last_bind_cpu = CPU_NEXT(igb_last_bind_cpu);
 	}
 
-	/* And Link */
 	rid = vector + 1;
-	adapter->res = bus_alloc_resource_any(dev,
-	    SYS_RES_IRQ, &rid, RF_SHAREABLE | RF_ACTIVE);
-	if (adapter->res == NULL) {
-		device_printf(dev,
-		    "Unable to allocate bus resource: "
-		    "MSIX Link Interrupt\n");
-		return (ENXIO);
+        error = iflib_irq_alloc_generic(ctx, &adapter->irq, rid, IFLIB_INTR_ADMIN, igb_msix_link, adapter, 0, "aq");
+
+	if (error) {
+		device_printf(iflib_get_dev(ctx), "Failed to register admin handler");
+		return (error); 
 	}
-	if ((error = bus_setup_intr(dev, adapter->res,
-	    INTR_TYPE_NET | INTR_MPSAFE, NULL,
-	    igb_msix_link, adapter, &adapter->tag)) != 0) {
-		device_printf(dev, "Failed to register Link handler");
-		return (error);
-	}
-#if __FreeBSD_version >= 800504
-	bus_describe_intr(dev, adapter->res, adapter->tag, "link");
-#endif
+
 	adapter->linkvec = vector;
 
 	return (0);
@@ -2696,10 +2596,11 @@ igb_configure_queues(struct adapter *adapter)
 
 
 static void
-igb_free_pci_resources(struct adapter *adapter)
+igb_free_pci_resources(if_ctx_t ctx)
 {
+	struct adapter *adapter = iflib_get_softc(ctx); 
 	struct		igb_queue *que = adapter->queues;
-	device_t	dev = adapter->dev;
+	device_t	dev = iflib_get_dev(ctx); 
 	int		rid;
 
 	/*

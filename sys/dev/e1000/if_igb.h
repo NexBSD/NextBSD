@@ -339,6 +339,8 @@ struct igb_queue {
 	struct task		que_task;
 	struct taskqueue	*tq;
 	u64			irqs;
+
+        struct if_irq           que_irq; 
 };
 
 /*
@@ -417,6 +419,9 @@ struct rx_ring {
 };
 
 struct adapter {
+	if_ctx_t ctx;
+	if_softc_ctx_t shared;
+#define num_queues shared->isc_nqsets
 	struct ifnet		*ifp;
 	struct e1000_hw		hw;
 
@@ -425,7 +430,6 @@ struct adapter {
 	struct cdev		*led_dev;
 
 	struct resource		*pci_mem;
-	struct resource		*msix_mem;
 	int			memrid;
 
 	/*
@@ -498,7 +502,6 @@ struct adapter {
 	 *	Allocated at run time, an array of rings.
 	 */
 	struct tx_ring		*tx_rings;
-	u32			num_tx_desc;
 
 	/*
 	 * Receive rings:
@@ -506,7 +509,6 @@ struct adapter {
 	 */
 	struct rx_ring		*rx_rings;
 	u64			que_mask;
-	u32			num_rx_desc;
 
 	/* Multicast array memory */
 	u8			*mta;
