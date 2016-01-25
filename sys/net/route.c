@@ -98,11 +98,6 @@ extern void sctp_addr_change(struct ifaddr *ifa, int cmd);
 u_int rt_numfibs = RT_NUMFIBS;
 SYSCTL_UINT(_net, OID_AUTO, fibs, CTLFLAG_RDTUN, &rt_numfibs, 0, "");
 
-u_int inpcb_rt_cache_enable = 0;
-SYSCTL_UINT(_net, OID_AUTO, conn_rt_cache, CTLFLAG_RW|CTLFLAG_TUN, &inpcb_rt_cache_enable, 0, "");
-TUNABLE_INT("net.conn_rt_cache", &inpcb_rt_cache_enable);
-
-
 /*
  * By default add routes to all fibs for new interfaces.
  * Once this is set to 0 then only allocate routes on interface
@@ -1183,8 +1178,7 @@ rt_unlinkrte(struct rib_head *rnh, struct rt_addrinfo *info, int *perror)
 		rn = rt_mpath_unlink(rnh, info, rt, perror);
 	else
 #endif
-	rn = rnh->rnh_deladdr(dst, netmask, rnh);
-	atomic_add_int(&rnh->rnh_gen, 1);
+	rn = rnh->rnh_deladdr(dst, netmask, &rnh->head);
 	if (rn == NULL)
 		return (NULL);
 
@@ -1453,8 +1447,7 @@ rt_mpath_unlink(struct rib_head *rnh, struct rt_addrinfo *info,
 		 * use the normal delete code to remove
 		 * the first entry
 		 */
-		rn = rnh->rnh_deladdr(dst, netmask, rnh);
-		atomic_add_int(&rnh->rnh_gen, 1);
+		rn = rnh->rnh_deladdr(dst, netmask, &rnh->head);
 		*perror = 0;
 		return (rn);
 	}
@@ -1581,7 +1574,8 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 			rt_maskedcopy(dst, (struct sockaddr *)&mdst, netmask);
 			dst = (struct sockaddr *)&mdst;
 		}
-		RADIX_NODE_HEAD_LOCK(rnh);
+
+		RIB_WLOCK(rnh);
 		rt = rt_unlinkrte(rnh, info, &error);
 		RIB_WUNLOCK(rnh);
 		if (error != 0)
@@ -1680,8 +1674,7 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 #endif /* FLOWTABLE */
 
 		/* XXX mtu manipulation will be done in rnh_addaddr -- itojun */
-		rn = rnh->rnh_addaddr(ndst, netmask, rnh, rt->rt_nodes);
-		atomic_add_int(&rnh->rnh_gen, 1);
+		rn = rnh->rnh_addaddr(ndst, netmask, &rnh->head, rt->rt_nodes);
 
 		rt_old = NULL;
 		if (rn == NULL && (info->rti_flags & RTF_PINNED) != 0) {
@@ -1697,11 +1690,9 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 			rt_old = rt_unlinkrte(rnh, info, &error);
 			info->rti_flags |= RTF_PINNED;
 			info->rti_info[RTAX_DST] = info_dst;
-			if (rt_old != NULL) {
-				rn = rnh->rnh_addaddr(ndst, netmask, rnh,
-						      rt->rt_nodes);
-				atomic_add_int(&rnh->rnh_gen, 1);
-			}
+			if (rt_old != NULL)
+				rn = rnh->rnh_addaddr(ndst, netmask, &rnh->head,
+				    rt->rt_nodes);
 		}
 		RIB_WUNLOCK(rnh);
 
