@@ -52,9 +52,9 @@ __FBSDID("$FreeBSD$");
 #include "cpufreq_if.h"
 
 /*
- * the number of tsc increments per minimum timestamp
+ * the number of tsc increments per minimum timestamp (10Mhz clock)
  */
-#define TSC_FREQ_MINTS (tsc_freq / (1000000000/60))
+#define TSC_FREQ_MINTS (tsc_freq / (1000000000/100))
 
 
 uint64_t	tsc_freq;
@@ -750,18 +750,45 @@ cpu_fill_vdso_timehands(struct vdso_timehands *vdso_th, struct timecounter *tc)
 	return (tc == &tsc_timecounter);
 }
 
+static DPCPU_DEFINE(uint64_t, pcputsc);	/* Per-CPU version of tsc */
+static volatile int64_t tsc0;
+
 sbintime_t
 cpu_tcp_ts_getsbintime_rdtsc(void)
 {
+	int64_t delta, tscval;
+	int64_t *t;
 
-	return (rdtsc() / TSC_FREQ_MINTS);
+	critical_enter();
+	t = DPCPU_PTR(pcputsc);
+	tscval = rdtsc();
+	delta = tscval - *t;
+	critical_exit();
+	return ((tsc0 + delta) / TSC_FREQ_MINTS);
 }
 
 sbintime_t
 cpu_tcp_ts_getsbintime_rdtscp(void)
 {
+	int64_t delta, tscval;
+	int64_t *t;
 
-	return (rdtscp() / TSC_FREQ_MINTS);
+	critical_enter();
+	t = DPCPU_PTR(pcputsc);
+	tscval = rdtscp();
+	delta = tscval - *t;
+	critical_exit();
+	return ((tsc0 + delta) / TSC_FREQ_MINTS);
+}
+
+void
+cpu_ts_hardclock_cpu(void)
+{
+	uint64_t *t = DPCPU_PTR(pcputsc);
+
+	*t = rdtscp();
+	if (curcpu == 0)
+		tsc0 = *t;
 }
 
 
