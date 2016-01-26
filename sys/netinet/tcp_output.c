@@ -809,7 +809,9 @@ send:
 		/* Timestamps. */
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
-			to.to_tsval = tcp_ts_getsbintime32() + tp->ts_offset;
+			tp->t_tsval_last = max(tcp_ts_getsbintime(),
+					       tp->t_tsval_last);
+			to.to_tsval = ((uint32_t)tp->t_tsval_last) + tp->ts_offset;
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
 			/* Set receive buffer autosizing timestamp. */
