@@ -493,6 +493,7 @@ struct adapter {
 	u32			optics;
 	u32			fc; /* local flow ctrl setting */
 	int			advertise;  /* link speeds */
+	bool			enable_aim; /* adaptive interrupt moderation */
 	bool			link_active;
 	u16			num_segs;
 	u32			link_speed;
