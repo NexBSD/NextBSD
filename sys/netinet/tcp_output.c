@@ -189,7 +189,8 @@ tcp_rexmt_output(struct inpcb *inp)
 int
 tcp_output(struct tcpcb *tp)
 {
-	struct socket *so = tp->t_inpcb->inp_socket;
+	struct inpcb *inp = tp->t_inpcb;
+	struct socket *so = inp->inp_socket;
 	long len, recwin, sendwin;
 	int off, flags, error = 0;	/* Keep compiler happy */
 	struct mbuf *m;
@@ -213,10 +214,10 @@ tcp_output(struct tcpcb *tp)
 	struct ip6_hdr *ip6 = NULL;
 	int isipv6;
 
-	isipv6 = (tp->t_inpcb->inp_vflag & INP_IPV6) != 0;
+	isipv6 = (inp->inp_vflag & INP_IPV6) != 0;
 #endif
 
-	INP_WLOCK_ASSERT(tp->t_inpcb);
+	INP_WLOCK_ASSERT(inp);
 
 #ifdef TCP_OFFLOAD
 	if (tp->t_flags & TF_TOE)
@@ -558,8 +559,8 @@ after_sack_rexmit:
 #ifdef IPSEC
 	    ipsec_optlen == 0 &&
 #endif
-	    tp->t_inpcb->inp_options == NULL &&
-	    tp->t_inpcb->in6p_options == NULL)
+	    inp->inp_options == NULL &&
+	    inp->in6p_options == NULL)
 		tso = 1;
 
 	if (sack_rxmit) {
@@ -773,7 +774,7 @@ send:
 		/* Maximum segment size. */
 		if (flags & TH_SYN) {
 			tp->snd_nxt = tp->iss;
-			to.to_mss = tcp_mssopt(&tp->t_inpcb->inp_inc);
+			to.to_mss = tcp_mssopt(&inp->inp_inc);
 			to.to_flags |= TOF_MSS;
 #ifdef TCP_RFC7413
 			/*
@@ -834,11 +835,11 @@ send:
 
 #ifdef INET6
 	if (isipv6)
-		ipoptlen = ip6_optlen(tp->t_inpcb);
+		ipoptlen = ip6_optlen(inp);
 	else
 #endif
-	if (tp->t_inpcb->inp_options)
-		ipoptlen = tp->t_inpcb->inp_options->m_len -
+	if (inp->inp_options)
+		ipoptlen = inp->inp_options->m_len -
 				offsetof(struct ipoption, ipopt_list);
 	else
 		ipoptlen = 0;
@@ -1104,20 +1105,20 @@ send:
 	SOCKBUF_UNLOCK_ASSERT(&so->so_snd);
 	m->m_pkthdr.rcvif = (struct ifnet *)0;
 #ifdef MAC
-	mac_inpcb_create_mbuf(tp->t_inpcb, m);
+	mac_inpcb_create_mbuf(inp, m);
 #endif
 #ifdef INET6
 	if (isipv6) {
 		ip6 = mtod(m, struct ip6_hdr *);
 		th = (struct tcphdr *)(ip6 + 1);
-		tcpip_fillheaders(tp->t_inpcb, ip6, th);
+		tcpip_fillheaders(inp, ip6, th);
 	} else
 #endif /* INET6 */
 	{
 		ip = mtod(m, struct ip *);
 		ipov = (struct ipovly *)ip;
 		th = (struct tcphdr *)(ip + 1);
-		tcpip_fillheaders(tp->t_inpcb, ip, th);
+		tcpip_fillheaders(inp, ip, th);
 	}
 
 	/*
@@ -1357,10 +1358,10 @@ send:
 		 * Also, desired default hop limit might be changed via
 		 * Neighbor Discovery.
 		 */
-		ip6->ip6_hlim = in6_selecthlim(tp->t_inpcb, NULL);
+		ip6->ip6_hlim = in6_selecthlim(inp, NULL);
 
 		if (in_rt_valid(inp)) {
-			sin6 = (struct sockaddr_in6 *)&ro.ro_dst;
+			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ro.ro_dst;
 			sin6->sin6_family = AF_INET6;
 			sin6->sin6_len = sizeof(struct sockaddr_in6);
 			memcpy(&sin6->sin6_addr.s6_addr, &inp->in6p_faddr.s6_addr, 16);
@@ -1394,9 +1395,9 @@ send:
 #endif
 
 		/* TODO: IPv6 IP6TOS_ECT bit on */
-		error = ip6_output(m, tp->t_inpcb->in6p_outputopts, &ro,
+		error = ip6_output(m, inp->in6p_outputopts, &ro,
 		    ((so->so_options & SO_DONTROUTE) ?  IP_ROUTETOIF : 0),
-		    NULL, NULL, tp->t_inpcb);
+		    NULL, NULL, inp);
 
 		if (error == EMSGSIZE && ro.ro_rt != NULL)
 			mtu = ro.ro_rt->rt_mtu;
@@ -1421,8 +1422,8 @@ send:
 	bzero(&ro, sizeof(ro));
 	ip->ip_len = htons(m->m_pkthdr.len);
 #ifdef INET6
-	if (tp->t_inpcb->inp_vflag & INP_IPV6PROTO)
-		ip->ip_ttl = in6_selecthlim(tp->t_inpcb, NULL);
+	if (inp->inp_vflag & INP_IPV6PROTO)
+		ip->ip_ttl = in6_selecthlim(inp, NULL);
 #endif /* INET6 */
 	/*
 	 * If we do path MTU discovery, then we set DF on every packet.
@@ -1450,7 +1451,7 @@ send:
 #endif
 
 	if (in_rt_valid(inp)) {
-		sin = (struct sockaddr_in *)&ro.ro_dst;
+		struct sockaddr_in *sin = (struct sockaddr_in *)&ro.ro_dst;
 		sin->sin_family = AF_INET;
 		sin->sin_len = sizeof(struct sockaddr_in);
 		sin->sin_addr.s_addr = inp->inp_faddr.s_addr;
@@ -1461,9 +1462,9 @@ send:
 			ro.ro_flags |= RT_CACHING_CONTEXT;
 	}
 
-	error = ip_output(m, tp->t_inpcb->inp_options, &ro,
+	error = ip_output(m, inp->inp_options, &ro,
 	    ((so->so_options & SO_DONTROUTE) ? IP_ROUTETOIF : 0), 0,
-	    tp->t_inpcb);
+	    inp);
 
 	if (inp->inp_prepend != ro.ro_prepend && ro.ro_prepend != NULL) {
 		if (inp->inp_prepend != NULL)
@@ -1474,7 +1475,9 @@ send:
 
 	if (error == EMSGSIZE && ro.ro_rt != NULL)
 		mtu = ro.ro_rt->rt_mtu;
-	RO_RTFREE(&ro);
+	if (!(ro.ro_flags & RT_CACHING_CONTEXT)) {
+		RO_RTFREE(&ro);
+	}
     }
 #endif /* INET */
 
@@ -1606,7 +1609,7 @@ timer:
 			return (error);
 		case ENOBUFS:
 			atomic_add_int(&V_tcp_output_enobufs, 1);
-			inp_rexmt_enqueue(tp->t_inpcb, tcp_rexmt_output);
+			inp_rexmt_enqueue(inp, tcp_rexmt_output);
 			return (0);
 		case EMSGSIZE:
 			/*
