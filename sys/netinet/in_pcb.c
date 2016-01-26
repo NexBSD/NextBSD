@@ -44,7 +44,6 @@ __FBSDID("$FreeBSD$");
 #include "opt_inet6.h"
 #include "opt_pcbgroup.h"
 #include "opt_rss.h"
-#include "opt_mpath.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -73,15 +72,10 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/if_var.h>
-#include <net/if_llatbl.h>
 #include <net/if_types.h>
 #include <net/route.h>
 #include <net/rss_config.h>
 #include <net/vnet.h>
-
-#include <net/if_dl.h>
-#include <net/ethernet.h>
-
 
 #if defined(INET) || defined(INET6)
 #include <netinet/in.h>
@@ -93,14 +87,12 @@ __FBSDID("$FreeBSD$");
 #endif
 #ifdef INET
 #include <netinet/in_var.h>
-#include <netinet/if_ether.h>
 #endif
 #ifdef INET6
 #include <netinet/ip6.h>
 #include <netinet6/in6_pcb.h>
 #include <netinet6/in6_var.h>
 #include <netinet6/ip6_var.h>
-#include <netinet6/nd6.h>
 #endif /* INET6 */
 
 
@@ -141,8 +133,6 @@ VNET_DEFINE(int, ipport_tcpallocs);
 static VNET_DEFINE(int, ipport_tcplastcount);
 
 #define	V_ipport_tcplastcount		VNET(ipport_tcplastcount)
-
-extern u_int inpcb_rt_cache_enable;
 
 static void	in_pcbremlists(struct inpcb *inp);
 #ifdef INET
@@ -923,7 +913,6 @@ in_pcbconnect_mbuf(struct inpcb *inp, struct sockaddr *nam,
 	inp->inp_laddr.s_addr = laddr;
 	inp->inp_faddr.s_addr = faddr;
 	inp->inp_fport = fport;
-
 	in_pcbrehash_mbuf(inp, m);
 
 	if (anonport)
@@ -976,7 +965,7 @@ in_pcbladdr(struct inpcb *inp, struct in_addr *faddr, struct in_addr *laddr,
 	 * Find out route to destination.
 	 */
 	if ((inp->inp_socket->so_options & SO_DONTROUTE) == 0)
-		rtalloc_ign_fib(&sro, 0, inp->inp_inc.inc_fibnum);
+		in_rtalloc_ign(&sro, 0, inp->inp_inc.inc_fibnum);
 
 	/*
 	 * If we found a route, use the address corresponding to

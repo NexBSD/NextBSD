@@ -1,6 +1,8 @@
 /*-
- * Copyright (c) 2012 Ganbold Tsagaankhuu <ganbold@freebsd.org>
+ * Copyright (c) 2015 Emmanuel Vadot <manu@bidouilliste.com>
  * All rights reserved.
+ *
+ * This code is derived from software written for Brini by Mark Brinicombe
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -22,51 +24,24 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * $FreeBSD$
+ *
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-#include <sys/param.h>
-#include <sys/systm.h>
-#include <sys/bus.h>
-#include <sys/kernel.h>
-
-#include <dev/fdt/fdt_common.h>
-#include <dev/ofw/openfirm.h>
-
-#include <machine/bus.h>
-#include <machine/vmparam.h>
-
-struct fdt_fixup_entry fdt_fixup_table[] = {
-	{ NULL, NULL }
-};
-
-#ifndef ARM_INTRNG
-
-static int
-fdt_aintc_decode_ic(phandle_t node, pcell_t *intr, int *interrupt, int *trig,
-    int *pol)
-{
-	int offset;
-
-	if (fdt_is_compatible(node, "allwinner,sun4i-ic"))
-		offset = 0;
-	else if (fdt_is_compatible(node, "arm,gic"))
-		offset = 32;
-	else
-		return (ENXIO);
-
-	*interrupt = fdt32_to_cpu(intr[0]) + offset;
-	*trig = INTR_TRIGGER_CONFORM;
-	*pol = INTR_POLARITY_CONFORM;
-
-	return (0);
-}
-
-fdt_pic_decode_t fdt_pic_table[] = {
-	&fdt_aintc_decode_ic,
-	NULL
-};
-
-#endif /* ARM_INTRNG */
+#ifndef AW_MACHDEP_H
+#define	AW_MACHDEP_H
+ 
+#define	ALLWINNERSOC_A10	0x10000000
+#define	ALLWINNERSOC_A13	0x13000000
+#define	ALLWINNERSOC_A10S	0x10000001
+#define	ALLWINNERSOC_A20	0x20000000
+ 
+#define	ALLWINNERSOC_SUN4I	0x40000000
+#define	ALLWINNERSOC_SUN5I	0x50000000
+#define	ALLWINNERSOC_SUN7I	0x70000000
+ 
+u_int allwinner_soc_type(void);
+u_int allwinner_soc_family(void);
+ 
+#endif /* AW_MACHDEP_H */
