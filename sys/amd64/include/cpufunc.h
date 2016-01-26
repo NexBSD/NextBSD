@@ -380,10 +380,11 @@ rdtsc(void)
 static __inline uint64_t
 rdtscp(void)
 {
-	uint32_t low, high, aux;
+	uint64_t low, high;
+	uint32_t aux;
 
-	__asm __volatile("rdtscp" : "=a" (low), "=d" (high), "=c" (aux));
-	return (low | ((uint64_t)high << 32));
+	__asm __volatile("rdtscp" : "=a" (low), "=d" (high), "=c" (aux) : : );
+	return (low | (high << 32));
 }
 
 static __inline uint32_t

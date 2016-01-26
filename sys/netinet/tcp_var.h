@@ -184,6 +184,7 @@ struct tcpcb {
 
 	sbintime_t	t_rcvtime;		/* inactivity time */
 	sbintime_t	t_starttime;		/* time connection was established */
+	sbintime_t	t_tsval_last;
 	u_int	t_rtttime;		/* RTT measurement start time */
 	tcp_seq	t_rtseq;		/* sequence number being timed */
 
