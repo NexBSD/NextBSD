@@ -92,7 +92,7 @@
  */
 #define SBT_MINTS 256
 #define SBT_MINTS_SHIFT 8
-
+#define	MIN_TS_STEP 2
 
 /*
  * Clock macros for RFC 1323 timestamps.

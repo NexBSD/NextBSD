@@ -383,10 +383,6 @@ int	psratio;
 static DPCPU_DEFINE(long, pcputicks);	/* Per-CPU version of ticks. */
 static int global_hardclock_run = 0;
 
-#if !defined(__amd64__) && !defined(__i386__)
-void cpu_ts_hardclock_cpu(void) { }
-#endif
-
 /*
  * Initialize clock frequencies and start both clocks running.
  */
@@ -434,7 +430,6 @@ hardclock_cpu(int usermode)
 	struct proc *p = td->td_proc;
 	int flags;
 
-	cpu_ts_hardclock_cpu();
 	/*
 	 * Run current process's virtual and profile time, as needed.
 	 */

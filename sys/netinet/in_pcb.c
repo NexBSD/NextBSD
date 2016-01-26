@@ -74,6 +74,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_var.h>
 #include <net/if_types.h>
 #include <net/route.h>
+#include <net/route_var.h>
 #include <net/rss_config.h>
 #include <net/vnet.h>
 
@@ -133,6 +134,8 @@ VNET_DEFINE(int, ipport_tcpallocs);
 static VNET_DEFINE(int, ipport_tcplastcount);
 
 #define	V_ipport_tcplastcount		VNET(ipport_tcplastcount)
+
+extern u_int inpcb_rt_cache_enable;
 
 static void	in_pcbremlists(struct inpcb *inp);
 #ifdef INET
@@ -518,7 +521,7 @@ inp_so_options(const struct inpcb *inp)
 int
 in_rt_valid(struct inpcb *inp)
 {
-	struct radix_node_head *rnh;
+	struct rib_head *rnh;
 
 	INP_WLOCK_ASSERT(inp);
 
@@ -562,7 +565,7 @@ void
 in_pcbrtalloc(struct inpcb *inp)
 {
 	struct rtentry *rt;
-	struct radix_node_head *rnh = NULL;
+	struct rib_head *rnh = NULL;
 	int gen;
 	struct route_in6 iproute;
 #ifdef INET6
