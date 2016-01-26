@@ -802,7 +802,7 @@ send:
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
 			tp->t_tsval_last = max(tcp_ts_getsbintime(),
-					       tp->t_tsval_last);
+					       tp->t_tsval_last + MIN_TS_STEP);
 			to.to_tsval = ((uint32_t)tp->t_tsval_last) + tp->ts_offset;
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
