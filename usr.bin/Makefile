@@ -277,7 +277,8 @@ SUBDIR.${MK_TOOLCHAIN}+=	ctags
 SUBDIR.${MK_TOOLCHAIN}+=	cxxfilt
 SUBDIR.${MK_TOOLCHAIN}+=	elfcopy
 SUBDIR.${MK_TOOLCHAIN}+=	file2c
-.if ${MACHINE_ARCH} != "aarch64" # ARM64TODO gprof does not build
+.if ${MACHINE_ARCH} != "aarch64" && \ # ARM64TODO gprof does not build
+    ${MACHINE_CPUARCH} != "riscv" # RISCVTODO gprof does not build
 SUBDIR.${MK_TOOLCHAIN}+=	gprof
 .endif
 SUBDIR.${MK_TOOLCHAIN}+=	indent
@@ -299,7 +300,9 @@ SUBDIR.${MK_VT}+=	vtfontcvt
 SUBDIR.${MK_USB}+=	usbhidaction
 SUBDIR.${MK_USB}+=	usbhidctl
 SUBDIR.${MK_UTMPX}+=	last
+.if ${MACHINE_CPUARCH} != "riscv" # RISCVTODO users does not build
 SUBDIR.${MK_UTMPX}+=	users
+.endif
 SUBDIR.${MK_UTMPX}+=	who
 SUBDIR.${MK_SVN}+=	svn
 SUBDIR.${MK_SVNLITE}+=	svn

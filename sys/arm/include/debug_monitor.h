@@ -1,9 +1,9 @@
 /*-
- * Copyright (c) 2009 The FreeBSD Foundation
+ * Copyright (c) 2014 The FreeBSD Foundation
  * All rights reserved.
  *
- * This software was developed by Semihalf under sponsorship from
- * the FreeBSD Foundation.
+ * This software was developed by Semihalf under
+ * the sponsorship of the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,19 +29,52 @@
  * $FreeBSD$
  */
 
-#ifndef _MACHINE_OFW_MACHDEP_H_
-#define _MACHINE_OFW_MACHDEP_H_
+#ifndef _MACHINE_DEBUG_MONITOR_H_
+#define	_MACHINE_DEBUG_MONITOR_H_
 
-#include <sys/types.h>
-#include <sys/bus.h>
-#include <sys/rman.h>
-#include <vm/vm.h>
+#ifdef DDB
 
-typedef	uint32_t	cell_t;
+#include <machine/db_machdep.h>
 
-struct mem_region {
-	uint64_t	mr_start;
-	uint64_t	mr_size;
+enum dbg_access_t {
+	HW_BREAKPOINT_X		= 0,
+	HW_WATCHPOINT_R		= 1,
+	HW_WATCHPOINT_W		= 2,
+	HW_WATCHPOINT_RW	= HW_WATCHPOINT_R | HW_WATCHPOINT_W,
 };
 
-#endif /* _MACHINE_OFW_MACHDEP_H_ */
+#if __ARM_ARCH >= 6
+void dbg_monitor_init(void);
+void dbg_show_watchpoint(void);
+int dbg_setup_watchpoint(db_expr_t, db_expr_t, enum dbg_access_t);
+int dbg_remove_watchpoint(db_expr_t, db_expr_t);
+#else /* __ARM_ARCH >= 6 */
+static __inline void
+dbg_show_watchpoint(void)
+{
+}
+static __inline int
+dbg_setup_watchpoint(db_expr_t addr __unused, db_expr_t size __unused,
+    enum dbg_access_t access __unused)
+{
+	return (ENXIO);
+}
+static __inline int
+dbg_remove_watchpoint(db_expr_t addr __unused, db_expr_t size __unused)
+{
+	return (ENXIO);
+}
+static __inline void
+dbg_monitor_init(void)
+{
+}
+#endif /* __ARM_ARCH < 6 */
+
+#else /* DDB */
+static __inline void
+dbg_monitor_init(void)
+{
+}
+#endif
+
+#endif /* _MACHINE_DEBUG_MONITOR_H_ */

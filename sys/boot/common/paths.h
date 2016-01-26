@@ -1,9 +1,6 @@
 /*-
- * Copyright (c) 2009 The FreeBSD Foundation
+ * Copyright (c) 2016 M. Warner Losh <imp@freebsd.org>
  * All rights reserved.
- *
- * This software was developed by Semihalf under sponsorship from
- * the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -14,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHORS AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -29,19 +26,14 @@
  * $FreeBSD$
  */
 
-#ifndef _MACHINE_OFW_MACHDEP_H_
-#define _MACHINE_OFW_MACHDEP_H_
+#ifndef _PATHS_H_
+#define	_PATHS_H_
 
-#include <sys/types.h>
-#include <sys/bus.h>
-#include <sys/rman.h>
-#include <vm/vm.h>
+#define PATH_DOTCONFIG	"/boot.config"
+#define PATH_CONFIG	"/boot/config"
+#define PATH_BOOT3	"/boot/loader"
+#define PATH_LOADER	"/boot/loader"
+#define PATH_LOADER_EFI	"/boot/loader.efi"
+#define PATH_KERNEL	"/boot/kernel/kernel"
 
-typedef	uint32_t	cell_t;
-
-struct mem_region {
-	uint64_t	mr_start;
-	uint64_t	mr_size;
-};
-
-#endif /* _MACHINE_OFW_MACHDEP_H_ */
+#endif /* _PATHS_H_ */
