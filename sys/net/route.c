@@ -98,6 +98,10 @@ extern void sctp_addr_change(struct ifaddr *ifa, int cmd);
 u_int rt_numfibs = RT_NUMFIBS;
 SYSCTL_UINT(_net, OID_AUTO, fibs, CTLFLAG_RDTUN, &rt_numfibs, 0, "");
 
+u_int inpcb_rt_cache_enable = 1;
+SYSCTL_UINT(_net, OID_AUTO, conn_rt_cache, CTLFLAG_RW|CTLFLAG_TUN, &inpcb_rt_cache_enable, 0, "");
+TUNABLE_INT("net.conn_rt_cache", &inpcb_rt_cache_enable);
+
 /*
  * By default add routes to all fibs for new interfaces.
  * Once this is set to 0 then only allocate routes on interface
@@ -139,7 +143,7 @@ static VNET_DEFINE(uma_zone_t, rtzone);		/* Routing table UMA zone. */
 
 static int rtrequest1_fib_change(struct rib_head *, struct rt_addrinfo *,
     struct rtentry **, u_int);
-static void rt_setmetrics(const struct rt_addrinfo *, struct rtentry *, struct radix_node_head *rnh);
+static void rt_setmetrics(const struct rt_addrinfo *, struct rtentry *, struct rib_head *rnh);
 static int rt_ifdelroute(const struct rtentry *rt, void *arg);
 static struct rtentry *rt_unlinkrte(struct rib_head *rnh,
     struct rt_addrinfo *info, int *perror);
@@ -1872,7 +1876,7 @@ bad:
 }
 
 static void
-rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt, struct radix_node_head *rnh)
+rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt, struct rib_head *rnh)
 {
 
 	if (info->rti_mflags & RTV_MTU) {
