@@ -59,7 +59,7 @@ __FBSDID("$FreeBSD$");
 
 uint64_t	tsc_freq;
 int64_t		tsc_freq_mints;
-int64_t		max_tsc_jitter;
+int64_t		max_sbt_jitter;
 uint64_t	tsc_sbt;
 int		tsc_is_invariant;
 int		tsc_perf_stat;
@@ -602,10 +602,10 @@ init:
 #endif
 	tsc_freq_mints = TSC_FREQ_MINTS;
 	/* timestamp ticks per millisecond */
-	max_tsc_jitter = tsc_freq/1000;
+	max_sbt_jitter = SBT_1MS/2;
 
-	printf("tsc_freq: %lu tsc_freq_mints: %lu max_tsc_jitter: %lu\n",
-	       tsc_freq, tsc_freq_mints, max_tsc_jitter);
+	printf("tsc_freq: %lu tsc_freq_mints: %lu max_sbt_jitter: %lu\n",
+	       tsc_freq, tsc_freq_mints, max_sbt_jitter);
 }
 SYSINIT(tsc_tc, SI_SUB_SMP, SI_ORDER_ANY, init_TSC_tc, NULL);
 
@@ -815,7 +815,7 @@ cpu_tcp_ts_getsbintime_rdtsc(void)
 
 	tsc_delta = curtsc - *tsclast;
 	*tsclast = curtsc;
-	if (__predict_false(tsc_delta < 0 || tsc_delta > max_tsc_jitter)) {
+	if (__predict_false(tsc_delta < 0 || tsc_delta > max_sbt_jitter)) {
 		cpu_ts_calibrate_rdtsc();
 		ts = DPCPU_GET(pcpusbt);
 		critical_exit();
@@ -848,15 +848,11 @@ cpu_tcp_ts_getsbintime_rdtscp(void)
 	 * scale tsc to units of 60ns and then shift up
 	 * to get sbintime
 	 */
-	sbt_delta = (((curtsc - tsc)/tsc_freq_mints) << 11);
+	sbt_delta = (((curtsc - tsc)/tsc_freq_mints) << SBT_SHIFT);
 	cursbt = sbt + sbt_delta;
 	if (TS_ALWAYS_CALIBRATE ||
-	    __predict_false(tsc_delta < 0 || tsc_delta > max_tsc_jitter)) {
+	    __predict_false(tsc_delta < 0 || sbt_delta > max_sbt_jitter)) {
 		sbt = cpu_ts_calibrate_rdtscp();
-		/*
-		 * even if we're preempted sbt0 will be the most
-		 * up to date value at this point
-		 */
 		curts = (sbt >> SBT_SHIFT);
 		*DPCPU_PTR(pcputslast) = sbt;
 		critical_exit();
