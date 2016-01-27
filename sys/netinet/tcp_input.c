@@ -1543,7 +1543,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * XXX: This should be done after segment
 	 * validation to ignore broken/spoofed segs.
 	 */
-	tp->t_rcvtime = tcp_ts_getsbintime();
+	tp->t_rcvtime = TCP_TS_TO_SBT(tcp_ts_getsbintime());
 	if (TCPS_HAVEESTABLISHED(tp->t_state))
 		tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp)*tick_sbt);
 
@@ -2870,7 +2870,7 @@ process_ACK:
 					tcp_timer_activate(tp, TT_2MSL,
 					    (tcp_fast_finwait2_recycle ?
 					    tcp_finwait2_timeout :
-					    TP_MAXIDLE(tp))*tick_sbt);
+					     TP_MAXIDLE(tp)));
 				}
 				tcp_state_change(tp, TCPS_FIN_WAIT_2);
 			}
@@ -3520,8 +3520,8 @@ tcp_xmit_timer(struct tcpcb *tp, sbintime_t rtt)
 	 * statistical, we have to test that we don't drop below
 	 * the minimum feasible timer (which is 2 ticks).
 	 */
-	TCPT_RANGESET(tp->t_rxtcur, TCP_REXMTVAL(tp)*tick_sbt,
-		      max(tp->t_rttmin, rtt + 2), TCPTV_REXMTMAX*tick_sbt);
+	TCPT_RANGESET(tp->t_rxtcur, TCP_REXMTVAL(tp),
+		      TCP_TS_TO_SBT(max(tp->t_rttmin, rtt + 2)), TCPTV_REXMTMAX*tick_sbt);
 
 	/*
 	 * We received an ack for a packet that wasn't retransmitted;

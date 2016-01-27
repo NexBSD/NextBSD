@@ -521,7 +521,7 @@ tcp_usr_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	    (error = tcp_offload_connect(so, nam)) == 0)
 		goto out;
 #endif
-	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp)*tick_sbt);
+	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp));
 	error = tp->t_fb->tfb_tcp_output(tp);
 out:
 	TCPDEBUG2(PRU_CONNECT);
@@ -609,7 +609,7 @@ tcp6_usr_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	    (error = tcp_offload_connect(so, nam)) == 0)
 		goto out;
 #endif
-	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp)*tick_sbt);
+	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp));
 	error = tp->t_fb->tfb_tcp_output(tp);
 
 out:
@@ -1669,21 +1669,21 @@ unlock_and_done:
 				if ((tp->t_state > TCPS_LISTEN) &&
 				    (tp->t_state <= TCPS_CLOSING))
 					tcp_timer_activate(tp, TT_KEEP,
-					    TP_KEEPIDLE(tp)*tick_sbt);
+					    TP_KEEPIDLE(tp));
 				break;
 			case TCP_KEEPINTVL:
 				tp->t_keepintvl = ui;
 				if ((tp->t_state == TCPS_FIN_WAIT_2) &&
 				    (TP_MAXIDLE(tp) > 0))
 					tcp_timer_activate(tp, TT_2MSL,
-					    TP_MAXIDLE(tp)*tick_sbt);
+					    TP_MAXIDLE(tp));
 				break;
 			case TCP_KEEPINIT:
 				tp->t_keepinit = ui;
 				if (tp->t_state == TCPS_SYN_RECEIVED ||
 				    tp->t_state == TCPS_SYN_SENT)
 					tcp_timer_activate(tp, TT_KEEP,
-					    TP_KEEPINIT(tp)*tick_sbt);
+					    TP_KEEPINIT(tp));
 				break;
 			}
 			goto unlock_and_done;
@@ -1699,7 +1699,7 @@ unlock_and_done:
 			if ((tp->t_state == TCPS_FIN_WAIT_2) &&
 			    (TP_MAXIDLE(tp) > 0))
 				tcp_timer_activate(tp, TT_2MSL,
-				    TP_MAXIDLE(tp)*tick_sbt);
+				    TP_MAXIDLE(tp));
 			goto unlock_and_done;
 
 #ifdef TCPPCAP
@@ -1983,8 +1983,8 @@ tcp_usrclosed(struct tcpcb *tp)
 			int timeout;
 
 			timeout = (tcp_fast_finwait2_recycle) ? 
-			    tcp_finwait2_timeout : TP_MAXIDLE(tp);
-			tcp_timer_activate(tp, TT_2MSL, timeout*tick_sbt);
+			    tcp_finwait2_timeout*tick_sbt : TP_MAXIDLE(tp);
+			tcp_timer_activate(tp, TT_2MSL, timeout);
 		}
 	}
 }

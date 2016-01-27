@@ -353,7 +353,7 @@ tcp_timer_2msl(void *xtp)
 		TCPSTAT_INC(tcps_finwait2_drops);
 		tp = tcp_close(tp);             
 	} else {
-		if (tcp_ts_getsbintime() - tp->t_rcvtime <= TP_MAXIDLE(tp)) {
+		if (TCP_TS_TO_SBT(tcp_ts_getsbintime()) - tp->t_rcvtime <= TP_MAXIDLE(tp)) {
 			if (!callout_reset(&tp->t_timers->tt_2msl,
 			   TP_KEEPINTVL(tp), tcp_timer_2msl, tp)) {
 				tp->t_timers->tt_flags &= ~TT_2MSL_RST;
@@ -418,7 +418,7 @@ tcp_timer_keep(void *xtp)
 		goto dropit;
 	if ((always_keepalive || inp->inp_socket->so_options & SO_KEEPALIVE) &&
 	    tp->t_state <= TCPS_CLOSING) {
-		if (tcp_ts_getsbintime() - tp->t_rcvtime >= TP_KEEPIDLE(tp) + TP_MAXIDLE(tp))
+		if (TCP_TS_TO_SBT(tcp_ts_getsbintime()) - tp->t_rcvtime >= TP_KEEPIDLE(tp) + TP_MAXIDLE(tp))
 			goto dropit;
 		/*
 		 * Send a packet designed to force a response
@@ -526,7 +526,7 @@ tcp_timer_persist(void *xtp)
         t = tcp_ts_getsbintime() - tp->t_rcvtime;
 	if (tp->t_rxtshift == TCP_MAXRXTSHIFT &&
 	    (t >= tcp_maxpersistidle*tick_sbt ||
-	     t >= TCP_REXMTVAL(tp) * tcp_totbackoff * tick_sbt)) {
+	     t >= TCP_REXMTVAL(tp) * tcp_totbackoff)) {
 		TCPSTAT_INC(tcps_persistdrop);
 		tp = tcp_drop(tp, ETIMEDOUT);
 		goto out;
@@ -536,7 +536,7 @@ tcp_timer_persist(void *xtp)
 	 * connection after a much reduced timeout.
 	 */
 	if (tp->t_state > TCPS_CLOSE_WAIT &&
-	    t >= TCPTV_PERSMAX*tick_sbt) {
+	    TCP_TS_TO_SBT(t) - tp->t_rcvtime >= TCPTV_PERSMAX*tick_sbt) {
 		TCPSTAT_INC(tcps_persistdrop);
 		tp = tcp_drop(tp, ETIMEDOUT);
 		goto out;
@@ -645,13 +645,13 @@ tcp_timer_rexmt(void * xtp)
 	TCPSTAT_INC(tcps_rexmttimeo);
 	if ((tp->t_state == TCPS_SYN_SENT) ||
 	    (tp->t_state == TCPS_SYN_RECEIVED))
-		rexmt = TCPTV_RTOBASE * tcp_syn_backoff[tp->t_rxtshift];
+		rexmt = TCPTV_RTOBASE * tcp_syn_backoff[tp->t_rxtshift] * tick_sbt;
 	else
 		rexmt = TCP_REXMTVAL(tp) * tcp_backoff[tp->t_rxtshift];
-	TCPT_RANGESET(tp->t_rxtcur, rexmt*tick_sbt,
-		      tp->t_rttmin, TCPTV_REXMTMAX*tick_sbt);
+	TCPT_RANGESET(tp->t_rxtcur, rexmt,
+		      TCP_TS_TO_SBT(tp->t_rttmin), TCPTV_REXMTMAX*tick_sbt);
 	/*  1 < delack < tcp_delacktime - and should scale down with RTO/2 */
-	TCPT_RANGESET(tp->t_delack, (rexmt >> 1)*tick_sbt, 1, tcp_delacktime*tick_sbt);
+	TCPT_RANGESET(tp->t_delack, (rexmt >> 1), 1, tcp_delacktime*tick_sbt);
 
 	/*
 	 * We enter the path for PLMTUD if connection is established or, if
