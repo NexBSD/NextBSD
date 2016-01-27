@@ -182,7 +182,7 @@ struct tcpcb {
 
 	u_int	t_maxopd;		/* mss plus options */
 
-	sbintime_t	t_rcvtime;		/* inactivity time */
+	sbintime_t	t_rcvtime;		/* inactivity time in sbintime */
 	sbintime_t	t_starttime;		/* time connection was established */
 	sbintime_t	t_tsval_last;
 	u_int	t_rtttime;		/* RTT measurement start time */
@@ -191,7 +191,7 @@ struct tcpcb {
 	u_int	t_bw_spare1;		/* unused */
 	tcp_seq	t_bw_spare2;		/* unused */
 
-	sbintime_t t_rxtcur;		/* current retransmit value */
+	sbintime_t t_rxtcur;		/* current retransmit value in sbintime */
 	u_int	t_maxseg;		/* maximum segment size */
 	uint64_t	t_srtt;			/* smoothed round-trip time */
 	uint64_t	t_rttvar;		/* variance in round-trip time */
@@ -254,7 +254,7 @@ struct tcpcb {
 	u_int	t_tsomaxsegcount;	/* TSO maximum segment count */
 	u_int	t_tsomaxsegsize;	/* TSO maximum segment size in bytes */
 	u_int	t_flags2;		/* More tcpcb flags storage */
-	u_int	t_delack;		/* delayed ack timer */
+	sbintime_t	t_delack;		/* delayed ack timer in sbintime */
 
 #if defined(_KERNEL) && defined(TCP_RFC7413)
 	uint32_t t_ispare[6];		/* 5 UTO, 1 TBD */
@@ -475,9 +475,9 @@ struct tcptw {
  * which results in inappropriately large RTO values for very
  * fast networks.
  */
-#define	TCP_REXMTVAL(tp) \
-	max((tp)->t_rttmin, (((tp)->t_srtt >> (TCP_RTT_SHIFT - TCP_DELTA_SHIFT))  \
-	  + (tp)->t_rttvar) >> TCP_DELTA_SHIFT)
+#define	TCP_REXMTVAL(tp)						\
+	TCP_TS_TO_SBT(max((tp)->t_rttmin, (((tp)->t_srtt >> (TCP_RTT_SHIFT - TCP_DELTA_SHIFT)) \
+			      + (tp)->t_rttvar) >> TCP_DELTA_SHIFT))
 
 /*
  * TCP statistics.
