@@ -784,7 +784,7 @@ cpu_ts_calibrate_ ## op(void) \
 	tsc = DPCPU_PTR(pcputsc);\
 	*tsc = *tsclast = op();\
 \
-	*sbt = getsbinuptime();\
+	*sbt = sbinuptime();\
 	return (*sbt);\
 }
 
