@@ -2,13 +2,14 @@
 
 .include <src.opts.mk>
 
+FILESGROUPS=	FILES
+
 FILES=	DAEMON \
 	FILESYSTEMS \
 	LOGIN \
 	NETWORKING \
 	SERVERS \
 	abi \
-	accounting \
 	addswap \
 	adjkerntz \
 	atm1 \
@@ -108,7 +109,6 @@ FILES=	DAEMON \
 	securelevel \
 	serial \
 	sppp \
-	${_sshd} \
 	statd \
 	static_arp \
 	static_ndp \
@@ -120,7 +120,6 @@ FILES=	DAEMON \
 	tmp \
 	${_ubthidhci} \
 	ugidfw \
-	${_unbound} \
 	${_utx} \
 	var \
 	watchdogd \
@@ -134,11 +133,13 @@ FILES=	DAEMON \
 	zvol
 
 .if ${MK_ACCT} != "no"
-FILES+=		accounting
+FILESGROUPS+=	ACCT
+ACCT+=		accounting
 .endif
 
 .if ${MK_ACPI} != "no"
-FILES+=		power_profile
+FILESGROUPS+=	ACPI
+ACPI=		power_profile
 .endif
 
 .if ${MK_ACPI} != "no" || ${MK_APM} != "no"
@@ -146,12 +147,14 @@ FILES+=		powerd
 .endif
 
 .if ${MK_AMD} != "no"
-FILES+=		amd
+FILESGROUPS+=	AMD
+AMD+=		amd
 .endif
 
 .if ${MK_APM} != "no"
-FILES+=	apm
-FILES+=	apmd
+FILESGROUPS+=	APM
+APM+=		apm
+APM+=		apmd
 .endif
 
 .if ${MK_AUTOFS} != "no"
@@ -172,7 +175,8 @@ FILES+=		bootparams
 .endif
 
 .if ${MK_BSNMP} != "no"
-FILES+=		bsnmpd
+FILESGROUPS+=	BSNMP
+BSNMP+=		bsnmpd
 .endif
 
 .if ${MK_CASPER} != "no"
@@ -201,7 +205,8 @@ FILES+=		iscsid
 .endif
 
 .if ${MK_JAIL} != "no"
-FILES+=	jail
+FILESGROUPS+=	JAIL
+JAIL+=		jail
 .endif
 
 .if ${MK_LEGACY_CONSOLE} != "no"
@@ -243,7 +248,8 @@ FILES+=		keyserv
 .endif
 
 .if ${MK_OPENSSH} != "no"
-_sshd=		sshd
+FILESGROUPS+=	SSH
+SSH=		sshd
 .endif
 
 .if ${MK_PF} != "no"
@@ -263,7 +269,8 @@ FILES+=		timed
 .endif
 
 .if ${MK_UNBOUND} != "no"
-_unbound=	local_unbound
+FILESGROUPS+=	UNBOUND
+UNBOUND+=	local_unbound
 .endif
 
 .if ${MK_UTMPX} != "no"
@@ -281,5 +288,37 @@ FILES+=		wpa_supplicant
 
 FILESDIR=	/etc/rc.d
 FILESMODE=	${BINMODE}
+
+UNBOUNDDIR=	/etc/rc.d
+UNBOUNDMODE=	${BINMODE}
+UNBOUNDPACKAGE=	unbound
+
+ACPIDIR=	/etc/rc.d
+ACPIMODE=	${BINMODE}
+ACPIPACKAGE=	acpi
+
+AMDDIR=		/etc/rc.d
+AMDMODE=	${BINMODE}
+AMDPACKAGE=	amd
+
+SSHDIR=		/etc/rc.d
+SSHMODE=	${BINMODE}
+SSHPACKAGE=	ssh
+
+BSNMPDIR=	/etc/rc.d
+BSNMPMODE=	${BINMODE}
+BSNMPPACKAGE=	bsnmp
+
+JAILDIR=	/etc/rc.d
+JAILMODE=	${BINMODE}
+JAILPACKAGE=	jail
+
+ACCTDIR=	/etc/rc.d
+ACCTMODE=	${BINMODE}
+ACCTPACKAGE=	acct
+
+APMDIR=		/etc/rc.d
+APMMODE=	${BINMODE}
+APMPACKAGE=	apm
 
 .include <bsd.prog.mk>
