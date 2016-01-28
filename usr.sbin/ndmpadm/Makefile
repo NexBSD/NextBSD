@@ -5,7 +5,7 @@
 NDMPADM_DIR=${.CURDIR}/../../contrib/ndmp/ndmpadm
 
 .PATH: ${NDMPADM_DIR}
-BINDIR= /usr/sbind
+BINDIR= /usr/sbin
 PROG= ndmpadm
 
 SRCS=	ndmpadm_main.c ndmpadm_print.c

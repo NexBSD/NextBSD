@@ -12,12 +12,12 @@ SHLIB_MAJOR=	1
 
 CFLAGS+= -DNEED_SOLARIS_BOOLEAN -g -O0
 #CFLAGS+=	-I/usr/local/include 
-CFLAGS+= -I../../contrib/ndmp/libndmp/common
-CFLAGS+= -I../../cddl/contrib/opensolaris/lib/libnvpair
-CFLAGS+= -I../../sys/cddl/contrib/opensolaris/uts/common
-CFLAGS+= -I../../sys/cddl/compat/opensolaris
-CFLAGS+= -I../../cddl/contrib/opensolaris/head
-CFLAGS+= -I../../contrib/ndmp/ndmpd/include
+CFLAGS+= -I${.CURDIR}/../../contrib/ndmp/libndmp/common
+CFLAGS+= -I${.CURDIR}/../../cddl/contrib/opensolaris/lib/libnvpair
+CFLAGS+= -I${.CURDIR}/../../sys/cddl/contrib/opensolaris/uts/common
+CFLAGS+= -I${.CURDIR}/../../sys/cddl/compat/opensolaris
+CFLAGS+= -I${.CURDIR}/../../cddl/contrib/opensolaris/head
+CFLAGS+= -I${.CURDIR}/../../contrib/ndmp/ndmpd/include
 
 CFLAGS+= -Wno-unknown-pragmas
 SRCS+= libndmp_door_data.c
