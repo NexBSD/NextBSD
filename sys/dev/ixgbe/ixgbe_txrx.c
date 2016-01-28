@@ -1,3 +1,8 @@
+
+#include "opt_inet.h"
+#include "opt_inet6.h"
+#include "opt_rss.h"
+
 #include "ixgbe.h"
 
 #ifdef	RSS
@@ -22,6 +27,9 @@ static int ixgbe_tso_setup(struct tx_ring *txr, int ctxd, struct mbuf *mp, u32 *
 static int ixgbe_tx_ctx_setup(struct adapter *adapter, struct tx_ring *txr, struct mbuf *mp, u32 *cmd_type_len, u32 *olinfo_status, int pidx, int *offload);
 
 static void ixgbe_rx_checksum(u32 staterr, if_rxd_info_t ri, u32 ptype);
+static int  ixgbe_determine_rsstype(u16 pkt_info);
+
+
 
 extern void ixgbe_if_enable_intr(if_ctx_t ctx);
 extern int ixgbe_intr(void *arg);
