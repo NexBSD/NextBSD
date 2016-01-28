@@ -784,7 +784,7 @@ cpu_ts_calibrate_ ## op(void) \
 	tsc = DPCPU_PTR(pcputsc);\
 	*tsc = *tsclast = op();\
 \
-	*sbt = getsbinuptime();\
+	*sbt = sbinuptime();\
 	return (*sbt);\
 }
 
@@ -805,7 +805,6 @@ cpu_tcp_ts_getsbintime_ ## op(void) \
 \
 	tsc_delta = curtsc - *tsclast;\
 	sbt_delta = (((curtsc - tsc)/tsc_freq_mints) << SBT_SHIFT);\
-	cursbt = sbt + sbt_delta;\
 	if (TS_ALWAYS_CALIBRATE ||\
 	    __predict_false(tsc_delta < 0 || sbt_delta > max_sbt_jitter)) {\
 		sbt = cpu_ts_calibrate_ ## op();\
@@ -814,6 +813,7 @@ cpu_tcp_ts_getsbintime_ ## op(void) \
 		critical_exit();\
 		return (curts);\
 	}\
+	cursbt = sbt + sbt_delta;\
 	*tsclast = curtsc;\
 	curts = max(cursbt >> SBT_SHIFT, tslast);\
 	*DPCPU_PTR(pcputslast) = curts;\

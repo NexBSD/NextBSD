@@ -207,6 +207,7 @@ tcp_output(struct tcpcb *tp)
 	struct sackhole *p;
 	int tso, mtu;
 	struct tcpopt to;
+	sbintime_t t;
 #if 0
 	int maxburst = TCP_MAXBURST;
 #endif
@@ -217,6 +218,7 @@ tcp_output(struct tcpcb *tp)
 	isipv6 = (inp->inp_vflag & INP_IPV6) != 0;
 #endif
 
+	t = tcp_ts_getsbintime();
 	INP_WLOCK_ASSERT(inp);
 
 #ifdef TCP_OFFLOAD
@@ -242,7 +244,7 @@ tcp_output(struct tcpcb *tp)
 	 * to send, then transmit; otherwise, investigate further.
 	 */
 	idle = (tp->t_flags & TF_LASTIDLE) || (tp->snd_max == tp->snd_una);
-	if (idle && ticks - tp->t_rcvtime >= tp->t_rxtcur)
+	if (idle && TCP_TS_TO_SBT(t) - tp->t_rcvtime >= tp->t_rxtcur)
 		cc_after_idle(tp);
 	tp->t_flags &= ~TF_LASTIDLE;
 	if (idle) {
@@ -801,7 +803,7 @@ send:
 		/* Timestamps. */
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
-			tp->t_tsval_last = max(tcp_ts_getsbintime(),
+			tp->t_tsval_last = max(t,
 					       tp->t_tsval_last + MIN_TS_STEP);
 			to.to_tsval = ((uint32_t)tp->t_tsval_last) + tp->ts_offset;
 			to.to_tsecr = tp->ts_recent;
@@ -809,7 +811,7 @@ send:
 			/* Set receive buffer autosizing timestamp. */
 			if (tp->rfbuf_ts == 0 &&
 			    (so->so_rcv.sb_flags & SB_AUTOSIZE))
-				tp->rfbuf_ts = tcp_ts_getsbintime();
+				tp->rfbuf_ts = t;
 		}
 		/* Selective ACK's. */
 		if (tp->t_flags & TF_SACK_PERMIT) {
@@ -1511,7 +1513,7 @@ out:
 			 * not currently timing anything.
 			 */
 			if (tp->t_rtttime == 0) {
-				tp->t_rtttime = tcp_ts_getsbintime();
+				tp->t_rtttime = t;
 				tp->t_rtseq = startseq;
 				TCPSTAT_INC(tcps_segstimed);
 			}
