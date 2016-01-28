@@ -23,6 +23,7 @@ SRCS+=	authfd.c authfile.c bufaux.c bufbn.c bufec.c buffer.c \
 	kex.c kexdh.c kexgex.c kexecdh.c kexc25519.c \
 	kexdhc.c kexgexc.c kexecdhc.c kexc25519c.c \
 	kexdhs.c kexgexs.c kexecdhs.c kexc25519s.c
+PACKAGE=	ssh
 
 # gss-genr.c should be in $SRCS but causes linking problems, so it is
 # compiled directly into sshd instead.
