@@ -128,6 +128,8 @@ OLD_DIRS+=usr/lib/clang/3.7.0/lib
 OLD_DIRS+=usr/lib/clang/3.7.0
 # 20151130: libelf moved from /usr/lib to /lib (libkvm dependency in r291406)
 OLD_LIBS+=usr/lib/libelf.so.2
+# 20151120: remove unused pkg repo public key
+OLD_FILES+=usr/share/keys/pkg/trusted/hardenedbsd.crt.2014-09-04
 # 20151115: Fox bad upgrade scheme
 OLD_FILES+=usr/share/locale/zh_CN.GB18030/zh_Hans_CN.GB18030
 OLD_FILES+=usr/share/locale/zh_CN.GB2312/zh_Hans_CN.GB2312
@@ -1374,6 +1376,10 @@ OLD_FILES+=usr/tests/usr.sbin/pw/pw_modify
 # 20141202: update to mandoc CVS 20141201
 OLD_FILES+=usr.bin/preconv
 OLD_FILES+=share/man/man1/preconv.1.gz
+# 20141204 ibcs support removal
+OLD_FILES+=etc/rc.d/archdep
+OLD_FILES+=shate/examples/ibcs2/README
+OLD_FILES+=shate/examples/ibcs2/hello.uu
 # 20141129: mrouted rc.d scripts removed from base
 OLD_FILES+=etc/rc.d/mrouted
 # 20141126: convert sbin/mdconfig/tests to ATF format tests

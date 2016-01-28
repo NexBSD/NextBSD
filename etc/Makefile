@@ -18,6 +18,7 @@ BIN1=	asl.conf \
 	fbtab \
 	gettytab \
 	group \
+	hbsd-update.conf \
 	hosts \
 	hosts.allow \
 	hosts.equiv \

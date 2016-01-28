@@ -89,7 +89,6 @@ __DEFAULT_YES_OPTIONS = \
     FMTREE \
     FORTH \
     FP_LIBC \
-    FREEBSD_UPDATE \
     FTP \
     GAMES \
     GCOV \
@@ -115,7 +114,6 @@ __DEFAULT_YES_OPTIONS = \
     LDNS \
     LDNS_UTILS \
     LEGACY_CONSOLE \
-    LIB32 \
     LIBPTHREAD \
     LIBTHR \
     LOCALES \
@@ -139,7 +137,6 @@ __DEFAULT_YES_OPTIONS = \
     PF \
     PKGBOOTSTRAP \
     PMC \
-    PORTSNAP \
     PPP \
     QUOTAS \
     RADIUS_SUPPORT \
@@ -179,11 +176,14 @@ __DEFAULT_NO_OPTIONS = \
     CLANG_EXTRAS \
     DTRACE_TESTS \
     EISA \
+    FREEBSD_UPDATE \
     HESIOD \
+    LIB32 \
     LIBSOFT \
     NAND \
     OFED \
     OPENLDAP \
+    PORTSNAP \
     SHARED_TOOLCHAIN \
     SORT_THREADS \
     SVN

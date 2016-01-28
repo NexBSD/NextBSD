@@ -45,6 +45,7 @@
 #include "opt_compat.h"
 #include "opt_ddb.h"
 #include "opt_kstack_pages.h"
+#include "opt_pax.h"
 #include "opt_platform.h"
 #include "opt_sched.h"
 #include "opt_timer.h"
@@ -71,6 +72,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/malloc.h>
 #include <sys/msgbuf.h>
 #include <sys/mutex.h>
+#include <sys/pax.h>
 #include <sys/pcpu.h>
 #include <sys/ptrace.h>
 #include <sys/reboot.h>
@@ -344,9 +346,9 @@ sendsig(catcher, ksi, mask)
 	tf->tf_usr_sp = (register_t)fp;
 	sysent = p->p_sysent;
 	if (sysent->sv_sigcode_base != 0)
-		tf->tf_usr_lr = (register_t)sysent->sv_sigcode_base;
+		tf->tf_usr_lr = (register_t)p->p_sigcode_base;
 	else
-		tf->tf_usr_lr = (register_t)(sysent->sv_psstrings -
+		tf->tf_usr_lr = (register_t)(p->p_psstrings -
 		    *(sysent->sv_szsigcode));
 	/* Set the mode to enter in the signal handler */
 #if __ARM_ARCH >= 7
