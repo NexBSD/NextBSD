@@ -1153,7 +1153,7 @@ tcp_newtcpcb(struct inpcb *inp)
 	tp->t_delack = tcp_delacktime*tick_sbt;
 	tp->snd_cwnd = TCP_MAXWIN << TCP_MAX_WINSHIFT;
 	tp->snd_ssthresh = TCP_MAXWIN << TCP_MAX_WINSHIFT;
-	tp->t_rcvtime = TCP_TS_TO_SBT(tcp_ts_getsbintime());
+	tp->t_rcvtime = tcp_ts_getsbintime();
 	/*
 	 * IPv4 TTL initialization is necessary for an IPv6 socket as well,
 	 * because the socket may be bound to an IPv6 wildcard address,
@@ -1335,8 +1335,8 @@ tcp_discardcb(struct tcpcb *tp)
 			ssthresh = 0;
 		metrics.rmx_ssthresh = ssthresh;
 
-		metrics.rmx_rtt = tp->t_srtt;
-		metrics.rmx_rttvar = tp->t_rttvar;
+		metrics.rmx_rtt = tp->t_srtt / SBT_1US;
+		metrics.rmx_rttvar = tp->t_rttvar / SBT_1US;
 		metrics.rmx_cwnd = tp->snd_cwnd;
 		metrics.rmx_sendpipe = 0;
 		metrics.rmx_recvpipe = 0;

@@ -244,7 +244,7 @@ tcp_output(struct tcpcb *tp)
 	 * to send, then transmit; otherwise, investigate further.
 	 */
 	idle = (tp->t_flags & TF_LASTIDLE) || (tp->snd_max == tp->snd_una);
-	if (idle && TCP_TS_TO_SBT(t) - tp->t_rcvtime >= tp->t_rxtcur)
+	if (idle && t - tp->t_rcvtime >= tp->t_rxtcur)
 		cc_after_idle(tp);
 	tp->t_flags &= ~TF_LASTIDLE;
 	if (idle) {
@@ -804,14 +804,14 @@ send:
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
 			tp->t_tsval_last = max(t,
-					       tp->t_tsval_last + MIN_TS_STEP);
-			to.to_tsval = ((uint32_t)tp->t_tsval_last) + tp->ts_offset;
+					       tp->t_tsval_last + MIN_TS_STEP*SBT_MINTS);
+			to.to_tsval = ((uint32_t)TCP_SBT_TO_TS(tp->t_tsval_last)) + tp->ts_offset;
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
 			/* Set receive buffer autosizing timestamp. */
 			if (tp->rfbuf_ts == 0 &&
 			    (so->so_rcv.sb_flags & SB_AUTOSIZE))
-				tp->rfbuf_ts = t;
+				tp->rfbuf_ts = TCP_SBT_TO_TS(t);
 		}
 		/* Selective ACK's. */
 		if (tp->t_flags & TF_SACK_PERMIT) {
@@ -1675,7 +1675,8 @@ timer:
 void
 tcp_setpersist(struct tcpcb *tp)
 {
-	uint64_t tt, t = ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1;
+	/* XXX */
+	uint64_t tt, t = tp->t_srtt + 4*tp->t_rttvar;
 
 	tp->t_flags &= ~TF_PREVVALID;
 	if (tcp_timer_active(tp, TT_REXMT))

@@ -63,12 +63,19 @@ int64_t		max_sbt_jitter;
 uint64_t	tsc_sbt;
 int		tsc_is_invariant;
 int		tsc_perf_stat;
+static int	tsc_ts_recalibrate;
+
 
 static eventhandler_tag tsc_levels_tag, tsc_pre_tag, tsc_post_tag;
 
 sbintime_t cpu_tcp_ts_getsbintime_rdtsc(void);
 sbintime_t cpu_tcp_ts_getsbintime_rdtscp(void);
 sbintime_t (*cpu_tcp_ts_getsbintime)(void);
+static void cpu_tcp_ts_calibrate_all(void);
+
+
+SYSCTL_INT(_kern_timecounter, OID_AUTO, tsc_ts_always_calibrate, CTLFLAG_RW,
+    &tsc_ts_recalibrate, 0, "always use sbintime for timestamp clock");
 
 SYSCTL_INT(_kern_timecounter, OID_AUTO, invariant_tsc, CTLFLAG_RDTUN,
     &tsc_is_invariant, 0, "Indicates whether the TSC is P-state invariant");
@@ -600,6 +607,7 @@ init:
 #elif defined(__i386__)
 	cpu_tcp_ts_getsbintime = cpu_tcp_ts_getsbintime_rdtsc;
 #endif
+	cpu_tcp_ts_calibrate_all();
 	tsc_freq_mints = TSC_FREQ_MINTS;
 	/* timestamp ticks per millisecond */
 	max_sbt_jitter = SBT_1MS/2;
@@ -772,6 +780,20 @@ static DPCPU_DEFINE(int64_t, pcputsc);	/* Per-CPU version of tsc at time of last
 static DPCPU_DEFINE(int64_t, pcputsclast);	/* Per-CPU version of tsc of last rdtsc(p) call */
 static DPCPU_DEFINE(int64_t, pcputslast);	/* Per-CPU version of tsc of last rdtsc(p) call */
 
+static void
+cpu_tcp_ts_calibrate_all(void)
+{
+	u_int _i;
+	int64_t *sbt, *tsclast, *tsc;
+
+	CPU_FOREACH(_i) {
+		sbt = DPCPU_ID_PTR(_i, pcpusbt);
+		tsclast = DPCPU_ID_PTR(_i, pcputsclast);
+		tsc = DPCPU_ID_PTR(_i, pcputsc);
+		*tsc = *tsclast = rdtsc();
+		*sbt = sbinuptime();
+	}
+}
 
 #define CPU_TS_CALIBRATE(op)  \
 static sbintime_t \
@@ -794,7 +816,7 @@ cpu_tcp_ts_getsbintime_ ## op(void) \
 {\
 	int64_t tsc_delta, sbt_delta;\
 	int64_t sbt, tsc, *tsclast;\
-	int64_t curtsc, cursbt, curts, tslast;\
+	int64_t curtsc, cursbt, tslast;\
 \
 	critical_enter();\
 	sbt = DPCPU_GET(pcpusbt);\
@@ -805,21 +827,20 @@ cpu_tcp_ts_getsbintime_ ## op(void) \
 \
 	tsc_delta = curtsc - *tsclast;\
 	sbt_delta = (((curtsc - tsc)/tsc_freq_mints) << SBT_SHIFT);\
-	if (TS_ALWAYS_CALIBRATE ||\
+	if (tsc_ts_recalibrate ||\
 	    __predict_false(tsc_delta < 0 || sbt_delta > max_sbt_jitter)) {\
 		sbt = cpu_ts_calibrate_ ## op();\
-		curts = (sbt >> SBT_SHIFT);\
-		*DPCPU_PTR(pcputslast) = sbt;\
+		*DPCPU_PTR(pcputslast) = cursbt = sbt;\
 		critical_exit();\
-		return (curts);\
+		return (cursbt);\
 	}\
 	cursbt = sbt + sbt_delta;\
 	*tsclast = curtsc;\
-	curts = max(cursbt >> SBT_SHIFT, tslast);\
-	*DPCPU_PTR(pcputslast) = curts;\
+	cursbt = max(cursbt , tslast);\
+	*DPCPU_PTR(pcputslast) = cursbt;\
 	critical_exit();\
 \
-	return (curts);\
+	return (cursbt);\
 }
 
 

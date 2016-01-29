@@ -1330,9 +1330,9 @@ tcp_fill_info(struct tcpcb *tp, struct tcp_info *ti)
 	}
 
 	ti->tcpi_rto = tp->t_rxtcur * tick;
-	ti->tcpi_last_data_recv = (long)((tcp_ts_getsbintime() - (int)tp->t_rcvtime)/tick_sbt) * tick;
-	ti->tcpi_rtt = ((u_int64_t)tp->t_srtt * tick) >> TCP_RTT_SHIFT;
-	ti->tcpi_rttvar = ((u_int64_t)tp->t_rttvar * tick) >> TCP_RTTVAR_SHIFT;
+	ti->tcpi_last_data_recv = (long)((tcp_ts_getsbintime() - tp->t_rcvtime)/tick_sbt) * tick;
+	ti->tcpi_rtt = ((u_int64_t)(tp->t_srtt/tick_sbt) * tick);
+	ti->tcpi_rttvar = ((u_int64_t)(tp->t_rttvar/tick_sbt) * tick);
 
 	ti->tcpi_snd_ssthresh = tp->snd_ssthresh;
 	ti->tcpi_snd_cwnd = tp->snd_cwnd;
@@ -2238,7 +2238,7 @@ db_print_tcpcb(struct tcpcb *tp, const char *name, int indent)
 	    tp->t_maxopd, tp->t_rcvtime, tp->t_starttime);
 
 	db_print_indent(indent);
-	db_printf("t_rttime: %u   t_rtsq: 0x%08x\n",
+	db_printf("t_rttime: %zu   t_rtsq: 0x%08x\n",
 	    tp->t_rtttime, tp->t_rtseq);
 
 	db_print_indent(indent);

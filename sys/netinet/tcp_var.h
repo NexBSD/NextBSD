@@ -182,19 +182,19 @@ struct tcpcb {
 
 	u_int	t_maxopd;		/* mss plus options */
 
-	sbintime_t	t_rcvtime;		/* inactivity time in sbintime */
+	sbintime_t	t_rcvtime;		/* inactivity time */
 	sbintime_t	t_starttime;		/* time connection was established */
 	sbintime_t	t_tsval_last;
-	u_int	t_rtttime;		/* RTT measurement start time */
+	sbintime_t	t_rtttime;		/* RTT measurement start time */
 	tcp_seq	t_rtseq;		/* sequence number being timed */
 
 	u_int	t_bw_spare1;		/* unused */
 	tcp_seq	t_bw_spare2;		/* unused */
 
-	sbintime_t t_rxtcur;		/* current retransmit value in sbintime */
+	sbintime_t t_rxtcur;		/* current retransmit value */
 	u_int	t_maxseg;		/* maximum segment size */
-	uint64_t	t_srtt;			/* smoothed round-trip time */
-	uint64_t	t_rttvar;		/* variance in round-trip time */
+	sbintime_t	t_srtt;		/* smoothed round-trip time */
+	sbintime_t	t_rttvar;	/* variance in round-trip time */
 	u_int	t_pmtud_saved_maxseg;	/* pre-blackhole MSS */
 
 	int	t_rxtshift;		/* log(2) of rexmt exp. backoff */
@@ -254,7 +254,7 @@ struct tcpcb {
 	u_int	t_tsomaxsegcount;	/* TSO maximum segment count */
 	u_int	t_tsomaxsegsize;	/* TSO maximum segment size in bytes */
 	u_int	t_flags2;		/* More tcpcb flags storage */
-	sbintime_t	t_delack;		/* delayed ack timer in sbintime */
+	sbintime_t	t_delack;		/* delayed ack timer */
 
 #if defined(_KERNEL) && defined(TCP_RFC7413)
 	uint32_t t_ispare[6];		/* 5 UTO, 1 TBD */
@@ -361,6 +361,10 @@ struct tcpcb {
 #define	TF2_PLPMTU_MAXSEGSNT	0x00000004 /* Last seg sent was full seg. */
 #define	TF2_ECN_ATTEMPT		0x00000008 /* Try ECN */
 #define	TF2_ECN_DCTCP		0x00000010 /* Mark ECT for _all_ DCTCP */
+#define	TF2_NO_DELACK_RXT	0x00000020 /* don't account for delack in bad
+					    * retransmit accounting
+					   */
+
 
 /*
  * Structure to hold TCP options that are only used during segment
@@ -453,11 +457,10 @@ struct tcptw {
  * and thus an "ALPHA" of 0.875.  rttvar has 13 bits to the right of the
  * binary point, and is smoothed with an ALPHA of 0.75.
  */
-#define	TCP_RTT_SCALE		(1<<16)	/* multiplier for srtt; 14 bits frac. */
-#define	TCP_RTT_SHIFT		16	/* shift for srtt; 14 bits frac. */
-#define	TCP_RTTVAR_SCALE	(1<<15)	/* multiplier for rttvar; 2 bits */
-#define	TCP_RTTVAR_SHIFT	15	/* shift for rttvar; 2 bits */
-#define	TCP_DELTA_SHIFT		13	/* see tcp_input.c */
+#define	TCP_RTT_SCALE		8	/* multiplier for srtt; 3 bits frac. */
+#define	TCP_RTT_SHIFT		3	/* shift for srtt; 14 bits frac. */
+#define	TCP_RTTVAR_SCALE	4	/* multiplier for rttvar; 2 bits */
+#define	TCP_RTTVAR_SHIFT	2	/* shift for rttvar; 2 bits */
 
 /*
  * The initial retransmission should happen at rtt + 4 * rttvar.
@@ -475,9 +478,7 @@ struct tcptw {
  * which results in inappropriately large RTO values for very
  * fast networks.
  */
-#define	TCP_REXMTVAL(tp)						\
-	TCP_TS_TO_SBT(max((tp)->t_rttmin, (((tp)->t_srtt >> (TCP_RTT_SHIFT - TCP_DELTA_SHIFT)) \
-			      + (tp)->t_rttvar) >> TCP_DELTA_SHIFT))
+#define	TCP_REXMTVAL(tp) max((tp)->t_rttmin, (tp)->t_srtt + ((tp)->t_rttvar << 2))
 
 /*
  * TCP statistics.

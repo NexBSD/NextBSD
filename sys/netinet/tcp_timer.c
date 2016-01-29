@@ -353,7 +353,7 @@ tcp_timer_2msl(void *xtp)
 		TCPSTAT_INC(tcps_finwait2_drops);
 		tp = tcp_close(tp);             
 	} else {
-		if (TCP_TS_TO_SBT(tcp_ts_getsbintime()) - tp->t_rcvtime <= TP_MAXIDLE(tp)) {
+		if (tcp_ts_getsbintime() - tp->t_rcvtime <= TP_MAXIDLE(tp)) {
 			if (!callout_reset(&tp->t_timers->tt_2msl,
 			   TP_KEEPINTVL(tp), tcp_timer_2msl, tp)) {
 				tp->t_timers->tt_flags &= ~TT_2MSL_RST;
@@ -418,7 +418,7 @@ tcp_timer_keep(void *xtp)
 		goto dropit;
 	if ((always_keepalive || inp->inp_socket->so_options & SO_KEEPALIVE) &&
 	    tp->t_state <= TCPS_CLOSING) {
-		if (TCP_TS_TO_SBT(tcp_ts_getsbintime()) - tp->t_rcvtime >= TP_KEEPIDLE(tp) + TP_MAXIDLE(tp))
+		if (tcp_ts_getsbintime() - tp->t_rcvtime >= TP_KEEPIDLE(tp) + TP_MAXIDLE(tp))
 			goto dropit;
 		/*
 		 * Send a packet designed to force a response
@@ -536,7 +536,7 @@ tcp_timer_persist(void *xtp)
 	 * connection after a much reduced timeout.
 	 */
 	if (tp->t_state > TCPS_CLOSE_WAIT &&
-	    TCP_TS_TO_SBT(t) - tp->t_rcvtime >= TCPTV_PERSMAX*tick_sbt) {
+	    t - tp->t_rcvtime >= TCPTV_PERSMAX*tick_sbt) {
 		TCPSTAT_INC(tcps_persistdrop);
 		tp = tcp_drop(tp, ETIMEDOUT);
 		goto out;
@@ -638,9 +638,15 @@ tcp_timer_rexmt(void * xtp)
 			tp->t_flags |= TF_WASCRECOVERY;
 		else
 			tp->t_flags &= ~TF_WASCRECOVERY;
-		tp->t_badrxtwin = tcp_ts_getsbintime() + (tp->t_srtt >> (TCP_RTT_SHIFT + 1));
+		tp->t_badrxtwin = tcp_ts_getsbintime() + tp->t_rxtcur;
+		/*
+		 * unless explicitly disabled we need to assume that the peer may
+		 * be disabling ACKs up to 100ms
+		 */
+		if (!(tp->t_flags2 & TF2_NO_DELACK_RXT))
+			tp->t_badrxtwin = max(tp->t_badrxtwin, 100*SBT_1MS + tp->t_rxtcur);
 		tp->t_flags |= TF_PREVVALID;
-	} else
+	} else if (tp->t_flags2 & TF2_NO_DELACK_RXT || (tp->t_rxtcur > 60*SBT_1MS) )
 		tp->t_flags &= ~TF_PREVVALID;
 	TCPSTAT_INC(tcps_rexmttimeo);
 	if ((tp->t_state == TCPS_SYN_SENT) ||
@@ -649,7 +655,7 @@ tcp_timer_rexmt(void * xtp)
 	else
 		rexmt = TCP_REXMTVAL(tp) * tcp_backoff[tp->t_rxtshift];
 	TCPT_RANGESET(tp->t_rxtcur, rexmt,
-		      TCP_TS_TO_SBT(tp->t_rttmin), TCPTV_REXMTMAX*tick_sbt);
+		      tp->t_rttmin, TCPTV_REXMTMAX*tick_sbt);
 	/*  1 < delack < tcp_delacktime - and should scale down with RTO/2 */
 	TCPT_RANGESET(tp->t_delack, (rexmt >> 1), 1, tcp_delacktime*tick_sbt);
 
@@ -775,7 +781,9 @@ tcp_timer_rexmt(void * xtp)
 	 * move the current srtt into rttvar to keep the current
 	 * retransmit times until then.
 	 */
-	if (tp->t_rxtshift > TCP_MAXRXTSHIFT / 4) {
+	if (tp->t_rxtshift > TCP_MAXRXTSHIFT / 4 &&
+	    (tp->t_rxtcur*tcp_backoff[tp->t_rxtshift] > 100*SBT_1MS ||
+	     (tp->t_flags2 & TF2_NO_DELACK_RXT))) {
 #ifdef INET6
 		if ((tp->t_inpcb->inp_vflag & INP_IPV6) != 0)
 			in6_losing(tp->t_inpcb);
