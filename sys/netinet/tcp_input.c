@@ -1548,7 +1548,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	tp->t_rcvtime = t;
 	if (TCPS_HAVEESTABLISHED(tp->t_state))
-		tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp)*tick_sbt);
+		tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp));
 
 	/*
 	 * Scale up the window into a 32-bit value.
@@ -1598,7 +1598,6 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * was established.
 	 */
 	if ((to.to_flags & TOF_TS) && (to.to_tsecr != 0)) {
-		to.to_tsecr -= tp->ts_offset;
 		if (TSTMP_GT(to.to_tsecr, TCP_SBT_TO_TS(t)))
 			to.to_tsecr = 0;
 	}
@@ -2055,7 +2054,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				    mtod(m, const char *), tp, th);
 				cc_conn_init(tp);
 				tcp_timer_activate(tp, TT_KEEP,
-				    TP_KEEPIDLE(tp)*tick_sbt);
+				    TP_KEEPIDLE(tp));
 			}
 		} else {
 			/*
