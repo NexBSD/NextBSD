@@ -108,14 +108,13 @@
  * networks faster then a modem that has minor (e.g. 1%) packet loss.
  */
 #define	TCPTV_MIN	( 3 )			/* minimum allowable value - see above */
-#define TCPTV_CPU_VAR	( hz/5 )		/* cpu variance allowed (200ms) */
 #define	TCPTV_REXMTMAX	( 64*hz)		/* max allowable REXMT value */
 
 #define TCPTV_TWTRUNC	8			/* RTO factor to truncate TW */
 
 #define	TCP_LINGERTIME	120			/* linger at most 2 minutes */
 
-#define	TCP_MAXRXTSHIFT	12			/* maximum retransmits */
+#define	TCP_MAXRXTSHIFT	16			/* maximum retransmits */
 
 #define	TCPTV_DELACK	( hz/25 )		/* 40ms timeout */
 
