@@ -80,10 +80,10 @@
 #define	TCPTV_PERSMIN	(  5*hz)		/* retransmit persistence */
 #define	TCPTV_PERSMAX	( 60*hz)		/* maximum persist interval */
 
-#define	TCPTV_KEEP_INIT	( 75*hz)		/* initial connect keepalive */
-#define	TCPTV_KEEP_IDLE	(120*60*hz)		/* dflt time before probing */
-#define	TCPTV_KEEPINTVL	( 75*hz)		/* default probe interval */
-#define	TCPTV_KEEPCNT	8			/* max probes before drop */
+#define	TCPTV_KEEP_INIT	( 5*hz)			/* initial connect keepalive */
+#define	TCPTV_KEEP_IDLE	( 5*hz)			/* dflt time before probing */
+#define	TCPTV_KEEPINTVL	( 5*hz)			/* default probe interval */
+#define	TCPTV_KEEPCNT	7*24*720		/* max probes before drop - one week*/
 
 #define TCPTV_FINWAIT2_TIMEOUT (60*hz)         /* FIN_WAIT_2 timeout if no receiver */
 
@@ -166,12 +166,12 @@ struct tcp_timer {
 
 #define TT_STOPPED	0x00010000
 
-#define	TP_KEEPINTVL(tp) ((tp)->t_keepintvl ? (tp)->t_keepintvl : tcp_keepintvl)
 #define	TP_KEEPCNT(tp)	((tp)->t_keepcnt ? (tp)->t_keepcnt : tcp_keepcnt)
 
+#define	TP_KEEPINTVL(tp) (((tp)->t_keepintvl ? (tp)->t_keepintvl : tcp_keepintvl)*tick_sbt)
 #define	TP_KEEPINIT(tp)	(((tp)->t_keepinit ? (tp)->t_keepinit : tcp_keepinit)*tick_sbt)
 #define	TP_KEEPIDLE(tp)	(((tp)->t_keepidle ? (tp)->t_keepidle : tcp_keepidle)*tick_sbt)
-#define	TP_MAXIDLE(tp)	((TP_KEEPCNT(tp) * TP_KEEPINTVL(tp))*tick_sbt)
+#define	TP_MAXIDLE(tp)	((TP_KEEPCNT(tp) * TP_KEEPINTVL(tp)))
 
 extern int tcp_keepinit;		/* time to establish connection */
 extern int tcp_keepidle;		/* time before keepalive probes begin */
