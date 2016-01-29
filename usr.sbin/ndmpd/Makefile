@@ -56,6 +56,7 @@ CFLAGS+= -I${.CURDIR}/../../sys/cddl/contrib/opensolaris/uts/common
 CFLAGS+= -I${.CURDIR}/../../sys/cddl/contrib/opensolaris/uts/common/sys
 CFLAGS+= -I${.CURDIR}/../../sys/cddl/contrib/opensolaris/common/zfs
 CFLAGS+= -I${.CURDIR}/../../cddl/contrib/opensolaris/head
+CFLAGS+= -I${.CURDIR}/../../contrib/libucl/include
 
 CFLAGS+= -I${.CURDIR}/../../sys/
 CFLAGS+= -I${SOL_SYS_COMPAT} -I${SOL_COMPAT}
@@ -64,7 +65,7 @@ CFLAGS+= -I${SOL_LIB}/libnvpair -I${SOL_LIB}/libzfs/common
 CFLAGS+= -I${SOL_UTS} -I${SOL_ZFS}
 CFLAGS+= -I${SMDIR}/../../libndmp/common
 CFLAGS+= -I/usr/local/include
-CFLAGS+= -L${.CURDIR}/../../lib/libndmp -L/usr/local/lib
+CFLAGS+= -L${.CURDIR}/../../lib/libndmp -L/usr/lib -L/usr/local/lib
 
 .if ${MK_INET6_SUPPORT} != "no"
 CFLAGS+= -DNETINET6
@@ -72,7 +73,7 @@ CFLAGS+= -DNETINET6
 
 WARNS?=	1
 
-LIBADD+= nvpair util geom bsm zfs zpool md pthread ndmp jansson
+LIBADD+= nvpair util geom bsm zfs zpool md pthread ndmp ucl
 MAN=
 
 .include <bsd.prog.mk>

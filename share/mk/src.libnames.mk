@@ -22,7 +22,6 @@ _PRIVATELIBS=	\
 		ldns \
 		sqlite3 \
 		ssh \
-		ucl \
 		unbound
 
 _INTERNALLIBS=	\
@@ -160,6 +159,7 @@ _LIBRARIES=	\
 		tacplus \
 		termcap \
 		termcapw \
+		ucl \
 		ufs \
 		ugidfw \
 		ulog \

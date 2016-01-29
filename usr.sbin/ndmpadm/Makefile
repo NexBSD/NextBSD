@@ -20,11 +20,13 @@ CFLAGS+= -I${.CURDIR}/../../cddl/contrib/opensolaris/lib/libnvpair
 CFLAGS+= -I${.CURDIR}/../../sys/cddl/contrib/opensolaris/uts/common
 CFLAGS+= -I${.CURDIR}/../../sys/cddl/compat/opensolaris
 CFLAGS+= -L${.CURDIR}/../../lib/libndmp
+CFLAGS+= -I${.CURDIR}/../../contrib/libucl/include
+CFLAGS+= -L/usr/lib
 CFLAGS+= -L/usr/local/lib
 
 WARNS?= 1
 
-LIBADD+= pthread ndmp jansson intl
+LIBADD+= pthread ndmp intl ucl
 MAN=
 
 .include <bsd.prog.mk>

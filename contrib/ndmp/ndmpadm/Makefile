@@ -44,7 +44,7 @@ SRCS =		$(OBJS:.o=.c)
 POFILES=	ndmpadm_main.po	ndmpadm_print.po
 POFILE=		ndmpadm.po
 
-LDLIBS += -lndmp
+LDLIBS += -lndmp -lucl
 
 CERRWARN += -_gcc=-Wno-uninitialized
 
