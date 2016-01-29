@@ -52,8 +52,6 @@ SUBDIR=	adduser \
 	mptutil \
 	mtest \
 	newsyslog \
-	ndmpadm \
-	ndmpd \
 	nfscbd \
 	nfsd \
 	nfsdumpstate \
