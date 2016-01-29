@@ -42,8 +42,7 @@
 
 #include <rpc/types.h>
 #include <libnvpair.h>
-
-#include <jansson.h>
+#include <ucl.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -63,17 +62,17 @@ extern int ndmp_errno;
 /* NDMP plugin module API */
 #define	NDMP_PLUGIN_VERSION	1
 
-typedef struct json_door_arg {
+typedef struct ucl_door_arg {
 	caddr_t data_ptr;
 	uint32_t data_size;
 	caddr_t rbuf;
 	uint32_t rsize;
-} json_door_arg_t;
+} ucl_door_arg_t;
 
-int json_door_open(int port);
-int json_door_call(int fd, json_door_arg_t *arg);
-int json_door_create(void (*server_procedure) (char *argp, size_t arg_size), int port);
-int json_door_return(caddr_t buf, int size, void *, int);
+int ucl_door_open(int port);
+int ucl_door_call(int fd, ucl_door_arg_t *arg);
+int ucl_door_create(void (*server_procedure) (char *argp, size_t arg_size), int port);
+int ucl_door_return(caddr_t buf, int size, void *, int);
 #define NDMP_DOOR_PORT 1337
 
 typedef struct ndmp_context {
@@ -345,7 +344,7 @@ typedef struct ndmp_stat {
 
 /* Common encode/decode functions used by door clients/servers.  */
 typedef struct ndmp_door_ctx {
-	json_t *root;
+	ucl_type_t *root;
 	char *ptr;
 	int count;
 	int idx;

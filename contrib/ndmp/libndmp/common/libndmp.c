@@ -49,7 +49,7 @@ static int ndmp_door_fildes = -1;
 static char *buf;
 static ndmp_door_ctx_t *dec_ctx;
 static ndmp_door_ctx_t *enc_ctx;
-static json_door_arg_t arg;
+static ucl_door_arg_t arg;
 static mutex_t ndmp_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int ndmp_door_setup(int opcode);
@@ -428,7 +428,7 @@ ndmp_door_setup(int opcode)
 {
 	/* Open channel to NDMP service */
 	if ((ndmp_door_fildes == -1) &&
-	    (ndmp_door_fildes = json_door_open(NDMP_DOOR_PORT)) < 0) {
+	    (ndmp_door_fildes = ucl_door_open(NDMP_DOOR_PORT)) < 0) {
 		ndmp_errno = ENDMP_DOOR_OPEN;
 		return (-1);
 	}
@@ -466,7 +466,7 @@ ndmp_door_call(void)
 	arg.rbuf = buf;
 	arg.rsize = NDMP_DOOR_SIZE;
 
-	if (json_door_call(ndmp_door_fildes, &arg) < 0) {
+	if (ucl_door_call(ndmp_door_fildes, &arg) < 0) {
 		free(buf);
 		ndmp_errno = ENDMP_DOOR_SRV_TIMEOUT;
 		(void) close(ndmp_door_fildes);

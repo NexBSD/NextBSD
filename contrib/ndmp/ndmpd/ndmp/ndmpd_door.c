@@ -102,7 +102,7 @@ ndmp_door_init(void)
 		return (-1);
 	}
 #endif
-	if (json_door_create(ndmp_door_server, NDMP_DOOR_PORT) != 0)
+	if (ucl_door_create(ndmp_door_server, NDMP_DOOR_PORT) != 0)
 		return (errno);
 
 	NDMP_LOG(LOG_DEBUG, "ndmp_door_init: Door server successfully started");
@@ -245,7 +245,7 @@ ndmp_door_server(char *ptr, size_t size)
 	if ((enc_status = ndmp_door_encode_finish(enc_ctx, &used)) != 0)
 		goto encode_error;
 
-	(void) json_door_return(buf, used, NULL, 0);
+	(void) ucl_door_return(buf, used, NULL, 0);
 
 	return;
 
@@ -253,7 +253,7 @@ decode_error:
 	ndmp_door_put_int32(enc_ctx, NDMP_DOOR_SRV_ERROR);
 	ndmp_door_put_uint32(enc_ctx, dec_status);
 	(void) ndmp_door_encode_finish(enc_ctx, &used);
-	(void) json_door_return(buf, used, NULL, 0);
+	(void) ucl_door_return(buf, used, NULL, 0);
 	return;
 
 encode_error:
@@ -261,5 +261,5 @@ encode_error:
 	ndmp_door_put_int32(enc_ctx, NDMP_DOOR_SRV_ERROR);
 	ndmp_door_put_uint32(enc_ctx, enc_status);
 	(void) ndmp_door_encode_finish(enc_ctx, &used);
-	(void) json_door_return(buf, used, NULL, 0);
+	(void) ucl_door_return(buf, used, NULL, 0);
 }

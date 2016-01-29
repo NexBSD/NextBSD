@@ -41,7 +41,7 @@
  * Provides encode/decode routines for all door servers/clients.
  */
 
-#include <jansson.h>
+#include <ucl.h>
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -57,11 +57,11 @@
 
 
 static int
-ndmp_json_dump_callback(const char *buf __unused, size_t size, void *data)
+ndmp_ucl_dump_callback(const char *buf __unused, size_t size, void *data)
 {
 	int len = *(int *)data;
 
-	printf ("adding %zu to json dump \n", size);
+	printf ("adding %zu to ucl dump \n", size);
 	*(int *)data = len + size;
 	return (0);
 }
@@ -70,13 +70,13 @@ ndmp_door_ctx_t *
 ndmp_door_decode_start(char *ptr, int size)
 {
 	ndmp_door_ctx_t *ctx = malloc(sizeof (ndmp_door_ctx_t));
-	json_error_t error;
+	ucl_error_t error;
 
 	if (ctx) {
 		ctx->idx = 0;
 		ctx->ptr = ptr;
-		ctx->root = json_loadb(ptr, size, 0, &error);
-		ctx->count = json_array_size(ctx->root);
+		ctx->root = ucl_loadb(ptr, size, 0, &error);
+		ctx->count = ucl_array_size(ctx->root);
 		ctx->status = 0;
 	}
 	return (ctx);
@@ -98,7 +98,7 @@ ndmp_door_encode_start(char *buf, int len)
 {
 	ndmp_door_ctx_t *ctx = malloc(sizeof (ndmp_door_ctx_t));
 	if (ctx) {
-		if ((ctx->root = json_array()) == NULL) {
+		if ((ctx->root = ucl_array()) == NULL) {
 			free(ctx);
 			return (NULL);
 		}
@@ -120,13 +120,13 @@ ndmp_door_encode_finish(ndmp_door_ctx_t *ctx, unsigned int *used)
 	 * XXX we need a _working_ means of determing the length of
 	 * the string returned without calling strlen
 	 */
-	json_dump_callback(ctx->root, ndmp_json_dump_callback, used, 0);
+	ucl_dump_callback(ctx->root, ndmp_ucl_dump_callback, used, 0);
 #endif
-	ptr = json_dumps(ctx->root, 0);
+	ptr = ucl_dumps(ctx->root, 0);
 	*used = strlen(ptr);
 	memcpy(ctx->ptr, ptr, *used);
 	free(ptr);
-	json_decref(ctx->root);
+	ucl_decref(ctx->root);
 	free(ctx);
 	return (status);
 }
@@ -135,12 +135,12 @@ int32_t
 ndmp_door_get_int32(ndmp_door_ctx_t *ctx)
 {
 	int32_t num = 0;
-	json_t *data;
+	ucl_type_t *data;
 
 	if (ctx->status == 0) {
-		data = json_array_get(ctx->root, ctx->idx);
+		data = ucl_array_get(ctx->root, ctx->idx);
 		ctx->idx++;
-		num = (int32_t)json_integer_value(data);
+		num = (int32_t)ucl_integer_value(data);
 	}
 	return (num);
 }
@@ -154,7 +154,7 @@ ndmp_door_get_uint32(ndmp_door_ctx_t *ctx)
 char *
 ndmp_door_get_string(ndmp_door_ctx_t *ctx)
 {
-	json_t *data;
+	ucl_type_t *data;
 	char *buf = NULL;
 	const char *str;
 	int len = ndmp_door_get_int32(ctx);
@@ -165,9 +165,9 @@ ndmp_door_get_string(ndmp_door_ctx_t *ctx)
 
 		buf = malloc(len +1);
 		if (buf) {
-			data = json_array_get(ctx->root, ctx->idx);
+			data = ucl_array_get(ctx->root, ctx->idx);
 			ctx->idx++;
-			str = json_string_value(data);
+			str = ucl_string_value(data);
 			if (len == 0) {
 				(void) strcpy(buf, "");
 			} else {
@@ -184,11 +184,11 @@ ndmp_door_get_string(ndmp_door_ctx_t *ctx)
 void
 ndmp_door_put_int32(ndmp_door_ctx_t *ctx, int32_t num)
 {
-	json_t *data;
+	ucl_type_t *data;
 
 	if (ctx->status == 0) {
-		data = json_integer(num);
-		json_array_append(ctx->root, data);
+		data = ucl_integer(num);
+		ucl_array_append(ctx->root, data);
 		ctx->count++;
 	}
 }
@@ -203,7 +203,7 @@ void
 ndmp_door_put_string(ndmp_door_ctx_t *ctx, char *buf)
 {
 	int len;
-	json_t *data;
+	ucl_type_t *data;
 
 	if (!buf)
 		len = -1;
@@ -213,10 +213,10 @@ ndmp_door_put_string(ndmp_door_ctx_t *ctx, char *buf)
 	if (ctx->status == 0) {
 		ndmp_door_put_int32(ctx, len);
 		if (buf)
-			data = json_string(buf);
+			data = ucl_string(buf);
 		else
-			data = json_string("");
-		json_array_append(ctx->root, data);
+			data = ucl_string("");
+		ucl_array_append(ctx->root, data);
 		ctx->count++;
 	}
 }
@@ -231,12 +231,12 @@ int64_t
 ndmp_door_get_int64(ndmp_door_ctx_t *ctx)
 {
 	int64_t num = 0;
-	json_t *data;
+	ucl_type_t *data;
 
 	if (ctx->status == 0) {
-		data = json_array_get(ctx->root, ctx->idx);
+		data = ucl_array_get(ctx->root, ctx->idx);
 		ctx->idx++;
-		num = (int64_t)json_integer_value(data);
+		num = (int64_t)ucl_integer_value(data);
 	}
 	return (num);
 }
@@ -251,11 +251,11 @@ ndmp_door_get_uint64(ndmp_door_ctx_t *ctx)
 static void
 ndmp_door_put_int64(ndmp_door_ctx_t *ctx, int64_t num)
 {
-	json_t *data;
+	ucl_type_t *data;
 
 	if (ctx->status == 0) {
-		data = json_integer(num);
-		json_array_append(ctx->root, data);
+		data = ucl_integer(num);
+		ucl_array_append(ctx->root, data);
 		ctx->count++;
 	}
 }
@@ -269,11 +269,11 @@ ndmp_door_put_uint64(ndmp_door_ctx_t *ctx, uint64_t num)
 void
 ndmp_door_put_short(ndmp_door_ctx_t *ctx, short num)
 {
-	json_t *data;
+	ucl_type_t *data;
 
 	if (ctx->status == 0) {
-		data = json_integer(num);
-		json_array_append(ctx->root, data);
+		data = ucl_integer(num);
+		ucl_array_append(ctx->root, data);
 		ctx->count++;
 	}
 }
@@ -300,12 +300,12 @@ ndmp_door_get_ushort(ndmp_door_ctx_t *ctx)
 void
 ndmp_door_put_buf(ndmp_door_ctx_t *ctx, unsigned char *start, int len)
 {
-	json_t *data;
+	ucl_type_t *data;
 
 	ndmp_door_put_int32(ctx, len);
 	if (ctx->status == 0) {
-		data = json_string_nocheck(start);
-		json_array_append(ctx->root, data);
+		data = ucl_string_nocheck(start);
+		ucl_array_append(ctx->root, data);
 		ctx->count++;
 	}
 }
@@ -314,7 +314,7 @@ int
 ndmp_door_get_buf(ndmp_door_ctx_t *ctx, unsigned char *buf, int bufsize)
 {
 	int rc, len = -1;
-	json_t *data;
+	ucl_type_t *data;
 
 	if (!buf)
 		return (-1);
@@ -325,9 +325,9 @@ ndmp_door_get_buf(ndmp_door_ctx_t *ctx, unsigned char *buf, int bufsize)
 			ctx->status = ENOSPC;
 			return (-2);
 		}
-		data = json_array_get(ctx->root, ctx->idx);
+		data = ucl_array_get(ctx->root, ctx->idx);
 		ctx->idx++;
-		rc = json_string_setn_nocheck(data, buf, bufsize);
+		rc = ucl_string_setn_nocheck(data, buf, bufsize);
 
 	}
 
@@ -337,7 +337,7 @@ ndmp_door_get_buf(ndmp_door_ctx_t *ctx, unsigned char *buf, int bufsize)
 __thread int doorfd;
 
 int
-json_door_call(int fd, json_door_arg_t *arg)
+ucl_door_call(int fd, ucl_door_arg_t *arg)
 {
 	int rc;
 
@@ -352,13 +352,13 @@ json_door_call(int fd, json_door_arg_t *arg)
 }
 
 int
-json_door_return(caddr_t buf, int size, void *arg0 __unused, int arg1 __unused)
+ucl_door_return(caddr_t buf, int size, void *arg0 __unused, int arg1 __unused)
 {
 
 	return (write(doorfd, buf, size));
 }
 
-struct json_door_request_arg {
+struct ucl_door_request_arg {
 	int fd;
 	size_t size;
 	void (*func)(char *, size_t);
@@ -366,15 +366,15 @@ struct json_door_request_arg {
 	char buf[NDMP_DOOR_SIZE];
 };
 
-struct json_door_server_arg {
+struct ucl_door_server_arg {
 	int fd;
 	void (*func)(char *, size_t);
 };
 
 static void *
-json_door_request(void *arg)
+ucl_door_request(void *arg)
 {
-	struct json_door_request_arg *jdra = arg;
+	struct ucl_door_request_arg *jdra = arg;
 
 	doorfd = jdra->fd;
 	while (1) {
@@ -389,29 +389,29 @@ json_door_request(void *arg)
 }
 
 static void *
-json_door_server(void *arg)
+ucl_door_server(void *arg)
 {
 	int newfd, fd;
 	pthread_t thread;
-	struct json_door_server_arg *jdsa = arg;
-	struct json_door_request_arg *jdra;
+	struct ucl_door_server_arg *jdsa = arg;
+	struct ucl_door_request_arg *jdra;
 	fd = jdsa->fd;
 
 	listen(fd, -1);
 	while ((newfd = accept(fd, NULL, 0)) > 0) {
-		if ((jdra = malloc(sizeof(struct json_door_request_arg))) == NULL)
-			perror("json_door_server failed to allocate request");
+		if ((jdra = malloc(sizeof(struct ucl_door_request_arg))) == NULL)
+			perror("ucl_door_server failed to allocate request");
 		jdra->fd = newfd;
 		jdra->func = jdsa->func;
 		jdra->ptr = jdra->buf;
-		if (pthread_create(&thread, NULL, json_door_request, jdra))
-			perror("json_door_server failed to create a thread:\n");
+		if (pthread_create(&thread, NULL, ucl_door_request, jdra))
+			perror("ucl_door_server failed to create a thread:\n");
 	}
 	return (NULL);
 }
 
 int
-json_door_open(int port)
+ucl_door_open(int port)
 {
 	int fd;
 	struct sockaddr_in lsin;
@@ -427,11 +427,11 @@ json_door_open(int port)
 }
 
 int
-json_door_create(void (*server_procedure) (char *argp, size_t arg_size), int port)
+ucl_door_create(void (*server_procedure) (char *argp, size_t arg_size), int port)
 {
 	int fd, rc;
 	struct sockaddr_in lsin;
-	struct json_door_server_arg *jdsa;
+	struct ucl_door_server_arg *jdsa;
 	pthread_t thread;
 
 	jdsa = malloc(sizeof(*jdsa));
@@ -451,7 +451,7 @@ json_door_create(void (*server_procedure) (char *argp, size_t arg_size), int por
 	}
 	jdsa->fd = fd;
 	jdsa->func = server_procedure;
-	rc = pthread_create(&thread, NULL, json_door_server, jdsa);
+	rc = pthread_create(&thread, NULL, ucl_door_server, jdsa);
 	if (rc)
 		printf("pthread_create failed %s\n", strerror(rc));
 	return (rc);
