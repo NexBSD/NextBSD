@@ -202,12 +202,13 @@ tcp_output(struct tcpcb *tp)
 #ifdef IPSEC
 	unsigned ipsec_optlen = 0;
 #endif
-	int idle, sendalot;
+	int idle, sendalot, needeven;
 	int sack_rxmit, sack_bytes_rxmt;
 	struct sackhole *p;
 	int tso, mtu;
 	struct tcpopt to;
 	sbintime_t t;
+	int sendcount;
 #if 0
 	int maxburst = TCP_MAXBURST;
 #endif
@@ -218,7 +219,7 @@ tcp_output(struct tcpcb *tp)
 	isipv6 = (inp->inp_vflag & INP_IPV6) != 0;
 #endif
 
-	t = tcp_ts_getsbintime();
+
 	INP_WLOCK_ASSERT(inp);
 
 #ifdef TCP_OFFLOAD
@@ -237,6 +238,9 @@ tcp_output(struct tcpcb *tp)
 	    (tp->snd_nxt != tp->snd_una))          /* not a retransmit */
 		return (0);
 #endif
+	t = tcp_ts_getsbintime();
+	needeven = tp->t_srtt < 100*SBT_1MS && (tp->snd_max == tp->snd_una);
+	sendcount = 0;
 	/*
 	 * Determine length of data that should be transmitted,
 	 * and flags that will be used.
@@ -254,6 +258,7 @@ tcp_output(struct tcpcb *tp)
 		}
 	}
 again:
+	t = tcp_ts_getsbintime();
 	/*
 	 * If we've recently taken a timeout, snd_max will be greater than
 	 * snd_nxt.  There may be SACK information that allows us to avoid
@@ -803,9 +808,7 @@ send:
 		/* Timestamps. */
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
-			tp->t_tsval_last = max(t,
-					       tp->t_tsval_last + MIN_TS_STEP*SBT_MINTS);
-			to.to_tsval = ((uint32_t)TCP_SBT_TO_TS(tp->t_tsval_last)) + tp->ts_offset;
+			tp->t_tslast = to.to_tsval = TCP_SBT_TO_TS(t);
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
 			/* Set receive buffer autosizing timestamp. */
@@ -1021,6 +1024,15 @@ send:
 		struct mbuf *mb;
 		u_int moff;
 
+		/*
+		 * We need to defeat delayed acks if our RTO is less than 100ms
+		 * so we split this last packet in to two
+		 */
+		if (needeven && sendalot == 0 && (off + len == sbused(&so->so_snd)) &&
+		    len > 1 && (sendcount & 1)) {
+			len = (len >> 2);
+			sendalot = 1;
+		}
 		if ((tp->t_flags & TF_FORCEDATA) && len == 1)
 			TCPSTAT_INC(tcps_sndprobe);
 		else if (SEQ_LT(tp->snd_nxt, tp->snd_max) || sack_rxmit) {
@@ -1400,7 +1412,7 @@ send:
 		error = ip6_output(m, inp->in6p_outputopts, &ro,
 		    ((so->so_options & SO_DONTROUTE) ?  IP_ROUTETOIF : 0),
 		    NULL, NULL, inp);
-
+		sendcount++;
 		if (error == EMSGSIZE && ro.ro_rt != NULL)
 			mtu = ro.ro_rt->rt_mtu;
 		if (inp->inp_prepend != ro.ro_prepend && ro.ro_prepend != NULL) {
@@ -1467,7 +1479,7 @@ send:
 	error = ip_output(m, inp->inp_options, &ro,
 	    ((so->so_options & SO_DONTROUTE) ? IP_ROUTETOIF : 0), 0,
 	    inp);
-
+	sendcount++;
 	if (inp->inp_prepend != ro.ro_prepend && ro.ro_prepend != NULL) {
 		if (inp->inp_prepend != NULL)
 			free(inp->inp_prepend, M_TEMP);
