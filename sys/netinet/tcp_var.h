@@ -184,8 +184,8 @@ struct tcpcb {
 
 	sbintime_t	t_rcvtime;		/* inactivity time */
 	sbintime_t	t_starttime;		/* time connection was established */
-	sbintime_t	t_tsval_last;
 	sbintime_t	t_rtttime;		/* RTT measurement start time */
+	uint32_t	t_tslast;
 	tcp_seq	t_rtseq;		/* sequence number being timed */
 
 	u_int	t_bw_spare1;		/* unused */
@@ -213,7 +213,6 @@ struct tcpcb {
 	u_char	request_r_scale;	/* pending window scaling */
 	u_int32_t  ts_recent;		/* timestamp echo data */
 	sbintime_t	ts_recent_age;		/* when last updated */
-	u_int32_t  ts_offset;		/* our timestamp offset */
 
 	tcp_seq	last_ack_sent;
 /* experimental */
@@ -436,7 +435,6 @@ struct tcptw {
 	u_short		tw_so_options;	/* copy of so_options */
 	struct ucred	*tw_cred;	/* user credentials */
 	u_int32_t	t_recent;
-	u_int32_t	ts_offset;	/* our timestamp offset */
 	sbintime_t	t_starttime;
 	int		tw_time;
 	TAILQ_ENTRY(tcptw) tw_2msl;

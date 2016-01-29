@@ -2268,8 +2268,8 @@ db_print_tcpcb(struct tcpcb *tp, const char *name, int indent)
 	    tp->ts_recent, tp->ts_recent_age);
 
 	db_print_indent(indent);
-	db_printf("ts_offset: %u   last_ack_sent: 0x%08x   snd_cwnd_prev: "
-	    "%lu\n", tp->ts_offset, tp->last_ack_sent, tp->snd_cwnd_prev);
+	db_printf("last_ack_sent: 0x%08x   snd_cwnd_prev: "
+	    "%lu\n", tp->last_ack_sent, tp->snd_cwnd_prev);
 
 	db_print_indent(indent);
 	db_printf("snd_ssthresh_prev: %lu   snd_recover_prev: 0x%08x   "

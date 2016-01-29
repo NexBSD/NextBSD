@@ -106,7 +106,7 @@
 /*
  * RFC defined MSL: 255s (+ 2s rounding slop)
  */
-#define TCP_PAWS_IDLE	(SBT_MINTS*SBT_1S)
+#define TCP_PAWS_IDLE	(SBT_MINTS*SBT_1S/2)
 
 #if defined(__amd64__) || defined(__i386__)
 #include <machine/clock.h>
