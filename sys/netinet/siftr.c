@@ -787,10 +787,10 @@ siftr_siftdata(struct pkt_node *pn, struct inpcb *inp, struct tcpcb *tp,
 	pn->rcv_scale = tp->rcv_scale;
 	pn->conn_state = tp->t_state;
 	pn->max_seg_size = tp->t_maxseg;
-	pn->smoothed_rtt = tp->t_srtt;
+	pn->smoothed_rtt = tp->t_srtt/SBT_1US;
 	pn->sack_enabled = (tp->t_flags & TF_SACK_PERMIT) != 0;
 	pn->flags = tp->t_flags;
-	pn->rxt_length = tp->t_rxtcur;
+	pn->rxt_length = tp->t_rxtcur/SBT_1US;
 	pn->snd_buf_hiwater = inp->inp_socket->so_snd.sb_hiwat;
 	pn->snd_buf_cc = sbused(&inp->inp_socket->so_snd);
 	pn->rcv_buf_hiwater = inp->inp_socket->so_rcv.sb_hiwat;
