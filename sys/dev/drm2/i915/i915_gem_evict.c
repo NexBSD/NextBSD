@@ -30,8 +30,9 @@
 __FBSDID("$FreeBSD$");
 
 #include <dev/drm2/drmP.h>
-#include <dev/drm2/i915/i915_drv.h>
+#include <dev/drm2/drm.h>
 #include <dev/drm2/i915/i915_drm.h>
+#include <dev/drm2/i915/i915_drv.h>
 
 static bool
 mark_free(struct drm_i915_gem_object *obj, struct list_head *unwind)
@@ -45,8 +46,7 @@ mark_free(struct drm_i915_gem_object *obj, struct list_head *unwind)
 
 int
 i915_gem_evict_something(struct drm_device *dev, int min_size,
-			 unsigned alignment, unsigned cache_level,
-			 bool mappable, bool nonblocking)
+			 unsigned alignment, bool mappable)
 {
 	drm_i915_private_t *dev_priv = dev->dev_private;
 	struct list_head eviction_list, unwind_list;
@@ -81,12 +81,11 @@ i915_gem_evict_something(struct drm_device *dev, int min_size,
 
 	INIT_LIST_HEAD(&unwind_list);
 	if (mappable)
-		drm_mm_init_scan_with_range(&dev_priv->mm.gtt_space,
-					    min_size, alignment, cache_level,
-					    0, dev_priv->mm.gtt_mappable_end);
+		drm_mm_init_scan_with_range(&dev_priv->mm.gtt_space, min_size,
+					    alignment, 0, 0,
+					    dev_priv->mm.gtt_mappable_end);
 	else
-		drm_mm_init_scan(&dev_priv->mm.gtt_space,
-				 min_size, alignment, cache_level);
+		drm_mm_init_scan(&dev_priv->mm.gtt_space, min_size, alignment, 0);
 
 	/* First see if there is a large enough contiguous idle region... */
 	list_for_each_entry(obj, &dev_priv->mm.inactive_list, mm_list) {
@@ -94,16 +93,29 @@ i915_gem_evict_something(struct drm_device *dev, int min_size,
 			goto found;
 	}
 
-	if (nonblocking)
-		goto none;
-
 	/* Now merge in the soon-to-be-expired objects... */
 	list_for_each_entry(obj, &dev_priv->mm.active_list, mm_list) {
+		/* Does the object require an outstanding flush? */
+		if (obj->base.write_domain)
+			continue;
+
 		if (mark_free(obj, &unwind_list))
 			goto found;
 	}
 
-none:
+	/* Finally add anything with a pending flush (in order of retirement) */
+	list_for_each_entry(obj, &dev_priv->mm.flushing_list, mm_list) {
+		if (mark_free(obj, &unwind_list))
+			goto found;
+	}
+	list_for_each_entry(obj, &dev_priv->mm.active_list, mm_list) {
+		if (!obj->base.write_domain)
+			continue;
+
+		if (mark_free(obj, &unwind_list))
+			goto found;
+	}
+
 	/* Nothing found, clean up and bail out! */
 	while (!list_empty(&unwind_list)) {
 		obj = list_first_entry(&unwind_list,
@@ -111,7 +123,7 @@ none:
 				       exec_list);
 
 		ret = drm_mm_scan_remove_block(obj->gtt_space);
-		BUG_ON(ret);
+		KASSERT(ret == 0, ("drm_mm_scan_remove_block failed %d", ret));
 
 		list_del_init(&obj->exec_list);
 	}
@@ -154,7 +166,7 @@ found:
 }
 
 int
-i915_gem_evict_everything(struct drm_device *dev)
+i915_gem_evict_everything(struct drm_device *dev, bool purgeable_only)
 {
 	drm_i915_private_t *dev_priv = dev->dev_private;
 	struct drm_i915_gem_object *obj, *next;
@@ -162,6 +174,7 @@ i915_gem_evict_everything(struct drm_device *dev)
 	int ret;
 
 	lists_empty = (list_empty(&dev_priv->mm.inactive_list) &&
+		       list_empty(&dev_priv->mm.flushing_list) &&
 		       list_empty(&dev_priv->mm.active_list));
 	if (lists_empty)
 		return -ENOSPC;
@@ -178,11 +191,17 @@ i915_gem_evict_everything(struct drm_device *dev)
 
 	i915_gem_retire_requests(dev);
 
+	KASSERT(list_empty(&dev_priv->mm.flushing_list),
+	    ("flush list not empty"));
+
 	/* Having flushed everything, unbind() should never raise an error */
 	list_for_each_entry_safe(obj, next,
-				 &dev_priv->mm.inactive_list, mm_list)
-		if (obj->pin_count == 0)
-			WARN_ON(i915_gem_object_unbind(obj));
+				 &dev_priv->mm.inactive_list, mm_list) {
+		if (!purgeable_only || obj->madv != I915_MADV_WILLNEED) {
+			if (obj->pin_count == 0)
+				i915_gem_object_unbind(obj);
+		}
+	}
 
 	return 0;
 }

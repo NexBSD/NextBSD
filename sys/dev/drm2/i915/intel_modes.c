@@ -27,26 +27,39 @@
 __FBSDID("$FreeBSD$");
 
 #include <dev/drm2/drmP.h>
-#include <dev/drm2/drm_edid.h>
-#include <dev/drm2/i915/intel_drv.h>
+#include <dev/drm2/drm.h>
+#include <dev/drm2/i915/i915_drm.h>
 #include <dev/drm2/i915/i915_drv.h>
+#include <dev/drm2/i915/intel_drv.h>
+#include <dev/drm2/drm_edid.h>
 #include <dev/iicbus/iiconf.h>
 
 /**
- * intel_connector_update_modes - update connector from edid
- * @connector: DRM connector device to use
- * @edid: previously read EDID information
+ * intel_ddc_probe
+ *
  */
-int intel_connector_update_modes(struct drm_connector *connector,
-				struct edid *edid)
+bool intel_ddc_probe(struct intel_encoder *intel_encoder, int ddc_bus)
 {
-	int ret;
+	struct drm_i915_private *dev_priv = intel_encoder->base.dev->dev_private;
+	u8 out_buf[] = { 0x0, 0x0};
+	u8 buf[2];
+	struct iic_msg msgs[] = {
+		{
+			.slave = DDC_ADDR << 1,
+			.flags = IIC_M_WR,
+			.len = 1,
+			.buf = out_buf,
+		},
+		{
+			.slave = DDC_ADDR << 1,
+			.flags = IIC_M_RD,
+			.len = 1,
+			.buf = buf,
+		}
+	};
 
-	drm_mode_connector_update_edid_property(connector, edid);
-	ret = drm_add_edid_modes(connector, edid);
-	drm_edid_to_eld(connector, edid);
-
-	return ret;
+	return (iicbus_transfer(intel_gmbus_get_adapter(dev_priv, ddc_bus),
+	    msgs, 2) == 0/* XXXKIB  2*/);
 }
 
 /**
@@ -56,18 +69,19 @@ int intel_connector_update_modes(struct drm_connector *connector,
  *
  * Fetch the EDID information from @connector using the DDC bus.
  */
-int intel_ddc_get_modes(struct drm_connector *connector,
-			device_t adapter)
+int
+intel_ddc_get_modes(struct drm_connector *connector, device_t adapter)
 {
 	struct edid *edid;
-	int ret;
+	int ret = 0;
 
 	edid = drm_get_edid(connector, adapter);
-	if (!edid)
-		return 0;
-
-	ret = intel_connector_update_modes(connector, edid);
-	free(edid, DRM_MEM_KMS);
+	if (edid) {
+		drm_mode_connector_update_edid_property(connector, edid);
+		ret = drm_add_edid_modes(connector, edid);
+		drm_edid_to_eld(connector, edid);
+		free(edid, DRM_MEM_KMS);
+	}
 
 	return ret;
 }
@@ -115,9 +129,9 @@ intel_attach_broadcast_rgb_property(struct drm_connector *connector)
 	prop = dev_priv->broadcast_rgb_property;
 	if (prop == NULL) {
 		prop = drm_property_create_enum(dev, DRM_MODE_PROP_ENUM,
-					   "Broadcast RGB",
-					   broadcast_rgb_names,
-					   ARRAY_SIZE(broadcast_rgb_names));
+		    "Broadcast RGB",
+		    broadcast_rgb_names,
+		    ARRAY_SIZE(broadcast_rgb_names));
 		if (prop == NULL)
 			return;
 
