@@ -80,10 +80,10 @@
 #define	TCPTV_PERSMIN	(  5*hz)		/* retransmit persistence */
 #define	TCPTV_PERSMAX	( 60*hz)		/* maximum persist interval */
 
-#define	TCPTV_KEEP_INIT	( 5*hz)			/* initial connect keepalive */
-#define	TCPTV_KEEP_IDLE	( 5*hz)			/* dflt time before probing */
-#define	TCPTV_KEEPINTVL	( 5*hz)			/* default probe interval */
-#define	TCPTV_KEEPCNT	7*24*720		/* max probes before drop - one week*/
+#define	TCPTV_KEEP_INIT	( 30*hz)			/* initial connect keepalive */
+#define	TCPTV_KEEP_IDLE	( 30*hz)			/* dflt time before probing */
+#define	TCPTV_KEEPINTVL	( 30*hz)			/* default probe interval */
+#define	TCPTV_KEEPCNT	7*24*120		/* max probes before drop - one week*/
 
 #define TCPTV_FINWAIT2_TIMEOUT (60*hz)         /* FIN_WAIT_2 timeout if no receiver */
 
