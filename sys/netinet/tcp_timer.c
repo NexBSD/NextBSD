@@ -354,8 +354,8 @@ tcp_timer_2msl(void *xtp)
 		tp = tcp_close(tp);             
 	} else {
 		if (tcp_ts_getsbintime() - tp->t_rcvtime <= TP_MAXIDLE(tp)) {
-			if (!callout_reset(&tp->t_timers->tt_2msl,
-			   TP_KEEPINTVL(tp), tcp_timer_2msl, tp)) {
+			if (!callout_reset_sbt(&tp->t_timers->tt_2msl,
+					       TP_KEEPINTVL(tp), SBT_1S, tcp_timer_2msl, tp, C_DEFAULT)) {
 				tp->t_timers->tt_flags &= ~TT_2MSL_RST;
 			}
 		} else
@@ -440,12 +440,12 @@ tcp_timer_keep(void *xtp)
 				    tp->rcv_nxt, tp->snd_una - 1, 0);
 			free(t_template, M_TEMP);
 		}
-		if (!callout_reset(&tp->t_timers->tt_keep, TP_KEEPINTVL(tp),
-		    tcp_timer_keep, tp)) {
+		if (!callout_reset_sbt(&tp->t_timers->tt_keep, TP_KEEPINTVL(tp), SBT_1S,
+				       tcp_timer_keep, tp, C_DEFAULT)) {
 			tp->t_timers->tt_flags &= ~TT_KEEP_RST;
 		}
-	} else if (!callout_reset(&tp->t_timers->tt_keep, TP_KEEPIDLE(tp),
-		    tcp_timer_keep, tp)) {
+	} else if (!callout_reset_sbt(&tp->t_timers->tt_keep, TP_KEEPIDLE(tp), SBT_1S,
+				      tcp_timer_keep, tp, C_DEFAULT)) {
 			tp->t_timers->tt_flags &= ~TT_KEEP_RST;
 		}
 
@@ -481,7 +481,7 @@ tcp_timer_persist(void *xtp)
 {
 	struct tcpcb *tp = xtp;
 	struct inpcb *inp;
-	sbintime_t t;
+	sbintime_t dt;
 	CURVNET_SET(tp->t_vnet);
 #ifdef TCPDEBUG
 	int ostate;
@@ -523,10 +523,10 @@ tcp_timer_persist(void *xtp)
 	 * backoff that we would use if retransmitting.
 	 */
 
-        t = tcp_ts_getsbintime() - tp->t_rcvtime;
+        dt = tcp_ts_getsbintime() - tp->t_rcvtime;
 	if (tp->t_rxtshift == TCP_MAXRXTSHIFT &&
-	    (t >= tcp_maxpersistidle*tick_sbt ||
-	     t >= TCP_REXMTVAL(tp) * tcp_totbackoff)) {
+	    (dt >= tcp_maxpersistidle*tick_sbt ||
+	     dt >= TCP_REXMTVAL(tp) * tcp_totbackoff)) {
 		TCPSTAT_INC(tcps_persistdrop);
 		tp = tcp_drop(tp, ETIMEDOUT);
 		goto out;
@@ -536,7 +536,7 @@ tcp_timer_persist(void *xtp)
 	 * connection after a much reduced timeout.
 	 */
 	if (tp->t_state > TCPS_CLOSE_WAIT &&
-	    t - tp->t_rcvtime >= TCPTV_PERSMAX*tick_sbt) {
+	    dt >= TCPTV_PERSMAX*tick_sbt) {
 		TCPSTAT_INC(tcps_persistdrop);
 		tp = tcp_drop(tp, ETIMEDOUT);
 		goto out;
@@ -788,7 +788,7 @@ tcp_timer_rexmt(void * xtp)
 		if ((tp->t_inpcb->inp_vflag & INP_IPV6) != 0)
 			in6_losing(tp->t_inpcb);
 #endif
-		tp->t_rttvar += (tp->t_srtt >> TCP_RTT_SHIFT);
+		tp->t_rttvar += (tp->t_srtt >> 2);
 		tp->t_srtt = 0;
 	}
 	tp->snd_nxt = tp->snd_una;
@@ -843,7 +843,7 @@ tcp_timer_activate(struct tcpcb *tp, uint32_t timer_type, sbintime_t delta)
 			t_callout = &tp->t_timers->tt_delack;
 			f_callout = tcp_timer_delack;
 			f_reset = TT_DELACK_RST;
-			f_precision = tick_sbt;
+			f_precision = SBT_1MS;
 			break;
 		case TT_REXMT:
 			t_callout = &tp->t_timers->tt_rexmt;
