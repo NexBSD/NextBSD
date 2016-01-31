@@ -49,6 +49,7 @@ typedef struct _node {
 	char	*sha256digest;			/* SHA-256 digest */
 	char	*rmd160digest;			/* RIPEMD160 digest */
 	char	*slink;				/* symbolic link reference */
+	char	*acl;				/* Access Control List */
 	uid_t	st_uid;				/* uid */
 	gid_t	st_gid;				/* gid */
 #define	MBITS	(S_ISUID|S_ISGID|S_ISTXT|S_IRWXU|S_IRWXG|S_IRWXO)
@@ -79,6 +80,7 @@ typedef struct _node {
 #define	F_FLAGS	0x80000				/* file flags */
 #define	F_SHA256	0x100000				/* SHA-256 digest */
 #define F_OPT	0x200000			/* existence optional */
+#define	F_ACL	0x400000			/* Access Control List */
 	u_int	flags;				/* items set */
 
 #define	F_BLOCK	0x001				/* block special */

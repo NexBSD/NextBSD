@@ -210,6 +210,11 @@ set(char *t, NODE *ip)
 			else if (strtofflags(&val, &ip->st_flags, NULL) != 0)
 				errx(1, "line %d: invalid flag %s",lineno, val);
  			break;
+		case F_ACL:
+			ip->acl = strdup(val);
+			if(!ip->acl)
+				errx(1, "strdup");
+			break;
 		case F_GID:
 			ip->st_gid = strtoul(val, &ep, 10);
 			if (*ep)

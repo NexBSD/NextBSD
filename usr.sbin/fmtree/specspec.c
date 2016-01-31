@@ -84,6 +84,8 @@ shownode(NODE *n, int f, char const *path)
 		printf(" rmd160digest=%s", n->rmd160digest);
 	if (f & F_SHA256)
 		printf(" sha256digest=%s", n->sha256digest);
+	if (f & F_ACL)
+		printf(" acl=%s", n->acl);
 	if (f & F_FLAGS)
 		printf(" flags=%s", flags_to_string(n->st_flags));
 	printf("\n");
