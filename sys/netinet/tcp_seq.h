@@ -90,12 +90,14 @@
  * MSL gives us what we need for now while otherwise remaining as RFC compliant as possible.
  *
  */
-#define SBT_MINTS 256
-/* minimum rtt is ~1us (60ns * 16) */
-#define SBT_MINRTT (SBT_MINTS << 4)
-#define SBT_MINTS_SHIFT 8
+
+#define SBT_MINTS_SHIFT 11
 #define	MIN_TS_STEP 2
 #define TS_1S (SBT_1S >> SBT_MINTS_SHIFT)
+#define SBT_MINTS (1 << SBT_MINTS_SHIFT)
+/* minimum rtt is ~1us (60ns * 16) */
+#define SBT_MINRTT (SBT_MINTS << 4)
+
 /*
  * Clock macros for RFC 1323 timestamps.
  */
