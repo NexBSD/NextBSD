@@ -71,6 +71,20 @@ __FBSDID("$FreeBSD$");
 #    define	HZ_VM HZ
 #  endif
 #endif
+#ifndef HARDCLOCK_HZ
+#  if defined(__mips__) || defined(__arm__)
+#    define	HARDCLOCK_HZ 100
+#  else
+#    define	HARDCLOCK_HZ 1000
+#  endif
+#  ifndef HZ_VM
+#    define	HARDCLOCK_HZ_VM 100
+#  endif
+#else
+#  ifndef HZ_VM
+#    define	HARDCLOCK_HZ_VM HARDCLOCK_HZ
+#  endif
+#endif
 #define	NPROC (20 + 16 * maxusers)
 #ifndef NBUF
 #define NBUF 0
@@ -83,6 +97,7 @@ static int sysctl_kern_vm_guest(SYSCTL_HANDLER_ARGS);
 
 int	hz;				/* systems maximum timer frequency */
 int	hardclock_hz;			/* system maximum hardclock frequency */
+int	hardclock_scale;		/* ratio of hardclock hz to hz */
 int	tick;				/* usec per tick (1000000 / hz) */
 struct bintime tick_bt;			/* bintime per tick (1s / hz) */
 
@@ -173,7 +188,8 @@ init_param1(void)
 		hz = vm_guest > VM_GUEST_NO ? HZ_VM : HZ;
 	TUNABLE_INT_FETCH("kern.hardclock_hz", &hardclock_hz);
 	if (hardclock_hz == -1)
-		hardclock_hz = min(hz, HZ);
+		hardclock_hz = min(hz, HARDCLOCK_HZ);
+	hardclock_scale = hz/hardclock_hz;
 	tick = max(1000000 / hz, 1);
 	tick_sbt = SBT_1S / hz;
 	htick_sbt = SBT_1S / hardclock_hz;
