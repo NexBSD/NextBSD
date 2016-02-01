@@ -812,6 +812,7 @@ send:
 				to.to_tsval = (uint32_t)(tp->t_lasttsecr + MAX_TS_STEP);
 			else
 				to.to_tsval = TCP_SBT_TO_TS(t);
+			tp->t_lasttsval = to.to_tsval;
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
 			/* Set receive buffer autosizing timestamp. */

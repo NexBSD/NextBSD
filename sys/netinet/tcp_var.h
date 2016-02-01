@@ -187,6 +187,7 @@ struct tcpcb {
 	sbintime_t	t_starttime;		/* time connection was established */
 	sbintime_t	t_rtttime;		/* RTT measurement start time */
 	uint32_t	t_lasttsecr;
+	uint32_t	t_lasttsval;
 	tcp_seq	t_rtseq;		/* sequence number being timed */
 
 	u_int	t_bw_spare1;		/* unused */
