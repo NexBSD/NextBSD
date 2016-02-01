@@ -91,7 +91,7 @@
  *
  */
 
-#define SBT_MINTS_SHIFT 11
+#define SBT_MINTS_SHIFT 13
 #define	MIN_TS_STEP 2
 #define TS_1S (SBT_1S >> SBT_MINTS_SHIFT)
 #define SBT_MINTS (1 << SBT_MINTS_SHIFT)
