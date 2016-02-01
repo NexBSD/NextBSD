@@ -1125,14 +1125,14 @@ send:
 	if (isipv6) {
 		ip6 = mtod(m, struct ip6_hdr *);
 		th = (struct tcphdr *)(ip6 + 1);
-		tcpip_fillheaders(inp, ip6, th);
+		tcpip_fillheaders(inp, ip6, th, 0);
 	} else
 #endif /* INET6 */
 	{
 		ip = mtod(m, struct ip *);
 		ipov = (struct ipovly *)ip;
 		th = (struct tcphdr *)(ip + 1);
-		tcpip_fillheaders(inp, ip, th);
+		tcpip_fillheaders(inp, ip, th, 0);
 	}
 
 	/*

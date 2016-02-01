@@ -785,12 +785,16 @@ tcp_fini(void *xtp)
  * of the tcpcb each time to conserve mbufs.
  */
 void
-tcpip_fillheaders(struct inpcb *inp, void *ip_ptr, void *tcp_ptr)
+tcpip_fillheaders(struct inpcb *inp, void *ip_ptr, void *tcp_ptr, int dooptions)
 {
+	struct tcpcb *tp = inp->inp_ppcb;
 	struct tcphdr *th = (struct tcphdr *)tcp_ptr;
+	char *opt = (char *)(th + 1);
+	int optlen;
+	struct tcpopt to;
 
 	INP_WLOCK_ASSERT(inp);
-
+	to.to_flags = 0;
 #ifdef INET6
 	if ((inp->inp_vflag & INP_IPV6) != 0) {
 		struct ip6_hdr *ip6;
@@ -825,6 +829,7 @@ tcpip_fillheaders(struct inpcb *inp, void *ip_ptr, void *tcp_ptr)
 		ip->ip_p = IPPROTO_TCP;
 		ip->ip_src = inp->inp_laddr;
 		ip->ip_dst = inp->inp_faddr;
+
 	}
 #endif /* INET */
 	th->th_sport = inp->inp_lport;
@@ -837,6 +842,16 @@ tcpip_fillheaders(struct inpcb *inp, void *ip_ptr, void *tcp_ptr)
 	th->th_win = 0;
 	th->th_urp = 0;
 	th->th_sum = 0;		/* in_pseudo() is called later for ipv4 */
+	if (dooptions && tp->t_flags & TF_RCVD_TSTMP) {
+		to.to_flags = TOF_TS;
+		to.to_tsecr = tp->ts_recent;
+		to.to_tsval = TCP_SBT_TO_TS(tcp_ts_getsbintime());
+	}
+	/* Processing the options. */
+	if (dooptions) {
+		optlen = tcp_addoptions(&to, opt);
+		th->th_off = ((sizeof(struct tcphdr) + optlen) >> 2);
+	}
 }
 
 /*
@@ -852,7 +867,7 @@ tcpip_maketemplate(struct inpcb *inp)
 	t = malloc(sizeof(*t), M_TEMP, M_NOWAIT);
 	if (t == NULL)
 		return (NULL);
-	tcpip_fillheaders(inp, (void *)&t->tt_ipgen, (void *)&t->tt_t);
+	tcpip_fillheaders(inp, (void *)&t->tt_ipgen, (void *)&t->tt_t, 1 /* dooptions */);
 	return (t);
 }
 
@@ -886,7 +901,7 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 	struct inpcb *inp;
 
 	KASSERT(tp != NULL || m != NULL, ("tcp_respond: tp and m both NULL"));
-
+	
 #ifdef INET6
 	isipv6 = ((struct ip *)ipgen)->ip_v == (IPV6_VERSION >> 4);
 	ip6 = ipgen;
@@ -926,7 +941,7 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 			ip = mtod(m, struct ip *);
 			nth = (struct tcphdr *)(ip + 1);
 		}
-		bcopy((caddr_t)th, (caddr_t)nth, sizeof(struct tcphdr));
+		bcopy((caddr_t)th, (caddr_t)nth, (th->th_off << 2));
 		flags = TH_ACK;
 	} else {
 		/*
@@ -957,6 +972,7 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 			 */
 			nth->th_sport = th->th_sport;
 			nth->th_dport = th->th_dport;
+			nth->th_off = th->th_off;
 		}
 		xchg(nth->th_dport, nth->th_sport, uint16_t);
 #undef xchg
@@ -966,7 +982,7 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 		ip6->ip6_flow = 0;
 		ip6->ip6_vfc = IPV6_VERSION;
 		ip6->ip6_nxt = IPPROTO_TCP;
-		tlen += sizeof (struct ip6_hdr) + sizeof (struct tcphdr);
+		tlen += sizeof (struct ip6_hdr) + (th->th_off << 2);
 		ip6->ip6_plen = htons(tlen - sizeof(*ip6));
 	}
 #endif
@@ -975,7 +991,7 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 #endif
 #ifdef INET
 	{
-		tlen += sizeof (struct tcpiphdr);
+		tlen += sizeof(struct tcpiphdr) - sizeof(struct tcphdr) + (th->th_off << 2);
 		ip->ip_len = htons(tlen);
 		ip->ip_ttl = V_ip_defttl;
 		if (V_path_mtu_discovery)
@@ -1004,7 +1020,6 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 	nth->th_seq = htonl(seq);
 	nth->th_ack = htonl(ack);
 	nth->th_x2 = 0;
-	nth->th_off = sizeof (struct tcphdr) >> 2;
 	nth->th_flags = flags;
 	if (tp != NULL)
 		nth->th_win = htons((u_short) (win >> tp->rcv_scale));
@@ -2384,17 +2399,16 @@ ipsec_hdrsiz_tcp(struct tcpcb *tp)
 	if ((inp->inp_vflag & INP_IPV6) != 0) {
 		ip6 = mtod(m, struct ip6_hdr *);
 		th = (struct tcphdr *)(ip6 + 1);
-		m->m_pkthdr.len = m->m_len =
-			sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
-		tcpip_fillheaders(inp, ip6, th);
+		tcpip_fillheaders(inp, ip6, th, 0);
+		m->m_pkthdr.len = m->m_len = sizeof(struct ip6_hdr) + (th->th_off << 2);
 		hdrsiz = ipsec_hdrsiz(m, IPSEC_DIR_OUTBOUND, inp);
 	} else
 #endif /* INET6 */
 	{
 		ip = mtod(m, struct ip *);
 		th = (struct tcphdr *)(ip + 1);
-		m->m_pkthdr.len = m->m_len = sizeof(struct tcpiphdr);
-		tcpip_fillheaders(inp, ip, th);
+		tcpip_fillheaders(inp, ip, th, 0);
+		m->m_pkthdr.len = m->m_len = (th->th_off << 2);
 		hdrsiz = ipsec_hdrsiz(m, IPSEC_DIR_OUTBOUND, inp);
 	}
 

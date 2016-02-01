@@ -85,6 +85,7 @@ struct sackhint {
 struct tcptemp {
 	u_char	tt_ipgen[40]; /* the size must be of max ip header, now IPv6 */
 	struct	tcphdr tt_t;
+	u_char opt[TCP_MAXOLEN];
 };
 
 #define tcp6cb		tcpcb  /* for KAME src sync over BSD*'s */
@@ -816,7 +817,7 @@ int	tcp_signature_check(struct mbuf *m, int off0, int tlen, int optlen,
 void	 tcp_slowtimo(void);
 struct tcptemp *
 	 tcpip_maketemplate(struct inpcb *);
-void	 tcpip_fillheaders(struct inpcb *, void *, void *);
+void	 tcpip_fillheaders(struct inpcb *, void *, void *, int);
 void	 tcp_timer_activate(struct tcpcb *, uint32_t, sbintime_t);
 int	 tcp_timer_active(struct tcpcb *, uint32_t);
 void	 tcp_timer_stop(struct tcpcb *, uint32_t);
