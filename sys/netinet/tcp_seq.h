@@ -91,7 +91,7 @@
  *
  */
 
-#define SBT_MINTS_SHIFT 13
+#define SBT_MINTS_SHIFT 8
 #define	MIN_TS_STEP 2
 #define TS_1S (SBT_1S >> SBT_MINTS_SHIFT)
 #define SBT_MINTS (1 << SBT_MINTS_SHIFT)
@@ -104,6 +104,8 @@
 #define	TCP_TS_TO_SBT(_t)	((_t) << SBT_MINTS_SHIFT)
 #define	TCP_SBT_TO_TS(_t)	((_t) >> SBT_MINTS_SHIFT)
 
+
+#define MAX_TS_STEP	((1<<30))
 
 /*
  * RFC defined MSL: 255s (+ 2s rounding slop)

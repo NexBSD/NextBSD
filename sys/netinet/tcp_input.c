@@ -1598,8 +1598,13 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * was established.
 	 */
 	if ((to.to_flags & TOF_TS) && (to.to_tsecr != 0)) {
-		if (TSTMP_GT(to.to_tsecr, TCP_SBT_TO_TS(t)))
+		if (to.to_tsecr == tp->t_lasttsecr + MAX_TS_STEP) {
+			tp->t_lasttsecr = to.to_tsecr;
 			to.to_tsecr = 0;
+		} else if (TSTMP_GT(to.to_tsecr, TCP_SBT_TO_TS(t)))
+			to.to_tsecr = 0;
+		else
+			tp->t_lasttsecr = to.to_tsecr;
 	}
 	/*
 	 * If timestamps were negotiated during SYN/ACK they should

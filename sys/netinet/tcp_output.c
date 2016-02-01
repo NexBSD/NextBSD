@@ -808,7 +808,10 @@ send:
 		/* Timestamps. */
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
-			tp->t_tslast = to.to_tsval = TCP_SBT_TO_TS(t);
+			if (SEQ_GT(tp->t_lasttsecr, TCP_SBT_TO_TS(t)))
+				to.to_tsval = (uint32_t)(tp->t_lasttsecr + MAX_TS_STEP);
+			else
+				to.to_tsval = TCP_SBT_TO_TS(t);
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
 			/* Set receive buffer autosizing timestamp. */
