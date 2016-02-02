@@ -213,6 +213,7 @@ struct tcpcb {
 	u_char	snd_scale;		/* window scaling for send window */
 	u_char	rcv_scale;		/* window scaling for recv window */
 	u_char	request_r_scale;	/* pending window scaling */
+	u_char	t_sendcount;		/* saturation counter of packets sent since last complete ack */
 	u_int32_t  ts_recent;		/* timestamp echo data */
 	sbintime_t	ts_recent_age;		/* when last updated */
 

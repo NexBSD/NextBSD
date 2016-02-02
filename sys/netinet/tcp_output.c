@@ -208,7 +208,6 @@ tcp_output(struct tcpcb *tp)
 	int tso, mtu;
 	struct tcpopt to;
 	sbintime_t t;
-	int sendcount;
 #if 0
 	int maxburst = TCP_MAXBURST;
 #endif
@@ -239,8 +238,9 @@ tcp_output(struct tcpcb *tp)
 		return (0);
 #endif
 	t = tcp_ts_getsbintime();
-	needeven = tp->t_srtt < 100*SBT_1MS && (tp->snd_max == tp->snd_una);
-	sendcount = 0;
+	needeven = tp->t_srtt < 100*SBT_1MS && !(tp->t_flags2 & TF2_NO_DELACK_RXT);
+	if (tp->snd_max == tp->snd_una)
+		tp->t_sendcount = 0;
 	/*
 	 * Determine length of data that should be transmitted,
 	 * and flags that will be used.
@@ -872,11 +872,14 @@ send:
 			struct mbuf *mb;
 			u_int moff;
 			int max_len;
+			int max_seg;
 
 			/* extract TSO information */
 			if_hw_tsomax = tp->t_tsomax;
 			if_hw_tsomaxsegcount = tp->t_tsomaxsegcount;
 			if_hw_tsomaxsegsize = tp->t_tsomaxsegsize;
+			max_seg = tp->t_maxseg - optlen;
+			len = (len / (2*max_seg)) *max_seg;
 
 			/*
 			 * Limit a TSO burst to prevent it from
@@ -898,7 +901,7 @@ send:
 					len = 0;
 				} else if (len > max_len) {
 					sendalot = 1;
-					len = max_len;
+					len = (max_len / (2*max_seg)) * max_seg;
 				}
 			}
 
@@ -1032,9 +1035,14 @@ send:
 		 * We need to defeat delayed acks if our RTO is less than 100ms
 		 * so we split this last packet in to two
 		 */
-		if (needeven && sendalot == 0 && (off + len == sbused(&so->so_snd)) &&
-		    len > 1 && (sendcount & 1)) {
-			len = (len >> 2);
+		if (needeven && (len > 1) && !(flags & TH_SYN) &&
+		    (off + len == (sbused(&so->so_snd)) - (!(tp->t_sendcount & 1)))) {
+			/*
+			 * the above line is equivalent to the two lines below:
+			 * ((off + len == sbused(&so->so_snd)) && (tp->t_sendcount & 1)) ||
+			 * ((off + len == sbused(&so->so_snd) - 1) && !(tp->t_sendcount & 1))
+		    */
+			len = (len >> 1);
 			sendalot = 1;
 		}
 		if ((tp->t_flags & TF_FORCEDATA) && len == 1)
@@ -1416,7 +1424,7 @@ send:
 		error = ip6_output(m, inp->in6p_outputopts, &ro,
 		    ((so->so_options & SO_DONTROUTE) ?  IP_ROUTETOIF : 0),
 		    NULL, NULL, inp);
-		sendcount++;
+		tp->t_sendcount++;
 		if (error == EMSGSIZE && ro.ro_rt != NULL)
 			mtu = ro.ro_rt->rt_mtu;
 		if (inp->inp_prepend != ro.ro_prepend && ro.ro_prepend != NULL) {
@@ -1483,7 +1491,7 @@ send:
 	error = ip_output(m, inp->inp_options, &ro,
 	    ((so->so_options & SO_DONTROUTE) ? IP_ROUTETOIF : 0), 0,
 	    inp);
-	sendcount++;
+	tp->t_sendcount++;
 	if (inp->inp_prepend != ro.ro_prepend && ro.ro_prepend != NULL) {
 		if (inp->inp_prepend != NULL)
 			free(inp->inp_prepend, M_TEMP);
