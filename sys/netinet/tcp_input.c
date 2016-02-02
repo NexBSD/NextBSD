@@ -291,6 +291,11 @@ cc_ack_received(struct tcpcb *tp, struct tcphdr *th, uint16_t type)
 	else
 		tp->ccv->flags &= ~CCF_CWND_LIMITED;
 
+	/*
+	 * XXX LAS needeven can be inferred by:
+	 * i.e. BYTES_THIS_ACK / maxseg > 1 for some number of samples, then other side is DELACKINg us
+	 * store that as a flag in tcpcb
+	 */
 	if (type == CC_ACK) {
 		if (tp->snd_cwnd > tp->snd_ssthresh) {
 			tp->t_bytes_acked += min(tp->ccv->bytes_this_ack,
@@ -1712,7 +1717,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				/*
 				 * "bad retransmit" recovery.
 				 */
-				if (tp->t_rxtshift > 0 &&
+				if (tp->t_rxtshift == 1 &&
 				    tp->t_flags & TF_PREVVALID &&
 				    (t - tp->t_badrxtwin) < 0) {
 					cc_cong_signal(tp, th, CC_RTO_ERR);

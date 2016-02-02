@@ -639,14 +639,7 @@ tcp_timer_rexmt(void * xtp)
 		else
 			tp->t_flags &= ~TF_WASCRECOVERY;
 		tp->t_badrxtwin = tcp_ts_getsbintime() + tp->t_rxtcur;
-		/*
-		 * unless explicitly disabled we need to assume that the peer may
-		 * be disabling ACKs up to 100ms
-		 */
-		if (!(tp->t_flags2 & TF2_NO_DELACK_RXT))
-			tp->t_badrxtwin = max(tp->t_badrxtwin, 100*SBT_1MS + tp->t_rxtcur);
-		tp->t_flags |= TF_PREVVALID;
-	} else if (tp->t_flags2 & TF2_NO_DELACK_RXT || (tp->t_rxtcur > 60*SBT_1MS) )
+	} else
 		tp->t_flags &= ~TF_PREVVALID;
 	TCPSTAT_INC(tcps_rexmttimeo);
 	if ((tp->t_state == TCPS_SYN_SENT) ||
@@ -781,9 +774,7 @@ tcp_timer_rexmt(void * xtp)
 	 * move the current srtt into rttvar to keep the current
 	 * retransmit times until then.
 	 */
-	if (tp->t_rxtshift > TCP_MAXRXTSHIFT / 4 &&
-	    (tp->t_rxtcur*tcp_backoff[tp->t_rxtshift] > 100*SBT_1MS ||
-	     (tp->t_flags2 & TF2_NO_DELACK_RXT))) {
+	if (tp->t_rxtshift > TCP_MAXRXTSHIFT / 4) {
 #ifdef INET6
 		if ((tp->t_inpcb->inp_vflag & INP_IPV6) != 0)
 			in6_losing(tp->t_inpcb);
