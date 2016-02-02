@@ -863,23 +863,25 @@ send:
 	 * the segment.
 	 */
 	if (len + optlen + ipoptlen > tp->t_maxseg) {
-		flags &= ~TH_FIN;
+		int max_seg;
 
-		if (tso) {
+		flags &= ~TH_FIN;
+		max_seg = tp->t_maxseg - optlen;
+
+
+		if (tso && len >= 2*max_seg) {
 			u_int if_hw_tsomax;
 			u_int if_hw_tsomaxsegcount;
 			u_int if_hw_tsomaxsegsize;
 			struct mbuf *mb;
 			u_int moff;
 			int max_len;
-			int max_seg;
+			int npkts;
 
 			/* extract TSO information */
 			if_hw_tsomax = tp->t_tsomax;
 			if_hw_tsomaxsegcount = tp->t_tsomaxsegcount;
 			if_hw_tsomaxsegsize = tp->t_tsomaxsegsize;
-			max_seg = tp->t_maxseg - optlen;
-			len = (len / (2*max_seg)) *max_seg;
 
 			/*
 			 * Limit a TSO burst to prevent it from
@@ -901,8 +903,19 @@ send:
 					len = 0;
 				} else if (len > max_len) {
 					sendalot = 1;
-					len = (max_len / (2*max_seg)) * max_seg;
+					len = max_len;
 				}
+			}
+
+			if (needeven) {
+				npkts = ((len  + max_seg - 1)/ max_seg)*max_seg;
+
+				if (((npkts + tp->t_sendcount) & 1) && !sendalot) {
+					len -= max_seg;
+					sendalot = 1;
+					tp->t_sendcount += npkts - 1;
+				} else
+					tp->t_sendcount += npkts;
 			}
 
 			/*
