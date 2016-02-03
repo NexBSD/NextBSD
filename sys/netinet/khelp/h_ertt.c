@@ -475,8 +475,7 @@ ertt_add_tx_segment_info_hook(int hhook_type, int hhook_id, void *udata,
 
 			if (((tp->t_flags & TF_NOOPT) == 0) &&
 			    (to->to_flags & TOF_TS)) {
-				txsi->tx_ts = ntohl(to->to_tsval) -
-				    tp->ts_offset;
+				txsi->tx_ts = ntohl(to->to_tsval);
 				txsi->rx_ts = ntohl(to->to_tsecr);
 			} else {
 				txsi->tx_ts = tcp_ts_getsbintime();

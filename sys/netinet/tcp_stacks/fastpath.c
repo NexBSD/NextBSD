@@ -1852,8 +1852,7 @@ tcp_do_segment_fastslow(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * was established.
 	 */
 	if ((to.to_flags & TOF_TS) && (to.to_tsecr != 0)) {
-		to.to_tsecr -= tp->ts_offset;
-		if (TSTMP_GT(to.to_tsecr, tcp_ts_getsbintime32()))
+		if (TSTMP_GT(to.to_tsecr, TCP_SBT_TO_TS(tcp_ts_getsbintime())))
 			to.to_tsecr = 0;
 	}
 	/*
@@ -2101,7 +2100,7 @@ tcp_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	if ((to->to_flags & TOF_TS) != 0 && to->to_tsecr) {
 		u_int t, curts;
 
-		curts = tcp_ts_getsbintime32();
+		curts = tcp_ts_getsbintime();
 		/*
 		 * cope with hourly wrap
 		 */
@@ -2301,8 +2300,7 @@ tcp_do_segment_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * was established.
 	 */
 	if ((to.to_flags & TOF_TS) && (to.to_tsecr != 0)) {
-		to.to_tsecr -= tp->ts_offset;
-		if (TSTMP_GT(to.to_tsecr, tcp_ts_getsbintime32()))
+		if (TSTMP_GT(to.to_tsecr, TCP_SBT_TO_TS(tcp_ts_getsbintime())))
 			to.to_tsecr = 0;
 	}
 	/*
