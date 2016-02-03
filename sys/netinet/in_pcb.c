@@ -72,6 +72,7 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_llatbl.h>
 #include <net/if_types.h>
 #include <net/route.h>
 #include <net/route_var.h>
@@ -94,6 +95,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet6/in6_pcb.h>
 #include <netinet6/in6_var.h>
 #include <netinet6/ip6_var.h>
+#include <netinet6/nd6.h>
 #endif /* INET6 */
 
 
@@ -134,6 +136,7 @@ VNET_DEFINE(int, ipport_tcpallocs);
 static VNET_DEFINE(int, ipport_tcplastcount);
 
 #define	V_ipport_tcplastcount		VNET(ipport_tcplastcount)
+extern u_int inpcb_rt_cache_enable;
 
 extern u_int inpcb_rt_cache_enable;
 
@@ -678,6 +681,9 @@ resolve:
 }
 
 #endif /* INET || INET6 */
+
+
+
 
 /*
  * Check if a new BINDMULTI socket is allowed to be created.
@@ -1301,7 +1307,6 @@ in_pcbdisconnect(struct inpcb *inp)
 		free(inp->inp_prepend, M_TEMP);
 		inp->inp_prepend = NULL;
 	}
-
 	inp->inp_faddr.s_addr = INADDR_ANY;
 	inp->inp_fport = 0;
 	in_pcbrehash(inp);
@@ -1465,7 +1470,6 @@ in_pcbfree(struct inpcb *inp)
 		free(inp->inp_prepend, M_TEMP);
 		inp->inp_prepend = NULL;
 	}
-
 	/* XXXRW: Do as much as possible here. */
 #ifdef IPSEC
 	if (inp->inp_sp != NULL)

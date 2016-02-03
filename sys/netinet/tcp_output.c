@@ -77,7 +77,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/tcp_timer.h>
 #include <netinet/tcp_var.h>
 #include <netinet/tcpip.h>
-#include <netinet/tcp_cc.h>
+#include <netinet/cc/cc.h>
 #ifdef TCPPCAP
 #include <netinet/tcp_pcap.h>
 #endif
@@ -1411,6 +1411,18 @@ send:
 				ro.ro_flags |= RT_CACHING_CONTEXT;
 		}
 
+		if (in_rt_valid(inp)) {
+			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ro.ro_dst;
+			sin6->sin6_family = AF_INET6;
+			sin6->sin6_len = sizeof(struct sockaddr_in6);
+			memcpy(&sin6->sin6_addr.s6_addr, &inp->in6p_faddr.s6_addr, 16);
+			ro.ro_rt = inp->inp_rt;
+			ro.ro_plen = inp->inp_plen;
+			ro.ro_prepend = inp->inp_prepend;
+			if (ro.ro_rt != NULL)
+				ro.ro_flags |= RT_CACHING_CONTEXT;
+		}
+
 		/*
 		 * Set the packet size here for the benefit of DTrace probes.
 		 * ip6_output() will set it properly; it's supposed to include
@@ -1722,7 +1734,7 @@ tcp_setpersist(struct tcpcb *tp)
 	 * Start/restart persistance timer.
 	 */
 	TCPT_RANGESET(tt, t * tcp_backoff[tp->t_rxtshift],
-		      TCPTV_PERSMIN*tick_sbt, TCPTV_PERSMAX*tick_sbt);
+		      tcp_persmin*tick_sbt, tcp_persmax*tick_sbt);
 	tcp_timer_activate(tp, TT_PERSIST, tt);
 	if (tp->t_rxtshift < TCP_MAXRXTSHIFT)
 		tp->t_rxtshift++;

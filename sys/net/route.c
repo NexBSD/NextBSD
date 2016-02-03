@@ -1188,6 +1188,7 @@ rt_unlinkrte(struct rib_head *rnh, struct rt_addrinfo *info, int *perror)
 	else
 #endif
 	rn = rnh->rnh_deladdr(dst, netmask, &rnh->head);
+	atomic_add_int(&rnh->rnh_gen, 1);
 	if (rn == NULL)
 		return (NULL);
 
@@ -1457,6 +1458,7 @@ rt_mpath_unlink(struct rib_head *rnh, struct rt_addrinfo *info,
 		 * the first entry
 		 */
 		rn = rnh->rnh_deladdr(dst, netmask, &rnh->head);
+		atomic_add_int(&rnh->rnh_gen, 1);
 		*perror = 0;
 		return (rn);
 	}
@@ -1684,6 +1686,7 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 
 		/* XXX mtu manipulation will be done in rnh_addaddr -- itojun */
 		rn = rnh->rnh_addaddr(ndst, netmask, &rnh->head, rt->rt_nodes);
+		atomic_add_int(&rnh->rnh_gen, 1);
 
 		rt_old = NULL;
 		if (rn == NULL && (info->rti_flags & RTF_PINNED) != 0) {
@@ -1699,9 +1702,12 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 			rt_old = rt_unlinkrte(rnh, info, &error);
 			info->rti_flags |= RTF_PINNED;
 			info->rti_info[RTAX_DST] = info_dst;
-			if (rt_old != NULL)
+			if (rt_old != NULL) {
 				rn = rnh->rnh_addaddr(ndst, netmask, &rnh->head,
-				    rt->rt_nodes);
+						      rt->rt_nodes);
+					atomic_add_int(&rnh->rnh_gen, 1);
+
+			}
 		}
 		RIB_WUNLOCK(rnh);
 
