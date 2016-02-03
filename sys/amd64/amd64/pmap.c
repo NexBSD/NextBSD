@@ -1421,12 +1421,20 @@ pmap_invalidate_page(pmap_t pmap, vm_offset_t va)
 	sched_unpin();
 }
 
+/* 4k PTEs -- Chosen to exceed the total size of Broadwell L2 TLB */
+#define	PMAP_INVLPG_THRESHOLD	(4 * 1024 * PAGE_SIZE)
+
 void
 pmap_invalidate_range(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 {
 	cpuset_t *mask;
 	vm_offset_t addr;
 	u_int cpuid, i;
+
+	if (eva - sva >= PMAP_INVLPG_THRESHOLD) {
+		pmap_invalidate_all(pmap);
+		return;
+	}
 
 	if (pmap_type_guest(pmap)) {
 		pmap_invalidate_ept(pmap);
@@ -3010,11 +3018,14 @@ reserve_pv_entries(pmap_t pmap, int needed, struct rwlock **lockp)
 retry:
 	avail = 0;
 	TAILQ_FOREACH(pc, &pmap->pm_pvchunk, pc_list) {
+#ifndef __POPCNT__
 		if ((cpu_feature2 & CPUID2_POPCNT) == 0) {
 			free = bitcount64(pc->pc_map[0]);
 			free += bitcount64(pc->pc_map[1]);
 			free += bitcount64(pc->pc_map[2]);
-		} else {
+		} else
+#endif
+		{
 			free = popcnt_pc_map_elem_pq(pc->pc_map[0]);
 			free += popcnt_pc_map_elem_pq(pc->pc_map[1]);
 			free += popcnt_pc_map_elem_pq(pc->pc_map[2]);

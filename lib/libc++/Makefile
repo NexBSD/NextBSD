@@ -6,6 +6,9 @@ _LIBCXXRTDIR=	${.CURDIR}/../../contrib/libcxxrt
 HDRDIR=		${.CURDIR}/../../contrib/libc++/include
 SRCDIR=		${.CURDIR}/../../contrib/libc++/src
 CXXINCLUDEDIR=	${INCLUDEDIR}/c++/v${SHLIB_MAJOR}
+.if ${MACHINE_CPUARCH} == "arm"
+STATIC_CXXFLAGS+= -mlong-calls
+.endif
 
 .PATH: ${SRCDIR}
 
@@ -206,9 +209,9 @@ EXTDIR=		${CXXINCLUDEDIR}/ext
 CLEANFILES+=	libstdc++.so libstdc++.a
 
 afterinstall:
-	ln -sf ${DESTDIR}${LIBDIR}/lib${LIB}.so \
+	${INSTALL_SYMLINK} ${DESTDIR}${LIBDIR}/lib${LIB}.so \
 		${.OBJDIR}/libstdc++.so
-	ln -sf ${DESTDIR}${LIBDIR}/lib${LIB}.a \
+	${INSTALL_SYMLINK} ${DESTDIR}${LIBDIR}/lib${LIB}.a \
 		${.OBJDIR}/libstdc++.a
 .endif
 

@@ -152,6 +152,10 @@ int db_frame(struct db_variable *vp, db_expr_t *valp, int rw)
 void
 db_show_mdpcpu(struct pcpu *pc)
 {
+
+#if __ARM_ARCH >= 6
+	db_printf("curpmap      = %p\n", pc->pc_curpmap);
+#endif
 }
 int
 db_validate_address(vm_offset_t addr)
@@ -166,7 +170,7 @@ db_validate_address(vm_offset_t addr)
 	    addr >= VM_MIN_KERNEL_ADDRESS
 #endif
 	   )
-		pmap = pmap_kernel();
+		pmap = kernel_pmap;
 	else
 		pmap = p->p_vmspace->vm_map.pmap;
 

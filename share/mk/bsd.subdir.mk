@@ -25,27 +25,30 @@
 # 		This is a variant of install, which will
 # 		put the stuff into the right "distribution".
 #
-# 	See ALL_SUBDIR_TARGETS for list of targets that will recurse.
-# 	Custom targets can be added to SUBDIR_TARGETS in src.conf.
+# 	See SUBDIR_TARGETS for list of targets that will recurse.
 #
 # 	Targets defined in STANDALONE_SUBDIR_TARGETS will always be ran
 # 	with SUBDIR_PARALLEL and will not respect .WAIT or SUBDIR_DEPEND_
 # 	values.
 #
+# 	SUBDIR_TARGETS and STANDALONE_SUBDIR_TARGETS can be appended to
+# 	via make.conf or src.conf.
+#
 
 .if !target(__<bsd.subdir.mk>__)
 __<bsd.subdir.mk>__:
 
-ALL_SUBDIR_TARGETS= all all-man buildconfig buildfiles buildincludes \
-		    checkdpadd clean cleandepend cleandir cleanilinks \
-		    cleanobj depend distribute files includes installconfig \
-		    installfiles installincludes install lint maninstall \
-		    manlint obj objlink regress tags \
-		    ${SUBDIR_TARGETS}
+SUBDIR_TARGETS+= \
+		all all-man buildconfig buildfiles buildincludes \
+		checkdpadd clean cleandepend cleandir cleanilinks \
+		cleanobj depend distribute files includes installconfig \
+		installfiles installincludes realinstall lint maninstall \
+		manlint obj objlink regress tags \
 
 # Described above.
-STANDALONE_SUBDIR_TARGETS?= obj checkdpadd clean cleandepend cleandir \
-			    cleanilinks cleanobj
+STANDALONE_SUBDIR_TARGETS+= \
+		obj checkdpadd clean cleandepend cleandir \
+		cleanilinks cleanobj installconfig \
 
 .include <bsd.init.mk>
 
@@ -55,12 +58,6 @@ STANDALONE_SUBDIR_TARGETS?= obj checkdpadd clean cleandepend cleandir \
 # ignore this
 _SUBDIR:
 .endif
-.endif
-.if !target(_SUBDIR)
-
-.if defined(SUBDIR)
-SUBDIR:=${SUBDIR} ${SUBDIR.yes}
-SUBDIR:=${SUBDIR:u}
 .endif
 
 DISTRIBUTION?=	base
@@ -93,6 +90,14 @@ install:	beforeinstall realinstall afterinstall
 .ORDER:		beforeinstall realinstall afterinstall
 .endif
 
+# SUBDIR recursing may be disabled for MK_DIRDEPS_BUILD
+.if !target(_SUBDIR)
+
+.if defined(SUBDIR)
+SUBDIR:=${SUBDIR} ${SUBDIR.yes}
+SUBDIR:=${SUBDIR:u}
+.endif
+
 # Subdir code shared among 'make <subdir>', 'make <target>' and SUBDIR_PARALLEL.
 _SUBDIR_SH=	\
 		if test -d ${.CURDIR}/$${dir}.${MACHINE_ARCH}; then \
@@ -104,7 +109,7 @@ _SUBDIR_SH=	\
 
 _SUBDIR: .USEBEFORE
 .if defined(SUBDIR) && !empty(SUBDIR) && !defined(NO_SUBDIR)
-	@${_+_}target=${.TARGET}; \
+	@${_+_}target=${.TARGET:realinstall=install}; \
 	    for dir in ${SUBDIR:N.WAIT}; do ( ${_SUBDIR_SH} ); done
 .endif
 
@@ -113,24 +118,23 @@ ${SUBDIR:N.WAIT}: .PHONY .MAKE
 	    dir=${.TARGET}; \
 	    ${_SUBDIR_SH};
 
-# Work around parsing of .if nested in .for by putting .WAIT string into a var.
-__wait= .WAIT
-.for __target in ${ALL_SUBDIR_TARGETS}
+.for __target in ${SUBDIR_TARGETS}
+# Only recurse on directly-called targets.  I.e., don't recurse on dependencies
+# such as 'install' becoming {before,real,after}install, just recurse
+# 'install'.  Despite that, 'realinstall' is special due to ordering issues
+# with 'afterinstall'.
+.if make(${__target}) || (${__target} == realinstall && make(install))
 # Can ordering be skipped for this and SUBDIR_PARALLEL forced?
-.if make(${__target}) && ${STANDALONE_SUBDIR_TARGETS:M${__target}}
+.if ${STANDALONE_SUBDIR_TARGETS:M${__target}}
 _is_standalone_target=	1
 SUBDIR:=	${SUBDIR:N.WAIT}
 .else
 _is_standalone_target=	0
 .endif
-# Only recurse on directly-called targets.  I.e., don't recurse on dependencies
-# such as 'install' becoming {before,real,after}install, just recurse
-# 'install'.
-.if make(${__target})
 .if defined(SUBDIR_PARALLEL) || ${_is_standalone_target} == 1
 __subdir_targets=
 .for __dir in ${SUBDIR}
-.if ${__wait} == ${__dir}
+.if ${__dir} == .WAIT
 __subdir_targets+= .WAIT
 .else
 __subdir_targets+= ${__target}_subdir_${__dir}
@@ -142,7 +146,7 @@ __deps+= ${__target}_subdir_${__dep}
 .endif
 ${__target}_subdir_${__dir}: .PHONY .MAKE ${__deps}
 .if !defined(NO_SUBDIR)
-	@${_+_}target=${__target}; \
+	@${_+_}target=${__target:realinstall=install}; \
 	    dir=${__dir}; \
 	    ${_SUBDIR_SH};
 .endif
@@ -152,11 +156,16 @@ ${__target}: ${__subdir_targets}
 .else
 ${__target}: _SUBDIR
 .endif	# SUBDIR_PARALLEL || _is_standalone_target
-.elif !target(${__target})
-${__target}:
 .endif	# make(${__target})
-.endfor	# __target in ${ALL_SUBDIR_TARGETS}
+.endfor	# __target in ${SUBDIR_TARGETS}
 
 .endif	# !target(_SUBDIR)
+
+# Ensure all targets exist
+.for __target in ${SUBDIR_TARGETS}
+.if !target(${__target})
+${__target}:
+.endif
+.endfor
 
 .endif
