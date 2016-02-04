@@ -574,7 +574,7 @@ pass:
 		goto bad;
 	}
 
-	error = nd6_output_ifp(rt->rt_ifp, origifp, m, dst, NULL);
+	error = nd6_output_ifp(rt->rt_ifp, origifp, m, dst, (struct route *)&rin6);
 	if (error) {
 		in6_ifstat_inc(rt->rt_ifp, ifs6_out_discard);
 		IP6STAT_INC(ip6s_cantforward);

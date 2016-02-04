@@ -53,6 +53,7 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/route.h>
+#include <net/ethernet.h>
 #include <net/vnet.h>
 
 #include <netinet/in.h>
@@ -181,6 +182,13 @@ tcp_output(struct tcpcb *tp)
 	struct ip *ip = NULL;
 	struct ipovly *ipov = NULL;
 	struct tcphdr *th;
+#ifdef INET
+	struct sockaddr_in *sin;
+#endif
+#ifdef INET6
+	struct sockaddr_in6 *sin6;
+#endif
+	struct inpcb *inp;
 	u_char opt[TCP_MAXOLEN];
 	unsigned ipoptlen, optlen, hdrlen;
 #ifdef IPSEC
@@ -201,7 +209,8 @@ tcp_output(struct tcpcb *tp)
 	isipv6 = (tp->t_inpcb->inp_vflag & INP_IPV6) != 0;
 #endif
 
-	INP_WLOCK_ASSERT(tp->t_inpcb);
+	inp = tp->t_inpcb;
+	INP_WLOCK_ASSERT(inp);
 
 #ifdef TCP_OFFLOAD
 	if (tp->t_flags & TF_TOE)
@@ -1342,6 +1351,21 @@ send:
 		 */
 		ip6->ip6_hlim = in6_selecthlim(tp->t_inpcb, NULL);
 
+		if (in_rt_valid(inp)) {
+			sin6 = (struct sockaddr_in6 *)&ro.ro_dst;
+			sin6->sin6_family = AF_INET6;
+			sin6->sin6_len = sizeof(struct sockaddr_in6);
+			memcpy(&sin6->sin6_addr.s6_addr, &inp->in6p_faddr.s6_addr, 16);
+			ro.ro_rt = inp->inp_rt;
+			ro.ro_plen = inp->inp_plen;
+			if (inp->inp_prepend != NULL) {
+				ro.ro_prepend = inp->inp_prepend;
+				ro.ro_plen = inp->inp_plen;
+			}
+			if (ro.ro_rt != NULL)
+				ro.ro_flags |= RT_CACHING_CONTEXT;
+		}
+
 		/*
 		 * Set the packet size here for the benefit of DTrace probes.
 		 * ip6_output() will set it properly; it's supposed to include
@@ -1371,7 +1395,15 @@ send:
 
 		if (error == EMSGSIZE && ro.ro_rt != NULL)
 			mtu = ro.ro_rt->rt_mtu;
-		RO_RTFREE(&ro);
+		if (inp->inp_prepend != ro.ro_prepend) {
+			if (inp->inp_prepend != NULL)
+				free(inp->inp_prepend, M_TEMP);
+			inp->inp_prepend = ro.ro_prepend;
+			inp->inp_plen = ro.ro_plen;
+		}
+		if (!(ro.ro_flags & RT_CACHING_CONTEXT)) {
+			RO_RTFREE(&ro);
+		}
 	}
 #endif /* INET6 */
 #if defined(INET) && defined(INET6)
@@ -1412,13 +1444,36 @@ send:
 	tcp_pcap_add(th, m, &(tp->t_outpkts));
 #endif
 
+	if (in_rt_valid(inp)) {
+		sin = (struct sockaddr_in *)&ro.ro_dst;
+		sin->sin_family = AF_INET;
+		sin->sin_len = sizeof(struct sockaddr_in);
+		sin->sin_addr.s_addr = inp->inp_faddr.s_addr;
+		ro.ro_rt = inp->inp_rt;
+		if (inp->inp_prepend != NULL) {
+			ro.ro_prepend = inp->inp_prepend;
+			ro.ro_plen = inp->inp_plen;
+		}
+		if (ro.ro_rt != NULL)
+			ro.ro_flags |= RT_CACHING_CONTEXT;
+	}
+
 	error = ip_output(m, tp->t_inpcb->inp_options, &ro,
 	    ((so->so_options & SO_DONTROUTE) ? IP_ROUTETOIF : 0), 0,
 	    tp->t_inpcb);
 
+	if (inp->inp_prepend != ro.ro_prepend) {
+		if (inp->inp_prepend != NULL)
+			free(inp->inp_prepend, M_TEMP);
+		inp->inp_prepend = ro.ro_prepend; 
+		inp->inp_plen = ro.ro_plen;
+	}
+
 	if (error == EMSGSIZE && ro.ro_rt != NULL)
 		mtu = ro.ro_rt->rt_mtu;
-	RO_RTFREE(&ro);
+	if (!(ro.ro_flags & RT_CACHING_CONTEXT)) {
+		RO_RTFREE(&ro);
+	}
     }
 #endif /* INET */
 

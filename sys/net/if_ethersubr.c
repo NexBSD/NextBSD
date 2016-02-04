@@ -312,7 +312,11 @@ ether_output(struct ifnet *ifp, struct mbuf *m,
 		if (error != 0)
 			return (error == EWOULDBLOCK ? 0 : error);
 	}
-
+	if (ro != NULL && ro->ro_prepend == NULL && (ro->ro_flags & RT_CACHING_CONTEXT) &&
+	    (ro->ro_prepend = malloc(ETHER_HDR_LEN, M_TEMP, M_NOWAIT)) != NULL) {
+		ro->ro_plen = hlen;
+		memcpy(ro->ro_prepend, phdr, ETHER_HDR_LEN);
+	}
 	if ((pflags & RT_L2_ME) != 0) {
 		update_mbuf_csumflags(m, m);
 		return (if_simloop(ifp, m, dst->sa_family, 0));

@@ -55,6 +55,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_dl.h>
 #include <net/if_var.h>
 #include <net/route.h>
+#include <net/route_var.h>
 #include <net/vnet.h>
 #include <netinet/if_ether.h>
 #include <netinet6/in6_var.h>
@@ -369,6 +370,10 @@ llentry_update_ifaddr(struct lltable *llt, struct llentry *lle, void *farg)
 	size_t linkhdrsize;
 	u_char *lladdr;
 	int lladdr_off;
+	int i;
+#if defined(INET) || defined(INET6)
+	struct rib_head *rnh;
+#endif
 
 	ifp = (struct ifnet *)farg;
 
@@ -387,6 +392,16 @@ llentry_update_ifaddr(struct lltable *llt, struct llentry *lle, void *farg)
 	lltable_calc_llheader(ifp, llt->llt_af, lladdr, linkhdr, &linkhdrsize,
 	    &lladdr_off);
 	memcpy(lle->r_linkdata, linkhdr, linkhdrsize);
+	for (i = 0; i < rt_numfibs; i++) {
+#ifdef	INET
+		rnh = rt_tables_get_rnh(i, AF_INET);
+		atomic_add_int(&rnh->rnh_gen, 1);
+#endif
+#ifdef	INET6
+		rnh = rt_tables_get_rnh(i, AF_INET6);
+		atomic_add_int(&rnh->rnh_gen, 1);
+#endif
+	}
 	LLE_WUNLOCK(lle);
 
 	return (0);
@@ -562,6 +577,10 @@ lltable_delete_addr(struct lltable *llt, u_int flags,
 {
 	struct llentry *lle;
 	struct ifnet *ifp;
+	int i;
+#if defined(INET) || defined(INET6)
+	struct rib_head *rnh;
+#endif
 
 	ifp = llt->llt_ifp;
 	IF_AFDATA_WLOCK(ifp);
@@ -578,6 +597,16 @@ lltable_delete_addr(struct lltable *llt, u_int flags,
 	}
 
 	lltable_unlink_entry(llt, lle);
+	for (i = 0; i < rt_numfibs; i++) {
+#ifdef	INET
+		rnh = rt_tables_get_rnh(i, AF_INET);
+		atomic_add_int(&rnh->rnh_gen, 1);
+#endif
+#ifdef	INET6
+		rnh = rt_tables_get_rnh(i, AF_INET6);
+		atomic_add_int(&rnh->rnh_gen, 1);
+#endif
+	}
 	IF_AFDATA_WUNLOCK(ifp);
 
 	llt->llt_delete_entry(llt, lle);
