@@ -172,6 +172,17 @@ ${__target}: ${__page}
 
 .endif	# ${MK_MANCOMPRESS} == "no"
 
+.if !defined(NO_MLINKS) && defined(MLINKS) && !empty(MLINKS)
+.for _oname _osect _dname _dsect in ${MLINKS:C/\.([^.]*)$/.\1 \1/}
+_MANLINKS+=	${MANDIR}${_osect}${MANSUBDIR}/${_oname} \
+		${MANDIR}${_dsect}${MANSUBDIR}/${_dname}
+.if defined(MANBUILDCAT) && !empty(MANBUILDCAT)
+_MANLINKS+=	${CATDIR}${_osect}${MANSUBDIR}/${_oname} \
+		${CATDIR}${_dsect}${MANSUBDIR}/${_dname}
+.endif
+.endfor
+.endif
+
 maninstall: _maninstall
 _maninstall:
 .if defined(MAN) && !empty(MAN)
