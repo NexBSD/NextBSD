@@ -45,7 +45,6 @@
 #define _WITH_GETLINE
 #include <stdio.h>
 #include <stdlib.h>
-#include <libintl.h>
 #include <strings.h>
 #include <libndmp.h>
 
