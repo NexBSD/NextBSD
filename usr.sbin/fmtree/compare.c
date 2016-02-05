@@ -38,6 +38,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/acl.h>
 
 #include <err.h>
 #include <errno.h>
@@ -315,6 +316,32 @@ typeerr:		LABEL;
 		}
 	}
 #endif /* SHA256 */
+	if (s->flags & F_ACL) {
+		char *new_acl_text;
+		acl_t acl;
+		size_t i;
+
+		acl = acl_get_file(p->fts_accpath, ACL_TYPE_ACCESS);
+		new_acl_text = acl_to_text(acl, NULL);
+		for(i = 0; new_acl_text[++i] != '\0';){
+			if (new_acl_text[i] == '\n')
+				new_acl_text[i] = ',';
+		}
+		new_acl_text[i-1] = '\0';
+		if (!new_acl_text) {
+			LABEL;
+			printf("%sACL: %s: %s\n", tab, p->fts_accpath,
+				strerror(errno));
+			tab = "\t";
+		} else if (strcmp(new_acl_text, s->acl)) {
+			LABEL;
+			printf("%sACL expected %s found %s\n",
+				tab, s->acl, new_acl_text);
+			tab = "\t";
+		}
+		acl_free(acl);
+		acl_free(new_acl_text);
+	}
 
 	if (s->flags & F_SLINK &&
 	    strcmp(cp = rlink(p->fts_accpath), s->slink)) {

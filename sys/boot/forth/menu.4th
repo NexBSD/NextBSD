@@ -470,7 +470,11 @@ also menu-infrastructure definitions
 
 	\ Print the frame caption at (x,y)
 	s" loader_menu_title" getenv dup -1 = if
+<<<<<<< HEAD
 		drop s" Welcome to NextBSD-Hardened"
+=======
+		drop s" Welcome to NextBSD"
+>>>>>>> NextBSD-CURRENT-HARDENED-NODCTCP
 	then
 	TRUE ( use default alignment )
 	s" loader_menu_title_align" getenv dup -1 <> if

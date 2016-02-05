@@ -23,6 +23,7 @@ SUBDIR_ORDERED=	csu \
 
 SUBDIR=	${SUBDIR_ORDERED} \
 	.WAIT \
+	lib9p \
 	libalias \
 	libasl \
 	libarchive \
@@ -76,7 +77,6 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	libmt \
 	${_libnandfs} \
 	lib80211 \
-	libndmp \
 	libnetbsd \
 	${_libnetgraph} \
 	${_libngatm} \
@@ -158,6 +158,8 @@ SUBDIR_DEPEND_libpjdlog= libutil
 SUBDIR_DEPEND_libprocstat= libkvm libutil
 SUBDIR_DEPEND_libradius= libmd
 SUBDIR_DEPEND_libsmb= libkiconv
+SUBDIR_DEPEND_libstdc++:= msun
+SUBDIR_DEPEND_libtacplus= libmd
 SUBDIR_DEPEND_libtacplus= libmd
 SUBDIR_DEPEND_libulog= libmd
 SUBDIR_DEPEND_libunbound= ${_libldns}

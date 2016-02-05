@@ -34,7 +34,7 @@
  */
 
 #include <sys/stdint.h>
-#include <sysexits.h>
+/* #include <sysexits.h> */
 
 #ifdef _KERNEL
 typedef	int64_t		clock_t;

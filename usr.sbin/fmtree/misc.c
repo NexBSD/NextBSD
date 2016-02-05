@@ -54,6 +54,7 @@ typedef struct _key {
 
 /* NB: the following table must be sorted lexically. */
 static KEY keylist[] = {
+	{"acl",		F_ACL,		NEEDVALUE},
 	{"cksum",	F_CKSUM,	NEEDVALUE},
 	{"flags",	F_FLAGS,	NEEDVALUE},
 	{"gid",		F_GID,		NEEDVALUE},

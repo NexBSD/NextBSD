@@ -50,7 +50,7 @@
 .error bsd.man.mk cannot be included directly.
 .endif
 
-MINSTALL?=	${INSTALL} -o ${MANOWN} -g ${MANGRP} -m ${MANMODE}
+MINSTALL?=	${INSTALL} ${TAG_ARGS} -o ${MANOWN} -g ${MANGRP} -m ${MANMODE}
 
 CATDIR=		${MANDIR:H:S/$/\/cat/}
 CATEXT=		.cat
@@ -61,6 +61,7 @@ MCOMPRESS_EXT?=	${COMPRESS_EXT}
 
 SECTIONS=	1 2 3 4 5 6 7 8 9
 .SUFFIXES:	${SECTIONS:S/^/./g}
+
 
 # Backwards compatibility.
 .if !defined(MAN)
@@ -226,10 +227,25 @@ _maninstall: ${MAN}
 .endfor
 .endif	# ${MK_MANCOMPRESS} == "no"
 .endif
-.for l t in ${_MANLINKS}
-	rm -f ${DESTDIR}${t} ${DESTDIR}${t}${MCOMPRESS_EXT}; \
-	    ${INSTALL_LINK} ${DESTDIR}${l}${ZEXT} ${DESTDIR}${t}${ZEXT}
+
+.if !defined(NO_MLINKS) && defined(MLINKS) && !empty(MLINKS)
+.for _oname _osect _dname _dsect in ${MLINKS:C/\.([^.]*)$/.\1 \1/}
+	@l=${DESTDIR}${MANDIR}${_osect}${MANSUBDIR}/${_oname}; \
+	t=${DESTDIR}${MANDIR}${_dsect}${MANSUBDIR}/${_dname}; \
+	${ECHO} $${t}${ZEXT} -\> $${l}${ZEXT}; \
+	rm -f $${t} $${t}${MCOMPRESS_EXT}; \
+	${INSTALL_LINK} ${TAG_ARGS} $${l}${ZEXT} $${t}${ZEXT}
 .endfor
+.if defined(MANBUILDCAT) && !empty(MANBUILDCAT)
+.for _oname _osect _dname _dsect in ${MLINKS:C/\.([^.]*)$/.\1 \1/}
+	@l=${DESTDIR}${MANDIR}${_osect}${MANSUBDIR}/${_oname}; \
+	t=${DESTDIR}${MANDIR}${_dsect}${MANSUBDIR}/${_dname}; \
+	${ECHO} $${t}${ZEXT} -\> $${l}${ZEXT}; \
+	rm -f $${t} $${t}${MCOMPRESS_EXT}; \
+	${INSTALL_LINK} ${TAG_ARGS} $${l}${ZEXT} $${t}${ZEXT}
+.endfor
+.endif
+.endif
 
 manlint:
 .if defined(MAN) && !empty(MAN)
