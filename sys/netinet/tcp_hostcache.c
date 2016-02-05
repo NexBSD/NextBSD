@@ -612,7 +612,7 @@ sysctl_tcp_hc_list(SYSCTL_HANDLER_ARGS)
 		TAILQ_FOREACH(hc_entry, &V_tcp_hostcache.hashbase[i].hch_bucket,
 			      rmx_q) {
 			sbuf_printf(&sb,
-			    "%-15s %5lu %8lu %6lums %6lums %8lu %8lu %8lu %4lu "
+			    "%-15s %5lu %8lu %6luus %6luus %8lu %8lu %8lu %4lu "
 			    "%4lu %4i\n",
 			    hc_entry->ip4.s_addr ? inet_ntoa(hc_entry->ip4) :
 #ifdef INET6
@@ -622,10 +622,8 @@ sysctl_tcp_hc_list(SYSCTL_HANDLER_ARGS)
 #endif
 			    hc_entry->rmx_mtu,
 			    hc_entry->rmx_ssthresh,
-			    msec(hc_entry->rmx_rtt *
-				(RTM_RTTUNIT / (hz * TCP_RTT_SCALE))),
-			    msec(hc_entry->rmx_rttvar *
-				(RTM_RTTUNIT / (hz * TCP_RTTVAR_SCALE))),
+		            hc_entry->rmx_rtt,
+			    hc_entry->rmx_rttvar,
 			    hc_entry->rmx_cwnd,
 			    hc_entry->rmx_sendpipe,
 			    hc_entry->rmx_recvpipe,

@@ -297,10 +297,8 @@ tcp_twstart(struct tcpcb *tp)
 	if ((tp->t_flags & (TF_REQ_TSTMP|TF_RCVD_TSTMP|TF_NOOPT)) ==
 	    (TF_REQ_TSTMP|TF_RCVD_TSTMP)) {
 		tw->t_recent = tp->ts_recent;
-		tw->ts_offset = tp->ts_offset;
 	} else {
 		tw->t_recent = 0;
-		tw->ts_offset = 0;
 	}
 
 	tw->snd_nxt = tp->snd_nxt;
@@ -546,7 +544,7 @@ tcp_twrespond(struct tcptw *tw, int flags)
 		hdrlen = sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
 		ip6 = mtod(m, struct ip6_hdr *);
 		th = (struct tcphdr *)(ip6 + 1);
-		tcpip_fillheaders(inp, ip6, th);
+		tcpip_fillheaders(inp, ip6, th, 0);
 	}
 #endif
 #if defined(INET6) && defined(INET)
@@ -557,7 +555,7 @@ tcp_twrespond(struct tcptw *tw, int flags)
 		hdrlen = sizeof(struct tcpiphdr);
 		ip = mtod(m, struct ip *);
 		th = (struct tcphdr *)(ip + 1);
-		tcpip_fillheaders(inp, ip, th);
+		tcpip_fillheaders(inp, ip, th, 0);
 	}
 #endif
 	to.to_flags = 0;
@@ -568,7 +566,7 @@ tcp_twrespond(struct tcptw *tw, int flags)
 	 */
 	if (tw->t_recent && flags == TH_ACK) {
 		to.to_flags |= TOF_TS;
-		to.to_tsval = tcp_ts_getsbintime32() + tw->ts_offset;
+		to.to_tsval = ((uint32_t)TCP_SBT_TO_TS(tcp_ts_getsbintime()));
 		to.to_tsecr = tw->t_recent;
 	}
 	optlen = tcp_addoptions(&to, (u_char *)(th + 1));
@@ -660,6 +658,7 @@ tcp_tw_2msl_stop(struct tcptw *tw, int reuse)
 
 	if (!reuse)
 		uma_zfree(V_tcptw_zone, tw);
+	TCPSTAT_DEC(tcps_states[TCPS_TIME_WAIT]);
 }
 
 struct tcptw *

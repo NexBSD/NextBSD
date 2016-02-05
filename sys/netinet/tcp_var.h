@@ -34,6 +34,7 @@
 #define _NETINET_TCP_VAR_H_
 
 #include <netinet/tcp.h>
+#include <netinet/tcp_fsm.h>
 
 #ifdef _KERNEL
 #include <net/vnet.h>
@@ -85,6 +86,7 @@ struct sackhint {
 struct tcptemp {
 	u_char	tt_ipgen[40]; /* the size must be of max ip header, now IPv6 */
 	struct	tcphdr tt_t;
+	u_char opt[TCP_MAXOLEN];
 };
 
 #define tcp6cb		tcpcb  /* for KAME src sync over BSD*'s */
@@ -182,19 +184,20 @@ struct tcpcb {
 
 	u_int	t_maxopd;		/* mss plus options */
 
-	sbintime_t	t_rcvtime;		/* inactivity time in sbintime */
+	sbintime_t	t_rcvtime;		/* inactivity time */
 	sbintime_t	t_starttime;		/* time connection was established */
-	sbintime_t	t_tsval_last;
-	u_int	t_rtttime;		/* RTT measurement start time */
+	sbintime_t	t_rtttime;		/* RTT measurement start time */
+	uint32_t	t_lasttsecr;
+	uint32_t	t_lasttsval;
 	tcp_seq	t_rtseq;		/* sequence number being timed */
 
 	u_int	t_bw_spare1;		/* unused */
 	tcp_seq	t_bw_spare2;		/* unused */
 
-	sbintime_t t_rxtcur;		/* current retransmit value in sbintime */
+	sbintime_t t_rxtcur;		/* current retransmit value */
 	u_int	t_maxseg;		/* maximum segment size */
-	uint64_t	t_srtt;			/* smoothed round-trip time */
-	uint64_t	t_rttvar;		/* variance in round-trip time */
+	sbintime_t	t_srtt;		/* smoothed round-trip time */
+	sbintime_t	t_rttvar;	/* variance in round-trip time */
 	u_int	t_pmtud_saved_maxseg;	/* pre-blackhole MSS */
 
 	int	t_rxtshift;		/* log(2) of rexmt exp. backoff */
@@ -211,9 +214,9 @@ struct tcpcb {
 	u_char	snd_scale;		/* window scaling for send window */
 	u_char	rcv_scale;		/* window scaling for recv window */
 	u_char	request_r_scale;	/* pending window scaling */
+	u_char	t_sendcount;		/* saturation counter of packets sent since last complete ack */
 	u_int32_t  ts_recent;		/* timestamp echo data */
 	sbintime_t	ts_recent_age;		/* when last updated */
-	u_int32_t  ts_offset;		/* our timestamp offset */
 
 	tcp_seq	last_ack_sent;
 /* experimental */
@@ -254,7 +257,7 @@ struct tcpcb {
 	u_int	t_tsomaxsegcount;	/* TSO maximum segment count */
 	u_int	t_tsomaxsegsize;	/* TSO maximum segment size in bytes */
 	u_int	t_flags2;		/* More tcpcb flags storage */
-	sbintime_t	t_delack;		/* delayed ack timer in sbintime */
+	sbintime_t	t_delack;		/* delayed ack timer */
 
 #if defined(_KERNEL) && defined(TCP_RFC7413)
 	uint32_t t_ispare[6];		/* 5 UTO, 1 TBD */
@@ -361,6 +364,10 @@ struct tcpcb {
 #define	TF2_PLPMTU_MAXSEGSNT	0x00000004 /* Last seg sent was full seg. */
 #define	TF2_ECN_ATTEMPT		0x00000008 /* Try ECN */
 #define	TF2_ECN_DCTCP		0x00000010 /* Mark ECT for _all_ DCTCP */
+#define	TF2_NO_DELACK_RXT	0x00000020 /* don't account for delack in bad
+					    * retransmit accounting
+					   */
+
 
 /*
  * Structure to hold TCP options that are only used during segment
@@ -432,7 +439,6 @@ struct tcptw {
 	u_short		tw_so_options;	/* copy of so_options */
 	struct ucred	*tw_cred;	/* user credentials */
 	u_int32_t	t_recent;
-	u_int32_t	ts_offset;	/* our timestamp offset */
 	sbintime_t	t_starttime;
 	int		tw_time;
 	TAILQ_ENTRY(tcptw) tw_2msl;
@@ -453,11 +459,10 @@ struct tcptw {
  * and thus an "ALPHA" of 0.875.  rttvar has 13 bits to the right of the
  * binary point, and is smoothed with an ALPHA of 0.75.
  */
-#define	TCP_RTT_SCALE		(1<<16)	/* multiplier for srtt; 14 bits frac. */
-#define	TCP_RTT_SHIFT		16	/* shift for srtt; 14 bits frac. */
-#define	TCP_RTTVAR_SCALE	(1<<15)	/* multiplier for rttvar; 2 bits */
-#define	TCP_RTTVAR_SHIFT	15	/* shift for rttvar; 2 bits */
-#define	TCP_DELTA_SHIFT		13	/* see tcp_input.c */
+#define	TCP_RTT_SCALE		8	/* multiplier for srtt; 3 bits frac. */
+#define	TCP_RTT_SHIFT		3	/* shift for srtt; 14 bits frac. */
+#define	TCP_RTTVAR_SCALE	4	/* multiplier for rttvar; 2 bits */
+#define	TCP_RTTVAR_SHIFT	2	/* shift for rttvar; 2 bits */
 
 /*
  * The initial retransmission should happen at rtt + 4 * rttvar.
@@ -475,9 +480,7 @@ struct tcptw {
  * which results in inappropriately large RTO values for very
  * fast networks.
  */
-#define	TCP_REXMTVAL(tp)						\
-	TCP_TS_TO_SBT(max((tp)->t_rttmin, (((tp)->t_srtt >> (TCP_RTT_SHIFT - TCP_DELTA_SHIFT)) \
-			      + (tp)->t_rttvar) >> TCP_DELTA_SHIFT))
+#define	TCP_REXMTVAL(tp) max((tp)->t_rttmin, (tp)->t_srtt + ((tp)->t_rttvar << 2))
 
 /*
  * TCP statistics.
@@ -595,6 +598,9 @@ struct	tcpstat {
 	uint64_t tcps_sig_err_sigopt;	/* No signature expected by socket */
 	uint64_t tcps_sig_err_nosigopt;	/* No signature provided by segment */
 
+	/* Running connection count. */
+	uint64_t tcps_states[TCP_NSTATES];
+
 	uint64_t _pad[12];		/* 6 UTO, 6 TBD */
 };
 
@@ -613,6 +619,9 @@ VNET_PCPUSTAT_DECLARE(struct tcpstat, tcpstat);	/* tcp statistics */
 #define	TCPSTAT_ADD(name, val)	\
     VNET_PCPUSTAT_ADD(struct tcpstat, tcpstat, name, (val))
 #define	TCPSTAT_INC(name)	TCPSTAT_ADD(name, 1)
+#define	TCPSTAT_DEC(name)	TCPSTAT_ADD(name, -1)
+#define	TCPSTAT_FETCH(name)	VNET_PCPUSTAT_FETCH(struct tcpstat, tcpstat, \
+				    name)
 
 /*
  * Kernel module consumers must use this accessor macro.
@@ -817,7 +826,7 @@ int	tcp_signature_check(struct mbuf *m, int off0, int tlen, int optlen,
 void	 tcp_slowtimo(void);
 struct tcptemp *
 	 tcpip_maketemplate(struct inpcb *);
-void	 tcpip_fillheaders(struct inpcb *, void *, void *);
+void	 tcpip_fillheaders(struct inpcb *, void *, void *, int);
 void	 tcp_timer_activate(struct tcpcb *, uint32_t, sbintime_t);
 int	 tcp_timer_active(struct tcpcb *, uint32_t);
 void	 tcp_timer_stop(struct tcpcb *, uint32_t);

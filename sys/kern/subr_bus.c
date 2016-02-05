@@ -3064,8 +3064,8 @@ resource_list_free(struct resource_list *rl)
  * @param count		XXX end-start+1
  */
 int
-resource_list_add_next(struct resource_list *rl, int type, u_long start,
-    u_long end, u_long count)
+resource_list_add_next(struct resource_list *rl, int type, rman_res_t start,
+    rman_res_t end, rman_res_t count)
 {
 	int rid;
 
@@ -3093,7 +3093,7 @@ resource_list_add_next(struct resource_list *rl, int type, u_long start,
  */
 struct resource_list_entry *
 resource_list_add(struct resource_list *rl, int type, int rid,
-    u_long start, u_long end, u_long count)
+    rman_res_t start, rman_res_t end, rman_res_t count)
 {
 	struct resource_list_entry *rle;
 
@@ -3251,7 +3251,7 @@ resource_list_delete(struct resource_list *rl, int type, int rid)
  */
 struct resource *
 resource_list_reserve(struct resource_list *rl, device_t bus, device_t child,
-    int type, int *rid, u_long start, u_long end, u_long count, u_int flags)
+    int type, int *rid, rman_res_t start, rman_res_t end, rman_res_t count, u_int flags)
 {
 	struct resource_list_entry *rle = NULL;
 	int passthrough = (device_get_parent(child) != bus);
@@ -3308,7 +3308,7 @@ resource_list_reserve(struct resource_list *rl, device_t bus, device_t child,
  */
 struct resource *
 resource_list_alloc(struct resource_list *rl, device_t bus, device_t child,
-    int type, int *rid, u_long start, u_long end, u_long count, u_int flags)
+    int type, int *rid, rman_res_t start, rman_res_t end, rman_res_t count, u_int flags)
 {
 	struct resource_list_entry *rle = NULL;
 	int passthrough = (device_get_parent(child) != bus);
@@ -3950,7 +3950,7 @@ bus_generic_teardown_intr(device_t dev, device_t child, struct resource *irq,
  */
 int
 bus_generic_adjust_resource(device_t dev, device_t child, int type,
-    struct resource *r, u_long start, u_long end)
+    struct resource *r, rman_res_t start, rman_res_t end)
 {
 	/* Propagate up the bus hierarchy until someone handles it. */
 	if (dev->parent)
@@ -3967,7 +3967,7 @@ bus_generic_adjust_resource(device_t dev, device_t child, int type,
  */
 struct resource *
 bus_generic_alloc_resource(device_t dev, device_t child, int type, int *rid,
-    u_long start, u_long end, u_long count, u_int flags)
+    rman_res_t start, rman_res_t end, rman_res_t count, u_int flags)
 {
 	/* Propagate up the bus hierarchy until someone handles it. */
 	if (dev->parent)
@@ -4122,7 +4122,7 @@ bus_generic_get_dma_tag(device_t dev, device_t child)
  */
 int
 bus_generic_rl_get_resource(device_t dev, device_t child, int type, int rid,
-    u_long *startp, u_long *countp)
+    rman_res_t *startp, rman_res_t *countp)
 {
 	struct resource_list *		rl = NULL;
 	struct resource_list_entry *	rle = NULL;
@@ -4153,7 +4153,7 @@ bus_generic_rl_get_resource(device_t dev, device_t child, int type, int rid,
  */
 int
 bus_generic_rl_set_resource(device_t dev, device_t child, int type, int rid,
-    u_long start, u_long count)
+    rman_res_t start, rman_res_t count)
 {
 	struct resource_list *		rl = NULL;
 
@@ -4221,7 +4221,7 @@ bus_generic_rl_release_resource(device_t dev, device_t child, int type,
  */
 struct resource *
 bus_generic_rl_alloc_resource(device_t dev, device_t child, int type,
-    int *rid, u_long start, u_long end, u_long count, u_int flags)
+    int *rid, rman_res_t start, rman_res_t end, rman_res_t count, u_int flags)
 {
 	struct resource_list *		rl = NULL;
 
@@ -4307,8 +4307,8 @@ bus_release_resources(device_t dev, const struct resource_spec *rs,
  * parent of @p dev.
  */
 struct resource *
-bus_alloc_resource(device_t dev, int type, int *rid, u_long start, u_long end,
-    u_long count, u_int flags)
+bus_alloc_resource(device_t dev, int type, int *rid, rman_res_t start, rman_res_t end,
+    rman_res_t count, u_int flags)
 {
 	if (dev->parent == NULL)
 		return (NULL);
@@ -4323,8 +4323,8 @@ bus_alloc_resource(device_t dev, int type, int *rid, u_long start, u_long end,
  * parent of @p dev.
  */
 int
-bus_adjust_resource(device_t dev, int type, struct resource *r, u_long start,
-    u_long end)
+bus_adjust_resource(device_t dev, int type, struct resource *r, rman_res_t start,
+    rman_res_t end)
 {
 	if (dev->parent == NULL)
 		return (EINVAL);
@@ -4454,7 +4454,7 @@ bus_describe_intr(device_t dev, struct resource *irq, void *cookie,
  */
 int
 bus_set_resource(device_t dev, int type, int rid,
-    u_long start, u_long count)
+    rman_res_t start, rman_res_t count)
 {
 	return (BUS_SET_RESOURCE(device_get_parent(dev), dev, type, rid,
 	    start, count));
@@ -4468,7 +4468,7 @@ bus_set_resource(device_t dev, int type, int rid,
  */
 int
 bus_get_resource(device_t dev, int type, int rid,
-    u_long *startp, u_long *countp)
+    rman_res_t *startp, rman_res_t *countp)
 {
 	return (BUS_GET_RESOURCE(device_get_parent(dev), dev, type, rid,
 	    startp, countp));
@@ -4480,10 +4480,11 @@ bus_get_resource(device_t dev, int type, int rid,
  * This function simply calls the BUS_GET_RESOURCE() method of the
  * parent of @p dev and returns the start value.
  */
-u_long
+rman_res_t
 bus_get_resource_start(device_t dev, int type, int rid)
 {
-	u_long start, count;
+	rman_res_t start;
+	rman_res_t count;
 	int error;
 
 	error = BUS_GET_RESOURCE(device_get_parent(dev), dev, type, rid,
@@ -4499,10 +4500,11 @@ bus_get_resource_start(device_t dev, int type, int rid)
  * This function simply calls the BUS_GET_RESOURCE() method of the
  * parent of @p dev and returns the count value.
  */
-u_long
+rman_res_t
 bus_get_resource_count(device_t dev, int type, int rid)
 {
-	u_long start, count;
+	rman_res_t start;
+	rman_res_t count;
 	int error;
 
 	error = BUS_GET_RESOURCE(device_get_parent(dev), dev, type, rid,

@@ -77,7 +77,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/tcp_timer.h>
 #include <netinet/tcp_var.h>
 #include <netinet/tcpip.h>
-#include <netinet/tcp_cc.h>
+#include <netinet/cc/cc.h>
 #ifdef TCPPCAP
 #include <netinet/tcp_pcap.h>
 #endif
@@ -202,7 +202,7 @@ tcp_output(struct tcpcb *tp)
 #ifdef IPSEC
 	unsigned ipsec_optlen = 0;
 #endif
-	int idle, sendalot;
+	int idle, sendalot, needeven;
 	int sack_rxmit, sack_bytes_rxmt;
 	struct sackhole *p;
 	int tso, mtu;
@@ -218,7 +218,7 @@ tcp_output(struct tcpcb *tp)
 	isipv6 = (inp->inp_vflag & INP_IPV6) != 0;
 #endif
 
-	t = tcp_ts_getsbintime();
+
 	INP_WLOCK_ASSERT(inp);
 
 #ifdef TCP_OFFLOAD
@@ -237,6 +237,10 @@ tcp_output(struct tcpcb *tp)
 	    (tp->snd_nxt != tp->snd_una))          /* not a retransmit */
 		return (0);
 #endif
+	t = tcp_ts_getsbintime();
+	needeven = tp->t_srtt < 100*SBT_1MS && !(tp->t_flags2 & TF2_NO_DELACK_RXT);
+	if (tp->snd_max == tp->snd_una)
+		tp->t_sendcount = 0;
 	/*
 	 * Determine length of data that should be transmitted,
 	 * and flags that will be used.
@@ -244,7 +248,7 @@ tcp_output(struct tcpcb *tp)
 	 * to send, then transmit; otherwise, investigate further.
 	 */
 	idle = (tp->t_flags & TF_LASTIDLE) || (tp->snd_max == tp->snd_una);
-	if (idle && TCP_TS_TO_SBT(t) - tp->t_rcvtime >= tp->t_rxtcur)
+	if (idle && t - tp->t_rcvtime >= tp->t_rxtcur)
 		cc_after_idle(tp);
 	tp->t_flags &= ~TF_LASTIDLE;
 	if (idle) {
@@ -254,6 +258,7 @@ tcp_output(struct tcpcb *tp)
 		}
 	}
 again:
+	t = tcp_ts_getsbintime();
 	/*
 	 * If we've recently taken a timeout, snd_max will be greater than
 	 * snd_nxt.  There may be SACK information that allows us to avoid
@@ -803,15 +808,17 @@ send:
 		/* Timestamps. */
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
-			tp->t_tsval_last = max(t,
-					       tp->t_tsval_last + MIN_TS_STEP);
-			to.to_tsval = ((uint32_t)tp->t_tsval_last) + tp->ts_offset;
+			if (SEQ_GT(tp->t_lasttsecr, TCP_SBT_TO_TS(t)))
+				to.to_tsval = (uint32_t)(tp->t_lasttsecr + MAX_TS_STEP);
+			else
+				to.to_tsval = TCP_SBT_TO_TS(t);
+			tp->t_lasttsval = to.to_tsval;
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
 			/* Set receive buffer autosizing timestamp. */
 			if (tp->rfbuf_ts == 0 &&
 			    (so->so_rcv.sb_flags & SB_AUTOSIZE))
-				tp->rfbuf_ts = t;
+				tp->rfbuf_ts = TCP_SBT_TO_TS(t);
 		}
 		/* Selective ACK's. */
 		if (tp->t_flags & TF_SACK_PERMIT) {
@@ -856,15 +863,20 @@ send:
 	 * the segment.
 	 */
 	if (len + optlen + ipoptlen > tp->t_maxseg) {
-		flags &= ~TH_FIN;
+		int max_seg;
 
-		if (tso) {
+		flags &= ~TH_FIN;
+		max_seg = tp->t_maxseg - optlen;
+
+
+		if (tso && len >= 2*max_seg) {
 			u_int if_hw_tsomax;
 			u_int if_hw_tsomaxsegcount;
 			u_int if_hw_tsomaxsegsize;
 			struct mbuf *mb;
 			u_int moff;
 			int max_len;
+			int npkts;
 
 			/* extract TSO information */
 			if_hw_tsomax = tp->t_tsomax;
@@ -893,6 +905,17 @@ send:
 					sendalot = 1;
 					len = max_len;
 				}
+			}
+
+			if (needeven) {
+				npkts = ((len  + max_seg - 1)/ max_seg)*max_seg;
+
+				if (((npkts + tp->t_sendcount) & 1) && !sendalot) {
+					len -= max_seg;
+					sendalot = 1;
+					tp->t_sendcount += npkts - 1;
+				} else
+					tp->t_sendcount += npkts;
 			}
 
 			/*
@@ -1021,6 +1044,20 @@ send:
 		struct mbuf *mb;
 		u_int moff;
 
+		/*
+		 * We need to defeat delayed acks if our RTO is less than 100ms
+		 * so we split this last packet in to two
+		 */
+		if (needeven && (len > 1) && !(flags & TH_SYN) &&
+		    (off + len == (sbused(&so->so_snd)) - (!(tp->t_sendcount & 1)))) {
+			/*
+			 * the above line is equivalent to the two lines below:
+			 * ((off + len == sbused(&so->so_snd)) && (tp->t_sendcount & 1)) ||
+			 * ((off + len == sbused(&so->so_snd) - 1) && !(tp->t_sendcount & 1))
+		    */
+			len = (len >> 1);
+			sendalot = 1;
+		}
 		if ((tp->t_flags & TF_FORCEDATA) && len == 1)
 			TCPSTAT_INC(tcps_sndprobe);
 		else if (SEQ_LT(tp->snd_nxt, tp->snd_max) || sack_rxmit) {
@@ -1113,14 +1150,14 @@ send:
 	if (isipv6) {
 		ip6 = mtod(m, struct ip6_hdr *);
 		th = (struct tcphdr *)(ip6 + 1);
-		tcpip_fillheaders(inp, ip6, th);
+		tcpip_fillheaders(inp, ip6, th, 0);
 	} else
 #endif /* INET6 */
 	{
 		ip = mtod(m, struct ip *);
 		ipov = (struct ipovly *)ip;
 		th = (struct tcphdr *)(ip + 1);
-		tcpip_fillheaders(inp, ip, th);
+		tcpip_fillheaders(inp, ip, th, 0);
 	}
 
 	/*
@@ -1374,6 +1411,18 @@ send:
 				ro.ro_flags |= RT_CACHING_CONTEXT;
 		}
 
+		if (in_rt_valid(inp)) {
+			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ro.ro_dst;
+			sin6->sin6_family = AF_INET6;
+			sin6->sin6_len = sizeof(struct sockaddr_in6);
+			memcpy(&sin6->sin6_addr.s6_addr, &inp->in6p_faddr.s6_addr, 16);
+			ro.ro_rt = inp->inp_rt;
+			ro.ro_plen = inp->inp_plen;
+			ro.ro_prepend = inp->inp_prepend;
+			if (ro.ro_rt != NULL)
+				ro.ro_flags |= RT_CACHING_CONTEXT;
+		}
+
 		/*
 		 * Set the packet size here for the benefit of DTrace probes.
 		 * ip6_output() will set it properly; it's supposed to include
@@ -1400,7 +1449,7 @@ send:
 		error = ip6_output(m, inp->in6p_outputopts, &ro,
 		    ((so->so_options & SO_DONTROUTE) ?  IP_ROUTETOIF : 0),
 		    NULL, NULL, inp);
-
+		tp->t_sendcount++;
 		if (error == EMSGSIZE && ro.ro_rt != NULL)
 			mtu = ro.ro_rt->rt_mtu;
 		if (inp->inp_prepend != ro.ro_prepend && ro.ro_prepend != NULL) {
@@ -1467,7 +1516,7 @@ send:
 	error = ip_output(m, inp->inp_options, &ro,
 	    ((so->so_options & SO_DONTROUTE) ? IP_ROUTETOIF : 0), 0,
 	    inp);
-
+	tp->t_sendcount++;
 	if (inp->inp_prepend != ro.ro_prepend && ro.ro_prepend != NULL) {
 		if (inp->inp_prepend != NULL)
 			free(inp->inp_prepend, M_TEMP);
@@ -1675,7 +1724,8 @@ timer:
 void
 tcp_setpersist(struct tcpcb *tp)
 {
-	uint64_t tt, t = ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1;
+	/* XXX */
+	uint64_t tt, t = tp->t_srtt + 4*tp->t_rttvar;
 
 	tp->t_flags &= ~TF_PREVVALID;
 	if (tcp_timer_active(tp, TT_REXMT))
@@ -1684,7 +1734,7 @@ tcp_setpersist(struct tcpcb *tp)
 	 * Start/restart persistance timer.
 	 */
 	TCPT_RANGESET(tt, t * tcp_backoff[tp->t_rxtshift],
-		      TCPTV_PERSMIN*tick_sbt, TCPTV_PERSMAX*tick_sbt);
+		      tcp_persmin*tick_sbt, tcp_persmax*tick_sbt);
 	tcp_timer_activate(tp, TT_PERSIST, tt);
 	if (tp->t_rxtshift < TCP_MAXRXTSHIFT)
 		tp->t_rxtshift++;

@@ -77,13 +77,13 @@
 						   if 0, no idea yet */
 #define	TCPTV_RTOBASE	( hz )			/* assumed RTO if no info - RFC 6298 */
 
-#define	TCPTV_PERSMIN	(  5*hz)		/* retransmit persistence */
+#define	TCPTV_PERSMIN	(  5*hz)		/* minimum persist interval */
 #define	TCPTV_PERSMAX	( 60*hz)		/* maximum persist interval */
 
-#define	TCPTV_KEEP_INIT	( 75*hz)		/* initial connect keepalive */
-#define	TCPTV_KEEP_IDLE	(120*60*hz)		/* dflt time before probing */
-#define	TCPTV_KEEPINTVL	( 75*hz)		/* default probe interval */
-#define	TCPTV_KEEPCNT	8			/* max probes before drop */
+#define	TCPTV_KEEP_INIT	( 60*hz)			/* initial connect keepalive */
+#define	TCPTV_KEEP_IDLE	( 60*hz)			/* dflt time before probing */
+#define	TCPTV_KEEPINTVL	( 60*hz)			/* default probe interval */
+#define	TCPTV_KEEPCNT	7*24*60		/* max probes before drop - one week*/
 
 #define TCPTV_FINWAIT2_TIMEOUT (60*hz)         /* FIN_WAIT_2 timeout if no receiver */
 
@@ -108,14 +108,13 @@
  * networks faster then a modem that has minor (e.g. 1%) packet loss.
  */
 #define	TCPTV_MIN	( 3 )			/* minimum allowable value - see above */
-#define TCPTV_CPU_VAR	( hz/5 )		/* cpu variance allowed (200ms) */
 #define	TCPTV_REXMTMAX	( 64*hz)		/* max allowable REXMT value */
 
 #define TCPTV_TWTRUNC	8			/* RTO factor to truncate TW */
 
 #define	TCP_LINGERTIME	120			/* linger at most 2 minutes */
 
-#define	TCP_MAXRXTSHIFT	12			/* maximum retransmits */
+#define	TCP_MAXRXTSHIFT	16			/* maximum retransmits */
 
 #define	TCPTV_DELACK	( hz/25 )		/* 40ms timeout */
 
@@ -167,13 +166,15 @@ struct tcp_timer {
 
 #define TT_STOPPED	0x00010000
 
-#define	TP_KEEPINTVL(tp) ((tp)->t_keepintvl ? (tp)->t_keepintvl : tcp_keepintvl)
 #define	TP_KEEPCNT(tp)	((tp)->t_keepcnt ? (tp)->t_keepcnt : tcp_keepcnt)
 
+#define	TP_KEEPINTVL(tp) (((tp)->t_keepintvl ? (tp)->t_keepintvl : tcp_keepintvl)*tick_sbt)
 #define	TP_KEEPINIT(tp)	(((tp)->t_keepinit ? (tp)->t_keepinit : tcp_keepinit)*tick_sbt)
 #define	TP_KEEPIDLE(tp)	(((tp)->t_keepidle ? (tp)->t_keepidle : tcp_keepidle)*tick_sbt)
-#define	TP_MAXIDLE(tp)	((TP_KEEPCNT(tp) * TP_KEEPINTVL(tp))*tick_sbt)
+#define	TP_MAXIDLE(tp)	((TP_KEEPCNT(tp) * TP_KEEPINTVL(tp)))
 
+extern int tcp_persmin;			/* minimum persist interval */
+extern int tcp_persmax;			/* maximum persist interval */
 extern int tcp_keepinit;		/* time to establish connection */
 extern int tcp_keepidle;		/* time before keepalive probes begin */
 extern int tcp_keepintvl;		/* time between keepalive probes */

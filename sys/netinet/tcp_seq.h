@@ -90,20 +90,27 @@
  * MSL gives us what we need for now while otherwise remaining as RFC compliant as possible.
  *
  */
-#define SBT_MINTS 256
+
 #define SBT_MINTS_SHIFT 8
 #define	MIN_TS_STEP 2
+#define TS_1S (SBT_1S >> SBT_MINTS_SHIFT)
+#define SBT_MINTS (1 << SBT_MINTS_SHIFT)
+/* minimum rtt is ~1us (60ns * 16) */
+#define SBT_MINRTT (SBT_MINTS << 4)
 
 /*
  * Clock macros for RFC 1323 timestamps.
  */
 #define	TCP_TS_TO_SBT(_t)	((_t) << SBT_MINTS_SHIFT)
+#define	TCP_SBT_TO_TS(_t)	((_t) >> SBT_MINTS_SHIFT)
 
+
+#define MAX_TS_STEP	((1<<30))
 
 /*
  * RFC defined MSL: 255s (+ 2s rounding slop)
  */
-#define TCP_PAWS_IDLE	(SBT_MINTS*SBT_1S)
+#define TCP_PAWS_IDLE	(SBT_MINTS*SBT_1S/2)
 
 #if defined(__amd64__) || defined(__i386__)
 #include <machine/clock.h>
@@ -114,9 +121,6 @@ extern sbintime_t (*cpu_tcp_ts_getsbintime)(void);
 #endif
 
 #define tcp_ts_getsbintime() (cpu_tcp_ts_getsbintime)()
-
-/* trivial macro to make intent clearer */
-#define tcp_ts_getsbintime32() ((uint32_t)tcp_ts_getsbintime())
 
 #endif /* _KERNEL */
 

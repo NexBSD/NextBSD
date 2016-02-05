@@ -469,7 +469,7 @@ void
 hardclock(int usermode, uintfptr_t pc)
 {
 
-	atomic_add_long(&ticks, 1);
+	atomic_add_long(&ticks, hardclock_scale);
 	hardclock_cpu(usermode);
 	tc_ticktock(1);
 	cpu_tick_calibration();
@@ -508,7 +508,7 @@ hardclock_cnt(int cnt, int usermode)
 	/*
 	 * Update per-CPU and possibly global ticks values.
 	 */
-	*t += cnt;
+	*t += cnt*hardclock_scale;
 	do {
 		global = ticks;
 		newticks = *t - global;

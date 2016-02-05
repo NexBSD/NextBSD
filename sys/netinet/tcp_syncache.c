@@ -351,6 +351,7 @@ syncache_insert(struct syncache *sc, struct syncache_head *sch)
 
 	SCH_UNLOCK(sch);
 
+	TCPSTAT_INC(tcps_states[TCPS_SYN_RECEIVED]);
 	TCPSTAT_INC(tcps_sc_added);
 }
 
@@ -364,6 +365,7 @@ syncache_drop(struct syncache *sc, struct syncache_head *sch)
 
 	SCH_LOCK_ASSERT(sch);
 
+	TCPSTAT_DEC(tcps_states[TCPS_SYN_RECEIVED]);
 	TAILQ_REMOVE(&sch->sch_bucket, sc, sc_hash);
 	sch->sch_length--;
 
@@ -820,6 +822,7 @@ syncache_socket(struct syncache *sc, struct socket *lso, struct mbuf *m)
 	tcp_state_change(tp, TCPS_SYN_RECEIVED);
 	tp->iss = sc->sc_iss;
 	tp->irs = sc->sc_irs;
+	tp->t_lasttsval =  sc->sc_ts;
 	tcp_rcvseqinit(tp);
 	tcp_sendseqinit(tp);
 	blk = sototcpcb(lso)->t_fb;
@@ -863,7 +866,6 @@ syncache_socket(struct syncache *sc, struct socket *lso, struct mbuf *m)
 			tp->t_flags |= TF_REQ_TSTMP|TF_RCVD_TSTMP;
 			tp->ts_recent = sc->sc_tsreflect;
 			tp->ts_recent_age = tcp_ts_getsbintime();
-			tp->ts_offset = sc->sc_tsoff;
 		}
 #ifdef TCP_SIGNATURE
 		if (sc->sc_flags & SCF_SIGNATURE)
@@ -909,7 +911,7 @@ syncache_socket(struct syncache *sc, struct socket *lso, struct mbuf *m)
 	tp->t_keepidle = sototcpcb(lso)->t_keepidle;
 	tp->t_keepintvl = sototcpcb(lso)->t_keepintvl;
 	tp->t_keepcnt = sototcpcb(lso)->t_keepcnt;
-	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp)*tick_sbt);
+	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp));
 
 	soisconnected(so);
 
@@ -992,7 +994,16 @@ syncache_expand(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 			goto failed;
 		}
 	} else {
-		/* Pull out the entry to unlock the bucket row. */
+		/*
+		 * Pull out the entry to unlock the bucket row.
+		 * 
+		 * NOTE: We must decrease TCPS_SYN_RECEIVED count here, not
+		 * tcp_state_change().  The tcpcb is not existent at this
+		 * moment.  A new one will be allocated via syncache_socket->
+		 * sonewconn->tcp_usr_attach in TCPS_CLOSED state, then
+		 * syncache_socket() will change it to TCPS_SYN_RECEIVED.
+		 */
+		TCPSTAT_DEC(tcps_states[TCPS_SYN_RECEIVED]);
 		TAILQ_REMOVE(&sch->sch_bucket, sc, sc_hash);
 		sch->sch_length--;
 #ifdef TCP_OFFLOAD
@@ -1381,7 +1392,7 @@ skip_alloc:
 		 */
 		if (to->to_flags & TOF_TS) {
 			sc->sc_tsreflect = to->to_tsval;
-			sc->sc_ts = tcp_ts_getsbintime();
+			sc->sc_ts = TCP_SBT_TO_TS(tcp_ts_getsbintime());
 			sc->sc_flags |= SCF_TIMESTAMP;
 		}
 		if (to->to_flags & TOF_SCALE) {
@@ -1921,10 +1932,8 @@ syncookie_generate(struct syncache_head *sch, struct syncache *sc)
 	iss = hash & ~0xff;
 	iss |= cookie.cookie ^ (hash >> 24);
 
-	/* Randomize the timestamp. */
 	if (sc->sc_flags & SCF_TIMESTAMP) {
-		sc->sc_ts = arc4random();
-		sc->sc_tsoff = sc->sc_ts - tcp_ts_getsbintime();
+		sc->sc_ts = TCP_SBT_TO_TS(tcp_ts_getsbintime());
 	}
 
 	TCPSTAT_INC(tcps_sc_sendcookie);
@@ -2014,7 +2023,6 @@ syncookie_lookup(struct in_conninfo *inc, struct syncache_head *sch,
 		sc->sc_flags |= SCF_TIMESTAMP;
 		sc->sc_tsreflect = to->to_tsval;
 		sc->sc_ts = to->to_tsecr;
-		sc->sc_tsoff = to->to_tsecr - tcp_ts_getsbintime();
 	}
 
 	if (to->to_flags & TOF_SIGNATURE)
@@ -2086,25 +2094,6 @@ syncookie_reseed(void *arg)
 
 	/* Reschedule ourself. */
 	callout_schedule(&sc->secret.reseed, SYNCOOKIE_LIFETIME * hz);
-}
-
-/*
- * Returns the current number of syncache entries.  This number
- * will probably change before you get around to calling 
- * syncache_pcblist.
- */
-int
-syncache_pcbcount(void)
-{
-	struct syncache_head *sch;
-	int count, i;
-
-	for (count = 0, i = 0; i < V_tcp_syncache.hashsize; i++) {
-		/* No need to lock for a read. */
-		sch = &V_tcp_syncache.hashbase[i];
-		count += sch->sch_length;
-	}
-	return count;
 }
 
 /*
