@@ -1770,7 +1770,7 @@ static void
 _rxq_refill_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
 {
 	struct rxq_refill_cb_arg *cb_arg = arg;
-	
+
 	cb_arg->error = error;
 	cb_arg->seg = segs[0];
 	cb_arg->nseg = nseg;
@@ -3424,7 +3424,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 
 		/* Allocate a buf ring */
 		txq->ift_br = brscp + i*nbuf_rings;
-		for (j = 0; j < nbuf_rings; j++) { 
+		for (j = 0; j < nbuf_rings; j++) {
 			err = mp_ring_alloc(&txq->ift_br[j], 2048, txq, iflib_txq_drain,
 								iflib_txq_can_drain, M_IFLIB, M_WAITOK);
 			if (err) {
@@ -3439,7 +3439,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 		rxq->ifr_ctx = ctx;
 		rxq->ifr_id = i;
 		rxq->ifr_ifdi = &qset->ifq_ifdi[1];
-		rxq->ifr_nfl = nfree_lists; 
+		rxq->ifr_nfl = nfree_lists;
 		if (!(fl =
 			  (iflib_fl_t) malloc(sizeof(struct iflib_fl) * nfree_lists, M_IFLIB, M_NOWAIT | M_ZERO))) {
 			device_printf(dev, "Unable to allocate free list memory\n");
@@ -3830,7 +3830,7 @@ iflib_link_state_change(if_ctx_t ctx, int link_state)
 
 #if 0
 	if_setbaudrate(ifp, baudrate);
-#endif	
+#endif
 	/* If link down, disable watchdog */
 	if ((ctx->ifc_link_state == LINK_STATE_UP) && (link_state == LINK_STATE_DOWN)) {
 		for (int i = 0; i < ctx->ifc_softc_ctx.isc_nqsets; i++, txq++)
@@ -3914,7 +3914,7 @@ iflib_msix_init(if_ctx_t ctx)
 		goto msi;
 
 	/*
-	** When used in a virtualized environment 
+	** When used in a virtualized environment
 	** PCI BUSMASTER capability may not be set
 	** so explicity set it here and rewrite
 	** the ENABLE in the MSIX control register
