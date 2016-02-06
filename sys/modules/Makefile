@@ -552,7 +552,7 @@ _io=		io
 _ipoib=         ipoib
 .endif
 _ix=		ix
-_ixv=		ixv
+#_ixv=		ixv
 _linprocfs=	linprocfs
 _linsysfs=	linsysfs
 _linux=		linux
