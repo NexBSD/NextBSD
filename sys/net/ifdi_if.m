@@ -208,6 +208,11 @@ METHOD int promisc_set {
 	int _flags;
 };
 
+METHOD void crcstrip_set {
+	if_ctx_t _ctx;
+	int _onoff;
+};
+
 #
 # IOV handling
 #
