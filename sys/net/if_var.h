@@ -175,6 +175,7 @@ struct if_encap_req {
 
 #define	IFENCAP_FLAG_BROADCAST	0x02	/* Destination is broadcast */
 
+
 /*
  * Structure defining a network interface.
  *
