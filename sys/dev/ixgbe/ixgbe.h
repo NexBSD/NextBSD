@@ -59,9 +59,9 @@
 #include <net/if_dl.h>
 #include <net/if_media.h>
 
-#include <net/bpf.h>
 #include <net/if_types.h>
 #include <net/if_vlan_var.h>
+#include <net/iflib.h>
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -337,37 +337,18 @@ struct ixgbe_mc_addr {
 };
 
 /*
-** Driver queue struct: this is the interrupt container
-**  for the associated tx and rx ring.
-*/
-struct ix_queue {
-	struct adapter		*adapter;
-	u32			msix;           /* This queue's MSIX vector */
-	u32			eims;           /* This queue's EIMS bit */
-	u32			eitr_setting;
-	u32			me;
-	struct resource		*res;
-	void			*tag;
-	int			busy;
-	struct tx_ring		*txr;
-	struct rx_ring		*rxr;
-	struct task		que_task;
-	struct taskqueue	*tq;
-	u64			irqs;
-};
-
-/*
  * The transmit ring, one per queue
  */
 struct tx_ring {
-        struct adapter		*adapter;
+	struct ix_queue	*que;
+	struct adapter		*adapter;
 	struct mtx		tx_mtx;
 	u32			me;
 	u32			tail;
 	int			busy;
 	union ixgbe_adv_tx_desc	*tx_base;
 	struct ixgbe_tx_buf	*tx_buffers;
-	struct ixgbe_dma_alloc	txdma;
+	uint64_t tx_paddr;
 	volatile u16		tx_avail;
 	u16			next_avail_desc;
 	u16			next_to_clean;
@@ -390,7 +371,7 @@ struct tx_ring {
 	unsigned long   	no_tx_map_avail;
 	unsigned long   	no_tx_dma_setup;
 	u64			no_desc_avail;
-	u64			total_packets;
+        u64			total_packets;
 };
 
 
@@ -398,22 +379,18 @@ struct tx_ring {
  * The Receive ring, one per rx queue
  */
 struct rx_ring {
-        struct adapter		*adapter;
+	struct ix_queue	*que;
+	struct adapter		*adapter;
 	struct mtx		rx_mtx;
+        struct lro_ctrl         lro; 
 	u32			me;
 	u32			tail;
 	union ixgbe_adv_rx_desc	*rx_base;
-	struct ixgbe_dma_alloc	rxdma;
-	struct lro_ctrl		lro;
-	bool			lro_enabled;
+	uint64_t rx_paddr;
 	bool			hw_rsc;
 	bool			vtag_strip;
-        u16			next_to_refresh;
-        u16 			next_to_check;
-	u16			num_desc;
 	u16			mbuf_sz;
 	char			mtx_name[16];
-	struct ixgbe_rx_buf	*rx_buffers;
 	bus_dma_tag_t		ptag;
 
 	u32			bytes; /* Used for AIM calc */
@@ -429,6 +406,27 @@ struct rx_ring {
 #ifdef IXGBE_FDIR
 	u64			flm;
 #endif
+};
+
+/*
+** Driver queue struct: this is the interrupt container
+**  for the associated tx and rx ring.
+*/
+struct ix_queue {
+	struct adapter		*adapter;
+	u32			msix;           /* This queue's MSIX vector */
+	u32			eims;           /* This queue's EIMS bit */
+	u32			eitr_setting;
+	u32			me;
+	struct resource		*res;
+	void			*tag;
+	int			busy;
+	struct tx_ring		txr;
+	struct rx_ring		rxr;
+
+        struct if_irq           que_irq; 
+  
+	u64			irqs;
 };
 
 #ifdef PCI_IOV
@@ -455,35 +453,33 @@ struct ixgbe_vf {
 
 /* Our adapter structure */
 struct adapter {
+	if_ctx_t ctx;
+	if_softc_ctx_t shared;
+#define num_queues shared->isc_nqsets
+#define max_frame_size shared->isc_max_frame_size
+#define intr_type shared->isc_intr
+	struct ifnet		*ifp;
 	struct ixgbe_hw		hw;
 	struct ixgbe_osdep	osdep;
 
 	struct device		*dev;
-	struct ifnet		*ifp;
 
 	struct resource		*pci_mem;
-	struct resource		*msix_mem;
 
 	/*
 	 * Interrupt resources: this set is
 	 * either used for legacy, or for Link
 	 * when doing MSIX
 	 */
+	struct if_irq           irq;
 	void			*tag;
 	struct resource 	*res;
 
-	struct ifmedia		media;
-	struct callout		timer;
+	struct ifmedia		*media;
 	int			msix;
 	int			if_flags;
 
-	struct mtx		core_mtx;
-
-	eventhandler_tag 	vlan_attach;
-	eventhandler_tag 	vlan_detach;
-
 	u16			num_vlans;
-	u16			num_queues;
 
 	/*
 	** Shadow VFTA table, this is needed because
@@ -499,7 +495,6 @@ struct adapter {
 	int			advertise;  /* link speeds */
 	bool			enable_aim; /* adaptive interrupt moderation */
 	bool			link_active;
-	u16			max_frame_size;
 	u16			num_segs;
 	u32			link_speed;
 	bool			link_up;
@@ -512,23 +507,21 @@ struct adapter {
 	bool			wol_support;
 	u32			wufc;
 
-	/* Mbuf cluster size */
-	u32			rx_mbuf_sz;
-
 	/* Support for pluggable optics */
 	bool			sfp_probe;
-	struct task     	link_task;  /* Link tasklet */
-	struct task     	mod_task;   /* SFP tasklet */
-	struct task     	msf_task;   /* Multispeed Fiber */
+
+	struct grouptask     	mod_task;   /* SFP tasklet */
+	struct grouptask     	msf_task;   /* Multispeed Fiber */
+
 #ifdef PCI_IOV
-	struct task		mbx_task;   /* VF -> PF mailbox interrupt */
+	struct grouptask		mbx_task;   /* VF -> PF mailbox interrupt */
 #endif /* PCI_IOV */
 #ifdef IXGBE_FDIR
 	int			fdir_reinit;
-	struct task     	fdir_task;
+	struct grouptask     	fdir_task;
 #endif
-	struct task		phy_task;   /* PHY intr tasklet */
-	struct taskqueue	*tq;
+
+	struct grouptask		phy_task;   /* PHY intr tasklet */
 
 	/*
 	** Queues: 
@@ -537,22 +530,9 @@ struct adapter {
 	**   with it.
 	*/
 	struct ix_queue		*queues;
-
-	/*
-	 * Transmit rings:
-	 *	Allocated at run time, an array of rings.
-	 */
-	struct tx_ring		*tx_rings;
-	u32			num_tx_desc;
-	u32			tx_process_limit;
-
-	/*
-	 * Receive rings:
-	 *	Allocated at run time, an array of rings.
-	 */
-	struct rx_ring		*rx_rings;
 	u64			active_queues;
-	u32			num_rx_desc;
+
+        u32                     tx_process_limit;
 	u32			rx_process_limit;
 
 	/* Multicast array memory */
@@ -568,6 +548,7 @@ struct adapter {
 #endif
 
 	/* Misc stats maintained by the driver */
+        unsigned long           rx_mbuf_sz;
 	unsigned long   	dropped_pkts;
 	unsigned long   	mbuf_defrag_failed;
 	unsigned long   	mbuf_header_failed;
@@ -592,7 +573,6 @@ struct adapter {
 	u64			noproto;
 #endif
 };
-
 
 /* Precision Time Sync (IEEE 1588) defines */
 #define ETHERTYPE_IEEE1588      0x88F7
@@ -697,19 +677,6 @@ drbr_needs_enqueue(struct ifnet *ifp, struct buf_ring *br)
         return (!buf_ring_empty(br));
 }
 #endif
-
-/*
-** Find the number of unrefreshed RX descriptors
-*/
-static inline u16
-ixgbe_rx_unrefreshed(struct rx_ring *rxr)
-{       
-	if (rxr->next_to_check > rxr->next_to_refresh)
-		return (rxr->next_to_check - rxr->next_to_refresh - 1);
-	else
-		return ((rxr->num_desc + rxr->next_to_check) -
-		    rxr->next_to_refresh - 1);
-}       
 
 /*
 ** This checks for a zero mac addr, something that will be likely
