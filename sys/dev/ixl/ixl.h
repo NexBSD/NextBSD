@@ -39,7 +39,6 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/buf_ring.h>
 #include <sys/mbuf.h>
 #include <sys/protosw.h>
 #include <sys/socket.h>
@@ -60,6 +59,7 @@
 #include <net/bpf.h>
 #include <net/if_types.h>
 #include <net/if_vlan_var.h>
+#include <net/iflib.h>
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -85,7 +85,6 @@
 #include <sys/proc.h>
 #include <sys/sysctl.h>
 #include <sys/endian.h>
-#include <sys/taskqueue.h>
 #include <sys/pcpu.h>
 #include <sys/smp.h>
 #include <machine/smp.h>
@@ -96,11 +95,15 @@
 #include <dev/pci/pci_iov.h>
 #endif
 
+#include "ifdi_if.h"
 #include "i40e_type.h"
 #include "i40e_prototype.h"
 
+MALLOC_DECLARE(M_IXL);
+
 #if defined(IXL_DEBUG) || defined(IXL_DEBUG_SYSCTL)
 #include <sys/sbuf.h>
+
 
 #define MAC_FORMAT "%02x:%02x:%02x:%02x:%02x:%02x"
 #define MAC_FORMAT_ARGS(mac_addr) \
@@ -304,16 +307,6 @@
 
 #define IXL_END_OF_INTR_LNKLST	0x7FF
 
-#define IXL_TX_LOCK(_sc)                mtx_lock(&(_sc)->mtx)
-#define IXL_TX_UNLOCK(_sc)              mtx_unlock(&(_sc)->mtx)
-#define IXL_TX_LOCK_DESTROY(_sc)        mtx_destroy(&(_sc)->mtx)
-#define IXL_TX_TRYLOCK(_sc)             mtx_trylock(&(_sc)->mtx)
-#define IXL_TX_LOCK_ASSERT(_sc)         mtx_assert(&(_sc)->mtx, MA_OWNED)
-
-#define IXL_RX_LOCK(_sc)                mtx_lock(&(_sc)->mtx)
-#define IXL_RX_UNLOCK(_sc)              mtx_unlock(&(_sc)->mtx)
-#define IXL_RX_LOCK_DESTROY(_sc)        mtx_destroy(&(_sc)->mtx)
-
 #if __FreeBSD_version >= 1100036
 #define IXL_SET_IPACKETS(vsi, count)	(vsi)->ipackets = (count)
 #define IXL_SET_IERRORS(vsi, count)	(vsi)->ierrors = (count)
@@ -362,17 +355,6 @@ typedef struct _ixl_vendor_info_t {
 
 struct ixl_tx_buf {
 	u32		eop_index;
-	struct mbuf	*m_head;
-	bus_dmamap_t	map;
-	bus_dma_tag_t	tag;
-};
-
-struct ixl_rx_buf {
-	struct mbuf	*m_head;
-	struct mbuf	*m_pack;
-	struct mbuf	*fmp;
-	bus_dmamap_t	hmap;
-	bus_dmamap_t	pmap;
 };
 
 /*
@@ -391,24 +373,21 @@ struct ixl_mac_filter {
  * The Transmit ring control struct
  */
 struct tx_ring {
-        struct ixl_queue	*que;
-	struct mtx		mtx;
+	struct ixl_queue	*que;
 	u32			tail;
-	struct i40e_tx_desc	*base;
-	struct i40e_dma_mem	dma;
+	struct i40e_tx_desc	*tx_base;
+	uint64_t tx_paddr;
 	u16			next_avail;
 	u16			next_to_clean;
 	u16			atr_rate;
 	u16			atr_count;
 	u16			itr;
 	u16			latency;
-	struct ixl_tx_buf	*buffers;
+	struct ixl_tx_buf	*tx_buffers;
 	volatile u16		avail;
 	u32			cmd;
 	bus_dma_tag_t		tx_tag;
 	bus_dma_tag_t		tso_tag;
-	char			mtx_name[16];
-	struct buf_ring		*br;
 
 	/* Used for Dynamic ITR calculation */
 	u32			packets;
@@ -425,20 +404,13 @@ struct tx_ring {
  * The Receive ring control struct
  */
 struct rx_ring {
-        struct ixl_queue	*que;
-	struct mtx		mtx;
-	union i40e_rx_desc	*base;
-	struct i40e_dma_mem	dma;
-	struct lro_ctrl		lro;
-	bool			lro_enabled;
-	bool			hdr_split;
+	struct ixl_queue	*que;
+	union i40e_rx_desc	*rx_base;
+	uint64_t rx_paddr;
 	bool			discard;
-        u16			next_refresh;
-        u16 			next_check;
 	u16			itr;
 	u16			latency;
-	char			mtx_name[16];
-	struct ixl_rx_buf	*buffers;
+	
 	u32			mbuf_sz;
 	u32			tail;
 	bus_dma_tag_t		htag;
@@ -467,13 +439,11 @@ struct ixl_queue {
 	u32			eims;           /* This queue's EIMS bit */
 	struct resource		*res;
 	void			*tag;
-	int			num_desc;	/* both tx and rx */
 	int			busy;
 	struct tx_ring		txr;
 	struct rx_ring		rxr;
-	struct task		task;
-	struct task		tx_task;
-	struct taskqueue	*tq;
+
+	struct if_irq	que_irq;
 
 	/* Queue stats */
 	u64			irqs;
@@ -486,32 +456,40 @@ struct ixl_queue {
 	u64			dropped_pkts;
 };
 
+#define DOWNCAST(sctx) ((struct ixl_vsi *)(sctx))
 /*
 ** Virtual Station interface: 
 **	there would be one of these per traffic class/type
 **	for now just one, and its embedded in the pf
 */
 SLIST_HEAD(ixl_ftl_head, ixl_mac_filter);
+
 struct ixl_vsi {
+	if_ctx_t ctx;
+	if_softc_ctx_t shared;
+
+	struct ifnet *ifp;
+	struct ifmedia *media;
+
+#define num_queues shared->isc_nqsets
+#define max_frame_size shared->isc_max_frame_size
+
 	void 			*back;
-	struct ifnet		*ifp;
-	struct device		*dev;
 	struct i40e_hw		*hw;
-	struct ifmedia		media;
 	u64			que_mask;
 	int			id;
 	u16			vsi_num;
 	u16			msix_base;	/* station base MSIX vector */
 	u16			first_queue;
-	u16			num_queues;
 	u16			rx_itr_setting;
 	u16			tx_itr_setting;
 	struct ixl_queue	*queues;	/* head of queues */
 	bool			link_active;
 	u16			seid;
+	u32			link_speed;
+	struct if_irq	irq;	
 	u16			uplink_seid;
 	u16			downlink_seid;
-	u16			max_frame_size;
 
 	/* MAC/VLAN Filter list */
 	struct ixl_ftl_head ftl;
@@ -519,8 +497,6 @@ struct ixl_vsi {
 
 	struct i40e_aqc_vsi_properties_data info;
 
-	eventhandler_tag 	vlan_attach;
-	eventhandler_tag 	vlan_detach;
 	u16			num_vlans;
 
 	/* Per-VSI stats from hardware */
@@ -551,21 +527,6 @@ struct ixl_vsi {
 };
 
 /*
-** Find the number of unrefreshed RX descriptors
-*/
-static inline u16
-ixl_rx_unrefreshed(struct ixl_queue *que)
-{       
-        struct rx_ring	*rxr = &que->rxr;
-        
-	if (rxr->next_check > rxr->next_refresh)
-		return (rxr->next_check - rxr->next_refresh - 1);
-	else
-		return ((que->num_desc + rxr->next_check) -
-		    rxr->next_refresh - 1);
-}       
-
-/*
 ** Find the next available unused filter
 */
 static inline struct ixl_mac_filter *
@@ -575,7 +536,7 @@ ixl_get_filter(struct ixl_vsi *vsi)
 
 	/* create a new empty filter */
 	f = malloc(sizeof(struct ixl_mac_filter),
-	    M_DEVBUF, M_NOWAIT | M_ZERO);
+	    M_IXL, M_NOWAIT | M_ZERO);
 	if (f)
 		SLIST_INSERT_HEAD(&vsi->ftl, f, next);
 
@@ -588,14 +549,8 @@ ixl_get_filter(struct ixl_vsi *vsi)
 static inline bool
 cmp_etheraddr(const u8 *ea1, const u8 *ea2)
 {       
-	bool cmp = FALSE;
 
-	if ((ea1[0] == ea2[0]) && (ea1[1] == ea2[1]) &&
-	    (ea1[2] == ea2[2]) && (ea1[3] == ea2[3]) &&
-	    (ea1[4] == ea2[4]) && (ea1[5] == ea2[5])) 
-		cmp = TRUE;
-
-	return (cmp);
+	return (bcmp(ea1, ea2, 6) == 0);
 }       
 
 /*
@@ -632,24 +587,21 @@ ixl_fw_version_str(struct i40e_hw *hw)
 /*********************************************************************
  *  TXRX Function prototypes
  *********************************************************************/
-int	ixl_allocate_tx_data(struct ixl_queue *);
-int	ixl_allocate_rx_data(struct ixl_queue *);
 void	ixl_init_tx_ring(struct ixl_queue *);
-int	ixl_init_rx_ring(struct ixl_queue *);
-bool	ixl_rxeof(struct ixl_queue *, int);
-bool	ixl_txeof(struct ixl_queue *);
-int	ixl_mq_start(struct ifnet *, struct mbuf *);
-int	ixl_mq_start_locked(struct ifnet *, struct tx_ring *);
-void	ixl_deferred_mq_start(void *, int);
-void	ixl_qflush(struct ifnet *);
-void	ixl_free_vsi(struct ixl_vsi *);
-void	ixl_free_que_tx(struct ixl_queue *);
-void	ixl_free_que_rx(struct ixl_queue *);
+
 #ifdef IXL_FDIR
 void	ixl_atr(struct ixl_queue *, struct tcphdr *, int);
 #endif
 #if __FreeBSD_version >= 1100000
 uint64_t ixl_get_counter(if_t ifp, ift_counter cnt);
 #endif
+
+/*********************************************************************
+ *  common Function prototypes
+ *********************************************************************/
+
+int	ixl_if_media_change(if_ctx_t);
+int	ixl_if_queues_alloc(if_ctx_t, caddr_t *, uint64_t *, int);
+void ixl_if_queues_free(if_ctx_t ctx);
 
 #endif /* _IXL_H_ */
