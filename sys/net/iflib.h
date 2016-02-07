@@ -68,12 +68,15 @@ typedef struct if_rxd_info {
 							 */
 } *if_rxd_info_t;
 
+#define IPI_TX_INTR	0x1		/* send an interrupt when this packet is sent */
+
 typedef struct if_pkt_info {
 	struct mbuf			*ipi_m;		/* tx packet */
-	bus_dma_segment_t	*ipi_segs;	/* physical addresses */
+	bus_dma_segment_t		*ipi_segs;	/* physical addresses */
 	uint16_t			ipi_qsidx;	/* queue set index */
 	uint16_t			ipi_nsegs;	/* number of segments */
 	uint16_t			ipi_ndescs;	/* number of descriptors used by encap */
+	uint16_t			ipi_flags;	/* per-packet flags */
 	uint32_t			ipi_pidx;	/* start pidx for encap */
 	uint32_t			ipi_new_pidx;	/* next available pidx post-encap */
 } *if_pkt_info_t;
@@ -160,8 +163,8 @@ struct if_shared_ctx {
 
 
 	uint32_t isc_qsizes[8];
-	int isc_nqs;
-	int isc_admin_intrcnt;
+	int isc_nqs;			/* # of queues per qset - usually 2 */
+	int isc_admin_intrcnt;		/* # of admin/link interrupts */
 
 	int isc_tx_reclaim_thresh;
 
@@ -192,6 +195,11 @@ typedef enum {
  * Driver has already allocated vectors
  */
 #define IFLIB_SKIP_MSIX		0x2
+
+/*
+ * Interface is a virtual function
+ */
+#define IFLIB_IS_VF		0x4
 
 
 /*
