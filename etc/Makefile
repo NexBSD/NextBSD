@@ -18,7 +18,6 @@ BIN1=	asl.conf \
 	fbtab \
 	gettytab \
 	group \
-	hbsd-update.conf \
 	hosts \
 	hosts.allow \
 	hosts.equiv \
@@ -88,6 +87,10 @@ BIN1+= freebsd-update.conf
 
 .if ${MK_FTP} != "no"
 BIN1+= ftpusers
+.endif
+
+.if ${MK_HBSD_UPDATE} != "no"
+BIN1+= hbsd-update.conf
 .endif
 
 .if ${MK_INETD} != "no"
