@@ -1,0 +1,4 @@
+include 	HARDENEDBSD
+ident           BFS_CBSD
+nooptions       SCHED_ULE
+options         SCHED_FBFS

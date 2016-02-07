@@ -184,6 +184,7 @@ PPS_SYNC	opt_ntp.h
 PREEMPTION	opt_sched.h
 QUOTA
 SCHED_4BSD	opt_sched.h
+SCHED_FBFS	opt_sched.h opt_runq.h
 SCHED_STATS	opt_sched.h
 SCHED_ULE	opt_sched.h
 SLEEPQUEUE_PROFILING
