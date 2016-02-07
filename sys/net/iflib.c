@@ -206,15 +206,17 @@ iflib_get_sctx(if_ctx_t ctx)
 
 
 #define LINK_ACTIVE(ctx) ((ctx)->ifc_link_state == LINK_STATE_UP)
+#define CTX_IS_VF(ctx) ((ctx)->ifc_sctx->isc_flags & IFLIB_IS_VF)
+
 
 typedef struct iflib_dma_info {
-	bus_addr_t			idi_paddr;
-	caddr_t				idi_vaddr;
+	bus_addr_t		idi_paddr;
+	caddr_t			idi_vaddr;
 	bus_dma_tag_t		idi_tag;
 	bus_dmamap_t		idi_map;
 	bus_dma_segment_t	idi_seg;
-	int					idi_nseg;
-	uint32_t			idi_size;
+	int			idi_nseg;
+	uint32_t		idi_size;
 } *iflib_dma_info_t;
 
 struct iflib_qset {
@@ -240,14 +242,14 @@ typedef struct iflib_sw_desc {
 } *iflib_sd_t;
 
 /* magic number that should be high enough for any hardware */
-#define IFLIB_MAX_TX_SEGS 128
-#define IFLIB_RX_COPY_THRESH 128
-#define IFLIB_QUEUE_IDLE			0
+#define IFLIB_MAX_TX_SEGS		128
+#define IFLIB_RX_COPY_THRESH		128
+#define IFLIB_QUEUE_IDLE		0
 #define IFLIB_QUEUE_HUNG		1
-#define IFLIB_QUEUE_WORKING	2
+#define IFLIB_QUEUE_WORKING		2
 
-#define IFLIB_BUDGET 64
-#define IFLIB_RESTART_BUDGET 8
+#define IFLIB_BUDGET			64
+#define IFLIB_RESTART_BUDGET		8
 
 #define IFC_LEGACY 0x1
 #define IFC_QFLUSH 0x2
@@ -581,16 +583,16 @@ SYSCTL_DECL(_dev_netmap);
 /*
  * The xl driver by default strips CRCs and we do not override it.
  */
-int ixl_rx_miss, ixl_rx_miss_bufs, ixl_crcstrip = 1;
-#if 0
-SYSCTL_INT(_dev_netmap, OID_AUTO, ixl_crcstrip,
-    CTLFLAG_RW, &ixl_crcstrip, 1, "strip CRC on rx frames");
-#endif
-SYSCTL_INT(_dev_netmap, OID_AUTO, ixl_rx_miss,
-    CTLFLAG_RW, &ixl_rx_miss, 0, "potentially missed rx intr");
-SYSCTL_INT(_dev_netmap, OID_AUTO, ixl_rx_miss_bufs,
-    CTLFLAG_RW, &ixl_rx_miss_bufs, 0, "potentially missed rx intr bufs");
 
+int iflib_crcstrip = 1;
+SYSCTL_INT(_dev_netmap, OID_AUTO, iflib_crcstrip,
+    CTLFLAG_RW, &iflib_crcstrip, 1, "strip CRC on rx frames");
+
+int iflib_rx_miss, iflib_rx_miss_bufs;
+SYSCTL_INT(_dev_netmap, OID_AUTO, iflib_rx_miss,
+    CTLFLAG_RW, &iflib_rx_miss, 0, "potentially missed rx intr");
+SYSCTL_INT(_dev_netmap, OID_AUTO, ixl_rx_miss_bufs,
+    CTLFLAG_RW, &iflib_rx_miss_bufs, 0, "potentially missed rx intr bufs");
 
 /*
  * Register/unregister. We are already under netmap lock.
@@ -608,7 +610,9 @@ iflib_netmap_register(struct netmap_adapter *na, int onoff)
 	/* Tell the stack that the interface is no longer active */
 	ifp->if_drv_flags &= ~(IFF_DRV_RUNNING | IFF_DRV_OACTIVE);
 
-	//set_crcstrip(&adapter->hw, onoff);
+	if (!CTX_IS_VF(ctx))
+		IFDI_CRCSTRIP_SET(ctx, onoff);
+
 	/* enable or disable flags and callbacks in na and ifp */
 	if (onoff) {
 		nm_set_native_flags(na);
@@ -616,7 +620,7 @@ iflib_netmap_register(struct netmap_adapter *na, int onoff)
 		nm_clear_native_flags(na);
 	}
 	IFDI_INIT(ctx);
-	//set_crcstrip(&adapter->hw, onoff); // XXX why twice ?
+	IFDI_CRCSTRIP_SET(ctx, onoff); // XXX why twice ?
 	CTX_UNLOCK(ctx);
 	return (ifp->if_drv_flags & IFF_DRV_RUNNING ? 0 : 1);
 }
@@ -648,14 +652,11 @@ iflib_netmap_txsync(struct netmap_kring *kring, int flags)
 	u_int const head = kring->rhead;
 	struct if_pkt_info pi;
 
-#ifdef notyet
-	/* XXX need to pass in pi */
 	/*
 	 * interrupts on every tx packet are expensive so request
 	 * them every half ring, or where NS_REPORT is set
 	 */
 	u_int report_frequency = kring->nkr_num_slots >> 1;
-#endif
 	/* device-specific */
 	if_ctx_t ctx = ifp->if_softc;
 	iflib_txq_t txq = &ctx->ifc_txqs[kring->ring_id];
@@ -703,10 +704,17 @@ iflib_netmap_txsync(struct netmap_kring *kring, int flags)
 			u_int len = slot->len;
 			uint64_t paddr;
 			void *addr = PNMB(na, slot, &paddr);
+			int flags = (slot->flags & NS_REPORT ||
+				nic_i == 0 || nic_i == report_frequency) ?
+				IPI_TX_INTR : 0;
 
 			/* device-specific */
 			pi.ipi_pidx = nic_i;
+			pi.ipi_flags = flags;
+
+			/* Fill the slot in the NIC ring. */
 			ctx->isc_txd_encap(ctx->ifc_softc, &pi);
+
 			/* prefetch for next round */
 			__builtin_prefetch(&ring->slot[nm_i + 1]);
 			__builtin_prefetch(&txq->ift_sds[nic_i + 1]);
@@ -727,6 +735,8 @@ iflib_netmap_txsync(struct netmap_kring *kring, int flags)
 			nic_i = nm_next(nic_i, lim);
 		}
 		kring->nr_hwcur = head;
+
+		/* synchronize the NIC ring */
 		bus_dmamap_sync(txq->ift_desc_tag, txq->ift_ifdi->idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
@@ -802,9 +812,7 @@ iflib_netmap_rxsync(struct netmap_kring *kring, int flags)
 	 * rxr->next_check is set to 0 on a ring reinit
 	 */
 	if (netmap_no_pendintr || force_update) {
-#if 0
-		int crclen = ixl_crcstrip ? 0 : 4;
-#endif
+		int crclen = iflib_crcstrip ? 0 : 4;
 		int error, avail;
 		uint16_t slot_flags = kring->nkr_slot_flags;
 
@@ -817,7 +825,7 @@ iflib_netmap_rxsync(struct netmap_kring *kring, int flags)
 				if (error)
 					ring->slot[nm_i].len = 0;
 				else
-					ring->slot[nm_i].len = ri.iri_len;
+					ring->slot[nm_i].len = ri.iri_len - crclen;
 				ring->slot[nm_i].flags = slot_flags;
 				bus_dmamap_sync(fl->ifl_ifdi->idi_tag,
 								fl->ifl_sds[nic_i].ifsd_map, BUS_DMASYNC_POSTREAD);
@@ -825,13 +833,11 @@ iflib_netmap_rxsync(struct netmap_kring *kring, int flags)
 				nic_i = nm_next(nic_i, lim);
 			}
 			if (n) { /* update the state variables */
-#if 0
 				if (netmap_no_pendintr && !force_update) {
 					/* diagnostics */
-					ixl_rx_miss ++;
-					ixl_rx_miss_bufs += n;
+					iflib_rx_miss ++;
+					iflib_rx_miss_bufs += n;
 				}
-#endif
 				fl->ifl_cidx = nic_i;
 				kring->nr_hwtail = nm_i;
 			}

@@ -1,15 +1,14 @@
-#ifndef IXGBE_STANDALONE_BUILD
-
 #undef PCI_IOV
 
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_rss.h"
 
-#endif
-
 #include "ixgbe.h"
 #include "ifdi_if.h"
+
+#include <net/netmap.h>
+#include <dev/netmap/netmap_kern.h>
 
 #ifdef	RSS
 #include <net/rss_config.h>
@@ -91,6 +90,7 @@ static void ixgbe_if_media_status(if_ctx_t ctx, struct ifmediareq * ifmr);
 static int ixgbe_if_media_change(if_ctx_t ctx);
 static int ixgbe_if_msix_intr_assign(if_ctx_t, int);
 static int ixgbe_if_mtu_set(if_ctx_t ctx, uint32_t mtu);
+static void ixgbe_if_crcstrip_set(if_ctx_t ctx, int onoff);
 static void ixgbe_if_multi_set(if_ctx_t ctx);
 static int ixgbe_if_promisc_set(if_ctx_t ctx, int flags);
 static int ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs);
@@ -238,6 +238,7 @@ static device_method_t ixgbe_if_methods[] = {
 	DEVMETHOD(ifdi_update_admin_status, ixgbe_if_update_admin_status),
 	DEVMETHOD(ifdi_multi_set, ixgbe_if_multi_set),
 	DEVMETHOD(ifdi_mtu_set, ixgbe_if_mtu_set),
+	DEVMETHOD(ifdi_crcstrip_set, ixgbe_if_crcstrip_set),
 	DEVMETHOD(ifdi_media_status, ixgbe_if_media_status),
 	DEVMETHOD(ifdi_media_change, ixgbe_if_media_change),
 	DEVMETHOD(ifdi_promisc_set, ixgbe_if_promisc_set),
@@ -3320,7 +3321,49 @@ ixgbe_if_mtu_set(if_ctx_t ctx, uint32_t mtu)
     
 	return error;
 }
- 
+
+
+static void
+ixgbe_if_crcstrip_set(if_ctx_t ctx, int onoff)
+{
+	struct adapter *sc = iflib_get_softc(ctx);
+	struct ixgbe_hw *hw = &sc->hw;
+	/* crc stripping is set in two places:
+	 * IXGBE_HLREG0 (modified on init_locked and hw reset)
+	 * IXGBE_RDRXCTL (set by the original driver in
+	 *	ixgbe_setup_hw_rsc() called in init_locked.
+	 *	We disable the setting when netmap is compiled in).
+	 * We update the values here, but also in ixgbe.c because
+	 * init_locked sometimes is called outside our control.
+	 */
+	uint32_t hl, rxc;
+
+	hl = IXGBE_READ_REG(hw, IXGBE_HLREG0);
+	rxc = IXGBE_READ_REG(hw, IXGBE_RDRXCTL);
+	if (netmap_verbose)
+		D("%s read  HLREG 0x%x rxc 0x%x",
+			onoff ? "enter" : "exit", hl, rxc);
+	/* hw requirements ... */
+	rxc &= ~IXGBE_RDRXCTL_RSCFRSTSIZE;
+	rxc |= IXGBE_RDRXCTL_RSCACKC;
+	if (onoff && !ix_crcstrip) {
+		/* keep the crc. Fast rx */
+		hl &= ~IXGBE_HLREG0_RXCRCSTRP;
+		rxc &= ~IXGBE_RDRXCTL_CRCSTRIP;
+	} else {
+		/* reset default mode */
+		hl |= IXGBE_HLREG0_RXCRCSTRP;
+		rxc |= IXGBE_RDRXCTL_CRCSTRIP;
+	}
+	if (netmap_verbose)
+		D("%s write HLREG 0x%x rxc 0x%x",
+			onoff ? "enter" : "exit", hl, rxc);
+	IXGBE_WRITE_REG(hw, IXGBE_HLREG0, hl);
+	IXGBE_WRITE_REG(hw, IXGBE_RDRXCTL, rxc);
+}
+
+
+
 /*********************************************************************
  *  Init entry point
  *
