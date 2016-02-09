@@ -1543,7 +1543,7 @@ assign_rxopt(struct tcpcb *tp, uint16_t tcpopt)
 		tp->t_flags |= TF_REQ_TSTMP;	/* forcibly set */
 		tp->ts_recent = 0;		/* XXX */
 		tp->t_maxseg -= TCPOLEN_TSTAMP_APPA;
-		tp->ts_recent_age = tcp_ts_getticks();
+		tp->ts_recent_age = tcp_ts_getsbintime();
 	}
 
 	if (G_TCPOPT_SACK(tcpopt))
