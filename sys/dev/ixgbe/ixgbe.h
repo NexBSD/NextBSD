@@ -353,7 +353,6 @@ struct tx_ring {
 	u16			next_avail_desc;
 	u16			next_to_clean;
 	u16			num_desc;
-	u32			txd_cmd;
 	bus_dma_tag_t		txtag;
 	char			mtx_name[16];
 #ifndef IXGBE_LEGACY_TX
