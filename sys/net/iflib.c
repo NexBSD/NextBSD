@@ -313,7 +313,6 @@ struct iflib_txq {
 };
 
 struct iflib_fl {
-	if_ctx_t	ifl_ctx;
 	uint32_t	ifl_cidx;
 	uint32_t	ifl_pidx;
 	uint32_t	ifl_gen;
@@ -1863,7 +1862,7 @@ iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 	}
 	m->m_len = len;
 
-	if ((fl->ifl_ctx->ifc_flags & IFC_MULTISEG) &&
+	if ((fl->ifl_rxq->ifr_ctx->ifc_flags & IFC_MULTISEG) &&
 	    (m = assemble_segments(fl, ri, sd, m, len)) == NULL)
 		return (NULL);
 	else
