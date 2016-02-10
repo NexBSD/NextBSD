@@ -31,6 +31,7 @@
  * prototypes used only in kernelspace.
  */
 
+#include <sys/selinfo.h>
 #ifndef _NET_NETMAP_KERN_H_
 #define _NET_NETMAP_KERN_H_
 
