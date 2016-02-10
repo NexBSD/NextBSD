@@ -69,16 +69,29 @@ typedef struct if_rxd_info {
 } *if_rxd_info_t;
 
 #define IPI_TX_INTR	0x1		/* send an interrupt when this packet is sent */
+#define IPI_TX_IPV4	0x2		/* ethertype IPv4 */
+#define IPI_TX_IPV6	0x4		/* ethertype IPv6 */
 
 typedef struct if_pkt_info {
-	struct mbuf			*ipi_m;		/* tx packet */
+	uint32_t			ipi_len;	/* packet length */
 	bus_dma_segment_t		*ipi_segs;	/* physical addresses */
 	uint16_t			ipi_qsidx;	/* queue set index */
 	uint16_t			ipi_nsegs;	/* number of segments */
 	uint16_t			ipi_ndescs;	/* number of descriptors used by encap */
-	uint16_t			ipi_flags;	/* per-packet flags */
+	uint16_t			ipi_flags;	/* iflib per-packet flags */
 	uint32_t			ipi_pidx;	/* start pidx for encap */
 	uint32_t			ipi_new_pidx;	/* next available pidx post-encap */
+	/* offload handling */
+	uint64_t			ipi_csum_flags;	/* packet checksum flags */
+	uint16_t			ipi_tso_segsz;	/* tso segment size */
+	uint16_t			ipi_mflags;	/* packet mbuf flags */
+	uint16_t			ipi_vtag;	/* VLAN tag */
+	uint16_t			ipi_etype;	/* ether header type */
+	uint8_t				ipi_ehdrlen;	/* ether header length */
+	uint8_t				ipi_ip_hlen;	/* ip header length */
+	uint8_t				ipi_tcp_hlen;	/* tcp header length */
+	uint8_t				ipi_ipproto;	/* ip protocol */
+	/* implied padding */
 } *if_pkt_info_t;
 
 typedef struct if_irq {
