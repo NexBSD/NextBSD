@@ -498,7 +498,6 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 		txr->atr_sample = atr_sample_rate;
 #endif
 
-	        txr->tx_avail = ixgbe_sctx->isc_ntxd;
 	}
 
 	iflib_config_gtask_init(ctx, &adapter->mod_task, ixgbe_handle_mod, "mod_task");

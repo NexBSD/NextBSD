@@ -39,10 +39,6 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#ifndef IXGBE_LEGACY_TX
-#include <sys/buf_ring.h>
-#endif
-#include <sys/mbuf.h>
 #include <sys/protosw.h>
 #include <sys/socket.h>
 #include <sys/malloc.h>
@@ -66,13 +62,6 @@
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
 #include <netinet/if_ether.h>
-#include <netinet/ip.h>
-#include <netinet/ip6.h>
-#include <netinet/tcp.h>
-#include <netinet/tcp_lro.h>
-#include <netinet/udp.h>
-
-#include <machine/in_cksum.h>
 
 #include <sys/bus.h>
 #include <machine/bus.h>
@@ -305,18 +294,8 @@ typedef struct _ixgbe_vendor_info_t {
 
 struct ixgbe_tx_buf {
 	union ixgbe_adv_tx_desc	*eop;
-	struct mbuf	*m_head;
-	bus_dmamap_t	map;
 };
 
-struct ixgbe_rx_buf {
-	struct mbuf	*buf;
-	struct mbuf	*fmp;
-	bus_dmamap_t	pmap;
-	u_int		flags;
-#define IXGBE_RX_COPY	0x01
-	uint64_t	addr;
-};
 
 /*
  * Bus dma allocation structure used by ixgbe_dma_malloc and ixgbe_dma_free.
@@ -342,23 +321,12 @@ struct ixgbe_mc_addr {
 struct tx_ring {
 	struct ix_queue	*que;
 	struct adapter		*adapter;
-	struct mtx		tx_mtx;
 	u32			me;
 	u32			tail;
 	int			busy;
 	union ixgbe_adv_tx_desc	*tx_base;
 	struct ixgbe_tx_buf	*tx_buffers;
 	uint64_t tx_paddr;
-	volatile u16		tx_avail;
-	u16			next_avail_desc;
-	u16			next_to_clean;
-	u16			num_desc;
-	bus_dma_tag_t		txtag;
-	char			mtx_name[16];
-#ifndef IXGBE_LEGACY_TX
-	struct buf_ring		*br;
-	struct task		txq_task;
-#endif
 #ifdef IXGBE_FDIR
 	u16			atr_sample;
 	u16			atr_count;
@@ -380,16 +348,12 @@ struct tx_ring {
 struct rx_ring {
 	struct ix_queue	*que;
 	struct adapter		*adapter;
-	struct mtx		rx_mtx;
-        struct lro_ctrl         lro; 
 	u32			me;
 	u32			tail;
 	union ixgbe_adv_rx_desc	*rx_base;
 	uint64_t rx_paddr;
 	bool			hw_rsc;
 	bool			vtag_strip;
-	u16			mbuf_sz;
-	char			mtx_name[16];
 	bus_dma_tag_t		ptag;
 
 	u32			bytes; /* Used for AIM calc */
@@ -578,24 +542,6 @@ struct adapter {
 #define PICOSECS_PER_TICK       20833
 #define TSYNC_UDP_PORT          319 /* UDP port for the protocol */
 #define IXGBE_ADVTXD_TSTAMP	0x00080000
-
-
-#define IXGBE_CORE_LOCK_INIT(_sc, _name) \
-        mtx_init(&(_sc)->core_mtx, _name, "IXGBE Core Lock", MTX_DEF)
-#define IXGBE_CORE_LOCK_DESTROY(_sc)      mtx_destroy(&(_sc)->core_mtx)
-#define IXGBE_TX_LOCK_DESTROY(_sc)        mtx_destroy(&(_sc)->tx_mtx)
-#define IXGBE_RX_LOCK_DESTROY(_sc)        mtx_destroy(&(_sc)->rx_mtx)
-#define IXGBE_CORE_LOCK(_sc)              mtx_lock(&(_sc)->core_mtx)
-#define IXGBE_TX_LOCK(_sc)                mtx_lock(&(_sc)->tx_mtx)
-#define IXGBE_TX_TRYLOCK(_sc)             mtx_trylock(&(_sc)->tx_mtx)
-#define IXGBE_RX_LOCK(_sc)                mtx_lock(&(_sc)->rx_mtx)
-#define IXGBE_CORE_UNLOCK(_sc)            mtx_unlock(&(_sc)->core_mtx)
-#define IXGBE_TX_UNLOCK(_sc)              mtx_unlock(&(_sc)->tx_mtx)
-#define IXGBE_RX_UNLOCK(_sc)              mtx_unlock(&(_sc)->rx_mtx)
-#define IXGBE_CORE_LOCK_ASSERT(_sc)       mtx_assert(&(_sc)->core_mtx, MA_OWNED)
-#define IXGBE_TX_LOCK_ASSERT(_sc)         mtx_assert(&(_sc)->tx_mtx, MA_OWNED)
-
-
 
 /* For backward compatibility */
 #if !defined(PCIER_LINK_STA)
