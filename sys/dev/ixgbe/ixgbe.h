@@ -595,6 +595,8 @@ struct adapter {
 #define IXGBE_CORE_LOCK_ASSERT(_sc)       mtx_assert(&(_sc)->core_mtx, MA_OWNED)
 #define IXGBE_TX_LOCK_ASSERT(_sc)         mtx_assert(&(_sc)->tx_mtx, MA_OWNED)
 
+
+
 /* For backward compatibility */
 #if !defined(PCIER_LINK_STA)
 #define PCIER_LINK_STA PCIR_EXPRESS_LINK_STA
@@ -717,6 +719,7 @@ bool	ixgbe_rxeof(struct ix_queue *);
 int	ixgbe_dma_malloc(struct adapter *,
 	    bus_size_t, struct ixgbe_dma_alloc *, int);
 void	ixgbe_dma_free(struct adapter *, struct ixgbe_dma_alloc *);
+int	ixgbe_get_regs(SYSCTL_HANDLER_ARGS);
 
 #ifdef PCI_IOV
 
