@@ -1854,10 +1854,8 @@ iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 		m_cljset(m, cl, fl->ifl_cltype);
 	}
 
-	if (__predict_false(ri->iri_pad)) {
-		m->m_data += ri->iri_pad;
-		len -= ri->iri_pad;
-	}
+	m->m_data += ri->iri_pad;
+	len -= ri->iri_pad;
 	m->m_len = len;
 
 	if ((fl->ifl_rxq->ifr_ctx->ifc_flags & IFC_MULTISEG) &&
@@ -2293,11 +2291,11 @@ retry:
 	return (err);
 }
 
-#define BRBITS 8
+/* forward compatibility for cxgb */
 #define FIRST_QSET(ctx) 0
+
 #define NQSETS(ctx) ((ctx)->ifc_softc_ctx.isc_nqsets)
-#define QIDX(ctx, m) ((((m)->m_pkthdr.flowid >> BRBITS) % NQSETS(ctx)) + FIRST_QSET(ctx))
-#define BRIDX(txq, m) ((m)->m_pkthdr.flowid % txq->ift_nbr)
+#define QIDX(ctx, m) (((m)->m_pkthdr.flowid % NQSETS(ctx)) + FIRST_QSET(ctx))
 #define DESC_RECLAIMABLE(q) ((int)((q)->ift_processed - (q)->ift_cleaned - (q)->ift_ctx->ifc_softc_ctx.isc_tx_nsegments))
 #define RECLAIM_THRESH(ctx) ((ctx)->ifc_sctx->isc_tx_reclaim_thresh)
 #define MAX_TX_DESC(ctx) ((ctx)->ifc_softc_ctx.isc_tx_nsegments)
