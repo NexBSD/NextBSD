@@ -260,9 +260,10 @@ typedef struct iflib_sw_desc {
 #define IFLIB_BUDGET			64
 #define IFLIB_RESTART_BUDGET		8
 
-#define IFC_LEGACY 0x1
-#define IFC_QFLUSH 0x2
-#define	IFC_MULTISEG 0x4
+#define	IFC_LEGACY		0x1
+#define	IFC_QFLUSH		0x2
+#define	IFC_MULTISEG		0x4
+#define	IFC_DMAR		0x8
 
 #define CSUM_OFFLOAD		(CSUM_IP_TSO|CSUM_IP6_TSO|CSUM_IP| \
 				 CSUM_IP_UDP|CSUM_IP_TCP|CSUM_IP_SCTP| \
@@ -326,7 +327,7 @@ struct iflib_fl {
 	iflib_rxq_t	ifl_rxq;
 	uint8_t		ifl_id;
 	iflib_dma_info_t	ifl_ifdi;
-	uint64_t	ifl_phys_addrs[256];
+	uint64_t	ifl_bus_addrs[256];
 	caddr_t		ifl_vm_addrs[256];
 };
 
@@ -393,6 +394,8 @@ static int enable_msix = 1;
  * Only allow a single packet to take up most 1/nth of the tx ring
  */
 #define MAX_SINGLE_PACKET_FRACTION 12
+#define IF_BAD_DMA (uint64_t)-1
+
 
 #define CTX_ACTIVE(ctx) ((if_getdrvflags((ctx)->ifc_ifp) & IFF_DRV_RUNNING))
 
@@ -1037,10 +1040,10 @@ iflib_dma_alloc(if_ctx_t ctx, bus_size_t size, iflib_dma_info_t dma,
 		goto fail_1;
 	}
 
-	dma->idi_paddr = (uint64_t)-1;
+	dma->idi_paddr = IF_BAD_DMA;
 	err = bus_dmamap_load(dma->idi_tag, dma->idi_map, dma->idi_vaddr,
 	    size, _iflib_dmamap_cb, &dma->idi_paddr, mapflags | BUS_DMA_NOWAIT);
-	if (err || dma->idi_paddr == (uint64_t)-1) {
+	if (err || dma->idi_paddr == IF_BAD_DMA) {
 		device_printf(dev,
 		    "%s: bus_dmamap_load failed: %d\n",
 		    __func__, err);
@@ -1065,11 +1068,11 @@ iflib_dma_free(iflib_dma_info_t dma)
 {
 	if (dma->idi_tag == NULL)
 		return;
-	if (dma->idi_paddr != 0) {
+	if (dma->idi_paddr != IF_BAD_DMA) {
 		bus_dmamap_sync(dma->idi_tag, dma->idi_map,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_unload(dma->idi_tag, dma->idi_map);
-		dma->idi_paddr = 0;
+		dma->idi_paddr = IF_BAD_DMA;
 	}
 	if (dma->idi_vaddr != NULL) {
 		bus_dmamem_free(dma->idi_tag, dma->idi_vaddr, dma->idi_map);
@@ -1345,6 +1348,28 @@ fail:
 	return (err);
 }
 
+
+/*
+ * Internal service routines
+ */
+
+struct rxq_refill_cb_arg {
+	int               error;
+	bus_dma_segment_t seg;
+	int               nseg;
+};
+
+static void
+_rxq_refill_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
+{
+	struct rxq_refill_cb_arg *cb_arg = arg;
+
+	cb_arg->error = error;
+	cb_arg->seg = segs[0];
+	cb_arg->nseg = nseg;
+}
+
+
 /**
  *	rxq_refill - refill an rxq  free-buffer list
  *	@ctx: the iflib context
@@ -1362,20 +1387,21 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 	iflib_sd_t rxsd = &fl->ifl_sds[pidx];
 	caddr_t cl;
 	int n, i = 0;
-	uint64_t phys_addr;
+	uint64_t bus_addr;
+	int err;
 
 	n  = count;
 	MPASS(n > 0);
 	MPASS(fl->ifl_credits >= 0);
 	MPASS(fl->ifl_credits + n <= fl->ifl_size);
-#ifdef INVARIANTS
+
 	if (pidx < fl->ifl_cidx)
 		MPASS(pidx + n <= fl->ifl_cidx);
 	if (pidx == fl->ifl_cidx && (fl->ifl_credits < fl->ifl_size))
 		MPASS(fl->ifl_gen == 0);
 	if (pidx > fl->ifl_cidx)
 		MPASS(n <= fl->ifl_size - pidx + fl->ifl_cidx);
-#endif
+
 	DBG_COUNTER_INC(fl_refills);
 	if (n > 8)
 		DBG_COUNTER_INC(fl_refills_large);
@@ -1407,34 +1433,38 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 			rxsd->ifsd_flags |= RX_SW_DESC_MAP_CREATED;
 		}
 #endif
-#if !defined(__i386__) && !defined(__amd64__)
+#if defined(__i386__) || defined(__amd64__)
+		if (__predict_true(!(ctx->ifc_flags & IFC_DMAR))) {
+			bus_addr = pmap_kextract((vm_offset_t)cl);
+		} else
+#endif
 		{
-			struct refill_rxq_cb_arg cb_arg;
+			struct rxq_refill_cb_arg cb_arg;
+			iflib_rxq_t q;
+
 			cb_arg.error = 0;
-			err = bus_dmamap_load(q->ifr_desc_tag, sd->ifsd_map,
-		         cl, q->ifr_buf_size, refill_rxq_cb, &cb_arg, 0);
+			q = fl->ifl_rxq;
+			err = bus_dmamap_load(q->ifr_desc_tag, rxsd->ifsd_map,
+		         cl, fl->ifl_buf_size, _rxq_refill_cb, &cb_arg, 0);
 
 			if (err != 0 || cb_arg.error) {
 				/*
 				 * !zone_pack ?
 				 */
-				if (q->zone == zone_pack)
-					uma_zfree(q->ifr_zone, cl);
+				if (fl->ifl_zone == zone_pack)
+					uma_zfree(fl->ifl_zone, cl);
 				m_free(m);
 				n = 0;
 				goto done;
 			}
-			phys_addr = cb_arg.seg.ds_addr;
+			bus_addr = cb_arg.seg.ds_addr;
 		}
-#else
-		phys_addr = pmap_kextract((vm_offset_t)cl);
-#endif
 		rxsd->ifsd_flags |= RX_SW_DESC_INUSE;
 
 		MPASS(rxsd->ifsd_m == NULL);
 		rxsd->ifsd_cl = cl;
 		rxsd->ifsd_m = m;
-		fl->ifl_phys_addrs[i] = phys_addr;
+		fl->ifl_bus_addrs[i] = bus_addr;
 		fl->ifl_vm_addrs[i] = cl;
 		rxsd++;
 		fl->ifl_credits++;
@@ -1447,14 +1477,12 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 		}
 		if (n == 0 || i == 256) {
 			ctx->isc_rxd_refill(ctx->ifc_softc, fl->ifl_rxq->ifr_id, fl->ifl_id, pidx,
-								 fl->ifl_phys_addrs, fl->ifl_vm_addrs, i);
+								 fl->ifl_bus_addrs, fl->ifl_vm_addrs, i);
 			i = 0;
 			pidx = fl->ifl_pidx;
 		}
 	}
-#if !defined(__i386__) && !defined(__amd64__)
 done:
-#endif
 	DBG_COUNTER_INC(rxd_flush);
 	if (fl->ifl_pidx == 0)
 		pidx = fl->ifl_size - 1;
@@ -1468,12 +1496,11 @@ __iflib_fl_refill_lt(if_ctx_t ctx, iflib_fl_t fl, int max)
 {
 	/* we avoid allowing pidx to catch up with cidx as it confuses ixl */
 	int32_t reclaimable = fl->ifl_size - fl->ifl_credits - 1;
-#ifdef INVARIANTS
 	int32_t delta = fl->ifl_size - get_inuse(fl->ifl_size, fl->ifl_cidx, fl->ifl_pidx, fl->ifl_gen) - 1;
 
 	MPASS(fl->ifl_credits <= fl->ifl_size);
 	MPASS(reclaimable == delta);
-#endif
+
 	if (reclaimable > 0)
 		_iflib_fl_refill(ctx, fl, min(max, reclaimable));
 }
@@ -1498,13 +1525,10 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 			}
 			if (d->ifsd_cl != NULL)
 				uma_zfree(fl->ifl_zone, d->ifsd_cl);
-		}
-#ifdef INVARIANTS
-		else {
+		} else {
 			MPASS(d->ifsd_cl == NULL);
 			MPASS(d->ifsd_m == NULL);
 		}
-#endif
 		d->ifsd_cl = NULL;
 		d->ifsd_m = NULL;
 		if (++cidx == fl->ifl_size)
@@ -1556,12 +1580,6 @@ iflib_fl_setup(iflib_fl_t fl)
 
 	/* Now replenish the mbufs */
 	MPASS(fl->ifl_credits == 0);
-#if 0
-	_iflib_fl_refill(ctx, fl, fl->ifl_size);
-	MPASS(fl->ifl_pidx == 0);
-	MPASS(fl->ifl_size == fl->ifl_credits);
-	MPASS(fl->ifl_gen == 1);
-#endif
 	/* avoid pre-allocating zillions of clusters to an idle card
 	 * potentially speeding up attach
 	 */
@@ -1748,29 +1766,6 @@ iflib_stop(if_ctx_t ctx)
 	}
 	IFDI_STOP(ctx);
 }
-
-/*
- * Internal service routines
- */
-
-#if !defined(__i386__) && !defined(__amd64__)
-struct rxq_refill_cb_arg {
-	int               error;
-	bus_dma_segment_t seg;
-	int               nseg;
-};
-
-static void
-_rxq_refill_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
-{
-	struct rxq_refill_cb_arg *cb_arg = arg;
-
-	cb_arg->error = error;
-	cb_arg->seg = segs[0];
-	cb_arg->nseg = nseg;
-}
-#endif
-
 
 static struct mbuf *
 assemble_segments(iflib_fl_t fl, if_rxd_info_t ri, iflib_sd_t sd, struct mbuf *m, int len)
@@ -2035,10 +2030,10 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		SLIST_REMOVE_HEAD(&rxq->ifr_lc.lro_active, next);
 		tcp_lro_flush(&rxq->ifr_lc, queued);
 	}
-#ifdef INVARIANTS
+
 	if ((sctx->isc_flags & IFLIB_HAS_CQ) == 0)
 		MPASS(cidx == *cidxp);
-#endif
+
 	if (sctx->isc_flags & IFLIB_HAS_CQ)
 		*cidxp = cidx;
 	*genp = gen;
@@ -2387,24 +2382,6 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 	return (reclaim);
 }
 
-#if 0
-static void
-iflib_tx_timeout(void *arg)
-{
-
-	/* XXX */
-}
-
-static void
-iflib_txq_deferred(struct buf_ring_sc *br __unused, void *sc)
-{
-	iflib_txq_t txq = sc;
-
-	GROUPTASK_ENQUEUE(&txq->ift_task);
-}
-#endif
-
-
 static void
 _ring_peek(struct mp_ring *r, struct mbuf **m, int cidx, int count)
 {
@@ -2581,36 +2558,6 @@ _task_fn_iov(void *context, int pending)
 	IFDI_VFLR_HANDLE(ctx);
 	CTX_UNLOCK(ctx);
 }
-
-
-#if 0
-void
-iflib_intr_rx(void *arg)
-{
-	iflib_rxq_t rxq = arg;
-
-	++rxq->ifr_rx_irq;
-	_task_fn_rx(arg, 0);
-}
-
-void
-iflib_intr_tx(void *arg)
-{
-	iflib_txq_t txq= arg;
-
-	++txq->ift_tx_irq;
-	_task_fn_tx(arg, 0);
-}
-
-void
-iflib_intr_link(void *arg)
-{
-	if_ctx_t ctx = arg;
-
-	++ctx->ifc_link_irq;
-	_task_fn_link(arg, 0);
-}
-#endif
 
 static int
 iflib_sysctl_int_delay(SYSCTL_HANDLER_ARGS)
@@ -3950,19 +3897,8 @@ iflib_tx_credits_update(if_ctx_t ctx, iflib_txq_t txq)
 static int
 iflib_rxd_avail(if_ctx_t ctx, iflib_rxq_t rxq, int cidx)
 {
-	int avail;
 
-	avail = ctx->isc_rxd_available(ctx->ifc_softc, rxq->ifr_id, cidx);
-#if 0
-	rxq->ifr_pidx += avail;
-	if (rxq->ifr_pidx >= rxq->ifr_size) {
-		rxq->ifr_pidx -= rxq->ifr_size;
-		rxq->ifr_gen = 1;
-	}
-
-	return (get_inuse(rxq->ifr_size, rxq->ifr_cidx, rxq->ifr_pidx, rxq->ifr_gen));
-#endif
-	return (avail);
+	return (ctx->isc_rxd_available(ctx->ifc_softc, rxq->ifr_id, cidx));
 }
 
 void
