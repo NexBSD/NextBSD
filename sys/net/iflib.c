@@ -70,6 +70,7 @@
 #include <dev/led/led.h>
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
+#include <dev/pci/pci_private.h>
 
 #include <net/iflib.h>
 
@@ -1555,7 +1556,7 @@ iflib_fl_setup(iflib_fl_t fl)
 	iflib_rxq_t rxq = fl->ifl_rxq;
 	if_ctx_t ctx = rxq->ifr_ctx;
 	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
-	int			err = 0;
+
 	/*
 	 * XXX don't set the max_frame_size to larger
 	 * than the hardware can handle
@@ -1585,6 +1586,8 @@ iflib_fl_setup(iflib_fl_t fl)
 	 */
 	_iflib_fl_refill(ctx, fl, min(128, fl->ifl_size));
 	MPASS(min(128, fl->ifl_size) == fl->ifl_credits);
+	if (min(128, fl->ifl_size) != fl->ifl_credits)
+		return (ENOBUFS);
 	/*
 	 * handle failure
 	 */
@@ -1592,7 +1595,7 @@ iflib_fl_setup(iflib_fl_t fl)
 	MPASS(rxq->ifr_ifdi != NULL);
 	bus_dmamap_sync(rxq->ifr_ifdi->idi_tag, rxq->ifr_ifdi->idi_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-	return (err);
+	return (0);
 }
 
 /*********************************************************************
@@ -2121,9 +2124,12 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 	}
 
 	switch (pi->ipi_etype) {
+#ifdef INET
 	case ETHERTYPE_IP:
 	{
 		struct ip *ip = (struct ip *)(m->m_data + pi->ipi_ehdrlen);
+
+		MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip));
 		pi->ipi_ip_hlen = ip->ip_hl << 2;
 		pi->ipi_ipproto = ip->ip_p;
 		pi->ipi_flags |= IPI_TX_IPV4;
@@ -2132,6 +2138,8 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 
 			if (__predict_false(ip->ip_p != IPPROTO_TCP))
 				return (ENXIO);
+
+			MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip) + sizeof(struct tcphdr));
 			ip->ip_sum = 0;
 			th->th_sum = in_pseudo(ip->ip_src.s_addr,
 					       ip->ip_dst.s_addr, htons(IPPROTO_TCP));
@@ -2140,10 +2148,14 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		}
 		break;
 	}
+#endif
+#ifdef INET6
 	case ETHERTYPE_IPV6:
 	{
 		struct ip6_hdr *ip6 = (struct ip6_hdr *)(m->m_data + pi->ipi_ehdrlen);
 		pi->ipi_ip_hlen = sizeof(struct ip6_hdr);
+
+		MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip6_hdr));
 		/* XXX-BZ this will go badly in case of ext hdrs. */
 		pi->ipi_ipproto = ip6->ip6_nxt;
 		pi->ipi_flags |= IPI_TX_IPV6;
@@ -2152,12 +2164,15 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 
 			if (__predict_false(ip6->ip6_nxt != IPPROTO_TCP))
 				return (ENXIO);
+
+			MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
 			th->th_sum = in6_cksum_pseudo(ip6, 0, IPPROTO_TCP, 0);
 			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
 			pi->ipi_tcp_hlen = th->th_off << 2;
 		}
 		break;
 	}
+#endif
 	default:
 		pi->ipi_csum_flags &= ~CSUM_OFFLOAD;
 		pi->ipi_ip_hlen = 0;
@@ -2998,6 +3013,8 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		return (err);
 	}
 
+	if (bus_get_dma_tag(dev) != pci_get_dma_tag(dev, device_get_parent(dev)))
+		ctx->ifc_flags |= IFC_DMAR;
 	scctx = &ctx->ifc_softc_ctx;
 	msix_bar = scctx->isc_msix_bar;
 
