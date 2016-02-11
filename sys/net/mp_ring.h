@@ -28,8 +28,8 @@
  *
  */
 
-#ifndef __CXGBE_MP_RING_H
-#define __CXGBE_MP_RING_H
+#ifndef __NET_MP_RING_H
+#define __NET_MP_RING_H
 
 #ifndef _KERNEL
 #error "no user-serviceable parts inside"
