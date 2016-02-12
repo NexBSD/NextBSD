@@ -393,7 +393,7 @@ int	bus_generic_deactivate_resource(device_t dev, device_t child, int type,
 int	bus_generic_detach(device_t dev);
 void	bus_generic_driver_added(device_t dev, driver_t *driver);
 int	bus_generic_get_cpus(device_t dev, device_t child, enum cpu_sets op,
-			     cpuset_t *cpuset);
+			     cpuset_t *cpuset, int size);
 bus_dma_tag_t
 	bus_generic_get_dma_tag(device_t dev, device_t child);
 int	bus_generic_get_domain(device_t dev, device_t child, int *domain);
@@ -460,7 +460,7 @@ int	bus_activate_resource(device_t dev, int type, int rid,
 			      struct resource *r);
 int	bus_deactivate_resource(device_t dev, int type, int rid,
 				struct resource *r);
-int	bus_get_cpus(device_t dev, enum cpu_sets op, cpuset_t *cpuset);
+int	bus_get_cpus(device_t dev, enum cpu_sets op, cpuset_t *cpuset, int size);
 bus_dma_tag_t bus_get_dma_tag(device_t dev);
 int	bus_get_domain(device_t dev, int *domain);
 int	bus_release_resource(device_t dev, int type, int rid,

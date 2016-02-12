@@ -128,7 +128,7 @@ static	int nexus_set_resource(device_t, device_t, int, int,
 static	int nexus_get_resource(device_t, device_t, int, int,
 			       rman_res_t *, rman_res_t *);
 static void nexus_delete_resource(device_t, device_t, int, int);
-static	int nexus_get_cpus(device_t, device_t, enum cpu_sets, cpuset_t *);
+static	int nexus_get_cpus(device_t, device_t, enum cpu_sets, cpuset_t *, int size);
 #ifdef DEV_APIC
 static	int nexus_alloc_msi(device_t pcib, device_t dev, int count, int maxcount, int *irqs);
 static	int nexus_release_msi(device_t pcib, device_t dev, int count, int *irqs);
@@ -619,7 +619,7 @@ nexus_delete_resource(device_t dev, device_t child, int type, int rid)
 }
 
 static int
-nexus_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
+nexus_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset, int size)
 {
 
 	switch (op) {
@@ -629,7 +629,7 @@ nexus_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
 		return (0);
 #endif
 	default:
-		return (bus_generic_get_cpus(dev, child, op, cpuset));
+		return (bus_generic_get_cpus(dev, child, op, cpuset, size));
 	}
 }
 

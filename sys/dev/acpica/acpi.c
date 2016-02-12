@@ -1074,7 +1074,7 @@ acpi_hint_device_unit(device_t acdev, device_t child, const char *name,
 }
 
 int
-acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
+acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset, int size)
 {
 	int rc, d, error;
 
@@ -1086,12 +1086,12 @@ acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
 		*cpuset = cpuset_domain[d];
 		return (0);
 	case INTR_CPUS:
-		if ((error = bus_generic_get_cpus(dev, child, op, cpuset)))
+		if ((error = bus_generic_get_cpus(dev, child, op, cpuset, size)))
 			return (error);
 		CPU_AND(cpuset, &cpuset_domain[d]);
 		return (0);
 	default:
-		return (bus_generic_get_cpus(dev, child, op, cpuset));
+		return (bus_generic_get_cpus(dev, child, op, cpuset, size));
 	}
 }
 
