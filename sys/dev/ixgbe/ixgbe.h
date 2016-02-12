@@ -403,7 +403,7 @@ struct ix_queue {
 struct ixgbe_vf {
 	u_int		pool;
 	u_int		rar_index;
-	u_int		max_frame_size;
+	u_int		maximum_frame_size;
 	uint32_t	flags;
 	uint8_t		ether_addr[ETHER_ADDR_LEN];
 	uint16_t	mc_hash[IXGBE_MAX_VF_MC];
