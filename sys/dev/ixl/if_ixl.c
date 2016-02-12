@@ -1278,7 +1278,7 @@ ixl_if_media_status(if_ctx_t ctx, struct ifmediareq * ifmr)
 **	implementation this is only available for TCP connections
 */
 void
-ixl_atr(struct ixl_queue *que, struct tcphdr *th, int etype)
+ixl_atr(struct ixl_queue *que, int hflags, int etype)
 {
 	struct ixl_vsi			*vsi = que->vsi;
 	if_shared_ctx_t sctx = ixl_sctx;
@@ -1295,7 +1295,7 @@ ixl_atr(struct ixl_queue *que, struct tcphdr *th, int etype)
 	** or at the selected sample rate 
 	*/
 	txr->atr_count++;
-	if (((th->th_flags & (TH_FIN | TH_SYN)) == 0) &&
+	if (((hflags & (TH_FIN | TH_SYN)) == 0) &&
 	    (txr->atr_count < txr->atr_rate))
                 return;
 	txr->atr_count = 0;
@@ -1325,7 +1325,7 @@ ixl_atr(struct ixl_queue *que, struct tcphdr *th, int etype)
 	** We use the TCP TH_FIN as a trigger to remove
 	** the filter, otherwise its an update.
 	*/
-	dtype |= (th->th_flags & TH_FIN) ?
+	dtype |= (hflags & TH_FIN) ?
 	    (I40E_FILTER_PROGRAM_DESC_PCMD_REMOVE <<
 	    I40E_TXD_FLTR_QW1_PCMD_SHIFT) :
 	    (I40E_FILTER_PROGRAM_DESC_PCMD_ADD_UPDATE <<

@@ -52,10 +52,6 @@
 
 /* Local Prototypes */
 static void ixl_rx_checksum(if_rxd_info_t ri, u32 status, u32 error, u8 ptype);
-static int	ixl_tx_setup_offload(struct ixl_queue *,
-		    struct mbuf *, u32 *, u32 *);
-static bool	ixl_tso_setup(struct ixl_queue *, struct mbuf *);
-
 
 static int ixl_isc_txd_encap(void *arg, if_pkt_info_t pi);
 static void ixl_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx);
@@ -115,6 +111,112 @@ ixl_tso_detect_sparse(struct mbuf *mp)
 
 /*********************************************************************
  *
+ *  Setup descriptor for hw offloads 
+ *
+ **********************************************************************/
+
+static void
+ixl_tx_setup_offload(struct ixl_queue *que,
+    if_pkt_info_t pi, u32 *cmd, u32 *off)
+{
+
+
+	switch (pi->ipi_etype) {
+#ifdef INET
+		case ETHERTYPE_IP:
+			/* The IP checksum must be recalculated with TSO */
+			if (pi->ipi_csum_flags & CSUM_TSO)
+				*cmd |= I40E_TX_DESC_CMD_IIPT_IPV4_CSUM;
+			else
+				*cmd |= I40E_TX_DESC_CMD_IIPT_IPV4;
+			break;
+#endif
+#ifdef INET6
+		case ETHERTYPE_IPV6:
+			*cmd |= I40E_TX_DESC_CMD_IIPT_IPV6;
+			break;
+#endif
+		default:
+			break;
+	}
+
+	*off |= (pi->ipi_ehdrlen >> 1) << I40E_TX_DESC_LENGTH_MACLEN_SHIFT;
+	*off |= (pi->ipi_ip_hlen >> 2) << I40E_TX_DESC_LENGTH_IPLEN_SHIFT;
+
+	switch (pi->ipi_ipproto) {
+		case IPPROTO_TCP:
+			if (pi->ipi_csum_flags & (CSUM_TCP|CSUM_TCP_IPV6)) {
+				*cmd |= I40E_TX_DESC_CMD_L4T_EOFT_TCP;
+				*off |= (pi->ipi_tcp_hlen >> 2) <<
+				    I40E_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
+			}
+#ifdef IXL_FDIR
+			ixl_atr(que, pi->ipi_tcp_hflags, pi->ipi_etype);
+#endif
+			break;
+		case IPPROTO_UDP:
+			if (pi->ipi_csum_flags & (CSUM_UDP|CSUM_UDP_IPV6)) {
+				*cmd |= I40E_TX_DESC_CMD_L4T_EOFT_UDP;
+				*off |= (sizeof(struct udphdr) >> 2) <<
+				    I40E_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
+			}
+			break;
+
+		case IPPROTO_SCTP:
+			if (pi->ipi_csum_flags & (CSUM_SCTP|CSUM_SCTP_IPV6)) {
+				*cmd |= I40E_TX_DESC_CMD_L4T_EOFT_SCTP;
+				*off |= (sizeof(struct sctphdr) >> 2) <<
+				    I40E_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
+			}
+			/* Fall Thru */
+		default:
+			break;
+	}
+
+}
+
+/**********************************************************************
+ *
+ *  Setup context for hardware segmentation offload (TSO)
+ *
+ **********************************************************************/
+static int
+ixl_tso_setup(struct ixl_queue *que, if_pkt_info_t pi)
+{
+	struct tx_ring			*txr = &que->txr;
+	struct i40e_tx_context_desc	*TXD;
+	struct ixl_tx_buf		*buf;
+	u32				cmd, mss, type, tsolen;
+	int				idx;
+	u64				type_cmd_tso_mss;
+
+	idx = pi->ipi_pidx;
+	buf = &txr->tx_buffers[idx];
+	TXD = (struct i40e_tx_context_desc *) &txr->tx_base[idx];
+	tsolen = pi->ipi_len - (pi->ipi_ehdrlen + pi->ipi_ip_hlen + pi->ipi_tcp_hlen);
+
+	type = I40E_TX_DESC_DTYPE_CONTEXT;
+	cmd = I40E_TX_CTX_DESC_TSO;
+	mss = pi->ipi_tso_segsz;
+
+	type_cmd_tso_mss = ((u64)type << I40E_TXD_CTX_QW1_DTYPE_SHIFT) |
+	    ((u64)cmd << I40E_TXD_CTX_QW1_CMD_SHIFT) |
+	    ((u64)tsolen << I40E_TXD_CTX_QW1_TSO_LEN_SHIFT) |
+	    ((u64)mss << I40E_TXD_CTX_QW1_MSS_SHIFT);
+	TXD->type_cmd_tso_mss = htole64(type_cmd_tso_mss);
+
+	TXD->tunneling_params = htole32(0);
+	buf->eop_index = -1;
+
+	if (++idx == ixl_sctx->isc_ntxd)
+		idx = 0;
+	return (idx);
+}
+
+
+
+/*********************************************************************
+ *
  *  This routine maps the mbufs to tx descriptors, allowing the
  *  TX engine to transmit the packets. 
  *  	- return 0 on success, positive on failure
@@ -128,15 +230,13 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	struct ixl_vsi		*vsi = arg;
 	struct ixl_queue	*que = &vsi->queues[pi->ipi_qsidx];
 	struct tx_ring		*txr = &que->txr;
-	struct mbuf		*m_head = pi->ipi_m;
 	int			nsegs = pi->ipi_nsegs;
 	bus_dma_segment_t *segs = pi->ipi_segs;
 	struct ixl_tx_buf	*buf;
 	struct i40e_tx_desc	*txd = NULL;
-	int             	i, j, error;
+	int             	i, j;
 	int			first, last = 0;
 
-	u16			vtag = 0;
 	u32			cmd, off;
 
 	cmd = off = 0;
@@ -148,42 +248,39 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
          */
 	first = pi->ipi_pidx;
 	buf = &txr->tx_buffers[first];
-	if (m_head != NULL) {
+
+	if (pi->ipi_flags & IPI_TX_INTR)
+		cmd |= (I40E_TX_DESC_CMD_RS << I40E_TXD_QW1_CMD_SHIFT);
+
 #ifdef notyet
-		if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
-			/* Use larger mapping for TSO */
-			tag = txr->tso_tag;
-			maxsegs = IXL_MAX_TSO_SEGS;
-			if (ixl_tso_detect_sparse(m_head)) {
-				m = m_defrag(m_head, M_NOWAIT);
-				if (m == NULL) {
-					m_freem(*m_headp);
-					*m_headp = NULL;
-					return (ENOBUFS);
-				}
-			*m_headp = m;
+	/* add this check to iflib - shouldn't actually happen in practice */
+	if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
+		/* Use larger mapping for TSO */
+		tag = txr->tso_tag;
+		maxsegs = IXL_MAX_TSO_SEGS;
+		if (ixl_tso_detect_sparse(m_head)) {
+			m = m_defrag(m_head, M_NOWAIT);
+			if (m == NULL) {
+				m_freem(*m_headp);
+				*m_headp = NULL;
+				return (ENOBUFS);
 			}
+			*m_headp = m;
 		}
+	}
 #endif
 
-		/* Set up the TSO/CSUM offload */
-		if (m_head->m_pkthdr.csum_flags & CSUM_OFFLOAD) {
-			error = ixl_tx_setup_offload(que, m_head, &cmd, &off);
-			if (error)
-				return (error);
-		}
-
-		/* Grab the VLAN tag */
-		if (m_head->m_flags & M_VLANTAG) {
-			cmd |= I40E_TX_DESC_CMD_IL2TAG1;
-			vtag = htole16(m_head->m_pkthdr.ether_vtag);
-		}
-	} else if (first == 0) {
-		/* XXX --- need to be able to pass slot->flags & NS_REPORT
-		 * || first == report_frequency) {
-		**/
-		cmd |= (I40E_TX_DESC_CMD_RS << I40E_TXD_QW1_CMD_SHIFT);
+	/* Set up the TSO/CSUM offload */
+	if (pi->ipi_csum_flags & CSUM_OFFLOAD) {
+		/* Set up the TSO context descriptor if required */
+		if (pi->ipi_csum_flags & CSUM_TSO)
+			first = ixl_tso_setup(que, pi);
+		ixl_tx_setup_offload(que, pi, &cmd, &off);
 	}
+
+	if (pi->ipi_mflags & M_VLANTAG)
+		cmd |= I40E_TX_DESC_CMD_IL2TAG1;
+
 	cmd |= I40E_TX_DESC_CMD_ICRC;
 
 	i = first;
@@ -200,7 +297,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		    | ((u64)cmd  << I40E_TXD_QW1_CMD_SHIFT)
 		    | ((u64)off << I40E_TXD_QW1_OFFSET_SHIFT)
 		    | ((u64)seglen  << I40E_TXD_QW1_TX_BUF_SZ_SHIFT)
-		    | ((u64)vtag  << I40E_TXD_QW1_L2TAG1_SHIFT));
+	            | ((u64)htole16(pi->ipi_vtag)  << I40E_TXD_QW1_L2TAG1_SHIFT));
 
 		last = i; /* descriptor that will get completion IRQ */
 
@@ -266,218 +363,6 @@ ixl_init_tx_ring(struct ixl_queue *que)
 	}
 }
 
-
-/*********************************************************************
- *
- *  Setup descriptor for hw offloads 
- *
- **********************************************************************/
-
-static int
-ixl_tx_setup_offload(struct ixl_queue *que,
-    struct mbuf *mp, u32 *cmd, u32 *off)
-{
-	struct ether_vlan_header	*eh;
-#ifdef INET
-	struct ip			*ip = NULL;
-#endif
-	struct tcphdr			*th = NULL;
-#ifdef INET6
-	struct ip6_hdr			*ip6;
-#endif
-	int				elen, ip_hlen = 0, tcp_hlen;
-	u16				etype;
-	u8				ipproto = 0;
-	bool				tso = FALSE;
-
-	/* Set up the TSO context descriptor if required */
-	if (mp->m_pkthdr.csum_flags & CSUM_TSO) {
-		tso = ixl_tso_setup(que, mp);
-		if (tso)
-			++que->tso;
-		else
-			return (ENXIO);
-	}
-
-	/*
-	 * Determine where frame payload starts.
-	 * Jump over vlan headers if already present,
-	 * helpful for QinQ too.
-	 */
-	eh = mtod(mp, struct ether_vlan_header *);
-	if (eh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
-		etype = ntohs(eh->evl_proto);
-		elen = ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN;
-	} else {
-		etype = ntohs(eh->evl_encap_proto);
-		elen = ETHER_HDR_LEN;
-	}
-
-	switch (etype) {
-#ifdef INET
-		case ETHERTYPE_IP:
-			ip = (struct ip *)(mp->m_data + elen);
-			ip_hlen = ip->ip_hl << 2;
-			ipproto = ip->ip_p;
-			th = (struct tcphdr *)((caddr_t)ip + ip_hlen);
-			/* The IP checksum must be recalculated with TSO */
-			if (tso)
-				*cmd |= I40E_TX_DESC_CMD_IIPT_IPV4_CSUM;
-			else
-				*cmd |= I40E_TX_DESC_CMD_IIPT_IPV4;
-			break;
-#endif
-#ifdef INET6
-		case ETHERTYPE_IPV6:
-			ip6 = (struct ip6_hdr *)(mp->m_data + elen);
-			ip_hlen = sizeof(struct ip6_hdr);
-			ipproto = ip6->ip6_nxt;
-			th = (struct tcphdr *)((caddr_t)ip6 + ip_hlen);
-			*cmd |= I40E_TX_DESC_CMD_IIPT_IPV6;
-			break;
-#endif
-		default:
-			break;
-	}
-
-	*off |= (elen >> 1) << I40E_TX_DESC_LENGTH_MACLEN_SHIFT;
-	*off |= (ip_hlen >> 2) << I40E_TX_DESC_LENGTH_IPLEN_SHIFT;
-
-	switch (ipproto) {
-		case IPPROTO_TCP:
-			tcp_hlen = th->th_off << 2;
-			if (mp->m_pkthdr.csum_flags & (CSUM_TCP|CSUM_TCP_IPV6)) {
-				*cmd |= I40E_TX_DESC_CMD_L4T_EOFT_TCP;
-				*off |= (tcp_hlen >> 2) <<
-				    I40E_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
-			}
-#ifdef IXL_FDIR
-			ixl_atr(que, th, etype);
-#endif
-			break;
-		case IPPROTO_UDP:
-			if (mp->m_pkthdr.csum_flags & (CSUM_UDP|CSUM_UDP_IPV6)) {
-				*cmd |= I40E_TX_DESC_CMD_L4T_EOFT_UDP;
-				*off |= (sizeof(struct udphdr) >> 2) <<
-				    I40E_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
-			}
-			break;
-
-		case IPPROTO_SCTP:
-			if (mp->m_pkthdr.csum_flags & (CSUM_SCTP|CSUM_SCTP_IPV6)) {
-				*cmd |= I40E_TX_DESC_CMD_L4T_EOFT_SCTP;
-				*off |= (sizeof(struct sctphdr) >> 2) <<
-				    I40E_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
-			}
-			/* Fall Thru */
-		default:
-			break;
-	}
-
-        return (0);
-}
-
-
-/**********************************************************************
- *
- *  Setup context for hardware segmentation offload (TSO)
- *
- **********************************************************************/
-static bool
-ixl_tso_setup(struct ixl_queue *que, struct mbuf *mp)
-{
-	struct tx_ring			*txr = &que->txr;
-	struct i40e_tx_context_desc	*TXD;
-	struct ixl_tx_buf		*buf;
-	u32				cmd, mss, type, tsolen;
-	u16				etype;
-	int				idx, elen, ip_hlen, tcp_hlen;
-	struct ether_vlan_header	*eh;
-#ifdef INET
-	struct ip			*ip;
-#endif
-#ifdef INET6
-	struct ip6_hdr			*ip6;
-#endif
-#if defined(INET6) || defined(INET)
-	struct tcphdr			*th;
-#endif
-	u64				type_cmd_tso_mss;
-
-	/*
-	 * Determine where frame payload starts.
-	 * Jump over vlan headers if already present
-	 */
-	eh = mtod(mp, struct ether_vlan_header *);
-	if (eh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
-		elen = ETHER_HDR_LEN + ETHER_VLAN_ENCAP_LEN;
-		etype = eh->evl_proto;
-	} else {
-		elen = ETHER_HDR_LEN;
-		etype = eh->evl_encap_proto;
-	}
-
-        switch (ntohs(etype)) {
-#ifdef INET6
-	case ETHERTYPE_IPV6:
-		ip6 = (struct ip6_hdr *)(mp->m_data + elen);
-		if (ip6->ip6_nxt != IPPROTO_TCP)
-			return (ENXIO);
-		ip_hlen = sizeof(struct ip6_hdr);
-		th = (struct tcphdr *)((caddr_t)ip6 + ip_hlen);
-		th->th_sum = in6_cksum_pseudo(ip6, 0, IPPROTO_TCP, 0);
-		tcp_hlen = th->th_off << 2;
-		break;
-#endif
-#ifdef INET
-	case ETHERTYPE_IP:
-		ip = (struct ip *)(mp->m_data + elen);
-		if (ip->ip_p != IPPROTO_TCP)
-			return (ENXIO);
-		ip->ip_sum = 0;
-		ip_hlen = ip->ip_hl << 2;
-		th = (struct tcphdr *)((caddr_t)ip + ip_hlen);
-		th->th_sum = in_pseudo(ip->ip_src.s_addr,
-		    ip->ip_dst.s_addr, htons(IPPROTO_TCP));
-		tcp_hlen = th->th_off << 2;
-		break;
-#endif
-	default:
-		printf("%s: CSUM_TSO but no supported IP version (0x%04x)",
-		    __func__, ntohs(etype));
-		return FALSE;
-        }
-
-        /* Ensure we have at least the IP+TCP header in the first mbuf. */
-        if (mp->m_len < elen + ip_hlen + sizeof(struct tcphdr))
-		return FALSE;
-
-	idx = txr->next_avail;
-	buf = &txr->tx_buffers[idx];
-	TXD = (struct i40e_tx_context_desc *) &txr->tx_base[idx];
-	tsolen = mp->m_pkthdr.len - (elen + ip_hlen + tcp_hlen);
-
-	type = I40E_TX_DESC_DTYPE_CONTEXT;
-	cmd = I40E_TX_CTX_DESC_TSO;
-	mss = mp->m_pkthdr.tso_segsz;
-
-	type_cmd_tso_mss = ((u64)type << I40E_TXD_CTX_QW1_DTYPE_SHIFT) |
-	    ((u64)cmd << I40E_TXD_CTX_QW1_CMD_SHIFT) |
-	    ((u64)tsolen << I40E_TXD_CTX_QW1_TSO_LEN_SHIFT) |
-	    ((u64)mss << I40E_TXD_CTX_QW1_MSS_SHIFT);
-	TXD->type_cmd_tso_mss = htole64(type_cmd_tso_mss);
-
-	TXD->tunneling_params = htole32(0);
-	buf->eop_index = -1;
-
-	if (++idx == ixl_sctx->isc_ntxd)
-		idx = 0;
-
-	txr->avail--;
-	txr->next_avail = idx;
-
-	return TRUE;
-}
 
 /*             
 ** ixl_get_tx_head - Retrieve the value from the 
