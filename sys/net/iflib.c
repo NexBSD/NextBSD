@@ -2126,13 +2126,18 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 	case ETHERTYPE_IP:
 	{
 		struct ip *ip = (struct ip *)(m->m_data + pi->ipi_ehdrlen);
+		struct tcphdr *th;
 
 		MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip));
+		th =  = (struct tcphdr *)((caddr_t)ip + pi->ipi_ip_hlen);
 		pi->ipi_ip_hlen = ip->ip_hl << 2;
 		pi->ipi_ipproto = ip->ip_p;
 		pi->ipi_flags |= IPI_TX_IPV4;
+#ifdef ATR
+		if (ip->ip_p == IPPROTO_TCP)
+			pi->ipi_tcp_hflags = th->th_flags;
+#endif
 		if (IS_TSO4(pi)) {
-			struct tcphdr *th = (struct tcphdr *)((caddr_t)ip + pi->ipi_ip_hlen);
 
 			if (__predict_false(ip->ip_p != IPPROTO_TCP))
 				return (ENXIO);
@@ -2151,14 +2156,21 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 	case ETHERTYPE_IPV6:
 	{
 		struct ip6_hdr *ip6 = (struct ip6_hdr *)(m->m_data + pi->ipi_ehdrlen);
+		struct tcphdr *th;
 		pi->ipi_ip_hlen = sizeof(struct ip6_hdr);
 
 		MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip6_hdr));
+		th = (struct tcphdr *)((caddr_t)ip6 + pi->ipi_ip_hlen);
+
 		/* XXX-BZ this will go badly in case of ext hdrs. */
 		pi->ipi_ipproto = ip6->ip6_nxt;
 		pi->ipi_flags |= IPI_TX_IPV6;
+#ifdef ATR
+		if (ip->ip_p == IPPROTO_TCP)
+			pi->ipi_tcp_hflags = th->th_flags;
+#endif
 		if (IS_TSO6(pi)) {
-			struct tcphdr *th = (struct tcphdr *)((caddr_t)ip6 + pi->ipi_ip_hlen);
+
 
 			if (__predict_false(ip6->ip6_nxt != IPPROTO_TCP))
 				return (ENXIO);
@@ -3997,7 +4009,7 @@ iflib_msix_init(if_ctx_t ctx)
 #else
 	queuemsgs = msgs - admincnt;
 #endif
-	if (bus_get_cpus(dev, INTR_CPUS, &ctx->ifc_cpus) == 0) {
+	if (bus_get_cpus(dev, INTR_CPUS, &ctx->ifc_cpus, sizeof(ctx->ifc_cpus)) == 0) {
 #ifdef RSS
 		queues = imin(queuemsgs, rss_getnumbuckets());
 #else
