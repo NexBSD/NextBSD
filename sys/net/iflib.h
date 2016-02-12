@@ -90,7 +90,9 @@ typedef struct if_pkt_info {
 	uint8_t				ipi_ehdrlen;	/* ether header length */
 	uint8_t				ipi_ip_hlen;	/* ip header length */
 	uint8_t				ipi_tcp_hlen;	/* tcp header length */
+	uint8_t				ipi_tcp_hflags;	/* tcp header flags */
 	uint8_t				ipi_ipproto;	/* ip protocol */
+
 	/* implied padding */
 } *if_pkt_info_t;
 
