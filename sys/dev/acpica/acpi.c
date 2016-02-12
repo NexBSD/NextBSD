@@ -1096,9 +1096,6 @@ acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
 }
 
 /*
- * Fetch the NUMA domain for the given device.
- *
- * If a device has a _PXM method, map that to a NUMA domain.
  * Fetch the VM domain for the given device 'dev'.
  *
  * Return 1 + domain if there's a domain, 0 if not found;
