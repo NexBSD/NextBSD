@@ -293,7 +293,7 @@ typedef struct _ixgbe_vendor_info_t {
 
 
 struct ixgbe_tx_buf {
-	union ixgbe_adv_tx_desc	*eop;
+	int eop;
 };
 
 

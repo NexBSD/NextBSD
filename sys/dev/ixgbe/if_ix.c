@@ -442,7 +442,7 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
 	struct ix_queue *que;
-	int i, error;
+	int i, j, error;
 #ifdef PCI_IOV
 	enum ixgbe_iov_mode mode;
 #endif
@@ -493,14 +493,16 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 		rxr->rx_paddr = paddrs[i*2 + 1];
 		rxr->bytes = 0;
 		txr->que = rxr->que = que;
-		txr->tx_buffers->eop = NULL;
+		for (j = 0; j < ixgbe_sctx->isc_ntxd; j++) {
+			txr->tx_buffers[j].eop = -1;
+		}
 		txr->bytes = 0;
 		txr->total_packets = 0;
 
 #ifdef IXGBE_FDIR
-	/* Set the rate at which we sample packets */
-	if (adapter->hw.mac.type != ixgbe_mac_82598EB)
-		txr->atr_sample = atr_sample_rate;
+		/* Set the rate at which we sample packets */
+		if (adapter->hw.mac.type != ixgbe_mac_82598EB)
+			txr->atr_sample = atr_sample_rate;
 #endif
 
 	}
@@ -2677,9 +2679,11 @@ static int
 ixgbe_if_detach(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
-	device_t dev = iflib_get_dev(ctx);
 	u32 ctrl_ext;
-  
+#ifdef PCI_IOV
+	device_t dev = iflib_get_dev(ctx);
+#endif
+
 	INIT_DEBUGOUT("ixgbe_detach: begin");
 
 #ifdef PCI_IOV

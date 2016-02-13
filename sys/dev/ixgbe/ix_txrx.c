@@ -195,7 +195,7 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	bus_dma_segment_t *segs  = pi->ipi_segs;
 	union ixgbe_adv_tx_desc *txd = NULL;
 	struct ixgbe_adv_tx_context_desc *TXD;
-	int                     i, j, first;
+	int                     i, j, first, cidx_last;
 	u32                     olinfo_status, cmd, flags = 0;
 
 	cmd =  (IXGBE_ADVTXD_DTYP_DATA |
@@ -238,6 +238,7 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		txd->read.cmd_type_len = htole32(flags | cmd | seglen);
 		txd->read.olinfo_status = htole32(olinfo_status);
 
+		cidx_last = i;
 		if (++i == ixgbe_sctx->isc_ntxd) {
 			i = 0;
 		}
@@ -248,7 +249,7 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 
 	/* Set the EOP descriptor that will be marked done */
 	buf = &txr->tx_buffers[first];
-	buf->eop = txd;
+	buf->eop = cidx_last;
 
 	txr->bytes += pi->ipi_len;
 	pi->ipi_new_pidx = i;
@@ -275,7 +276,7 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
 	struct ix_queue  *que = &sc->queues[txqid];
 	struct tx_ring   *txr = &que->txr;
 	
-	u32		    cidx, processed = 0;
+	u32		    cidx, ntxd, processed = 0;
 	u32               limit = sc->tx_process_limit;
 
 	struct ixgbe_tx_buf	*buf;
@@ -285,37 +286,38 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
 
 	buf = &txr->tx_buffers[cidx];
 	txd = &txr->tx_base[cidx];
-
+	ntxd = ixgbe_sctx->isc_ntxd;
 	do {
+		int delta, eop = buf->eop;
+		union ixgbe_adv_tx_desc *eopd;
 
-		union ixgbe_adv_tx_desc *eop = buf->eop;
-		if (eop == NULL) { /* No work */
+		if (eop == -1) { /* No work */
 			break;
 		}
-    
-		if ((eop->wb.status & IXGBE_TXD_STAT_DD) == 0) {
+
+		eopd = &txr->tx_base[eop];
+		if ((eopd->wb.status & IXGBE_TXD_STAT_DD) == 0) {
 			break;	/* I/O not complete */
 		}
     
-		buf->eop = NULL; /* clear indicate processed */
-    
-		/* We clean the range if multi segment */
-		while (txd != eop) {
-			++txd;
-			++buf;
-			cidx++;
-			processed++;
-			/* wrap the ring? */
-			if (cidx == ixgbe_sctx->isc_ntxd) {
-				buf = txr->tx_buffers;
-				txd = txr->tx_base;
-				cidx = 0;
-			}
-			buf->eop = NULL;
+		buf->eop = -1; /* clear indicate processed */
+
+		/*
+		 *
+		 * update for multi segment case
+		 */
+		if (eop != cidx) {
+			delta = eop - cidx;
+			if (eop < cidx)
+				delta += ntxd;
+			processed += delta;
+			txd = eopd;
+			buf = &txr->tx_buffers[eop];
+			cidx = eop;
 		}
+		processed++;
 		++txr->packets;
-		++processed;
-    
+
 		/* Try the next packet */
 		txd++;
 		buf++;
@@ -327,6 +329,7 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
 			txd = txr->tx_base;
 		}
 		prefetch(txd);
+		prefetch(txd+1);
 	} while (__predict_true(--limit) && cidx != cidx_init);
 
 	return (processed);
