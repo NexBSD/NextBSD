@@ -196,22 +196,21 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	union ixgbe_adv_tx_desc *txd = NULL;
 	struct ixgbe_adv_tx_context_desc *TXD;
 	int                     i, j, first, cidx_last;
-	u32                     olinfo_status, cmd, flags = 0;
+	u32                     olinfo_status, cmd, flags;
 
 	cmd =  (IXGBE_ADVTXD_DTYP_DATA |
 		IXGBE_ADVTXD_DCMD_IFCS | IXGBE_ADVTXD_DCMD_DEXT);
-	olinfo_status = 0;
+
 	if (pi->ipi_mflags & M_VLANTAG)
 		cmd |= IXGBE_ADVTXD_DCMD_VLE;
   
 	i = first = pi->ipi_pidx;
-	if (pi->ipi_flags & IPI_TX_INTR)
-		flags = IXGBE_TXD_CMD_RS;
+	flags = (pi->ipi_flags & IPI_TX_INTR) ? IXGBE_TXD_CMD_RS : 0;
 
 	/* Indicate the whole packet as payload when not doing TSO */
 	TXD = (struct ixgbe_adv_tx_context_desc *) &txr->tx_base[first];
 
-	olinfo_status |= pi->ipi_len << IXGBE_ADVTXD_PAYLEN_SHIFT;
+
 	if (pi->ipi_csum_flags & CSUM_OFFLOAD || IXGBE_IS_X550VF(sc)) {
 		/*********************************************
 		 * Set up the appropriate offload context
@@ -223,7 +222,8 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 			++txr->tso_tx;
 		}
 		++i;
-	}
+	} else
+		olinfo_status = pi->ipi_len << IXGBE_ADVTXD_PAYLEN_SHIFT;
 
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seglen;
