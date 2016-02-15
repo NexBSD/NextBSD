@@ -87,6 +87,7 @@ SUBDIR=	${SUBDIR_ORDERED} \
 	libosxsupport \
 	libpam \
 	libpcap \
+	${_libpe} \
 	libpjdlog \
 	${_libpmc} \
 	${_libproc} \
@@ -193,6 +194,7 @@ _cuse=		libcuse
 
 .if ${MK_TOOLCHAIN} != "no"
 _libelftc=	libelftc
+_libpe=		libpe
 .endif
 
 .if ${MK_FILE} != "no"
