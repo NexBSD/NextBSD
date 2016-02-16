@@ -268,6 +268,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 			*m_headp = m;
 		}
 	}
+
 #endif
 
 	/* Set up the TSO/CSUM offload */
