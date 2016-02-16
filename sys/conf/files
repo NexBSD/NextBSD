@@ -1869,6 +1869,8 @@ dev/ixgbe/ix_txrx.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
 dev/ixgbe/ixgbe_osdep.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
+dev/ixgbe/ixgbe_sysctl.c	optional ix inet iflib | ixv inet iflib \
+	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
 dev/ixgbe/ixgbe_phy.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
 dev/ixgbe/ixgbe_api.c		optional ix inet iflib | ixv inet iflib \
