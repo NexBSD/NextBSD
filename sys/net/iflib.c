@@ -2675,7 +2675,10 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)mp, count, IFLIB_BUDGET);
 	/* drain => err = iflib_txq_transmit(ifp, txq, m); */
 	if (err) {
+		/* support forthcoming later */
+#ifdef DRIVER_BACKPRESSURE
 		txq->ift_closed = TRUE;
+#endif
 		for (i = 0; i < count; i++)
 			m_freem(mp[i]);
 		ifmp_ring_check_drainage(txq->ift_br[0], BATCH_SIZE);
