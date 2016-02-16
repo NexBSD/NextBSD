@@ -275,7 +275,6 @@ static struct if_shared_ctx ixlv_sctx_init = {
 };
 
 if_shared_ctx_t ixlv_sctx = &ixlv_sctx_init;
-MALLOC_DEFINE(M_IXL, "ixl", "ixl driver allocations");
 
 static void *
 ixlv_register(device_t dev)
@@ -897,7 +896,13 @@ ixlv_if_init(if_ctx_t ctx)
 		    "Init failed to complete in alloted time!\n");
 
 }
+void
+ixlv_init(void *arg)
+{
+	struct ixlv_sc *sc = arg;
 
+	ixlv_if_init(sc->vsi.ctx);
+}
 /*
  * ixlv_attach() helper function; gathers information about
  * the (virtual) hardware for use elsewhere in the driver.
@@ -1434,6 +1439,12 @@ ixlv_if_intr_enable(if_ctx_t ctx)
 }
 
 void
+ixlv_enable_intr(struct ixl_vsi *vsi)
+{
+	ixlv_if_intr_enable(vsi->ctx);
+}
+
+void
 ixlv_if_intr_disable(if_ctx_t ctx)
 {
 	struct ixlv_sc			*sc = iflib_get_softc(ctx);
@@ -1446,6 +1457,11 @@ ixlv_if_intr_disable(if_ctx_t ctx)
 		ixlv_if_queue_intr_disable(ctx, que->me);
 }
 
+void
+ixlv_disable_intr(struct ixl_vsi *vsi)
+{
+	ixlv_if_intr_disable(vsi->ctx);
+}
 
 static void
 ixlv_disable_adminq_irq(struct i40e_hw *hw)
@@ -1654,6 +1670,15 @@ ixlv_msix_que(void *arg)
 	ixlv_set_queue_rx_itr(que);
 	ixlv_set_queue_tx_itr(que);
 	return (FILTER_SCHEDULE_THREAD);
+}
+
+
+/* XXX */
+void
+ixlv_update_link_status(struct ixlv_sc *sc)
+{
+	/* satisfy linker for the moment */
+	;
 }
 
 
