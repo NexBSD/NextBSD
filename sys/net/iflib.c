@@ -558,6 +558,8 @@ static int iflib_legacy_setup(if_ctx_t ctx, driver_filter_t filter, void *filter
 static void iflib_txq_check_drain(iflib_txq_t txq, int budget);
 static uint32_t iflib_txq_can_drain(struct ifmp_ring *);
 static int iflib_register(if_ctx_t);
+static void iflib_init_locked(if_ctx_t ctx);
+
 
 #ifdef DEV_NETMAP
 #include <sys/selinfo.h>
@@ -1631,7 +1633,6 @@ iflib_timer(void *arg)
 	iflib_txq_t txq = arg;
 	if_ctx_t ctx = txq->ift_ctx;
 	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
-	if_t ifp = ctx->ifc_ifp;
 
 	/*
 	** Check on the state of the TX queue(s), this
@@ -1659,16 +1660,7 @@ hung:
 	ctx->ifc_watchdog_events++;
 	ctx->ifc_pause_frames = 0;
 
-	/* Set hardware offload abilities */
-	if_clearhwassist(ifp);
-	if (if_getcapenable(ifp) & IFCAP_TXCSUM)
-		if_sethwassistbits(ifp, CSUM_TCP | CSUM_UDP, 0);
-	if (if_getcapenable(ifp) & IFCAP_TSO4)
-		if_sethwassistbits(ifp, CSUM_TSO, 0);
-	if (if_getcapenable(ifp) & IFCAP_TXCSUM_IPV6)
-		if_sethwassistbits(ifp,  (CSUM_TCP_IPV6 | CSUM_UDP_IPV6), 0);
-
-	IFDI_INIT(ctx);
+	iflib_init_locked(ctx);
 	CTX_UNLOCK(ctx);
 }
 
@@ -1676,13 +1668,27 @@ static void
 iflib_init_locked(if_ctx_t ctx)
 {
 	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
+	if_t ifp = ctx->ifc_ifp;
 	iflib_fl_t fl;
 	iflib_txq_t txq;
 	iflib_rxq_t rxq;
 	int i, j;
 
-	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
+
+	if_setdrvflagbits(ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
 	IFDI_INTR_DISABLE(ctx);
+
+	/* Set hardware offload abilities */
+	if_clearhwassist(ifp);
+	if (if_getcapenable(ifp) & IFCAP_TXCSUM)
+		if_sethwassistbits(ifp, CSUM_TCP | CSUM_UDP, 0);
+	if (if_getcapenable(ifp) & IFCAP_TXCSUM_IPV6)
+		if_sethwassistbits(ifp,  (CSUM_TCP_IPV6 | CSUM_UDP_IPV6), 0);
+	if (if_getcapenable(ifp) & IFCAP_TSO4)
+		if_sethwassistbits(ifp, CSUM_IP_TSO, 0);
+	if (if_getcapenable(ifp) & IFCAP_TSO6)
+		if_sethwassistbits(ifp, CSUM_IP6_TSO, 0);
+
 	for (i = 0, txq = ctx->ifc_txqs, rxq = ctx->ifc_rxqs; i < sctx->isc_nqsets; i++, txq++, rxq++) {
 		TX_LOCK(txq);
 		callout_stop(&txq->ift_timer);
