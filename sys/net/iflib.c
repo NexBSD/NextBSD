@@ -304,7 +304,7 @@ struct iflib_txq {
 	int                     ift_id;
 	iflib_sd_t              ift_sds;
 	int                     ift_nbr;
-	struct mp_ring        **ift_br;
+	struct ifmp_ring        **ift_br;
 	struct grouptask	ift_task;
 	int			ift_qstatus;
 	int                     ift_active;
@@ -556,7 +556,7 @@ static int iflib_qset_structures_setup(if_ctx_t ctx);
 static int iflib_msix_init(if_ctx_t ctx);
 static int iflib_legacy_setup(if_ctx_t ctx, driver_filter_t filter, void *filterarg, int *rid, char *str);
 static void iflib_txq_check_drain(iflib_txq_t txq, int budget);
-static uint32_t iflib_txq_can_drain(struct mp_ring *);
+static uint32_t iflib_txq_can_drain(struct ifmp_ring *);
 static int iflib_register(if_ctx_t);
 
 #ifdef DEV_NETMAP
@@ -2407,7 +2407,7 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 }
 
 static void
-_ring_peek(struct mp_ring *r, struct mbuf **m, int cidx, int count)
+_ring_peek(struct ifmp_ring *r, struct mbuf **m, int cidx, int count)
 {
 	int i;
 
@@ -2416,7 +2416,7 @@ _ring_peek(struct mp_ring *r, struct mbuf **m, int cidx, int count)
 }
 
 static void
-_ring_putback(struct mp_ring *r, struct mbuf *m, int i, int cidx)
+_ring_putback(struct ifmp_ring *r, struct mbuf *m, int i, int cidx)
 {
 
 	r->items[(cidx + i) & (r->size-1)] = m;
@@ -2426,11 +2426,11 @@ static void
 iflib_txq_check_drain(iflib_txq_t txq, int budget)
 {
 
-	mp_ring_check_drainage(txq->ift_br[0], budget);
+	ifmp_ring_check_drainage(txq->ift_br[0], budget);
 }
 
 static uint32_t
-iflib_txq_can_drain(struct mp_ring *r)
+iflib_txq_can_drain(struct ifmp_ring *r)
 {
 	iflib_txq_t txq = r->cookie;
 
@@ -2438,7 +2438,7 @@ iflib_txq_can_drain(struct mp_ring *r)
 }
 
 static uint32_t
-iflib_txq_drain(struct mp_ring *r, uint32_t cidx, uint32_t pidx)
+iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 {
 	iflib_txq_t txq = r->cookie;
 	if_ctx_t ctx = txq->ift_ctx;
@@ -2514,7 +2514,7 @@ _task_fn_tx(void *context, int pending)
 	if (!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING))
 		return;
 
-	mp_ring_check_drainage(txq->ift_br[0], IFLIB_BUDGET);
+	ifmp_ring_check_drainage(txq->ift_br[0], IFLIB_BUDGET);
 }
 
 static void
@@ -2672,13 +2672,13 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		mp[i]->m_nextpkt = NULL;
 	}
 	DBG_COUNTER_INC(tx_seen);
-	err = mp_ring_enqueue(txq->ift_br[0], (void **)mp, count, IFLIB_BUDGET);
+	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)mp, count, IFLIB_BUDGET);
 	/* drain => err = iflib_txq_transmit(ifp, txq, m); */
 	if (err) {
 		txq->ift_closed = TRUE;
 		for (i = 0; i < count; i++)
 			m_freem(mp[i]);
-		mp_ring_check_drainage(txq->ift_br[0], BATCH_SIZE);
+		ifmp_ring_check_drainage(txq->ift_br[0], BATCH_SIZE);
 	}
 	if (count > 16)
 		free(mp, M_IFLIB);
@@ -2697,7 +2697,7 @@ iflib_if_qflush(if_t ifp)
 	ctx->ifc_flags |= IFC_QFLUSH;
 	CTX_UNLOCK(ctx);
 	for (i = 0; i < NQSETS(ctx); i++, txq++)
-		while (!mp_ring_is_idle(txq->ift_br[0]))
+		while (!ifmp_ring_is_idle(txq->ift_br[0]))
 			iflib_txq_check_drain(txq, 0);
 	CTX_LOCK(ctx);
 	ctx->ifc_flags &= ~IFC_QFLUSH;
@@ -3399,7 +3399,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 	int nfree_lists = sctx->isc_nfl ? sctx->isc_nfl : 1;
 	caddr_t *vaddrs;
 	uint64_t *paddrs;
-	struct mp_ring **brscp;
+	struct ifmp_ring **brscp;
 	int nbuf_rings = 1; /* XXX determine dynamically */
 
 	KASSERT(nqs > 0, ("number of queues must be at least 1"));
@@ -3486,7 +3486,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 		/* Allocate a buf ring */
 		txq->ift_br = brscp + i*nbuf_rings;
 		for (j = 0; j < nbuf_rings; j++) {
-			err = mp_ring_alloc(&txq->ift_br[j], 2048, txq, iflib_txq_drain,
+			err = ifmp_ring_alloc(&txq->ift_br[j], 2048, txq, iflib_txq_drain,
 								iflib_txq_can_drain, M_IFLIB, M_WAITOK);
 			if (err) {
 				/* XXX free any allocated rings */

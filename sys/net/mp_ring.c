@@ -62,7 +62,7 @@ enum {
 };
 
 static inline uint16_t
-space_available(struct mp_ring *r, union ring_state s)
+space_available(struct ifmp_ring *r, union ring_state s)
 {
 	uint16_t x = r->size - 1;
 
@@ -75,7 +75,7 @@ space_available(struct mp_ring *r, union ring_state s)
 }
 
 static inline uint16_t
-increment_idx(struct mp_ring *r, uint16_t idx, uint16_t n)
+increment_idx(struct ifmp_ring *r, uint16_t idx, uint16_t n)
 {
 	int x = r->size - idx;
 
@@ -101,7 +101,7 @@ state_to_flags(union ring_state s, int abdicate)
  * all items up to the pidx_tail in the state are visible.
  */
 static void
-drain_ring(struct mp_ring *r, union ring_state os, uint16_t prev, int budget)
+drain_ring(struct ifmp_ring *r, union ring_state os, uint16_t prev, int budget)
 {
 	union ring_state ns;
 	int n, pending, total;
@@ -178,10 +178,10 @@ drain_ring(struct mp_ring *r, union ring_state os, uint16_t prev, int budget)
 }
 
 int
-mp_ring_alloc(struct mp_ring **pr, int size, void *cookie, ring_drain_t drain,
-    ring_can_drain_t can_drain, struct malloc_type *mt, int flags)
+ifmp_ring_alloc(struct ifmp_ring **pr, int size, void *cookie, mp_ring_drain_t drain,
+    mp_ring_can_drain_t can_drain, struct malloc_type *mt, int flags)
 {
-	struct mp_ring *r;
+	struct ifmp_ring *r;
 
 	/* All idx are 16b so size can be 65536 at most */
 	if (pr == NULL || size < 2 || size > 65536 || drain == NULL ||
@@ -191,7 +191,7 @@ mp_ring_alloc(struct mp_ring **pr, int size, void *cookie, ring_drain_t drain,
 	flags &= M_NOWAIT | M_WAITOK;
 	MPASS(flags != 0);
 
-	r = malloc(__offsetof(struct mp_ring, items[size]), mt, flags | M_ZERO);
+	r = malloc(__offsetof(struct ifmp_ring, items[size]), mt, flags | M_ZERO);
 	if (r == NULL)
 		return (ENOMEM);
 	r->size = size;
@@ -208,7 +208,7 @@ mp_ring_alloc(struct mp_ring **pr, int size, void *cookie, ring_drain_t drain,
 	if (r->enqueues == NULL || r->drops == NULL || r->starts == NULL ||
 	    r->stalls == NULL || r->restarts == NULL ||
 	    r->abdications == NULL) {
-		mp_ring_free(r);
+		ifmp_ring_free(r);
 		return (ENOMEM);
 	}
 
@@ -217,8 +217,7 @@ mp_ring_alloc(struct mp_ring **pr, int size, void *cookie, ring_drain_t drain,
 }
 
 void
-
-mp_ring_free(struct mp_ring *r)
+ifmp_ring_free(struct ifmp_ring *r)
 {
 
 	if (r == NULL)
@@ -246,7 +245,7 @@ mp_ring_free(struct mp_ring *r)
  * Returns an errno.
  */
 int
-mp_ring_enqueue(struct mp_ring *r, void **items, int n, int budget)
+ifmp_ring_enqueue(struct ifmp_ring *r, void **items, int n, int budget)
 {
 	union ring_state os, ns;
 	uint16_t pidx_start, pidx_stop;
@@ -265,7 +264,7 @@ mp_ring_enqueue(struct mp_ring *r, void **items, int n, int budget)
 			counter_u64_add(r->drops, n);
 			MPASS(os.flags != IDLE);
 			if (os.flags == STALLED)
-				mp_ring_check_drainage(r, 0);
+				ifmp_ring_check_drainage(r, 0);
 			return (ENOBUFS);
 		}
 		ns.state = os.state;
@@ -320,7 +319,7 @@ mp_ring_enqueue(struct mp_ring *r, void **items, int n, int budget)
 }
 
 void
-mp_ring_check_drainage(struct mp_ring *r, int budget)
+ifmp_ring_check_drainage(struct ifmp_ring *r, int budget)
 {
 	union ring_state os, ns;
 
@@ -344,7 +343,7 @@ mp_ring_check_drainage(struct mp_ring *r, int budget)
 }
 
 void
-mp_ring_reset_stats(struct mp_ring *r)
+ifmp_ring_reset_stats(struct ifmp_ring *r)
 {
 
 	counter_u64_zero(r->enqueues);
@@ -356,7 +355,7 @@ mp_ring_reset_stats(struct mp_ring *r)
 }
 
 int
-mp_ring_is_idle(struct mp_ring *r)
+ifmp_ring_is_idle(struct ifmp_ring *r)
 {
 	union ring_state s;
 
