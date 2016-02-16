@@ -1100,7 +1100,8 @@ ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	struct 		ixl_vsi *vsi = iflib_get_softc(ctx);
 	struct ixl_pf	*pf = vsi->back;
 	struct 		ixl_queue *que = vsi->queues;
-	int 		err, rid, vector = 0;
+	int 		err, i, rid, vector = 0;
+	char buf[16];
 
 	/* Admin Que is vector 0*/
 	rid = vector + 1;
@@ -1117,8 +1118,7 @@ ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_IOV, pf, 0, "ixl_iov");
 
 	/* Now set up the stations */
-	for (int i = 0; i < vsi->num_queues; i++, vector++, que++) {
-		char buf[16];
+	for (i = 0; i < vsi->num_queues; i++, vector++, que++) {
 		rid = vector + 1;
 
 		snprintf(buf, sizeof(buf), "rxq%d", i);
@@ -1129,9 +1129,13 @@ ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 			vsi->num_queues = i + 1;
 			goto fail;
 		}
-		snprintf(buf, sizeof(buf), "txq%d", i);
-		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, que, que->me, buf);
 		que->msix = vector;
+	}
+
+	for (i = 0, que = vsi->queues; i < vsi->num_queues; i++, que++) {
+		snprintf(buf, sizeof(buf), "txq%d", i);
+		rid = que->msix + 1;
+		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, que, que->me, buf);
 	}
 
 	return (0);
@@ -2494,6 +2498,7 @@ static void ixl_config_rss(struct ixl_vsi *vsi)
 	struct ixl_pf	*pf = (struct ixl_pf *)vsi->back;
 	struct i40e_hw	*hw = vsi->hw;
 	u32		lut = 0;
+	u32		qf_ctl;
 	u64		set_hena = 0, hena;
 	int		i, j, que_id;
 #ifdef RSS
@@ -2551,6 +2556,14 @@ static void ixl_config_rss(struct ixl_vsi *vsi)
 	hena |= set_hena;
 	wr32(hw, I40E_PFQF_HENA(0), (u32)hena);
 	wr32(hw, I40E_PFQF_HENA(1), (u32)(hena >> 32));
+
+	/* configure the RSS table size */
+	qf_ctl = rd32(hw, I40E_PFQF_CTL_0);
+	if (pf->hw.func_caps.rss_table_size == 512)
+		qf_ctl |= I40E_PFQF_CTL_0_HASHLUTSIZE_512;
+	else
+		qf_ctl &= ~I40E_PFQF_CTL_0_HASHLUTSIZE_512;
+	wr32(hw, I40E_PFQF_CTL_0, qf_ctl);
 
 	/* Populate the LUT with max no. of queues in round robin fashion */
 	for (i = j = 0; i < pf->hw.func_caps.rss_table_size; i++, j++) {

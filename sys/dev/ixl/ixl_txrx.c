@@ -506,7 +506,6 @@ ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 	return (cnt);
 }
 
-#ifdef RSS
 /*
 ** i40e_ptype_to_hash: parse the packet type
 ** to determine the appropriate hash.
@@ -562,7 +561,7 @@ ixl_ptype_to_hash(u8 ptype)
 	/* We should never get here!! */
 	return M_HASHTYPE_OPAQUE;
 }
-#endif /* RSS */
+
 
 /*********************************************************************
  *
@@ -605,11 +604,6 @@ ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	ri->iri_len = plen;
 	rxr->rx_bytes += plen;
 
-#ifdef notyet
-	/* XXX should be checked from avail */
-
-#endif
-
 	cur->wb.qword1.status_error_len = 0;
 	eop = (status & (1 << I40E_RX_DESC_STATUS_EOF_SHIFT));
 	if (status & (1 << I40E_RX_DESC_STATUS_L2TAG1P_SHIFT))
@@ -636,14 +630,9 @@ ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		rxr->packets++;
 		if ((vsi->ifp->if_capenable & IFCAP_RXCSUM) != 0)
 			ixl_rx_checksum(ri, status, error, ptype);
-#ifdef RSS
-		ri->iri_flowid =
-			le32toh(cur->wb.qword0.hi_dword.rss);
+		ri->iri_flowid = le32toh(cur->wb.qword0.hi_dword.rss);
 		ri->iri_rsstype = ixl_ptype_to_hash(ptype);
-#else
-		ri->iri_flowid = que->msix;
-		ri->iri_rsstype = M_HASHTYPE_OPAQUE;
-#endif
+
 		if (vtag) {
 			ri->iri_vtag = vtag;
 			ri->iri_flags |= M_VLANTAG;
