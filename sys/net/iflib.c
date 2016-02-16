@@ -75,6 +75,9 @@
 #include <net/iflib.h>
 
 
+#include "opt_inet.h"
+#include "opt_inet6.h"
+
 #include "ifdi_if.h"
 
 /*
@@ -1499,7 +1502,9 @@ __iflib_fl_refill_lt(if_ctx_t ctx, iflib_fl_t fl, int max)
 {
 	/* we avoid allowing pidx to catch up with cidx as it confuses ixl */
 	int32_t reclaimable = fl->ifl_size - fl->ifl_credits - 1;
+#ifdef INVARIANTS
 	int32_t delta = fl->ifl_size - get_inuse(fl->ifl_size, fl->ifl_cidx, fl->ifl_pidx, fl->ifl_gen) - 1;
+#endif
 
 	MPASS(fl->ifl_credits <= fl->ifl_size);
 	MPASS(reclaimable == delta);
@@ -2134,11 +2139,11 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		struct tcphdr *th;
 
 		MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip));
-		th =  = (struct tcphdr *)((caddr_t)ip + pi->ipi_ip_hlen);
+		th = (struct tcphdr *)((caddr_t)ip + pi->ipi_ip_hlen);
 		pi->ipi_ip_hlen = ip->ip_hl << 2;
 		pi->ipi_ipproto = ip->ip_p;
 		pi->ipi_flags |= IPI_TX_IPV4;
-		if (ip->ip_p == IPPROTO_TCP) {
+		if (pi->ipi_ipproto == IPPROTO_TCP) {
 			pi->ipi_tcp_hflags = th->th_flags;
 			pi->ipi_tcp_hlen = th->th_off << 2;
 		}
@@ -2170,12 +2175,11 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		pi->ipi_ipproto = ip6->ip6_nxt;
 		pi->ipi_flags |= IPI_TX_IPV6;
 
-		if (ip->ip_p == IPPROTO_TCP) {
+		if (pi->ipi_ipproto == IPPROTO_TCP) {
 			pi->ipi_tcp_hflags = th->th_flags;
 			pi->ipi_tcp_hlen = th->th_off << 2;
 		}
 		if (IS_TSO6(pi)) {
-
 
 			if (__predict_false(ip6->ip6_nxt != IPPROTO_TCP))
 				return (ENXIO);
@@ -2745,7 +2749,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 				iflib_if_init(ctx);
 #ifdef INET
 			if (!(if_getflags(ifp) & IFF_NOARP))
-				arp_ifinit_drv(ifp, ifa);
+				arp_ifinit(ifp, ifa);
 #endif
 		} else
 			err = ether_ioctl(ifp, command, data);
