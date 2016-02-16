@@ -294,7 +294,7 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
 	struct ix_queue *que;
-	int i, error;
+	int i, j, error;
 
 #ifdef PCI_IOV
 	enum ixgbe_iov_mode iov_mode;
@@ -345,7 +345,8 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 		rxr->rx_paddr = paddrs[i*2 + 1];
 		rxr->bytes = 0;
 		txr->que = rxr->que = que;
-		txr->tx_buffers->eop = NULL;
+		for (j = 0; j < ixv_sctx->isc_ntxd; j++)
+			txr->tx_buffers->eop = -1;
 		txr->bytes = 0;
 		txr->total_packets = 0;
 
@@ -505,9 +506,6 @@ ixv_if_attach_pre(if_ctx_t ctx)
 		bcopy(addr, hw->mac.addr, sizeof(addr));
 	}
 
-#ifdef DEV_NETMAP
-	ixgbe_netmap_attach(adapter);
-#endif /* DEV_NETMAP */
 	INIT_DEBUGOUT("ixv_attach: end");
 	return (0);
 
@@ -536,9 +534,6 @@ ixv_if_attach_post(if_ctx_t ctx)
 	ixv_init_stats(adapter);
 	ixv_add_stats_sysctls(adapter);
 
-#ifdef DEV_NETMAP
-	ixgbe_netmap_attach(adapter);
-#endif /* DEV_NETMAP */
 	INIT_DEBUGOUT("ixv_attachpost: end");
 
 end:
