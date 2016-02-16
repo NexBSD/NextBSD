@@ -421,7 +421,7 @@ static moduledata_t iflib_moduledata = {
 	NULL
 };
 
-DECLARE_MODULE(iflib, iflib_moduledata, SI_SUB_SMP, SI_ORDER_ANY);
+DECLARE_MODULE(iflib, iflib_moduledata, SI_SUB_INIT_IF, SI_ORDER_ANY);
 MODULE_VERSION(iflib, 1);
 
 MODULE_DEPEND(iflib, pci, 1, 1, 1);
@@ -2639,7 +2639,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	 */
 	txq = &ctx->ifc_txqs[qidx];
 
-
+#ifdef DRIVER_BACKPRESSURE
 	if (txq->ift_closed) {
 		while (m != NULL) {
 			next = m->m_nextpkt;
@@ -2649,7 +2649,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		}
 		return (ENOBUFS);
 	}
-
+#endif
 	qidx = count = 0;
 	mp = marr;
 	next = m;
