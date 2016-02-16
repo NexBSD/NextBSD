@@ -1520,8 +1520,7 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 			bus_dmamap_unload(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
 			bus_dmamap_destroy(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
 			if (d->ifsd_m != NULL) {
-				m_init(d->ifsd_m, zone_mbuf, MLEN,
-				       M_NOWAIT, MT_DATA, 0);
+				m_init(d->ifsd_m, M_NOWAIT, MT_DATA, 0);
 				uma_zfree(zone_mbuf, d->ifsd_m);
 			}
 			if (d->ifsd_cl != NULL)
@@ -1842,7 +1841,7 @@ iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 
 	/* SYNC ? */
 	if (ri->iri_len <= IFLIB_RX_COPY_THRESH) {
-		m_init(m, fl->ifl_zone, fl->ifl_buf_size, M_NOWAIT, MT_DATA, flags);
+		m_init(m, M_NOWAIT, MT_DATA, flags);
 		memcpy(m->m_data, sd->ifsd_cl, ri->iri_len);
 	} else {
 		bus_dmamap_unload(fl->ifl_rxq->ifr_desc_tag, sd->ifsd_map);
@@ -1850,7 +1849,7 @@ iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
 		sd->ifsd_cl = NULL;
 
 		flags |= M_EXT;
-		m_init(m, fl->ifl_zone, fl->ifl_buf_size, M_NOWAIT, MT_DATA, flags);
+		m_init(m, M_NOWAIT, MT_DATA, flags);
 		m_cljset(m, cl, fl->ifl_cltype);
 	}
 
