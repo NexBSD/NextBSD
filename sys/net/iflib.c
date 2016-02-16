@@ -2132,10 +2132,10 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		pi->ipi_ip_hlen = ip->ip_hl << 2;
 		pi->ipi_ipproto = ip->ip_p;
 		pi->ipi_flags |= IPI_TX_IPV4;
-#ifdef ATR
-		if (ip->ip_p == IPPROTO_TCP)
+		if (ip->ip_p == IPPROTO_TCP) {
 			pi->ipi_tcp_hflags = th->th_flags;
-#endif
+			pi->ipi_tcp_hlen = th->th_off << 2;
+		}
 		if (IS_TSO4(pi)) {
 
 			if (__predict_false(ip->ip_p != IPPROTO_TCP))
@@ -2146,7 +2146,6 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 			th->th_sum = in_pseudo(ip->ip_src.s_addr,
 					       ip->ip_dst.s_addr, htons(IPPROTO_TCP));
 			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
-			pi->ipi_tcp_hlen = th->th_off << 2;
 		}
 		break;
 	}
@@ -2164,10 +2163,11 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		/* XXX-BZ this will go badly in case of ext hdrs. */
 		pi->ipi_ipproto = ip6->ip6_nxt;
 		pi->ipi_flags |= IPI_TX_IPV6;
-#ifdef ATR
-		if (ip->ip_p == IPPROTO_TCP)
+
+		if (ip->ip_p == IPPROTO_TCP) {
 			pi->ipi_tcp_hflags = th->th_flags;
-#endif
+			pi->ipi_tcp_hlen = th->th_off << 2;
+		}
 		if (IS_TSO6(pi)) {
 
 
@@ -2177,7 +2177,6 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 			MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
 			th->th_sum = in6_cksum_pseudo(ip6, 0, IPPROTO_TCP, 0);
 			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
-			pi->ipi_tcp_hlen = th->th_off << 2;
 		}
 		break;
 	}
