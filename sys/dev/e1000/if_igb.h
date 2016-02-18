@@ -66,6 +66,8 @@
 #include <net/if_arp.h>
 #include <net/if_dl.h>
 #include <net/if_media.h>
+#include <net/iflib.h>
+
 #ifdef	RSS
 #include <net/rss_config.h>
 #include <netinet/in_rss.h>
@@ -118,7 +120,7 @@
  *      (num_tx_desc * sizeof(struct e1000_tx_desc)) % 128 == 0
  */
 #define IGB_MIN_RXD		256
-#define IGB_DEFAULT_RXD		1024
+#define IGB_DEFAULT_RXD 1024
 #define IGB_MAX_RXD		4096
 
 /*
@@ -323,35 +325,20 @@ struct igb_dma_alloc {
 };
 
 
-/*
-** Driver queue struct: this is the interrupt container
-**  for the associated tx and rx ring.
-*/
-struct igb_queue {
-	struct adapter		*adapter;
-	u32			msix;		/* This queue's MSIX vector */
-	u32			eims;		/* This queue's EIMS bit */
-	u32			eitr_setting;
-	struct resource		*res;
-	void			*tag;
-	struct tx_ring		*txr;
-	struct rx_ring		*rxr;
-	struct task		que_task;
-	struct taskqueue	*tq;
-	u64			irqs;
-};
+
 
 /*
  * The transmit ring, one per queue
  */
 struct tx_ring {
-        struct adapter		*adapter;
-	struct mtx		tx_mtx;
+	struct adapter		*adapter;
+	struct igb_queue    *que;
 	u32			me;
+	u32         tail; 
 	int			watchdog_time;
 	union e1000_adv_tx_desc	*tx_base;
 	struct igb_tx_buf	*tx_buffers;
-	struct igb_dma_alloc	txdma;
+	uint64_t            tx_paddr; 
 	volatile u16		tx_avail;
 	u16			next_avail_desc;
 	u16			next_to_clean;
@@ -384,14 +371,14 @@ struct tx_ring {
  */
 struct rx_ring {
 	struct adapter		*adapter;
-	u32			me;
-	struct igb_dma_alloc	rxdma;
+	struct igb_queue    *que;
+	u32			        me;
+	u32                 tail; 
 	union e1000_adv_rx_desc	*rx_base;
+	uint64_t rx_paddr; 
 	struct lro_ctrl		lro;
 	bool			lro_enabled;
 	bool			hdr_split;
-	struct mtx		rx_mtx;
-	char			mtx_name[16];
 	u32			next_to_refresh;
 	u32			next_to_check;
 	struct igb_rx_buf	*rx_buffers;
@@ -416,7 +403,33 @@ struct rx_ring {
 	u64			rx_bytes;
 };
 
+/*
+** Driver queue struct: this is the interrupt container
+**  for the associated tx and rx ring.
+*/
+struct igb_queue {
+	struct adapter		*adapter;
+	u32			msix;		/* This queue's MSIX vector */
+	u32			eims;		/* This queue's EIMS bit */
+	u32			eitr_setting;
+	u32         me; 
+	struct resource		*res;
+	void			*tag;
+	struct tx_ring		txr;
+	struct rx_ring		rxr;
+	struct task		que_task;
+	struct taskqueue	*tq;
+	u64			irqs;
+
+	struct if_irq           que_irq; 
+};
+
 struct adapter {
+	if_softc_ctx_t shared;
+	if_ctx_t ctx; 
+#define num_queues shared->isc_nqsets
+#define max_frame_size shared->isc_max_frame_size
+#define intr_type shared->isc_intr
 	struct ifnet		*ifp;
 	struct e1000_hw		hw;
 
@@ -424,8 +437,8 @@ struct adapter {
 	struct device		*dev;
 	struct cdev		*led_dev;
 
+	struct if_irq    irq; 
 	struct resource		*pci_mem;
-	struct resource		*msix_mem;
 	int			memrid;
 
 	/*
@@ -436,7 +449,7 @@ struct adapter {
 	void			*tag;
 	struct resource 	*res;
 
-	struct ifmedia		media;
+	struct ifmedia		*media;
 	struct callout		timer;
 	int			msix;
 	int			if_flags;
@@ -448,7 +461,8 @@ struct adapter {
 	eventhandler_tag 	vlan_detach;
 
 	u16			num_vlans;
-	u16			num_queues;
+	u32         num_rx_desc;
+	u32         num_tx_desc;
 
 	/*
 	** Shadow VFTA table, this is needed because
@@ -462,12 +476,11 @@ struct adapter {
 	u32			optics;
 	u32			fc; /* local flow ctrl setting */
 	int			advertise;  /* link speeds */
-	bool			link_active;
-	u16			max_frame_size;
+	bool		link_active;
 	u16			num_segs;
 	u16			link_speed;
-	bool			link_up;
-	u32 			linkvec;
+	bool		link_up;
+	u32 		linkvec;
 	u16			link_duplex;
 	u32			dmac;
 	int			link_mask;
@@ -479,11 +492,11 @@ struct adapter {
 	u32			rx_mbuf_sz;
 
 	/* Support for pluggable optics */
-	bool			sfp_probe;
-	struct task     	link_task;  /* Link tasklet */
-	struct task     	mod_task;   /* SFP tasklet */
-	struct task     	msf_task;   /* Multispeed Fiber */
-	struct taskqueue	*tq;
+	bool			 sfp_probe;
+	struct grouptask link_task;  /* Link tasklet */
+	struct grouptask mod_task;   /* SFP tasklet */
+	struct grouptask msf_task;   /* Multispeed Fiber */
+	struct taskqueue *tq;
 
 	/*
 	** Queues: 
@@ -492,21 +505,7 @@ struct adapter {
 	**   with it.
 	*/
 	struct igb_queue	*queues;
-
-	/*
-	 * Transmit rings:
-	 *	Allocated at run time, an array of rings.
-	 */
-	struct tx_ring		*tx_rings;
-	u32			num_tx_desc;
-
-	/*
-	 * Receive rings:
-	 *	Allocated at run time, an array of rings.
-	 */
-	struct rx_ring		*rx_rings;
-	u64			que_mask;
-	u32			num_rx_desc;
+	u64			        que_mask;
 
 	/* Multicast array memory */
 	u8			*mta;
