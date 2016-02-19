@@ -84,18 +84,10 @@ _rlogind=	rlogind
 _rshd=		rshd
 .endif
 
-<<<<<<< HEAD
-=======
-.if ${MK_SENDMAIL} != "no"
-_mail.local=	mail.local
-_smrsh=		smrsh
-.endif
-
 .if ${MK_MAN_UTILS} != "no"
 _makewhatis.local=	makewhatis.local
 .endif
 
->>>>>>> 96a8fa52de80131ac7fe64ec6fa9a3f7a10585ea
 .if ${MK_TALK} != "no"
 SUBDIR+=	talkd
 .endif
