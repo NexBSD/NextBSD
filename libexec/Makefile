@@ -11,6 +11,7 @@ SUBDIR=	${_atf} \
 	getty \
 	${_hyperv} \
 	launchproxy \
+	${_makewhatis.local} \
 	${_mknetid} \
 	${_pppoed} \
 	revnetgroup \
@@ -81,6 +82,10 @@ SUBDIR+=	rbootd
 .if ${MK_RCMDS} != "no"
 _rlogind=	rlogind
 _rshd=		rshd
+.endif
+
+.if ${MK_MAN_UTILS} != "no"
+_makewhatis.local=	makewhatis.local
 .endif
 
 .if ${MK_TALK} != "no"
