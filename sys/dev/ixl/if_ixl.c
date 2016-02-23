@@ -939,6 +939,7 @@ ixl_if_init(if_ctx_t ctx)
 #ifdef IXL_FDIR
 	filter.enable_fdir = TRUE;
 #endif
+	filter.hash_lut_size = I40E_HASH_LUT_SIZE_512;
 	if (i40e_set_filter_control(hw, &filter))
 		device_printf(dev, "set_filter_control() failed\n");
 
@@ -1563,7 +1564,8 @@ ixl_configure_msix(struct ixl_pf *pf)
 
 	/* Next configure the queues */
 	for (int i = 0; i < vsi->num_queues; i++, vector++) {
-		wr32(hw, I40E_PFINT_DYN_CTLN(i), i);
+		wr32(hw, I40E_PFINT_DYN_CTLN(i), 0);
+		/* First queue type is RX / type 0 */
 		wr32(hw, I40E_PFINT_LNKLSTN(i), i);
 
 		reg = I40E_QINT_RQCTL_CAUSE_ENA_MASK |
@@ -1576,11 +1578,8 @@ ixl_configure_msix(struct ixl_pf *pf)
 		reg = I40E_QINT_TQCTL_CAUSE_ENA_MASK |
 		(IXL_TX_ITR << I40E_QINT_TQCTL_ITR_INDX_SHIFT) |
 		(vector << I40E_QINT_TQCTL_MSIX_INDX_SHIFT) |
-		((i+1) << I40E_QINT_TQCTL_NEXTQ_INDX_SHIFT) |
+		(IXL_QUEUE_EOL << I40E_QINT_TQCTL_NEXTQ_INDX_SHIFT) |
 		(I40E_QUEUE_TYPE_RX << I40E_QINT_TQCTL_NEXTQ_TYPE_SHIFT);
-		if (i == (vsi->num_queues - 1))
-			reg |= (IXL_QUEUE_EOL
-			    << I40E_QINT_TQCTL_NEXTQ_INDX_SHIFT);
 		wr32(hw, I40E_QINT_TQCTL(i), reg);
 	}
 }
@@ -2014,8 +2013,17 @@ ixl_initialize_vsi(struct ixl_vsi *vsi)
 	*/
 	ctxt.info.valid_sections = I40E_AQ_VSI_PROP_QUEUE_MAP_VALID;
 	ctxt.info.mapping_flags |= I40E_AQ_VSI_QUE_MAP_CONTIG;
-	ctxt.info.queue_mapping[0] = 0; 
-	ctxt.info.tc_mapping[0] = 0x0800; 
+	/* In contig mode, que_mapping[0] is first queue index used by this VSI */
+	ctxt.info.queue_mapping[0] = 0;
+	/*
+	 * This VSI will only use traffic class 0; start traffic class 0's
+	 * queue allocation at queue 0, and assign it 64 (2^6) queues (though
+	 * the driver may not use all of them).
+	 */
+	ctxt.info.tc_mapping[0] = ((0 << I40E_AQ_VSI_TC_QUE_OFFSET_SHIFT)
+	    & I40E_AQ_VSI_TC_QUE_OFFSET_MASK) |
+	    ((6 << I40E_AQ_VSI_TC_QUE_NUMBER_SHIFT)
+	    & I40E_AQ_VSI_TC_QUE_NUMBER_MASK);
 
 	/* Set VLAN receive stripping mode */
 	ctxt.info.valid_sections |= I40E_AQ_VSI_PROP_VLAN_VALID;
