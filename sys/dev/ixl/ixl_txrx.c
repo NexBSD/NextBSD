@@ -62,6 +62,7 @@ static void ixl_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 static void ixl_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx);
 static int ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx);
 static int ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri);
+static int ixl_isc_txd_tso_check(bus_dma_segment_t *segs, int nsegs, int segsz);
 
 extern int ixl_intr(void *arg);
 
@@ -73,41 +74,34 @@ struct if_txrx ixl_txrx  = {
 	ixl_isc_rxd_pkt_get,
 	ixl_isc_rxd_refill,
 	ixl_isc_rxd_flush,
-	ixl_intr
+	ixl_intr,
+	ixl_isc_txd_tso_check
 };
 
 extern if_shared_ctx_t ixl_sctx;
 
 
-#ifdef notyet
+
 /*
 ** Find mbuf chains passed to the driver 
 ** that are 'sparse', using more than 8
-** mbufs to deliver an mss-size chunk of data
+** segments to deliver an mss-size chunk of data
 */
-static inline bool
-ixl_tso_detect_sparse(struct mbuf *mp)
+static int
+ixl_isc_txd_tso_check(bus_dma_segment_t *segs, int nsegs, int segsz)
 {
-	struct mbuf	*m;
-	int		num = 0, mss;
-	bool		ret = FALSE;
+	int		i, mss;
 
-	mss = mp->m_pkthdr.tso_segsz;
-	for (m = mp->m_next; m != NULL; m = m->m_next) {
-		num++;
-		mss -= m->m_len;
+	mss = segsz;
+	if (nsegs <= IXL_SPARSE_CHAIN)
+		return (0);
+	for (i = 0; i < nsegs; i++) {
+		mss -= segs[i].ds_len;
 		if (mss < 1)
 			break;
-		if (m->m_next == NULL)
-			break;
 	}
-	if (num > IXL_SPARSE_CHAIN)
-		ret = TRUE;
-
-	return (ret);
+	return (i > IXL_SPARSE_CHAIN);
 }
-#endif
-
 
 /*********************************************************************
  *

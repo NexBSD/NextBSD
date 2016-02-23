@@ -443,6 +443,7 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	 * These are the same across all current ixl models
 	 */
 	vsi->shared->isc_tx_nsegments = IXL_MAX_TX_SEGS;
+	vsi->shared->isc_tx_tso_nsegments = IXL_MAX_TSO_SEGS;
 	vsi->shared->isc_msix_bar = PCIR_BAR(IXL_BAR);
 	
 
