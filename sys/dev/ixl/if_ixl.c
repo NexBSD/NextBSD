@@ -65,7 +65,6 @@ char ixl_driver_version[] = "1.4.3";
 static pci_vendor_info_t ixl_vendor_info_array[] =
 {
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_SFP_XL710, "Intel(R) Ethernet Connection XL710 Driver"),
-	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_KX_A, "Intel(R) Ethernet Connection XL710 Driver"),
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_KX_B, "Intel(R) Ethernet Connection XL710 Driver"),
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_KX_C, "Intel(R) Ethernet Connection XL710 Driver"),
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_QSFP_A, "Intel(R) Ethernet Connection XL710 Driver"),
@@ -73,8 +72,6 @@ static pci_vendor_info_t ixl_vendor_info_array[] =
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_QSFP_C, "Intel(R) Ethernet Connection XL710 Driver"),
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_10G_BASE_T, "Intel(R) Ethernet Connection XL710 Driver"),
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_10G_BASE_T4,"Intel(R) Ethernet Connection XL710 Driver"),
-	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_20G_KR2, "Intel(R) Ethernet Connection XL710 Driver"),
-	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_20G_KR2_A, "Intel(R) Ethernet Connection XL710 Driver"),
 #ifdef X722_SUPPORT
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_SFP_X722, "Intel(R) Ethernet Connection XL710 Driver"),
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_1G_BASE_T_X722, "Intel(R) Ethernet Connection XL710 Driver"),
