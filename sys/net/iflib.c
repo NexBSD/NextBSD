@@ -2139,7 +2139,7 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		struct tcphdr *th;
 
 		MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip));
-		th = (struct tcphdr *)((caddr_t)ip + pi->ipi_ip_hlen);
+		th = (struct tcphdr *)((caddr_t)ip + (ip->ip_hl << 2));
 		pi->ipi_ip_hlen = ip->ip_hl << 2;
 		pi->ipi_ipproto = ip->ip_p;
 		pi->ipi_flags |= IPI_TX_IPV4;
