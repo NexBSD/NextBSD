@@ -126,9 +126,9 @@ struct iflib_ctx {
 
 	cpuset_t ifc_cpus;
 	if_shared_ctx_t ifc_sctx;
+	struct if_softc_ctx ifc_softc_ctx;
 
 	struct mtx ifc_mtx;
-	char ifc_mtx_name[16];
 	iflib_txq_t ifc_txqs;
 	iflib_rxq_t ifc_rxqs;
 	iflib_qset_t ifc_qsets;
@@ -139,11 +139,8 @@ struct iflib_ctx {
 
 	int ifc_link_state;
 	int ifc_link_irq;
-	eventhandler_tag ifc_vlan_attach_event;
-	eventhandler_tag ifc_vlan_detach_event;
 	int ifc_pause_frames;
 	int ifc_watchdog_events;
-	uint8_t ifc_mac[ETHER_ADDR_LEN];
 	struct cdev *ifc_led_dev;
 	struct resource *ifc_msix_mem;
 
@@ -164,7 +161,10 @@ struct iflib_ctx {
 #define isc_rxd_refill ifc_txrx.ift_rxd_refill
 #define isc_rxd_refill ifc_txrx.ift_rxd_refill
 #define isc_legacy_intr ifc_txrx.ift_legacy_intr
-	struct if_softc_ctx ifc_softc_ctx;
+	eventhandler_tag ifc_vlan_attach_event;
+	eventhandler_tag ifc_vlan_detach_event;
+	uint8_t ifc_mac[ETHER_ADDR_LEN];
+	char ifc_mtx_name[16];
 };
 
 
@@ -261,6 +261,8 @@ typedef struct iflib_sw_desc {
 #define IFLIB_QUEUE_HUNG		1
 #define IFLIB_QUEUE_WORKING		2
 
+#define TX_BATCH_SIZE			32
+
 #define IFLIB_BUDGET			64
 #define IFLIB_RESTART_BUDGET		8
 
@@ -294,16 +296,11 @@ struct iflib_txq {
 	uint64_t	ift_no_desc_avail;
 	uint64_t	ift_mbuf_defrag_failed;
 	uint64_t	ift_tx_irq;
-	bus_dma_tag_t		    ift_desc_tag;
-	bus_dma_segment_t	ift_segs[IFLIB_MAX_TX_SEGS];
+	int		ift_closed;
 	struct callout	ift_timer;
 	struct callout	ift_db_check;
 
 	struct mtx              ift_mtx;
-#define MTX_NAME_LEN 16
-	char                    ift_mtx_name[MTX_NAME_LEN];
-#define BATCH_SIZE 32
-	struct mbuf				*ift_mp[BATCH_SIZE];
 	int                     ift_id;
 	iflib_sd_t              ift_sds;
 	int                     ift_nbr;
@@ -313,8 +310,11 @@ struct iflib_txq {
 	int                     ift_active;
 	int			ift_watchdog_time;
 	struct iflib_filter_info ift_filter_info;
+	bus_dma_tag_t		ift_desc_tag;
 	iflib_dma_info_t	ift_ifdi;
-	int                     ift_closed;
+#define MTX_NAME_LEN 16
+	char                    ift_mtx_name[MTX_NAME_LEN];
+	bus_dma_segment_t	ift_segs[IFLIB_MAX_TX_SEGS]  __aligned(CACHE_LINE_SIZE);
 };
 
 struct iflib_fl {
@@ -382,11 +382,11 @@ struct iflib_rxq {
 	uint8_t		ifr_nfl;
 	struct lro_ctrl			ifr_lc;
 	struct mtx				ifr_mtx;
-	char                    ifr_mtx_name[MTX_NAME_LEN];
 	struct grouptask        ifr_task;
+	struct iflib_filter_info ifr_filter_info;
 	bus_dma_tag_t           ifr_desc_tag;
 	iflib_dma_info_t		ifr_ifdi;
-	struct iflib_filter_info ifr_filter_info;
+	char                    ifr_mtx_name[MTX_NAME_LEN];
 };
 
 
@@ -2269,7 +2269,8 @@ retry:
 	}
 	m_head = *m_headp;
 
-	if ((err = iflib_parse_header(&pi, m_head)) != 0)
+	if (m_head->m_pkthdr.csum_flags &&
+	    (err = iflib_parse_header(&pi, m_head)) != 0)
 		return (err);
 
 	pi.ipi_segs = segs;
@@ -2415,20 +2416,11 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 	return (reclaim);
 }
 
-static void
-_ring_peek(struct ifmp_ring *r, struct mbuf **m, int cidx, int count)
-{
-	int i;
-
-	for (i = 0; i < count; i++)
-		m[i] = r->items[(cidx + i) & (r->size-1)];
-}
-
-static void
-_ring_putback(struct ifmp_ring *r, struct mbuf *m, int i, int cidx)
+static struct mbuf **
+_ring_peek_one(struct ifmp_ring *r, int cidx, int offset)
 {
 
-	r->items[(cidx + i) & (r->size-1)] = m;
+	return (__DEVOLATILE(struct mbuf **, &r->items[(cidx + offset) & (r->size-1)]));
 }
 
 static void
@@ -2452,7 +2444,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	iflib_txq_t txq = r->cookie;
 	if_ctx_t ctx = txq->ift_ctx;
 	if_t ifp = ctx->ifc_ifp;
-	struct mbuf **mp = &txq->ift_mp[0];
+	struct mbuf **mp, *m;
 	int i, count, pkt_sent, bytes_sent, mcast_sent, avail;
 
 	avail = IDXDIFF(pidx, cidx, r->size);
@@ -2475,8 +2467,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		return (0);
 	}
 	mcast_sent = bytes_sent = pkt_sent = 0;
-	count = MIN(avail, BATCH_SIZE);
-	_ring_peek(r, mp, cidx, count);
+	count = MIN(avail, TX_BATCH_SIZE);
 
 	if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING) ||
 		!LINK_ACTIVE(ctx)) {
@@ -2485,18 +2476,20 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	}
 
 	for (i = 0; i < count; i++) {
-		if(iflib_encap(txq, &mp[i])) {
-			_ring_putback(r, mp[i], i, cidx);
+		mp = _ring_peek_one(r, cidx, i);
+
+		if(iflib_encap(txq, mp)) {
 			DBG_COUNTER_INC(txq_drain_encapfail);
 			goto done;
 		}
+		m = *mp;
 		DBG_COUNTER_INC(tx_sent);
 		pkt_sent++;
-		bytes_sent += mp[i]->m_pkthdr.len;
-		if (mp[i]->m_flags & M_MCAST)
+		bytes_sent += m->m_pkthdr.len;
+		if (m->m_flags & M_MCAST)
 			mcast_sent++;
 		iflib_txd_db_check(ctx, txq, 0);
-		ETHER_BPF_MTAP(ifp, mp[i]);
+		ETHER_BPF_MTAP(ifp, m);
 	}
 done:
 
@@ -2690,7 +2683,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 #endif
 		for (i = 0; i < count; i++)
 			m_freem(mp[i]);
-		ifmp_ring_check_drainage(txq->ift_br[0], BATCH_SIZE);
+		ifmp_ring_check_drainage(txq->ift_br[0], TX_BATCH_SIZE);
 	}
 	if (count > 16)
 		free(mp, M_IFLIB);
