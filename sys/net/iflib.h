@@ -145,13 +145,16 @@ typedef struct if_txrx {
 							uint64_t *paddrs, caddr_t *vaddrs, uint16_t count);
 	void (*ift_rxd_flush) (void *, uint16_t qsidx, uint8_t flidx, uint32_t pidx);
 	int (*ift_legacy_intr) (void *);
+	/* OPTIONAL */
+	int (*ift_txd_tso_check) (bus_dma_segment_t *segs, int nsegs, int segsz);
 } *if_txrx_t;
 
 typedef struct if_softc_ctx {
 	int isc_vectors;
 	int isc_nqsets;
-	int isc_msix_bar;			/* can be model specific - initialize in attach_pre */
+	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
+	int isc_tx_tso_nsegments;	/* can be model specific - initialize in attach_pre */
 	iflib_intr_mode_t isc_intr;
 	uint16_t isc_max_frame_size; /* set at init time by driver */
 	pci_vendor_info_t isc_vendor_info;	/* set by iflib prior to attach_pre */

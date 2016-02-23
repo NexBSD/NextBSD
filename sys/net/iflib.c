@@ -161,6 +161,7 @@ struct iflib_ctx {
 #define isc_rxd_refill ifc_txrx.ift_rxd_refill
 #define isc_rxd_refill ifc_txrx.ift_rxd_refill
 #define isc_legacy_intr ifc_txrx.ift_legacy_intr
+#define isc_txd_tso_check  ifc_txrx.ift_txd_tso_check
 	eventhandler_tag ifc_vlan_attach_event;
 	eventhandler_tag ifc_vlan_detach_event;
 	uint8_t ifc_mac[ETHER_ADDR_LEN];
@@ -275,6 +276,7 @@ typedef struct iflib_sw_desc {
 				 CSUM_IP_UDP|CSUM_IP_TCP|CSUM_IP_SCTP| \
 				 CSUM_IP6_UDP|CSUM_IP6_TCP|CSUM_IP6_SCTP)
 
+
 struct iflib_txq {
 	if_ctx_t	ift_ctx;
 	uint64_t	ift_flags;
@@ -311,6 +313,7 @@ struct iflib_txq {
 	int			ift_watchdog_time;
 	struct iflib_filter_info ift_filter_info;
 	bus_dma_tag_t		ift_desc_tag;
+	bus_dma_tag_t		ift_tso_desc_tag;
 	iflib_dma_info_t	ift_ifdi;
 #define MTX_NAME_LEN 16
 	char                    ift_mtx_name[MTX_NAME_LEN];
@@ -1153,12 +1156,15 @@ iflib_txsd_alloc(iflib_txq_t txq)
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	device_t dev = ctx->ifc_dev;
 	iflib_sd_t txsd;
-	int err, i, nsegments;
+	int err, i, nsegments, ntsosegments;
 
 	if (ctx->ifc_softc_ctx.isc_tx_nsegments > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
 		ctx->ifc_softc_ctx.isc_tx_nsegments = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
+	if (ctx->ifc_softc_ctx.isc_tx_tso_nsegments > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
+		ctx->ifc_softc_ctx.isc_tx_tso_nsegments = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
 
 	nsegments = ctx->ifc_softc_ctx.isc_tx_nsegments;
+	ntsosegments = ctx->ifc_softc_ctx.isc_tx_tso_nsegments;
 	MPASS(sctx->isc_ntxd > 0);
 	MPASS(nsegments > 0);
 
@@ -1180,6 +1186,24 @@ iflib_txsd_alloc(iflib_txq_t txq)
 		device_printf(dev,"Unable to allocate TX DMA tag: %d\n", err);
 		device_printf(dev,"maxsize: %ld nsegments: %d maxsegsize: %ld\n",
 					  sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
+		goto fail;
+	}
+
+	if ((err = bus_dma_tag_create(bus_get_dma_tag(dev),
+			       1, 0,			/* alignment, bounds */
+			       BUS_SPACE_MAXADDR,	/* lowaddr */
+			       BUS_SPACE_MAXADDR,	/* highaddr */
+			       NULL, NULL,		/* filter, filterarg */
+			       sctx->isc_tx_maxsize,		/* maxsize */
+			       ntsosegments,	/* nsegments */
+			       sctx->isc_tx_maxsegsize,	/* maxsegsize */
+			       0,			/* flags */
+			       NULL,			/* lockfunc */
+			       NULL,			/* lockfuncarg */
+			       &txq->ift_tso_desc_tag))) {
+		device_printf(dev,"Unable to allocate TX TSO DMA tag: %d\n", err);
+		device_printf(dev,"maxsize: %ld ntsosegments: %d maxsegsize: %ld\n",
+					  sctx->isc_tx_maxsize, ntsosegments, sctx->isc_tx_maxsegsize);
 		goto fail;
 	}
 
@@ -2212,7 +2236,9 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	struct if_pkt_info pi;
 	bool remap = TRUE;
 	int err, nsegs, ndesc;
+	bus_dma_tag_t desc_tag;
 
+	desc_tag = (m_head->m_pkthdr.csum_flags & CSUM_TSO) ? txq->ift_tso_desc_tag : txq->ift_desc_tag;
 retry:
 
 	err = bus_dmamap_load_mbuf_sg(txq->ift_desc_tag, map,
@@ -2251,6 +2277,12 @@ retry:
 		return (err);
 	}
 
+	if ((m_head->m_pkthdr.csum_flags & CSUM_TSO) &&
+	    ctx->isc_txd_tso_check != NULL &&
+	    (ctx->isc_txd_tso_check(segs, nsegs, m_head->m_pkthdr.tso_segsz) != 0))
+		goto retry;
+
+
 	/*
 	 * XXX assumes a 1 to 1 relationship between segments and
 	 *        descriptors - this does not hold true on all drivers, e.g.
@@ -2261,7 +2293,7 @@ retry:
 		panic("filled ring in spite of INVARIANTS");
 #endif
 		txq->ift_no_desc_avail++;
-		bus_dmamap_unload(txq->ift_desc_tag, map);
+		bus_dmamap_unload(desc_tag, map);
 		DBG_COUNTER_INC(encap_txq_avail_fail);
 		if (txq->ift_task.gt_task.ta_pending == 0)
 			GROUPTASK_ENQUEUE(&txq->ift_task);
@@ -2354,6 +2386,7 @@ iflib_tx_desc_free(iflib_txq_t txq, int n)
 
 		if (txsd->ifsd_m != NULL) {
 			if (txsd->ifsd_flags & TX_SW_DESC_MAPPED) {
+				/* does it matter if it's not the TSO tag? */
 				bus_dmamap_unload(txq->ift_desc_tag, txsd->ifsd_map);
 				txsd->ifsd_flags &= ~TX_SW_DESC_MAPPED;
 			}
