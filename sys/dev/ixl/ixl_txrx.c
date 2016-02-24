@@ -62,7 +62,6 @@ static void ixl_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 static void ixl_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx);
 static int ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx);
 static int ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri);
-static int ixl_isc_txd_tso_check(bus_dma_segment_t *segs, int nsegs, int segsz);
 
 extern int ixl_intr(void *arg);
 
@@ -74,8 +73,7 @@ struct if_txrx ixl_txrx  = {
 	ixl_isc_rxd_pkt_get,
 	ixl_isc_rxd_refill,
 	ixl_isc_rxd_flush,
-	ixl_intr,
-	ixl_isc_txd_tso_check
+	ixl_intr
 };
 
 extern if_shared_ctx_t ixl_sctx;
@@ -88,7 +86,7 @@ extern if_shared_ctx_t ixl_sctx;
 ** segments to deliver an mss-size chunk of data
 */
 static int
-ixl_isc_txd_tso_check(bus_dma_segment_t *segs, int nsegs, int segsz)
+ixl_tso_detect_sparse(bus_dma_segment_t *segs, int nsegs, int segsz)
 {
 	int		i, mss;
 
@@ -234,7 +232,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	u32			cmd, off;
 
 	cmd = off = 0;
-	
+
         /*
          * Important to capture the first descriptor
          * used because it will contain the index of
@@ -246,30 +244,15 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	if (pi->ipi_flags & IPI_TX_INTR)
 		cmd |= (I40E_TX_DESC_CMD_RS << I40E_TXD_QW1_CMD_SHIFT);
 
-#ifdef notyet
-	/* add this check to iflib - shouldn't actually happen in practice */
-	if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
-		/* Use larger mapping for TSO */
-		tag = txr->tso_tag;
-		maxsegs = IXL_MAX_TSO_SEGS;
-		if (ixl_tso_detect_sparse(m_head)) {
-			m = m_defrag(m_head, M_NOWAIT);
-			if (m == NULL) {
-				m_freem(*m_headp);
-				*m_headp = NULL;
-				return (ENOBUFS);
-			}
-			*m_headp = m;
-		}
-	}
-
-#endif
-
 	/* Set up the TSO/CSUM offload */
 	if (pi->ipi_csum_flags & CSUM_OFFLOAD) {
 		/* Set up the TSO context descriptor if required */
-		if (pi->ipi_csum_flags & CSUM_TSO)
+		if (pi->ipi_csum_flags & CSUM_TSO) {
+			if (ixl_tso_detect_sparse(segs, nsegs, pi->ipi_tso_segsz))
+				return (EFBIG);
+
 			first = ixl_tso_setup(que, pi);
+		}
 		ixl_tx_setup_offload(que, pi, &cmd, &off);
 	}
 

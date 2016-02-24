@@ -1847,7 +1847,7 @@ ixl_setup_interface(device_t dev, struct ixl_vsi *vsi)
 	INIT_DEBUGOUT("ixl_setup_interface: begin");
 	/* initialize fast path functions */
 
-	cap = IFCAP_HWCSUM | IFCAP_HWCSUM_IPV6 | IFCAP_LRO | IFCAP_JUMBO_MTU; /* IFCAP_TSO | */
+	cap = IFCAP_HWCSUM | IFCAP_HWCSUM_IPV6 | IFCAP_LRO | IFCAP_JUMBO_MTU | IFCAP_TSO;
 	cap |= IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU | IFCAP_VLAN_HWCSUM;
 	if_setifheaderlen(ifp, sizeof(struct ether_vlan_header));
 	if_setcapabilitiesbit(ifp, cap, 0);
