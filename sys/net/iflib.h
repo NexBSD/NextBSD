@@ -145,8 +145,6 @@ typedef struct if_txrx {
 							uint64_t *paddrs, caddr_t *vaddrs, uint16_t count);
 	void (*ift_rxd_flush) (void *, uint16_t qsidx, uint8_t flidx, uint32_t pidx);
 	int (*ift_legacy_intr) (void *);
-	/* OPTIONAL */
-	int (*ift_txd_tso_check) (bus_dma_segment_t *segs, int nsegs, int segsz);
 } *if_txrx_t;
 
 typedef struct if_softc_ctx {

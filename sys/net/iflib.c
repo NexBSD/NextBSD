@@ -161,7 +161,6 @@ struct iflib_ctx {
 #define isc_rxd_refill ifc_txrx.ift_rxd_refill
 #define isc_rxd_refill ifc_txrx.ift_rxd_refill
 #define isc_legacy_intr ifc_txrx.ift_legacy_intr
-#define isc_txd_tso_check  ifc_txrx.ift_txd_tso_check
 	eventhandler_tag ifc_vlan_attach_event;
 	eventhandler_tag ifc_vlan_detach_event;
 	uint8_t ifc_mac[ETHER_ADDR_LEN];
@@ -2243,7 +2242,7 @@ retry:
 
 	err = bus_dmamap_load_mbuf_sg(txq->ift_desc_tag, map,
 	    *m_headp, segs, &nsegs, BUS_DMA_NOWAIT);
-
+defrag:
 	if (__predict_false(err)) {
 		switch (err) {
 		case EFBIG:
@@ -2277,12 +2276,6 @@ retry:
 		return (err);
 	}
 
-	if ((m_head->m_pkthdr.csum_flags & CSUM_TSO) &&
-	    ctx->isc_txd_tso_check != NULL &&
-	    (ctx->isc_txd_tso_check(segs, nsegs, m_head->m_pkthdr.tso_segsz) != 0))
-		goto retry;
-
-
 	/*
 	 * XXX assumes a 1 to 1 relationship between segments and
 	 *        descriptors - this does not hold true on all drivers, e.g.
@@ -2304,7 +2297,7 @@ retry:
 	if (m_head->m_pkthdr.csum_flags &&
 	    (err = iflib_parse_header(&pi, m_head)) != 0)
 		return (err);
-
+	pi.ipi_len = m_head->m_pkthdr.len;
 	pi.ipi_segs = segs;
 	pi.ipi_nsegs = nsegs;
 	pi.ipi_pidx = pidx;
@@ -2338,9 +2331,10 @@ retry:
 		txq->ift_in_use += ndesc;
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
-	} else {
+	} else if (err == EFBIG && remap == TRUE)
+		goto defrag;
+	else
 		DBG_COUNTER_INC(encap_txd_encap_fail);
-	}
 	return (err);
 }
 
