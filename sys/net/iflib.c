@@ -1786,6 +1786,7 @@ iflib_stop(if_ctx_t ctx)
 
 	IFDI_INTR_DISABLE(ctx);
 
+	pause("iflib_stop", hz/4);
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
 	for (i = 0; i < scctx->isc_nqsets; i++, txq++, rxq++) {
 		/* make sure all transmitters have completed before proceeding */
@@ -2566,6 +2567,8 @@ _task_fn_rx(void *context, int pending)
 			IFDI_QUEUE_INTR_ENABLE(ctx, rxq->ifr_id);
 		}
 	}
+	if (!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING))
+		return;
 	if (more)
 		GROUPTASK_ENQUEUE(&rxq->ifr_task);
 }
