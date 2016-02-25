@@ -3624,6 +3624,7 @@ uma_dbg_getslab(uma_zone_t zone, void *item)
 	mem = (uint8_t *)((uintptr_t)item & (~UMA_SLAB_MASK));
 	if (zone->uz_flags & UMA_ZONE_VTOSLAB) {
 		slab = vtoslab((vm_offset_t)mem);
+		MPASS(slab->us_keg != NULL);
 	} else {
 		/*
 		 * It is safe to return the slab here even though the
@@ -3639,6 +3640,8 @@ uma_dbg_getslab(uma_zone_t zone, void *item)
 		ZONE_UNLOCK(zone);
 	}
 
+	MPASS(slab->us_data != NULL);
+	MPASS(slab->us_keg != NULL);
 	return (slab);
 }
 
