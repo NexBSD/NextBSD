@@ -572,7 +572,7 @@ ixl_fw_version_str(struct i40e_hw *hw)
 /*********************************************************************
  *  TXRX Function prototypes
  *********************************************************************/
-void	ixl_init_tx_ring(struct ixl_queue *);
+void	ixl_init_tx_ring(struct ixl_vsi *, struct ixl_queue *);
 
 #ifdef IXL_FDIR
 void	ixl_atr(struct ixl_queue *, struct tcphdr *, int);

@@ -318,7 +318,7 @@ ixl_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx)
  *
  **********************************************************************/
 void
-ixl_init_tx_ring(struct ixl_queue *que)
+ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_queue *que)
 {
 	struct tx_ring *txr = &que->txr;
 	struct ixl_tx_buf *buf;
@@ -333,6 +333,8 @@ ixl_init_tx_ring(struct ixl_queue *que)
 	txr->atr_count = 0;
 #endif
 
+	wr32(vsi->hw, I40E_QTX_TAIL(que->me), 0);
+	wr32(vsi->hw, I40E_QTX_HEAD(que->me), 0);
 	buf = txr->tx_buffers;
 	for (int i = 0; i < ixl_sctx->isc_ntxd; i++, buf++) {
 

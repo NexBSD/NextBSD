@@ -852,7 +852,7 @@ ixlv_init_internal(if_ctx_t ctx)
 
 	/* Prepare the queues for operation */
 	for (int i = 0; i < vsi->num_queues; i++, que++) {
-		ixl_init_tx_ring(que);
+		ixl_init_tx_ring(vsi, que);
 	}
 
 	/* Configure queues */

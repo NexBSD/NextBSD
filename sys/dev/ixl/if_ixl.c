@@ -1536,6 +1536,12 @@ ixl_if_stop(if_ctx_t ctx)
 	struct ixl_vsi	*vsi = iflib_get_softc(ctx);
 
 	INIT_DEBUGOUT("ixl_if_stop: begin\n");
+#ifdef notyet
+	if (pf->num_vfs == 0)
+		ixl_disable_intr(vsi);
+	else
+		ixl_disable_rings_intr(vsi);
+#endif
 	ixl_disable_rings(vsi);
 }
 
@@ -2085,7 +2091,7 @@ ixl_initialize_vsi(struct ixl_vsi *vsi)
 		ixl_flush(hw);
 
 		/* Do ring (re)init */
-		ixl_init_tx_ring(que);
+		ixl_init_tx_ring(vsi, que);
 
 		/* Next setup the HMC RX Context  */
 		if (vsi->max_frame_size <= MCLBYTES)
