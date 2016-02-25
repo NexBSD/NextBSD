@@ -135,6 +135,9 @@ ixl_tx_setup_offload(struct ixl_queue *que,
 	*off |= (pi->ipi_ehdrlen >> 1) << I40E_TX_DESC_LENGTH_MACLEN_SHIFT;
 	*off |= (pi->ipi_ip_hlen >> 2) << I40E_TX_DESC_LENGTH_IPLEN_SHIFT;
 
+	MPASS(pi->ipi_ip_hlen);
+	MPASS(pi->ipi_ehdrlen);
+
 	switch (pi->ipi_ipproto) {
 		case IPPROTO_TCP:
 			if (pi->ipi_csum_flags & (CSUM_TCP|CSUM_TCP_IPV6)) {
@@ -142,6 +145,8 @@ ixl_tx_setup_offload(struct ixl_queue *que,
 				*off |= (pi->ipi_tcp_hlen >> 2) <<
 				    I40E_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
 			}
+			MPASS(pi->ipi_tcp_hlen);
+
 #ifdef IXL_FDIR
 			ixl_atr(que, pi->ipi_tcp_hflags, pi->ipi_etype);
 #endif
@@ -191,6 +196,8 @@ ixl_tso_setup(struct ixl_queue *que, if_pkt_info_t pi)
 	cmd = I40E_TX_CTX_DESC_TSO;
 	mss = pi->ipi_tso_segsz;
 
+	MPASS(pi->ipi_ipproto == IPPROTO_TCP);
+	MPASS(mss);
 	type_cmd_tso_mss = ((u64)type << I40E_TXD_CTX_QW1_DTYPE_SHIFT) |
 	    ((u64)cmd << I40E_TXD_CTX_QW1_CMD_SHIFT) |
 	    ((u64)tsolen << I40E_TXD_CTX_QW1_TSO_LEN_SHIFT) |
