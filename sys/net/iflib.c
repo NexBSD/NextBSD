@@ -2135,11 +2135,6 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 {
 	struct ether_vlan_header *eh;
 
-	pi->ipi_mflags = (m->m_flags & M_VLANTAG);
-	pi->ipi_csum_flags = m->m_pkthdr.csum_flags;
-	pi->ipi_vtag = (m->m_flags & M_VLANTAG) ? m->m_pkthdr.ether_vtag : 0;
-	pi->ipi_flags = 0;
-
 	/*
 	 * Determine where frame payload starts.
 	 * Jump over vlan headers if already present,
@@ -2294,10 +2289,15 @@ defrag:
 	}
 	m_head = *m_headp;
 
+	pi.ipi_len = m_head->m_pkthdr.len;
+	pi.ipi_mflags = (m->m_flags & M_VLANTAG);
+	pi.ipi_csum_flags = m->m_pkthdr.csum_flags;
+	pi.ipi_vtag = (m->m_flags & M_VLANTAG) ? m->m_pkthdr.ether_vtag : 0;
+	pi.ipi_flags = 0;
+
 	if (m_head->m_pkthdr.csum_flags &&
 	    (err = iflib_parse_header(&pi, m_head)) != 0)
 		return (err);
-	pi.ipi_len = m_head->m_pkthdr.len;
 	pi.ipi_segs = segs;
 	pi.ipi_nsegs = nsegs;
 	pi.ipi_pidx = pidx;
