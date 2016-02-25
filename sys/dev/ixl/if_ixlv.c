@@ -418,7 +418,7 @@ ixlv_if_attach_pre(if_ctx_t ctx)
 	return (error);
 
 err_res_buf:
-	free(sc->vf_res, M_DEVBUF);
+	free(sc->vf_res, M_IXL);
 err_aq:
 	i40e_shutdown_adminq(hw);
 err_pci_res:
@@ -493,7 +493,7 @@ ixlv_if_detach(if_ctx_t ctx)
 	INIT_DBG_DEV(dev, "begin");
 
 	i40e_shutdown_adminq(&sc->hw);
-	free(sc->vf_res, M_DEVBUF);
+	free(sc->vf_res, M_IXL);
 	ixlv_free_pci_resources(sc);
 	ixlv_free_filters(sc);
 
@@ -753,7 +753,7 @@ ixlv_reinit_locked(struct ixlv_sc *sc)
 		if (mf->flags & IXL_FILTER_DEL) {
 			SLIST_REMOVE(sc->mac_filters, mf,
 			    ixlv_mac_filter, next);
-			free(mf, M_DEVBUF);
+			free(mf, M_IXL);
 		} else
 			mf->flags |= IXL_FILTER_ADD;
 	}
@@ -764,7 +764,7 @@ ixlv_reinit_locked(struct ixlv_sc *sc)
 		while (!SLIST_EMPTY(sc->vlan_filters)) {
 			vf = SLIST_FIRST(sc->vlan_filters);
 			SLIST_REMOVE_HEAD(sc->vlan_filters, next);
-			free(vf, M_DEVBUF);
+			free(vf, M_IXL);
 		}
 	}
 
@@ -1057,7 +1057,7 @@ retry_config:
 	if (!sc->vf_res) {
 		bufsz = sizeof(struct i40e_virtchnl_vf_resource) +
 		    (I40E_MAX_VF_VSI * sizeof(struct i40e_virtchnl_vsi_resource));
-		sc->vf_res = malloc(bufsz, M_DEVBUF, M_NOWAIT);
+		sc->vf_res = malloc(bufsz, M_IXL, M_NOWAIT);
 		if (!sc->vf_res) {
 			device_printf(dev,
 			    "%s: Unable to allocate memory for VF configuration"
@@ -1085,7 +1085,7 @@ retry_config:
 	goto done;
 
 fail:
-	free(sc->vf_res, M_DEVBUF);
+	free(sc->vf_res, M_IXL);
 done:
 	return (ret_error);
 }
@@ -1332,7 +1332,7 @@ ixlv_if_vlan_register(if_ctx_t ctx, u16 vtag)
 
 	++vsi->num_vlans;
 	/* should either fail or be M_WAITOK XXX */
-	v = malloc(sizeof(struct ixlv_vlan_filter), M_DEVBUF, M_NOWAIT | M_ZERO);
+	v = malloc(sizeof(struct ixlv_vlan_filter), M_IXL, M_NOWAIT | M_ZERO);
 
 	SLIST_INSERT_HEAD(sc->vlan_filters, v, next);
 	v->vlan = vtag;
@@ -1377,7 +1377,7 @@ ixlv_get_mac_filter(struct ixlv_sc *sc)
 	struct ixlv_mac_filter	*f;
 
 	f = malloc(sizeof(struct ixlv_mac_filter),
-	    M_DEVBUF, M_NOWAIT | M_ZERO);
+	    M_IXL, M_NOWAIT | M_ZERO);
 	if (f)
 		SLIST_INSERT_HEAD(sc->mac_filters, f, next);
 
@@ -2326,10 +2326,10 @@ static void
 ixlv_init_filters(struct ixlv_sc *sc)
 {
 	sc->mac_filters = malloc(sizeof(struct ixlv_mac_filter),
-	    M_DEVBUF, M_NOWAIT | M_ZERO);
+	    M_IXL, M_NOWAIT | M_ZERO);
 	SLIST_INIT(sc->mac_filters);
 	sc->vlan_filters = malloc(sizeof(struct ixlv_vlan_filter),
-	    M_DEVBUF, M_NOWAIT | M_ZERO);
+	    M_IXL, M_NOWAIT | M_ZERO);
 	SLIST_INIT(sc->vlan_filters);
 	return;
 }
@@ -2343,12 +2343,12 @@ ixlv_free_filters(struct ixlv_sc *sc)
 	while (!SLIST_EMPTY(sc->mac_filters)) {
 		f = SLIST_FIRST(sc->mac_filters);
 		SLIST_REMOVE_HEAD(sc->mac_filters, next);
-		free(f, M_DEVBUF);
+		free(f, M_IXL);
 	}
 	while (!SLIST_EMPTY(sc->vlan_filters)) {
 		v = SLIST_FIRST(sc->vlan_filters);
 		SLIST_REMOVE_HEAD(sc->vlan_filters, next);
-		free(v, M_DEVBUF);
+		free(v, M_IXL);
 	}
 	return;
 }

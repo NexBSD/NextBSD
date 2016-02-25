@@ -217,7 +217,7 @@ ixlv_verify_api_ver(struct ixlv_sc *sc)
 	int retries = 0;
 
 	event.buf_len = IXL_AQ_BUFSZ;
-	event.msg_buf = malloc(event.buf_len, M_DEVBUF, M_NOWAIT);
+	event.msg_buf = malloc(event.buf_len, M_IXL, M_NOWAIT);
 	if (!event.msg_buf) {
 		err = ENOMEM;
 		goto out;
@@ -257,7 +257,7 @@ ixlv_verify_api_ver(struct ixlv_sc *sc)
 		sc->pf_version = pf_vvi->minor;
 
 out_alloc:
-	free(event.msg_buf, M_DEVBUF);
+	free(event.msg_buf, M_IXL);
 out:
 	return err;
 }
@@ -309,7 +309,7 @@ ixlv_get_vf_config(struct ixlv_sc *sc)
 	len = sizeof(struct i40e_virtchnl_vf_resource) +
 	    sizeof(struct i40e_virtchnl_vsi_resource);
 	event.buf_len = len;
-	event.msg_buf = malloc(event.buf_len, M_DEVBUF, M_NOWAIT);
+	event.msg_buf = malloc(event.buf_len, M_IXL, M_NOWAIT);
 	if (!event.msg_buf) {
 		err = ENOMEM;
 		goto out;
@@ -354,7 +354,7 @@ ixlv_get_vf_config(struct ixlv_sc *sc)
 	i40e_vf_parse_hw_config(hw, sc->vf_res);
 
 out_alloc:
-	free(event.msg_buf, M_DEVBUF);
+	free(event.msg_buf, M_IXL);
 out:
 	return err;
 }
@@ -381,7 +381,7 @@ ixlv_configure_queues(struct ixlv_sc *sc)
 	pairs = vsi->num_queues;
 	len = sizeof(struct i40e_virtchnl_vsi_queue_config_info) +
 		       (sizeof(struct i40e_virtchnl_queue_pair_info) * pairs);
-	vqci = malloc(len, M_DEVBUF, M_NOWAIT | M_ZERO);
+	vqci = malloc(len, M_IXL, M_NOWAIT | M_ZERO);
 	if (!vqci) {
 		device_printf(dev, "%s: unable to allocate memory\n", __func__);
 		ixl_vc_schedule_retry(&sc->vc_mgr);
@@ -417,7 +417,7 @@ ixlv_configure_queues(struct ixlv_sc *sc)
 
 	ixlv_send_pf_msg(sc, I40E_VIRTCHNL_OP_CONFIG_VSI_QUEUES,
 			   (u8 *)vqci, len);
-	free(vqci, M_DEVBUF);
+	free(vqci, M_IXL);
 }
 
 /*
@@ -473,7 +473,7 @@ ixlv_map_queues(struct ixlv_sc *sc)
 
 	len = sizeof(struct i40e_virtchnl_irq_map_info) +
 	      (sc->msix * sizeof(struct i40e_virtchnl_vector_map));
-	vm = malloc(len, M_DEVBUF, M_NOWAIT);
+	vm = malloc(len, M_IXL, M_NOWAIT);
 	if (!vm) {
 		printf("%s: unable to allocate memory\n", __func__);
 		ixl_vc_schedule_retry(&sc->vc_mgr);
@@ -501,7 +501,7 @@ ixlv_map_queues(struct ixlv_sc *sc)
 
 	ixlv_send_pf_msg(sc, I40E_VIRTCHNL_OP_CONFIG_IRQ_MAP,
 	    (u8 *)vm, len);
-	free(vm, M_DEVBUF);
+	free(vm, M_IXL);
 }
 
 /*
@@ -539,7 +539,7 @@ ixlv_add_vlans(struct ixlv_sc *sc)
 		return;
 	}
 
-	v = malloc(len, M_DEVBUF, M_NOWAIT);
+	v = malloc(len, M_IXL, M_NOWAIT);
 	if (!v) {
 		device_printf(dev, "%s: unable to allocate memory\n",
 			__func__);
@@ -569,7 +569,7 @@ ixlv_add_vlans(struct ixlv_sc *sc)
  	}
 
 	ixlv_send_pf_msg(sc, I40E_VIRTCHNL_OP_ADD_VLAN, (u8 *)v, len);
-	free(v, M_DEVBUF);
+	free(v, M_IXL);
 	/* add stats? */
 }
 
@@ -608,7 +608,7 @@ ixlv_del_vlans(struct ixlv_sc *sc)
 		return;
 	}
 
-	v = malloc(len, M_DEVBUF, M_NOWAIT | M_ZERO);
+	v = malloc(len, M_IXL, M_NOWAIT | M_ZERO);
 	if (!v) {
 		device_printf(dev, "%s: unable to allocate memory\n",
 			__func__);
@@ -625,7 +625,7 @@ ixlv_del_vlans(struct ixlv_sc *sc)
                         bcopy(&f->vlan, &v->vlan_id[i], sizeof(u16));
                         i++;
                         SLIST_REMOVE(sc->vlan_filters, f, ixlv_vlan_filter, next);
-                        free(f, M_DEVBUF);
+                        free(f, M_IXL);
                 }
                 if (i == cnt)
                         break;
@@ -639,7 +639,7 @@ ixlv_del_vlans(struct ixlv_sc *sc)
  	}
 
 	ixlv_send_pf_msg(sc, I40E_VIRTCHNL_OP_DEL_VLAN, (u8 *)v, len);
-	free(v, M_DEVBUF);
+	free(v, M_IXL);
 	/* add stats? */
 }
 
@@ -672,7 +672,7 @@ ixlv_add_ether_filters(struct ixlv_sc *sc)
 	len = sizeof(struct i40e_virtchnl_ether_addr_list) +
 	    (cnt * sizeof(struct i40e_virtchnl_ether_addr));
 
-	a = malloc(len, M_DEVBUF, M_NOWAIT | M_ZERO);
+	a = malloc(len, M_IXL, M_NOWAIT | M_ZERO);
 	if (a == NULL) {
 		device_printf(dev, "%s: Failed to get memory for "
 		    "virtchnl_ether_addr_list\n", __func__);
@@ -700,7 +700,7 @@ ixlv_add_ether_filters(struct ixlv_sc *sc)
 	ixlv_send_pf_msg(sc,
 	    I40E_VIRTCHNL_OP_ADD_ETHER_ADDRESS, (u8 *)a, len);
 	/* add stats? */
-	free(a, M_DEVBUF);
+	free(a, M_IXL);
 	return;
 }
 
@@ -732,7 +732,7 @@ ixlv_del_ether_filters(struct ixlv_sc *sc)
 	len = sizeof(struct i40e_virtchnl_ether_addr_list) +
 	    (cnt * sizeof(struct i40e_virtchnl_ether_addr));
 
-	d = malloc(len, M_DEVBUF, M_NOWAIT | M_ZERO);
+	d = malloc(len, M_IXL, M_NOWAIT | M_ZERO);
 	if (d == NULL) {
 		device_printf(dev, "%s: Failed to get memory for "
 		    "virtchnl_ether_addr_list\n", __func__);
@@ -750,7 +750,7 @@ ixlv_del_ether_filters(struct ixlv_sc *sc)
 			    MAC_FORMAT_ARGS(f->macaddr));
 			j++;
 			SLIST_REMOVE(sc->mac_filters, f, ixlv_mac_filter, next);
-			free(f, M_DEVBUF);
+			free(f, M_IXL);
 		}
 		if (j == cnt)
 			break;
@@ -758,7 +758,7 @@ ixlv_del_ether_filters(struct ixlv_sc *sc)
 	ixlv_send_pf_msg(sc,
 	    I40E_VIRTCHNL_OP_DEL_ETHER_ADDRESS, (u8 *)d, len);
 	/* add stats? */
-	free(d, M_DEVBUF);
+	free(d, M_IXL);
 	return;
 }
 
