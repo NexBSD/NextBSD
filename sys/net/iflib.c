@@ -1721,8 +1721,8 @@ iflib_init_locked(if_ctx_t ctx)
 		TX_LOCK(txq);
 		callout_stop(&txq->ift_timer);
 		callout_stop(&txq->ift_db_check);
-		TX_UNLOCK(txq);
 		iflib_netmap_txq_init(ctx, txq);
+		TX_UNLOCK(txq);
 		iflib_netmap_rxq_init(ctx, rxq);
 	}
 
@@ -1786,7 +1786,6 @@ iflib_stop(if_ctx_t ctx)
 
 	IFDI_INTR_DISABLE(ctx);
 
-	pause("iflib_stop", hz/4);
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
 	for (i = 0; i < scctx->isc_nqsets; i++, txq++, rxq++) {
 		/* make sure all transmitters have completed before proceeding */
@@ -2159,10 +2158,10 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		struct tcphdr *th;
 
 		MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip));
-		th = (struct tcphdr *)((caddr_t)ip + (ip->ip_hl << 2));
 		pi->ipi_ip_hlen = ip->ip_hl << 2;
 		pi->ipi_ipproto = ip->ip_p;
 		pi->ipi_flags |= IPI_TX_IPV4;
+		th = (struct tcphdr *)((caddr_t)ip + pi->ipi_ip_hlen);
 		if (pi->ipi_ipproto == IPPROTO_TCP) {
 			pi->ipi_tcp_hflags = th->th_flags;
 			pi->ipi_tcp_hlen = th->th_off << 2;
@@ -2643,6 +2642,17 @@ static void
 iflib_if_init(void *arg)
 {
 	if_ctx_t ctx = arg;
+
+	CTX_LOCK(ctx);
+	/* Tell the stack that the interface is no longer active */
+	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
+
+	IFDI_INTR_DISABLE(ctx);
+	CTX_UNLOCK(ctx);
+
+	/* wait for any rx to return */
+	pause("iflib_init", hz/4);
+
 	CTX_LOCK(ctx);
 	iflib_stop(ctx);
 	iflib_init_locked(ctx);
