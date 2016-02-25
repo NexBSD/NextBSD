@@ -2864,11 +2864,9 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 			if_togglecapenable(ifp, IFCAP_LRO);
 		if (mask & IFCAP_TSO4) {
 			if_togglecapenable(ifp, IFCAP_TSO4);
-			reinit = 1;
 		}
 		if (mask & IFCAP_TSO6) {
 			if_togglecapenable(ifp, IFCAP_TSO6);
-			reinit = 1;
 		}
 		if (mask & IFCAP_VLAN_HWTAGGING) {
 			if_togglecapenable(ifp, IFCAP_VLAN_HWTAGGING);
