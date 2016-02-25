@@ -806,7 +806,9 @@ ixl_if_detach(if_ctx_t ctx)
 	if (status)
 		device_printf(iflib_get_dev(ctx),
 		    "Shutdown Admin queue failed with code %d\n", status);
-
+	else
+		device_printf(iflib_get_dev(ctx),
+		    "Shutdown Admin queue success\n");
 	ixl_free_pci_resources(pf);
 	ixl_free_mac_filters(vsi);
 	return (0);
@@ -1717,9 +1719,6 @@ ixl_free_pci_resources(struct ixl_pf * pf)
 	struct ixl_vsi		*vsi = &pf->vsi;
 	struct ixl_queue	*que = vsi->queues;
 	device_t		dev = iflib_get_dev(vsi->ctx);
-	int			rid, memrid;
-
-	memrid = PCIR_BAR(IXL_BAR);
 
 	/* We may get here before stations are setup */
 	if ((!ixl_enable_msix) || (que == NULL))
@@ -1734,19 +1733,6 @@ ixl_free_pci_resources(struct ixl_pf * pf)
 	for (int i = 0; i < vsi->num_queues; i++, que++)
 		iflib_irq_free(vsi->ctx, &que->que_irq);
 early:
-	/* Clean the AdminQ interrupt last */
-	if (pf->admvec) /* we are doing MSIX */
-		rid = pf->admvec + 1;
-	else
-		(pf->msix != 0) ? (rid = 1):(rid = 0);
-
-	if (pf->tag != NULL) {
-		bus_teardown_intr(dev, pf->res, pf->tag);
-		pf->tag = NULL;
-	}
-	if (pf->res != NULL)
-		bus_release_resource(dev, SYS_RES_IRQ, rid, pf->res);
-
 	if (pf->pci_mem != NULL)
 		bus_release_resource(dev, SYS_RES_MEMORY,
 		    PCIR_BAR(0), pf->pci_mem);
@@ -2372,9 +2358,6 @@ ixl_add_hw_stats(struct ixl_pf *pf)
 		txr = &(queues[q].txr);
 		rxr = &(queues[q].rxr);
 
-		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "mbuf_defrag_failed",
-				CTLFLAG_RD, &(queues[q].mbuf_defrag_failed),
-				"m_defrag() failed");
 		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "dropped",
 				CTLFLAG_RD, &(queues[q].dropped_pkts),
 				"Driver dropped packets");
@@ -2384,12 +2367,6 @@ ixl_add_hw_stats(struct ixl_pf *pf)
 		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "tso_tx",
 				CTLFLAG_RD, &(queues[q].tso),
 				"TSO");
-		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "tx_dma_setup",
-				CTLFLAG_RD, &(queues[q].tx_dma_setup),
-				"Driver tx dma failure in xmit");
-		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "no_desc_avail",
-				CTLFLAG_RD, &(txr->no_desc),
-				"Queue No Descriptor Available");
 		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "tx_packets",
 				CTLFLAG_RD, &(txr->total_packets),
 				"Queue Packets Transmitted");
@@ -3477,15 +3454,12 @@ ixl_print_debug_info(struct ixl_pf *pf)
 	struct ixl_vsi		*vsi = &pf->vsi;
 	struct ixl_queue	*que = vsi->queues;
 	struct rx_ring		*rxr = &que->rxr;
-	struct tx_ring		*txr = &que->txr;
 	u32			reg;	
 
 
 	printf("Queue irqs = %jx\n", (uintmax_t)que->irqs);
 	printf("AdminQ irqs = %jx\n", (uintmax_t)pf->admin_irq);
-	printf("RX not ready = %jx\n", (uintmax_t)rxr->not_done);
 	printf("RX packets = %jx\n", (uintmax_t)rxr->rx_packets);
-	printf("TX desc avail = %x\n", txr->avail);
 
 	reg = rd32(hw, I40E_GLV_GORCL(0xc));
 	 printf("RX Bytes = %x\n", reg);

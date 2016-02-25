@@ -2286,9 +2286,6 @@ ixlv_add_sysctls(struct ixlv_sc *sc)
 		txr = &(queues[q].txr);
 		rxr = &(queues[q].rxr);
 
-		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "mbuf_defrag_failed",
-				CTLFLAG_RD, &(queues[q].mbuf_defrag_failed),
-				"m_defrag() failed");
 		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "dropped",
 				CTLFLAG_RD, &(queues[q].dropped_pkts),
 				"Driver dropped packets");
@@ -2298,12 +2295,6 @@ ixlv_add_sysctls(struct ixlv_sc *sc)
 		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "tso_tx",
 				CTLFLAG_RD, &(queues[q].tso),
 				"TSO");
-		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "tx_dma_setup",
-				CTLFLAG_RD, &(queues[q].tx_dma_setup),
-				"Driver tx dma failure in xmit");
-		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "no_desc_avail",
-				CTLFLAG_RD, &(txr->no_desc),
-				"Queue No Descriptor Available");
 		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "tx_packets",
 				CTLFLAG_RD, &(txr->total_packets),
 				"Queue Packets Transmitted");
