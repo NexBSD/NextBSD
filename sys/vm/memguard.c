@@ -259,6 +259,7 @@ memguard_page_lookup(vm_offset_t va)
 	p = PHYS_TO_VM_PAGE(pa);
 	KASSERT(p->wire_count != 0 && p->queue == PQ_NONE,
 	    ("MEMGUARD: Expected wired page %p in vtomgfifo!", p));
+	return (p);
 }
 
 static u_long *
