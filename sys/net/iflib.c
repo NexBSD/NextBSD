@@ -1933,7 +1933,6 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		return (FALSE);
 	}
 
-	ri.iri_qsidx = rxq->ifr_id;
 	if (sctx->isc_flags & IFLIB_HAS_CQ) {
 		cidxp  = &rxq->ifr_cidx;
 		genp =  &rxq->ifr_gen;
@@ -1963,15 +1962,12 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		bus_dmamap_sync(di->idi_tag, di->idi_map,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
-		ri.iri_cidx = cidx;
 		/*
 		 * Reset client set fields to their default values
 		 */
-		ri.iri_flags = 0;
-		ri.iri_m = NULL;
-		ri.iri_next_offset = 0;
-		ri.iri_pad = 0;
-		ri.iri_qidx = 0;
+		bzero(&ri, sizeof(ri));
+		ri.iri_qsidx = rxq->ifr_id;
+		ri.iri_cidx = cidx;
 		ri.iri_ifp = ctx->ifc_ifp;
 		err = ctx->isc_rxd_pkt_get(ctx->ifc_softc, &ri);
 
@@ -2289,19 +2285,19 @@ defrag:
 	}
 	m_head = *m_headp;
 
+	bzero(&pi, sizeof(pi));
 	pi.ipi_len = m_head->m_pkthdr.len;
-	pi.ipi_mflags = (m->m_flags & M_VLANTAG);
+	pi.ipi_mflags = (m->m_flags & (M_VLANTAG|M_BCAST|M_MCAST));
 	pi.ipi_csum_flags = m->m_pkthdr.csum_flags;
 	pi.ipi_vtag = (m->m_flags & M_VLANTAG) ? m->m_pkthdr.ether_vtag : 0;
-	pi.ipi_flags = 0;
 
-	if (m_head->m_pkthdr.csum_flags &&
+	if (pi.ipi_csum_flags &&
 	    (err = iflib_parse_header(&pi, m_head)) != 0)
 		return (err);
 	pi.ipi_segs = segs;
 	pi.ipi_nsegs = nsegs;
 	pi.ipi_pidx = pidx;
-	pi.ipi_ndescs = 0;
+
 	pi.ipi_qsidx = txq->ift_id;
 
 	MPASS(pidx >= 0 && pidx < sctx->isc_ntxd);
