@@ -1788,15 +1788,20 @@ iflib_stop(if_ctx_t ctx)
 
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
 	for (i = 0; i < scctx->isc_nqsets; i++, txq++, rxq++) {
-		/* Free any existing tx buffers. */
+		/* make sure all transmitters have completed before proceeding */
+		TX_LOCK(txq);
+		TX_UNLOCK(txq);
+
+		/* clean any enqueued buffers */
+		iflib_txq_check_drain(txq, 0);
 		txsd = txq->ift_sds;
+		/* Free any existing tx buffers. */
 		for (j = 0; j < sctx->isc_ntxd; j++, txsd++) {
 			iflib_txsd_free(ctx, txq, txsd);
 		}
 		qset = &ctx->ifc_qsets[txq->ift_id];
 		for (j = 0, di = qset->ifq_ifdi; j < qset->ifq_nhwqs; j++, di++)
 			bzero((void *)di->idi_vaddr, di->idi_size);
-		iflib_txq_check_drain(txq, 0);
 		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++)
 			iflib_fl_bufs_free(fl);
 	}
