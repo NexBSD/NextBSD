@@ -238,7 +238,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
          * used because it will contain the index of
          * the one we tell the hardware to report back
          */
-	first = pi->ipi_pidx;
+	i = first = pi->ipi_pidx;
 	buf = &txr->tx_buffers[first];
 
 	if (pi->ipi_flags & IPI_TX_INTR)
@@ -251,7 +251,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 			if (ixl_tso_detect_sparse(segs, nsegs, pi->ipi_tso_segsz))
 				return (EFBIG);
 
-			first = ixl_tso_setup(que, pi);
+			i = ixl_tso_setup(que, pi);
 		}
 		ixl_tx_setup_offload(que, pi, &cmd, &off);
 	}
@@ -261,7 +261,6 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 
 	cmd |= I40E_TX_DESC_CMD_ICRC;
 
-	i = first;
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seglen;
 
