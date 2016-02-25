@@ -38,6 +38,12 @@
 #include "opt_rss.h"
 #endif
 
+#ifndef IXL_DEBUG_SYSCTL
+#ifdef INVARIANTS
+#define IXL_DEBUG_SYSCTL
+#endif
+#endif
+
 #include "ixl.h"
 #include "ixl_pf.h"
 
