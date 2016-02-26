@@ -2129,6 +2129,18 @@ iflib_txd_deferred_db_check(void * arg)
 	txq->ift_db_pending = txq->ift_npending = 0;
 }
 
+#ifdef PKT_DEBUG
+static void
+print_pkt(if_pkt_info_t pi)
+{
+	printf("pi len:  %d qsidx: %d nsegs: %d ndescs: %d flags: %x pidx: %d\n",
+	       pi->ipi_len, pi->ipi_qsidx, pi->ipi_nsegs, pi->ipi_ndescs, pi->ipi_flags, pi->ipi_pidx);
+	printf("pi new_pidx: %d csum_flags: %lx tso_segsz: %d mflags: %x vtag: %d\n",
+	       pi->ipi_new_pidx, pi->ipi_csum_flags, pi->ipi_tso_segsz, pi->ipi_mflags, pi->ipi_vtag);
+	printf("pi etype: %d ehdrlen: %d ip_hlen: %d ipproto: %d\n",
+	       pi->ipi_etype, pi->ipi_ehdrlen, pi->ipi_ip_hlen, pi->ipi_ipproto);
+}
+#endif
 
 #define IS_TSO4(pi) ((pi)->ipi_csum_flags & CSUM_IP_TSO)
 #define IS_TSO6(pi) ((pi)->ipi_csum_flags & CSUM_IP6_TSO)
@@ -2308,6 +2320,9 @@ defrag:
 	pi.ipi_qsidx = txq->ift_id;
 
 	MPASS(pidx >= 0 && pidx < sctx->isc_ntxd);
+#ifdef PKT_DEBUG
+	print_pkt(&pi);
+#endif
 	if ((err = ctx->isc_txd_encap(ctx->ifc_softc, &pi)) == 0) {
 		bus_dmamap_sync(txq->ift_ifdi->idi_tag, txq->ift_ifdi->idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
