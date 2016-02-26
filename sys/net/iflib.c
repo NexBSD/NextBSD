@@ -2238,7 +2238,7 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	if_ctx_t ctx = txq->ift_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	bus_dma_segment_t	*segs = txq->ift_segs;
-	struct mbuf		*m, *m_head = *m_headp;
+	struct mbuf		*m_head = *m_headp;
 	int pidx = txq->ift_pidx;
 	iflib_sd_t txsd = &txq->ift_sds[pidx];
 	bus_dmamap_t		map = txsd->ifsd_map;
@@ -2259,15 +2259,15 @@ defrag:
 			/* try defrag once */
 			if (remap == TRUE) {
 				remap = FALSE;
-				m = m_defrag(*m_headp, M_NOWAIT);
-				if (m == NULL) {
+				m_head = m_defrag(*m_headp, M_NOWAIT);
+				if (m_head == NULL) {
 					txq->ift_mbuf_defrag_failed++;
 					m_freem(*m_headp);
 					DBG_COUNTER_INC(tx_frees);
 					*m_headp = NULL;
 					err = ENOBUFS;
 				} else {
-					*m_headp = m;
+					*m_headp = m_head;
 					goto retry;
 				}
 			}
@@ -2306,9 +2306,9 @@ defrag:
 
 	bzero(&pi, sizeof(pi));
 	pi.ipi_len = m_head->m_pkthdr.len;
-	pi.ipi_mflags = (m->m_flags & (M_VLANTAG|M_BCAST|M_MCAST));
-	pi.ipi_csum_flags = m->m_pkthdr.csum_flags;
-	pi.ipi_vtag = (m->m_flags & M_VLANTAG) ? m->m_pkthdr.ether_vtag : 0;
+	pi.ipi_mflags = (m_head->m_flags & (M_VLANTAG|M_BCAST|M_MCAST));
+	pi.ipi_csum_flags = m_head->m_pkthdr.csum_flags;
+	pi.ipi_vtag = (m_head->m_flags & M_VLANTAG) ? m_head->m_pkthdr.ether_vtag : 0;
 
 	if (pi.ipi_csum_flags &&
 	    (err = iflib_parse_header(&pi, m_head)) != 0)
