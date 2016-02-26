@@ -203,8 +203,9 @@ static void		ixl_if_stop(if_ctx_t ctx);
 static void		ixl_if_intr_enable(if_ctx_t ctx);
 static void		ixl_if_intr_disable(if_ctx_t ctx);
 static void		ixl_if_queue_intr_enable(if_ctx_t ctx, uint16_t qid);
+#if 0
 static void		ixl_if_queue_intr_disable(if_ctx_t ctx, uint16_t qid);
-
+#endif
 static void	ixl_if_multi_set(if_ctx_t);
 static void	ixl_if_update_admin_status(if_ctx_t);
 static int	ixl_if_mtu_set(if_ctx_t, uint32_t);
@@ -2961,12 +2962,9 @@ ixl_if_intr_enable(if_ctx_t ctx)
 {
 	struct ixl_vsi	*vsi = iflib_get_softc(ctx);
 	struct i40e_hw		*hw = vsi->hw;
-	struct ixl_queue	*que = vsi->queues;
 
 	if (ixl_enable_msix) {
 		ixl_enable_adminq(hw);
-		for (int i = 0; i < vsi->num_queues; i++, que++)
-			ixl_if_queue_intr_enable(vsi->ctx, que->me);
 	} else
 		ixl_enable_legacy(hw);
 }
@@ -2976,12 +2974,9 @@ ixl_if_intr_disable(if_ctx_t ctx)
 {
 	struct ixl_vsi	*vsi = iflib_get_softc(ctx);
 	struct i40e_hw		*hw = vsi->hw;
-	struct ixl_queue	*que = vsi->queues;
 
 	if (ixl_enable_msix) {
 		ixl_disable_adminq(hw);
-		for (int i = 0; i < vsi->num_queues; i++, que++)
-			ixl_if_queue_intr_disable(ctx, que->me);
 	} else
 		ixl_disable_legacy(hw);
 }
@@ -2998,6 +2993,7 @@ ixl_if_queue_intr_enable(if_ctx_t ctx, uint16_t qid)
 	wr32(vsi->hw, I40E_PFINT_DYN_CTLN(qid), reg);
 }
 
+#if 0
 static void
 ixl_if_queue_intr_disable(if_ctx_t ctx, uint16_t qid)
 {
@@ -3008,6 +3004,7 @@ ixl_if_queue_intr_disable(if_ctx_t ctx, uint16_t qid)
 	reg = IXL_ITR_NONE << I40E_PFINT_DYN_CTLN_ITR_INDX_SHIFT;
 	wr32(hw, I40E_PFINT_DYN_CTLN(qid), reg);
 }
+#endif
 
 static int
 ixl_disable_rings(struct ixl_vsi *vsi)
