@@ -1159,11 +1159,11 @@ iflib_txsd_alloc(iflib_txq_t txq)
 
 	if (ctx->ifc_softc_ctx.isc_tx_nsegments > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
 		ctx->ifc_softc_ctx.isc_tx_nsegments = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
-	if (ctx->ifc_softc_ctx.isc_tx_tso_nsegments > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
-		ctx->ifc_softc_ctx.isc_tx_tso_nsegments = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
+	if (ctx->ifc_softc_ctx.isc_tx_tso_segments_max > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
+		ctx->ifc_softc_ctx.isc_tx_tso_segments_max = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
 
 	nsegments = ctx->ifc_softc_ctx.isc_tx_nsegments;
-	ntsosegments = ctx->ifc_softc_ctx.isc_tx_tso_nsegments;
+	ntsosegments = ctx->ifc_softc_ctx.isc_tx_tso_segments_max;
 	MPASS(sctx->isc_ntxd > 0);
 	MPASS(nsegments > 0);
 
@@ -3380,6 +3380,7 @@ _iflib_assert(if_shared_ctx_t sctx)
 	MPASS(sctx->isc_rx_nsegments);
 	MPASS(sctx->isc_rx_maxsegsize);
 
+
 	MPASS(sctx->isc_txrx->ift_txd_encap);
 	MPASS(sctx->isc_txrx->ift_txd_flush);
 	MPASS(sctx->isc_txrx->ift_txd_credits_update);
@@ -3394,6 +3395,7 @@ static int
 iflib_register(if_ctx_t ctx)
 {
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
+	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 	driver_t *driver = sctx->isc_driver;
 	device_t dev = ctx->ifc_dev;
 	if_t ifp;
@@ -3429,6 +3431,12 @@ iflib_register(if_ctx_t ctx)
 	if_setcapabilities(ifp, 0);
 	if_setcapenable(ifp, 0);
 
+#if __FreeBSD_version >= 1100045
+	/* TSO parameters - dig these out of the data sheet - simply correspond to tag setup */
+	ifp->if_hw_tsomaxsegcount = scctx->isc_tx_tso_segments_max;
+	ifp->if_hw_tsomax = scctx->isc_tx_tso_size_max;
+	ifp->if_hw_tsomaxsegsize = scctx->isc_tx_tso_segsize_max;
+#endif
 	ctx->ifc_vlan_attach_event =
 		EVENTHANDLER_REGISTER(vlan_config, iflib_vlan_register, ctx,
 							  EVENTHANDLER_PRI_FIRST);

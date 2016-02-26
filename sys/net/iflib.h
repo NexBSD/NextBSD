@@ -152,7 +152,10 @@ typedef struct if_softc_ctx {
 	int isc_nqsets;
 	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
-	int isc_tx_tso_nsegments;	/* can be model specific - initialize in attach_pre */
+	int isc_tx_tso_segments_max;
+	int isc_tx_tso_size_max;
+	int isc_tx_tso_segsize_max;
+
 	iflib_intr_mode_t isc_intr;
 	uint16_t isc_max_frame_size; /* set at init time by driver */
 	pci_vendor_info_t isc_vendor_info;	/* set by iflib prior to attach_pre */
