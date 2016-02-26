@@ -1568,9 +1568,7 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 	/*
 	 * Reset free list values
 	 */
-	fl->ifl_pidx = 0;
-	fl->ifl_cidx = 0;
-	fl->ifl_gen = 0;
+	fl->ifl_cidx = fl->ifl_pidx = fl->ifl_gen = 0;;
 	bzero(idi->idi_vaddr, idi->idi_size);
 }
 
@@ -1801,9 +1799,11 @@ iflib_stop(if_ctx_t ctx)
 		for (j = 0; j < sctx->isc_ntxd; j++, txsd++) {
 			iflib_txsd_free(ctx, txq, txsd);
 		}
+		txq->ift_cidx = txq->ift_pidx = 0;
 		qset = &ctx->ifc_qsets[txq->ift_id];
 		for (j = 0, di = qset->ifq_ifdi; j < qset->ifq_nhwqs; j++, di++)
 			bzero((void *)di->idi_vaddr, di->idi_size);
+		/* also resets the free lists pidx/cidx */
 		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++)
 			iflib_fl_bufs_free(fl);
 	}
