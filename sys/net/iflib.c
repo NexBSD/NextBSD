@@ -1662,6 +1662,8 @@ iflib_timer(void *arg)
 	if_ctx_t ctx = txq->ift_ctx;
 	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 
+	if (!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING))
+		return;
 	/*
 	** Check on the state of the TX queue(s), this
 	** can be done without the lock because its RO
