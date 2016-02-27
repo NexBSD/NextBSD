@@ -164,7 +164,7 @@ static int ixgbe_interface_setup(if_ctx_t ctx);
 static void ixgbe_add_media_types(if_ctx_t ctx);
 static void ixgbe_update_stats_counters(struct adapter *adapter);
 static void ixgbe_config_link(struct adapter *adapter);
-static void ixgbe_get_slot_info(struct ixgbe_hw *hw);
+static void ixgbe_get_slot_info(struct adapter *);
 static void ixgbe_check_eee_support(struct adapter *adapter);
 static void ixgbe_check_wol_support(struct adapter *adapter);
 static void ixgbe_enable_rx_drop(struct adapter *);
@@ -1056,7 +1056,7 @@ ixgbe_if_attach_post(if_ctx_t ctx)
 	ixgbe_add_hw_stats(adapter);
   
 	/* Check PCIE slot type/speed/width */
-	ixgbe_get_slot_info(hw);
+	ixgbe_get_slot_info(adapter);
 
 	/* Set an initial default flow control value */
 	adapter->fc = ixgbe_fc_full;
@@ -1165,13 +1165,6 @@ ixgbe_interface_setup(if_ctx_t ctx)
 
 	adapter->max_frame_size =
 	    ifp->if_mtu + ETHER_HDR_LEN + ETHER_CRC_LEN;
-
-#if __FreeBSD_version >= 1100045
-	/* TSO parameters */
-	ifp->if_hw_tsomax = 65518;
-	ifp->if_hw_tsomaxsegcount = IXGBE_82599_SCATTER;
-	ifp->if_hw_tsomaxsegsize = 2048;
-#endif
 
 	/*
 	** Don't turn this on by default, if vlans are
@@ -1858,13 +1851,15 @@ ixgbe_setup_vlan_hw_support(if_ctx_t ctx)
 ** the slot this adapter is plugged into.
 */
 static void
-ixgbe_get_slot_info(struct ixgbe_hw *hw)
+ixgbe_get_slot_info(struct adapter *adapter)
 {
-	device_t		dev = ((struct adapter *)hw->back)->dev;
+	device_t		dev = iflib_get_dev(adapter->ctx);
+	struct ixgbe_hw		*hw = &adapter->hw;
 	struct ixgbe_mac_info	*mac = &hw->mac;
 	u16			link;
 	u32			offset;
 
+	MPASS(hw->back != NULL);
 	/* For most devices simply call the shared code routine */
 	if (hw->device_id != IXGBE_DEV_ID_82599_SFP_SF_QP) {
 		ixgbe_get_bus_info(hw);
@@ -2353,7 +2348,6 @@ ixgbe_msix_link(void *arg)
 
 	++adapter->link_irq;
 
-	MPASS(hw->back != NULL);
 	/* First get the cause */
 	reg_eicr = IXGBE_READ_REG(hw, IXGBE_EICS);
 
@@ -2653,7 +2647,7 @@ ixgbe_allocate_pci_resources(if_ctx_t ctx)
 
 	rid = PCIR_BAR(0);
 	adapter->pci_mem = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-											  &rid, RF_ACTIVE);
+						  &rid, RF_ACTIVE);
 
 	if (!(adapter->pci_mem)) {
 		device_printf(dev,"Unable to allocate bus resource: memory\n");
@@ -2665,7 +2659,6 @@ ixgbe_allocate_pci_resources(if_ctx_t ctx)
 	adapter->osdep.mem_bus_space_handle =
 		rman_get_bushandle(adapter->pci_mem);
 	adapter->hw.hw_addr = (u8 *) &adapter->osdep.mem_bus_space_handle;
-
 	adapter->hw.back = adapter;
 	return (0);
 }
@@ -3428,7 +3421,8 @@ out:
 static void
 ixgbe_handle_mod(void *context, int pending)
 {
-	struct adapter  *adapter = context;
+	if_ctx_t ctx = context;
+	struct adapter  *adapter = iflib_get_softc(ctx);
 	struct ixgbe_hw *hw = &adapter->hw;
 	device_t	dev = adapter->dev;
 	u32 err;
@@ -3456,7 +3450,8 @@ ixgbe_handle_mod(void *context, int pending)
 static void
 ixgbe_handle_msf(void *context, int pending)
 {
-	struct adapter  *adapter = context;
+	if_ctx_t ctx = context;
+	struct adapter  *adapter = iflib_get_softc(ctx);
 	struct ixgbe_hw *hw = &adapter->hw;
 	u32 autoneg;
 	bool negotiate;
@@ -3485,7 +3480,8 @@ ixgbe_handle_msf(void *context, int pending)
 static void
 ixgbe_handle_phy(void *context, int pending)
 {
-	struct adapter  *adapter = context;
+	if_ctx_t ctx = context;
+	struct adapter  *adapter = iflib_get_softc(ctx);
 	struct ixgbe_hw *hw = &adapter->hw;
 	int error;
 
