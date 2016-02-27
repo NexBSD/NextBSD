@@ -337,7 +337,8 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
 	return (processed);
 }
 
-static void ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
+static void
+ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 				 uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count)
 {
 	struct adapter *sc       = arg;
@@ -353,7 +354,8 @@ static void ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unuse
 	}
 }
 
-static void ixgbe_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx)
+static void
+ixgbe_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx)
 {
 	struct adapter *sc       = arg;
 	struct ix_queue *que     = &sc->queues[rxqid];
@@ -362,7 +364,8 @@ static void ixgbe_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused
 	IXGBE_WRITE_REG(&sc->hw, rxr->tail, pidx);
 }
 
-static int ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
+static int
+ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 {
 	struct adapter *sc       = arg;
 	struct ix_queue *que     = &sc->queues[rxqid];
