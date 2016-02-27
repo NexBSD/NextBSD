@@ -221,7 +221,9 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 			cmd |= IXGBE_ADVTXD_DCMD_TSE;
 			++txr->tso_tx;
 		}
-		++i;
+
+		if (++i == ixgbe_sctx->isc_ntxd)
+			i = 0;
 	} else
 		olinfo_status = pi->ipi_len << IXGBE_ADVTXD_PAYLEN_SHIFT;
 
