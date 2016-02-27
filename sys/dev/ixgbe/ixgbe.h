@@ -416,14 +416,15 @@ struct ixgbe_vf {
 
 /* Our adapter structure */
 struct adapter {
+	/* much of the code assumes this is first :< */
+	struct ixgbe_hw		hw;
+	struct ixgbe_osdep	osdep;
 	if_ctx_t ctx;
 	if_softc_ctx_t shared;
 #define num_queues shared->isc_nqsets
 #define max_frame_size shared->isc_max_frame_size
 #define intr_type shared->isc_intr
 	struct ifnet		*ifp;
-	struct ixgbe_hw		hw;
-	struct ixgbe_osdep	osdep;
 
 	struct device		*dev;
 
@@ -666,6 +667,7 @@ int	ixgbe_dma_malloc(struct adapter *,
 	    bus_size_t, struct ixgbe_dma_alloc *, int);
 void	ixgbe_dma_free(struct adapter *, struct ixgbe_dma_alloc *);
 int	ixgbe_get_regs(SYSCTL_HANDLER_ARGS);
+void	ixgbe_init_tx_ring(struct ix_queue *que);
 
 #ifdef PCI_IOV
 

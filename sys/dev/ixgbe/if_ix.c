@@ -2964,6 +2964,8 @@ ixgbe_if_init(if_ctx_t ctx)
 	/* Now enable all the queues */
 	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
+
+		ixgbe_init_tx_ring(que);
 		txdctl = IXGBE_READ_REG(hw, IXGBE_TXDCTL(txr->me));
 		txdctl |= IXGBE_TXDCTL_ENABLE;
 		/* Set WTHRESH to 8, burst writeback */
