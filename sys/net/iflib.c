@@ -2175,6 +2175,9 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		pi->ipi_ip_hlen = ip->ip_hl << 2;
 		pi->ipi_ipproto = ip->ip_p;
 		pi->ipi_flags |= IPI_TX_IPV4;
+
+		if (pi->ipi_csum_flags & CSUM_IP)
+                       ip->ip_sum = 0;
 		th = (struct tcphdr *)((caddr_t)ip + pi->ipi_ip_hlen);
 		if (pi->ipi_ipproto == IPPROTO_TCP) {
 			pi->ipi_tcp_hflags = th->th_flags;
@@ -2186,7 +2189,6 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 				return (ENXIO);
 
 			MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip) + sizeof(struct tcphdr));
-			ip->ip_sum = 0;
 			th->th_sum = in_pseudo(ip->ip_src.s_addr,
 					       ip->ip_dst.s_addr, htons(IPPROTO_TCP));
 			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
@@ -2292,9 +2294,6 @@ defrag:
 	 *        cxgb
 	 */
 	if (nsegs > TXQ_AVAIL(txq)) {
-#ifdef INVARIANTS
-		panic("filled ring in spite of INVARIANTS");
-#endif
 		txq->ift_no_desc_avail++;
 		bus_dmamap_unload(desc_tag, map);
 		DBG_COUNTER_INC(encap_txq_avail_fail);
@@ -2310,7 +2309,8 @@ defrag:
 	pi.ipi_csum_flags = m_head->m_pkthdr.csum_flags;
 	pi.ipi_vtag = (m_head->m_flags & M_VLANTAG) ? m_head->m_pkthdr.ether_vtag : 0;
 
-	if (pi.ipi_csum_flags &&
+	/* deliberate bitwise OR to make one condition */
+	if ((pi.ipi_csum_flags | pi.ipi_vtag) &&
 	    (err = iflib_parse_header(&pi, m_head)) != 0)
 		return (err);
 	pi.ipi_segs = segs;
@@ -2338,10 +2338,10 @@ defrag:
 #endif
 		txsd->ifsd_m = m_head;
 		MPASS(pi.ipi_new_pidx >= 0 && pi.ipi_new_pidx < sctx->isc_ntxd);
-		if (pi.ipi_new_pidx >= pi.ipi_pidx) {
-			ndesc = pi.ipi_new_pidx - pi.ipi_pidx;
-		} else {
-			ndesc = pi.ipi_new_pidx - pi.ipi_pidx + sctx->isc_ntxd;
+
+		ndesc = pi.ipi_new_pidx - pi.ipi_pidx;
+		if (pi.ipi_new_pidx < pi.ipi_pidx) {
+			ndesc += sctx->isc_ntxd;
 			txq->ift_gen = 1;
 		}
 		MPASS(pi.ipi_new_pidx != pidx);
@@ -2520,7 +2520,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		goto skip_db;
 	}
 
-	for (i = 0; i < count; i++) {
+	for (i = 0; i < count && TXQ_AVAIL(txq) >= MAX_TX_DESC(txq->ift_ctx); i++) {
 		mp = _ring_peek_one(r, cidx, i);
 
 		if(iflib_encap(txq, mp)) {
