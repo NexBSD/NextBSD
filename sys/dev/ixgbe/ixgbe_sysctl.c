@@ -502,15 +502,11 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	for (j = 0; j < 64; j++) {
 		struct ixgbe_tx_buf *buf = &txr->tx_buffers[j];
 		unsigned int *ptr = (unsigned int *)&txr->tx_base[j].read;
-		u64 buffer_addr = txr->tx_base[j].read.buffer_addr;
-		u32 cmd_type_len = txr->tx_base[j].read.cmd_type_len;
-		u32 olinfo_status = txr->tx_base[j].read.olinfo_status;
 
-		sbuf_printf(sb, "\tTXD[%d] addr: %08lx Cmd Len:%d  olinfo_status:%d eop: %d DD=%d\n",
-			    j, buffer_addr, cmd_type_len, olinfo_status, buf->eop,
+		sbuf_printf(sb, "\tTXD[%d] [0]: %08x [1]: %08x [2]: %08x [3]: %08x  eop: %d DD=%d\n",
+			    j, ptr[0], ptr[1], ptr[2], ptr[3], buf->eop,
 			    buf->eop != -1 ? txr->tx_base[buf->eop].wb.status & IXGBE_TXD_STAT_DD : 0);
-		sbuf_printf(sb, "\tTXD[%d] [0]: %08x [1]: %08x [2]: %08x [3]: %08x\n",
-			    j, ptr[0], ptr[1], ptr[2], ptr[3]);
+
 	}
 	/* X540 specific DCB registers
 	regs_buff[1137] = IXGBE_READ_REG(hw, IXGBE_RTTQCNCR);

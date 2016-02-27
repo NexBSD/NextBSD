@@ -63,6 +63,7 @@ static void ixgbe_rx_checksum(u32 staterr, if_rxd_info_t ri, u32 ptype);
 
 extern void ixgbe_if_enable_intr(if_ctx_t ctx);
 extern int ixgbe_intr(void *arg);
+static int ixgbe_determine_rsstype(u16 pkt_info);
 
 struct if_txrx ixgbe_txrx  = {
 	ixgbe_isc_txd_encap,
@@ -77,49 +78,6 @@ struct if_txrx ixgbe_txrx  = {
 
 extern if_shared_ctx_t ixgbe_sctx;
 
-/**********************************************************************
- *
- *  Setup work for hardware segmentation offload (TSO) on
- *  adapters using advanced tx descriptors
- *
- **********************************************************************/
-static int
-ixgbe_tso_setup(struct ixgbe_adv_tx_context_desc * TXD, if_pkt_info_t pi)
-{
-	u32 vlan_macip_lens, type_tucmd_mlhl;
-	u32 mss_l4len_idx, paylen;
-	u32 olinfo_status;
-
-	mss_l4len_idx = vlan_macip_lens = type_tucmd_mlhl = olinfo_status = 0;
-	if (pi->ipi_flags & IPI_TX_IPV4)
-		type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_IPV4;
-	else if (pi->ipi_flags & IPI_TX_IPV6)
-		type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_IPV6;
-	else
-		panic("CSUM_TSO but no supported IP version");
-
-
-	/* This is used in the transmit desc in encap */
-	paylen = pi->ipi_len - pi->ipi_ehdrlen - pi->ipi_ip_hlen - pi->ipi_tcp_hlen;
-
-	/* ADV DTYPE TUCMD */
-	type_tucmd_mlhl |= IXGBE_ADVTXD_DCMD_DEXT | IXGBE_ADVTXD_DTYP_CTXT;
-	type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_L4T_TCP;
-	TXD->type_tucmd_mlhl = htole32(type_tucmd_mlhl);
-
-	/* MSS L4LEN IDX */
-	mss_l4len_idx |= (pi->ipi_tso_segsz << IXGBE_ADVTXD_MSS_SHIFT);
-	mss_l4len_idx |= (pi->ipi_tcp_hlen << IXGBE_ADVTXD_L4LEN_SHIFT);
-	TXD->mss_l4len_idx = htole32(mss_l4len_idx);
-
-	TXD->seqnum_seed = htole32(0);
-
-	olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
-	olinfo_status |= paylen << IXGBE_ADVTXD_PAYLEN_SHIFT;
-
-	return (olinfo_status);
-}
-
 /*********************************************************************
  *
  *  Advanced Context Descriptor setup for VLAN, CSUM or TSO
@@ -129,26 +87,23 @@ static int
 ixgbe_tx_ctx_setup(struct ixgbe_adv_tx_context_desc *TXD, if_pkt_info_t pi)
 {
 	u32 vlan_macip_lens, type_tucmd_mlhl;
-	u32 olinfo_status;
+	u32 olinfo_status, mss_l4len_idx, pktlen;
 
-	vlan_macip_lens = type_tucmd_mlhl = 0;
+	olinfo_status = mss_l4len_idx = vlan_macip_lens = type_tucmd_mlhl = 0;
 	/* VLAN MACLEN IPLEN */
 	vlan_macip_lens |= (htole16(pi->ipi_vtag) << IXGBE_ADVTXD_VLAN_SHIFT);
 	vlan_macip_lens |= pi->ipi_ehdrlen << IXGBE_ADVTXD_MACLEN_SHIFT;
-	vlan_macip_lens |= pi->ipi_ip_hlen;
-	TXD->vlan_macip_lens = htole32(vlan_macip_lens);
 
-	/* First check if TSO is to be used */
-	if (pi->ipi_csum_flags & CSUM_TSO)
-		return (ixgbe_tso_setup(TXD, pi));
-
-	olinfo_status = pi->ipi_len << IXGBE_ADVTXD_PAYLEN_SHIFT;
-	if (pi->ipi_flags & IPI_TX_IPV4)
+	if (pi->ipi_flags & IPI_TX_IPV4) {
 		type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_IPV4;
-	else if (pi->ipi_flags & IPI_TX_IPV6)
+		/* Tell transmit desc to also do IPv4 checksum. */
+		olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
+	} else if (pi->ipi_flags & IPI_TX_IPV6)
 		type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_IPV6;
 	else
 		goto no_offloads;
+
+	vlan_macip_lens |= pi->ipi_ip_hlen;
 
 	switch (pi->ipi_ipproto) {
 	case IPPROTO_TCP:
@@ -159,7 +114,7 @@ ixgbe_tx_ctx_setup(struct ixgbe_adv_tx_context_desc *TXD, if_pkt_info_t pi)
 		if (pi->ipi_csum_flags & CSUM_UDP)
 			type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_L4T_UDP;
 		break;
-#if __FreeBSD_version >= 800000
+#ifdef CSUM_SCTP
 	case IPPROTO_SCTP:
 		if (pi->ipi_csum_flags & CSUM_SCTP)
 			type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_L4T_SCTP;
@@ -170,16 +125,25 @@ ixgbe_tx_ctx_setup(struct ixgbe_adv_tx_context_desc *TXD, if_pkt_info_t pi)
 		break;
 	}
 
-	olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
+	/* First check if TSO is to be used */
+	if (pi->ipi_csum_flags & CSUM_TSO) {
+		/* This is used in the transmit desc in encap */
+		pktlen = pi->ipi_len - pi->ipi_ehdrlen - pi->ipi_ip_hlen - pi->ipi_tcp_hlen;
 
-no_offloads:
+		olinfo_status |= pktlen << IXGBE_ADVTXD_PAYLEN_SHIFT;
+		mss_l4len_idx |= (pi->ipi_tso_segsz << IXGBE_ADVTXD_MSS_SHIFT);
+		mss_l4len_idx |= (pi->ipi_tcp_hlen << IXGBE_ADVTXD_L4LEN_SHIFT);
+	} else {
+		olinfo_status |= pi->ipi_len << IXGBE_ADVTXD_PAYLEN_SHIFT;
+	}
+	no_offloads:
 	type_tucmd_mlhl |= IXGBE_ADVTXD_DCMD_DEXT | IXGBE_ADVTXD_DTYP_CTXT;
 
 	/* Now copy bits into descriptor */
 	TXD->vlan_macip_lens = htole32(vlan_macip_lens);
 	TXD->type_tucmd_mlhl = htole32(type_tucmd_mlhl);
 	TXD->seqnum_seed = htole32(0);
-	TXD->mss_l4len_idx = htole32(0);
+	TXD->mss_l4len_idx = htole32(mss_l4len_idx);
 
         return (olinfo_status);
 }
@@ -207,7 +171,6 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	i = first = pi->ipi_pidx;
 	flags = (pi->ipi_flags & IPI_TX_INTR) ? IXGBE_TXD_CMD_RS : 0;
 
-	/* Indicate the whole packet as payload when not doing TSO */
 	TXD = (struct ixgbe_adv_tx_context_desc *) &txr->tx_base[first];
 
 
@@ -224,9 +187,10 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 
 		if (++i == ixgbe_sctx->isc_ntxd)
 			i = 0;
-	} else
+	} else {
+		/* Indicate the whole packet as payload when not doing TSO */
 		olinfo_status = pi->ipi_len << IXGBE_ADVTXD_PAYLEN_SHIFT;
-
+	}
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seglen;
 		bus_addr_t segaddr;
@@ -300,9 +264,8 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
 		eopd = &txr->tx_base[eop];
 		if ((eopd->wb.status & IXGBE_TXD_STAT_DD) == 0) {
 			break;	/* I/O not complete */
-		}
-    
-		buf->eop = -1; /* clear indicate processed */
+		} else
+			buf->eop = -1; /* clear indicate processed */
 
 		/*
 		 *
@@ -458,15 +421,9 @@ ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		if ((ifp->if_capenable & IFCAP_RXCSUM) != 0)
 			ixgbe_rx_checksum(staterr, ri,  ptype);
 
-#ifdef RSS
 		ri->iri_flowid =
 			le32toh(rxd->wb.lower.hi_dword.rss);
 		ri->iri_rsstype = ixgbe_determine_rsstype(pkt_info);
-#else
-		ri->iri_flowid = que->msix;
-		ri->iri_rsstype = M_HASHTYPE_OPAQUE;
-#endif	
-       
 		if (vtag) {
 			ri->iri_vtag = vtag;
 			ri->iri_flags |= M_VLANTAG;
@@ -520,7 +477,6 @@ ixgbe_rx_checksum(u32 staterr, if_rxd_info_t ri, u32 ptype)
  *  Parse the packet type to determine the appropriate hash
  *
  ******************************************************************/
-#ifdef RSS
 static int 
 ixgbe_determine_rsstype(u16 pkt_info)
 {
@@ -536,15 +492,14 @@ ixgbe_determine_rsstype(u16 pkt_info)
 	case IXGBE_RXDADV_RSSTYPE_IPV6:
 		return M_HASHTYPE_RSS_IPV6;
 	case IXGBE_RXDADV_RSSTYPE_IPV6_TCP_EX:
-       return M_HASHTYPE_RSS_TCP_IPV6_EX;
-     case IXGBE_RXDADV_RSSTYPE_IPV4_UDP:
-       return M_HASHTYPE_RSS_UDP_IPV4;
-     case IXGBE_RXDADV_RSSTYPE_IPV6_UDP:
-       return M_HASHTYPE_RSS_UDP_IPV6;
-     case IXGBE_RXDADV_RSSTYPE_IPV6_UDP_EX:
-       return M_HASHTYPE_RSS_UDP_IPV6_EX;
-     default:
-       return M_HASHTYPE_OPAQUE;
+		return M_HASHTYPE_RSS_TCP_IPV6_EX;
+	case IXGBE_RXDADV_RSSTYPE_IPV4_UDP:
+		return M_HASHTYPE_RSS_UDP_IPV4;
+	case IXGBE_RXDADV_RSSTYPE_IPV6_UDP:
+		return M_HASHTYPE_RSS_UDP_IPV6;
+	case IXGBE_RXDADV_RSSTYPE_IPV6_UDP_EX:
+		return M_HASHTYPE_RSS_UDP_IPV6_EX;
+	default:
+		return M_HASHTYPE_OPAQUE;
      }
 }
-#endif
