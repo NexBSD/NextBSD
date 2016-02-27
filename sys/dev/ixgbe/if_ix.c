@@ -928,6 +928,10 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 		adapter->shared->isc_msix_bar = PCIR_BAR(MSIX_82599_BAR);
 	}
 
+	adapter->shared->isc_tx_tso_segments_max = IXGBE_82599_SCATTER;
+	adapter->shared->isc_tx_tso_size_max = 65518;
+	adapter->shared->isc_tx_tso_segsize_max = 2048;
+
 	/* Sysctls */
 	ixgbe_add_device_sysctls(ctx);
 
