@@ -78,6 +78,17 @@ struct if_txrx ixgbe_txrx  = {
 
 extern if_shared_ctx_t ixgbe_sctx;
 
+void
+ixgbe_init_tx_ring(struct ix_queue *que)
+{
+	struct tx_ring *txr = &que->txr;
+	struct ixgbe_tx_buf *buf;
+
+	buf = txr->tx_buffers;
+	for (int i = 0; i < ixgbe_sctx->isc_ntxd; i++, buf++) {
+		buf->eop = -1;
+	}
+}
 /*********************************************************************
  *
  *  Advanced Context Descriptor setup for VLAN, CSUM or TSO
