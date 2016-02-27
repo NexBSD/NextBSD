@@ -2292,9 +2292,6 @@ defrag:
 	 *        cxgb
 	 */
 	if (nsegs > TXQ_AVAIL(txq)) {
-#ifdef INVARIANTS
-		panic("filled ring in spite of INVARIANTS");
-#endif
 		txq->ift_no_desc_avail++;
 		bus_dmamap_unload(desc_tag, map);
 		DBG_COUNTER_INC(encap_txq_avail_fail);
@@ -2338,10 +2335,10 @@ defrag:
 #endif
 		txsd->ifsd_m = m_head;
 		MPASS(pi.ipi_new_pidx >= 0 && pi.ipi_new_pidx < sctx->isc_ntxd);
-		if (pi.ipi_new_pidx >= pi.ipi_pidx) {
-			ndesc = pi.ipi_new_pidx - pi.ipi_pidx;
-		} else {
-			ndesc = pi.ipi_new_pidx - pi.ipi_pidx + sctx->isc_ntxd;
+
+		ndesc = pi.ipi_new_pidx - pi.ipi_pidx;
+		if (pi.ipi_new_pidx < pi.ipi_pidx) {
+			ndesc += sctx->isc_ntxd;
 			txq->ift_gen = 1;
 		}
 		MPASS(pi.ipi_new_pidx != pidx);
@@ -2520,7 +2517,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		goto skip_db;
 	}
 
-	for (i = 0; i < count; i++) {
+	for (i = 0; i < count && TXQ_AVAIL(txq) >= MAX_TX_DESC(txq->ift_ctx); i++) {
 		mp = _ring_peek_one(r, cidx, i);
 
 		if(iflib_encap(txq, mp)) {
