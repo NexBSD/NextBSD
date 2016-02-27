@@ -506,7 +506,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 		u32 cmd_type_len = txr->tx_base[j].read.cmd_type_len;
 		u32 olinfo_status = txr->tx_base[j].read.olinfo_status;
 
-		sbuf_printf(sb, "\tTXD[%d] addr: %08lx Cmd Len:%d  olinfo_status:%d eop: %d DD=%d\n",
+		sbuf_printf(sb, "\tTXD[%d] addr: %08lx Cmd Len:%d  olinfo_status:%x eop: %d DD=%d\n",
 			    j, buffer_addr, cmd_type_len, olinfo_status, buf->eop,
 			    buf->eop != -1 ? txr->tx_base[buf->eop].wb.status & IXGBE_TXD_STAT_DD : 0);
 		sbuf_printf(sb, "\tTXD[%d] [0]: %08x [1]: %08x [2]: %08x [3]: %08x\n",
