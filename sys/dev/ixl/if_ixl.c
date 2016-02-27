@@ -371,7 +371,7 @@ static struct if_shared_ctx ixl_sctx_init = {
 	.isc_q_align = PAGE_SIZE,/* max(DBA_ALIGN, PAGE_SIZE) */
 	.isc_tx_maxsize = IXL_TSO_SIZE,
 
-	.isc_tx_maxsegsize = PAGE_SIZE*4,
+	.isc_tx_maxsegsize = PAGE_SIZE,
 
 	.isc_rx_maxsize = PAGE_SIZE*4,
 	.isc_rx_nsegments = 1,
