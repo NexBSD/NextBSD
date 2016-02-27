@@ -94,10 +94,24 @@ ixgbe_tx_ctx_setup(struct ixgbe_adv_tx_context_desc *TXD, if_pkt_info_t pi)
 	vlan_macip_lens |= (htole16(pi->ipi_vtag) << IXGBE_ADVTXD_VLAN_SHIFT);
 	vlan_macip_lens |= pi->ipi_ehdrlen << IXGBE_ADVTXD_MACLEN_SHIFT;
 
+	pktlen = pi->ipi_len;
+	/* First check if TSO is to be used */
+	if (pi->ipi_csum_flags & CSUM_TSO) {
+		/* This is used in the transmit desc in encap */
+		pktlen = pi->ipi_len - pi->ipi_ehdrlen - pi->ipi_ip_hlen - pi->ipi_tcp_hlen;
+
+		olinfo_status |= pktlen << IXGBE_ADVTXD_PAYLEN_SHIFT;
+		mss_l4len_idx |= (pi->ipi_tso_segsz << IXGBE_ADVTXD_MSS_SHIFT);
+		mss_l4len_idx |= (pi->ipi_tcp_hlen << IXGBE_ADVTXD_L4LEN_SHIFT);
+	}
+
+	olinfo_status |= pktlen << IXGBE_ADVTXD_PAYLEN_SHIFT;
+
 	if (pi->ipi_flags & IPI_TX_IPV4) {
 		type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_IPV4;
 		/* Tell transmit desc to also do IPv4 checksum. */
-		olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
+		if (pi->ipi_csum_flags & (CSUM_IP|CSUM_TSO))
+			olinfo_status |= IXGBE_TXD_POPTS_IXSM << 8;
 	} else if (pi->ipi_flags & IPI_TX_IPV6)
 		type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_IPV6;
 	else
@@ -124,19 +138,10 @@ ixgbe_tx_ctx_setup(struct ixgbe_adv_tx_context_desc *TXD, if_pkt_info_t pi)
 		goto no_offloads;
 		break;
 	}
+/* Insert L4 checksum into data descriptors */
+	olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
 
-	/* First check if TSO is to be used */
-	if (pi->ipi_csum_flags & CSUM_TSO) {
-		/* This is used in the transmit desc in encap */
-		pktlen = pi->ipi_len - pi->ipi_ehdrlen - pi->ipi_ip_hlen - pi->ipi_tcp_hlen;
-
-		olinfo_status |= pktlen << IXGBE_ADVTXD_PAYLEN_SHIFT;
-		mss_l4len_idx |= (pi->ipi_tso_segsz << IXGBE_ADVTXD_MSS_SHIFT);
-		mss_l4len_idx |= (pi->ipi_tcp_hlen << IXGBE_ADVTXD_L4LEN_SHIFT);
-	} else {
-		olinfo_status |= pi->ipi_len << IXGBE_ADVTXD_PAYLEN_SHIFT;
-	}
-	no_offloads:
+no_offloads:
 	type_tucmd_mlhl |= IXGBE_ADVTXD_DCMD_DEXT | IXGBE_ADVTXD_DTYP_CTXT;
 
 	/* Now copy bits into descriptor */
@@ -174,7 +179,7 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	TXD = (struct ixgbe_adv_tx_context_desc *) &txr->tx_base[first];
 
 
-	if (pi->ipi_csum_flags & CSUM_OFFLOAD || IXGBE_IS_X550VF(sc)) {
+	if (pi->ipi_csum_flags & CSUM_OFFLOAD || IXGBE_IS_X550VF(sc) || pi->ipi_vtag) {
 		/*********************************************
 		 * Set up the appropriate offload context
 		 * this will consume the first descriptor
