@@ -1137,8 +1137,7 @@ ixv_allocate_pci_resources(if_ctx_t ctx)
 
 	/* Pick up the tuneable queues */
 	adapter->num_queues = ixv_num_queues;
-	adapter->hw.back = &adapter->osdep;
-
+	adapter->hw.back = adapter;
 	return (0);
 }
 
