@@ -451,7 +451,7 @@ SYSCTL_INT(_net_iflib, OID_AUTO, min_tx_latency, CTLFLAG_RW,
 		   &iflib_min_tx_latency, 0, "minimize transmit latency at the possibel expense of throughput");
 /* determined by iflib */
 static int iflib_num_queues = 0;
-SYSCTL_INT(_net_iflib, OID_AUTO, num_queues, CTLFLAG_RDTUN, &iflib_num_queues, 0,
+SYSCTL_INT(_net_iflib, OID_AUTO, num_queues, CTLFLAG_RWTUN, &iflib_num_queues, 0,
     "Number of queues to configure, 0 indicates autoconfigure");
 
 
