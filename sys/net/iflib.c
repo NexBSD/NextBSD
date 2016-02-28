@@ -279,10 +279,9 @@ typedef struct iflib_sw_desc {
 
 struct iflib_txq {
 	if_ctx_t	ift_ctx;
-	uint64_t	ift_flags;
 	uint32_t	ift_in_use;
 	uint32_t	ift_size;
-	uint32_t	ift_processed; /* need to have device tx interrupt update this with credits */
+	uint32_t	ift_processed;
 	uint32_t	ift_cleaned;
 	uint32_t	ift_cidx;
 	uint32_t	ift_cidx_processed;
@@ -290,14 +289,11 @@ struct iflib_txq {
 	uint32_t	ift_gen;
 	uint32_t	ift_db_pending;
 	uint32_t	ift_npending;
-	uint32_t	ift_tqid;
-	uint64_t	ift_tx_direct_packets;
-	uint64_t	ift_tx_direct_bytes;
 	uint64_t	ift_no_tx_dma_setup;
 	uint64_t	ift_no_desc_avail;
 	uint64_t	ift_mbuf_defrag_failed;
+	uint64_t	ift_mbuf_defrag;
 	uint64_t	ift_tx_irq;
-	uint32_t	ift_stop_thres;
 	int		ift_closed;
 	struct callout	ift_timer;
 	struct callout	ift_db_check;
@@ -1683,7 +1679,8 @@ iflib_timer(void *arg)
 		(ctx->ifc_pause_frames == 0))
 		goto hung;
 
-	if (TXQ_AVAIL(txq) <= 2*scctx->isc_tx_nsegments)
+	if (TXQ_AVAIL(txq) <= 2*scctx->isc_tx_nsegments ||
+	    ifmp_ring_is_stalled(txq->ift_br[0]))
 		GROUPTASK_ENQUEUE(&txq->ift_task);
 
 	ctx->ifc_pause_frames = 0;
@@ -1810,8 +1807,8 @@ iflib_stop(if_ctx_t ctx)
 			iflib_txsd_free(ctx, txq, txsd);
 		}
 		txq->ift_processed = txq->ift_cleaned = txq->ift_cidx_processed = 0;
-		txq->ift_in_use = txq->ift_cidx = txq->ift_pidx = 0;
-		txq->ift_closed = 0;
+		txq->ift_in_use = txq->ift_cidx = txq->ift_pidx = txq->ift_no_desc_avail = 0;
+		txq->ift_closed = txq->ift_mbuf_defrag = txq->ift_mbuf_defrag_failed = 0;
 		ifmp_ring_reset_stats(txq->ift_br[0]);
 		qset = &ctx->ifc_qsets[txq->ift_id];
 		for (j = 0, di = qset->ifq_ifdi; j < qset->ifq_nhwqs; j++, di++)
@@ -2278,6 +2275,7 @@ defrag:
 					*m_headp = NULL;
 					err = ENOBUFS;
 				} else {
+					txq->ift_mbuf_defrag++;
 					*m_headp = m_head;
 					goto retry;
 				}
@@ -2571,7 +2569,6 @@ _task_fn_tx(void *context, int pending)
 
 	if (!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING))
 		return;
-
 	ifmp_ring_check_drainage(txq->ift_br[0], IFLIB_BUDGET);
 }
 
@@ -4216,6 +4213,15 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 				       CTLFLAG_RD,
 				       &fl->ifl_credits, 1, "credits available");
 		}
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "mbuf_defrag",
+				   CTLFLAG_RD,
+				   &txq->ift_mbuf_defrag, "# of times m_defrag was called");
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "mbuf_defrag_failed",
+				   CTLFLAG_RD,
+				   &txq->ift_mbuf_defrag_failed, "# of times m_defrag failed");
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "no_desc_avail",
+				   CTLFLAG_RD,
+				   &txq->ift_mbuf_defrag_failed, "# of times no descriptors were available");
 		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_pidx",
 				   CTLFLAG_RD,
 				   &txq->ift_pidx, 1, "Producer Index");
