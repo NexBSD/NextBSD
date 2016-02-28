@@ -1709,7 +1709,7 @@ iflib_init_locked(if_ctx_t ctx)
 	/* Set hardware offload abilities */
 	if_clearhwassist(ifp);
 	if (if_getcapenable(ifp) & IFCAP_TXCSUM)
-		if_sethwassistbits(ifp, CSUM_TCP | CSUM_UDP, 0);
+		if_sethwassistbits(ifp, CSUM_IP | CSUM_TCP | CSUM_UDP, 0);
 	if (if_getcapenable(ifp) & IFCAP_TXCSUM_IPV6)
 		if_sethwassistbits(ifp,  (CSUM_TCP_IPV6 | CSUM_UDP_IPV6), 0);
 	if (if_getcapenable(ifp) & IFCAP_TSO4)
