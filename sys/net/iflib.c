@@ -550,6 +550,8 @@ SYSCTL_INT(_net_iflib, OID_AUTO, verbose_debug, CTLFLAG_RW,
 
 #endif
 
+
+
 #define IFLIB_DEBUG 0
 
 static void iflib_tx_structures_free(if_ctx_t ctx);
@@ -564,6 +566,7 @@ static void iflib_txq_check_drain(iflib_txq_t txq, int budget);
 static uint32_t iflib_txq_can_drain(struct ifmp_ring *);
 static int iflib_register(if_ctx_t);
 static void iflib_init_locked(if_ctx_t ctx);
+static void iflib_add_device_sysctl(if_ctx_t ctx);
 
 
 #ifdef DEV_NETMAP
@@ -3139,6 +3142,8 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		goto fail_detach;
 	}
 	*ctxp = ctx;
+
+	iflib_add_device_sysctl(ctx);
 	return (0);
 fail_detach:
 	ether_ifdetach(ctx->ifc_ifp);
@@ -4122,4 +4127,63 @@ msi:
 	}
 
 	return (vectors);
+}
+
+#define NAME_BUFLEN 32
+static void
+iflib_add_device_sysctl(if_ctx_t ctx)
+{
+	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
+        device_t dev = iflib_get_dev(ctx);
+	struct sysctl_oid_list *child;
+	struct sysctl_ctx_list *ctx_list;
+	iflib_fl_t fl;
+	iflib_txq_t txq;
+	iflib_rxq_t rxq;
+	int i, j;
+	char namebuf[NAME_BUFLEN];
+	struct sysctl_oid *queue_node, *fl_node;
+	struct sysctl_oid_list *queue_list, *fl_list;
+	ctx_list = device_get_sysctl_ctx(dev);
+	child = SYSCTL_CHILDREN(device_get_sysctl_tree(dev));
+
+	for (i = 0, txq = ctx->ifc_txqs, rxq = ctx->ifc_rxqs; i < scctx->isc_nqsets; i++, txq++, rxq++) {
+		snprintf(namebuf, NAME_BUFLEN, "queue%d", i);
+		queue_node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, namebuf,
+					     CTLFLAG_RD, NULL, "Queue Name");
+		queue_list = SYSCTL_CHILDREN(queue_node);
+		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++) {
+			snprintf(namebuf, NAME_BUFLEN, "fl%d", i);
+			fl_node = SYSCTL_ADD_NODE(ctx_list, queue_list, OID_AUTO, namebuf,
+						     CTLFLAG_RD, NULL, "freelist Name");
+			fl_list = SYSCTL_CHILDREN(queue_node);
+			SYSCTL_ADD_INT(ctx_list, fl_list, OID_AUTO, "pidx",
+				       CTLFLAG_RD,
+				       &fl->ifl_pidx, 1, "Producer Index");
+			SYSCTL_ADD_INT(ctx_list, fl_list, OID_AUTO, "cidx",
+				       CTLFLAG_RD,
+				       &fl->ifl_cidx, 1, "Consumer Index");
+		}
+		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_pidx",
+				   CTLFLAG_RD,
+				   &txq->ift_pidx, 1, "Producer Index");
+		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cidx",
+				   CTLFLAG_RD,
+				   &txq->ift_cidx, 1, "Consumer Index");
+		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cidx_processed",
+				   CTLFLAG_RD,
+				   &txq->ift_cidx_processed, 1, "Consumer Index seen by credit update");
+		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_processed",
+				   CTLFLAG_RD,
+				   &txq->ift_cidx_processed, 1, "descriptors procesed for clean");
+		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_in_use",
+				   CTLFLAG_RD,
+				   &txq->ift_in_use, 1, "descriptors in use");
+		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cleaned",
+				   CTLFLAG_RD,
+				   &txq->ift_cleaned, 1, "total cleaned");
+		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cidx",
+				   CTLFLAG_RD,
+				   &txq->ift_cidx, 1, "Consumer Index");
+	}
 }
