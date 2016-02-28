@@ -4142,6 +4142,7 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 	iflib_rxq_t rxq;
 	int i, j;
 	char namebuf[NAME_BUFLEN];
+	char *qfmt;
 	struct sysctl_oid *queue_node, *fl_node, *node;
 	struct sysctl_oid_list *queue_list, *fl_list;
 	ctx_list = device_get_sysctl_ctx(dev);
@@ -4150,13 +4151,19 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 	node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, "iflib",
 					     CTLFLAG_RD, NULL, "IFLIB fields");
 	child = SYSCTL_CHILDREN(node);
+	if (scctx->isc_nqsets > 100)
+		qfmt = "q%03d";
+	else if (scctx->isc_nqsets > 10)
+		qfmt = "q%02d";
+	else
+		qfmt = "q%d";
 	for (i = 0, txq = ctx->ifc_txqs, rxq = ctx->ifc_rxqs; i < scctx->isc_nqsets; i++, txq++, rxq++) {
-		snprintf(namebuf, NAME_BUFLEN, "q%03d", i);
+		snprintf(namebuf, NAME_BUFLEN, qfmt, i);
 		queue_node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, namebuf,
 					     CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++) {
-			snprintf(namebuf, NAME_BUFLEN, "fl%d", i);
+			snprintf(namebuf, NAME_BUFLEN, "rxq_fl%d", j);
 			fl_node = SYSCTL_ADD_NODE(ctx_list, queue_list, OID_AUTO, namebuf,
 						     CTLFLAG_RD, NULL, "freelist Name");
 			fl_list = SYSCTL_CHILDREN(fl_node);
@@ -4166,6 +4173,9 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 			SYSCTL_ADD_INT(ctx_list, fl_list, OID_AUTO, "cidx",
 				       CTLFLAG_RD,
 				       &fl->ifl_cidx, 1, "Consumer Index");
+			SYSCTL_ADD_INT(ctx_list, fl_list, OID_AUTO, "credits",
+				       CTLFLAG_RD,
+				       &fl->ifl_credits, 1, "credits available");
 		}
 		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_pidx",
 				   CTLFLAG_RD,
