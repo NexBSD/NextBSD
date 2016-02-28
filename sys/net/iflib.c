@@ -4196,5 +4196,28 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cleaned",
 				   CTLFLAG_RD,
 				   &txq->ift_cleaned, 1, "total cleaned");
+		SYSCTL_ADD_UQUAD(ctx_list, queue_list, OID_AUTO, "ring_state",
+				 CTLFLAG_RD,  __DEVOLATILE(uint64_t *, &txq->ift_br[0]->state),
+				 "state of soft ring");
+
+		SYSCTL_ADD_COUNTER_U64(ctx_list, queue_list, OID_AUTO, "r_enqueues",
+				       CTLFLAG_RD, &txq->ift_br[0]->enqueues,
+				       "# of enqueues to the mp_ring for this queue");
+		SYSCTL_ADD_COUNTER_U64(ctx_list, queue_list, OID_AUTO, "r_drops",
+				       CTLFLAG_RD, &txq->ift_br[0]->drops,
+				       "# of drops in the mp_ring for this queue");
+		SYSCTL_ADD_COUNTER_U64(ctx_list, queue_list, OID_AUTO, "r_starts",
+				       CTLFLAG_RD, &txq->ift_br[0]->starts,
+				       "# of normal consumer starts in the mp_ring for this queue");
+		SYSCTL_ADD_COUNTER_U64(ctx_list, queue_list, OID_AUTO, "r_stalls",
+				       CTLFLAG_RD, &txq->ift_br[0]->stalls,
+					       "# of consumer stalls in the mp_ring for this queue");
+		SYSCTL_ADD_COUNTER_U64(ctx_list, queue_list, OID_AUTO, "r_restarts",
+			       CTLFLAG_RD, &txq->ift_br[0]->restarts,
+				       "# of consumer restarts in the mp_ring for this queue");
+		SYSCTL_ADD_COUNTER_U64(ctx_list, queue_list, OID_AUTO, "r_abdications",
+				       CTLFLAG_RD, &txq->ift_br[0]->abdications,
+				       "# of consumer abdications in the mp_ring for this queue");
+
 	}
 }
