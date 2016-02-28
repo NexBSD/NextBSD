@@ -178,9 +178,8 @@ ixl_tx_setup_offload(struct ixl_queue *que,
  *
  **********************************************************************/
 static int
-ixl_tso_setup(struct ixl_queue *que, if_pkt_info_t pi)
+ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 {
-	struct tx_ring			*txr = &que->txr;
 	struct i40e_tx_context_desc	*TXD;
 	struct ixl_tx_buf		*buf;
 	u32				cmd, mss, type, tsolen;
@@ -258,7 +257,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 			if (ixl_tso_detect_sparse(segs, nsegs, pi->ipi_tso_segsz))
 				return (EFBIG);
 
-			i = ixl_tso_setup(que, pi);
+			i = ixl_tso_setup(txr, pi);
 		}
 		ixl_tx_setup_offload(que, pi, &cmd, &off);
 	}
@@ -295,10 +294,8 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	    htole64(((u64)IXL_TXD_CMD << I40E_TXD_QW1_CMD_SHIFT));
 	pi->ipi_new_pidx = i;
 
-
 	/* Set the index of the descriptor that will be marked done */
-	buf = &txr->tx_buffers[first];
-	buf->eop_index = last;
+	txr->tx_buffers[first].eop_index = last;
 
 	++txr->total_packets;
 	return (0);
