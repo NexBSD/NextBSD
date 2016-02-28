@@ -5,6 +5,7 @@
  *
  ********************************************************************/
 #define IXGBE_REGS_LEN  1139
+extern if_shared_ctx_t ixgbe_sctx;
 
 int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 {
@@ -13,6 +14,8 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	struct ix_queue *que = &adapter->queues[0];
 	struct rx_ring *rxr = &que->rxr;
 	struct tx_ring *txr = &que->txr;
+	int ntxd = ixgbe_sctx->isc_ntxd;
+	int nrxd = ixgbe_sctx->isc_nrxd;
 
 	struct sbuf *sb;
 	u32 *regs_buff = (u32 *)malloc(sizeof(u32) * IXGBE_REGS_LEN, M_DEVBUF, M_NOWAIT);
@@ -493,13 +496,13 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	/* same as RTTQCNRR */
 	sbuf_printf(sb, "\tIXGBE_RTTBCNRD\t %08x\n", regs_buff[1136]);
 
-	for (j = 0; j < 64; j++) {
+	for (j = 0; j < nrxd; j++) {
 		u32 staterr = le32toh(rxr->rx_base[j].wb.upper.status_error);
 		u32 length =  le32toh(rxr->rx_base[j].wb.upper.length);
 		sbuf_printf(sb, "\tReceive Descriptor Address %d: %08lx  Error:%d  Length:%d\n", j, rxr->rx_base[j].read.pkt_addr, staterr, length);
 	}
 
-	for (j = 0; j < 64; j++) {
+	for (j = 0; j < ntxd; j++) {
 		struct ixgbe_tx_buf *buf = &txr->tx_buffers[j];
 		unsigned int *ptr = (unsigned int *)&txr->tx_base[j].read;
 
