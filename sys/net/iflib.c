@@ -1166,7 +1166,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
 	ntsosegments = ctx->ifc_softc_ctx.isc_tx_tso_segments_max;
 	MPASS(sctx->isc_ntxd > 0);
 	MPASS(nsegments > 0);
-
+	MPASS(ntsosegments > 0);
 	/*
 	 * Setup DMA descriptor areas.
 	 */
@@ -2760,7 +2760,7 @@ iflib_if_qflush(if_t ifp)
 	ctx->ifc_flags |= IFC_QFLUSH;
 	CTX_UNLOCK(ctx);
 	for (i = 0; i < NQSETS(ctx); i++, txq++)
-		while (!ifmp_ring_is_idle(txq->ift_br[0]))
+		while (!(ifmp_ring_is_idle(txq->ift_br[0]) || ifmp_ring_is_stalled(txq->ift_br[0])))
 			iflib_txq_check_drain(txq, 0);
 	CTX_LOCK(ctx);
 	ctx->ifc_flags &= ~IFC_QFLUSH;

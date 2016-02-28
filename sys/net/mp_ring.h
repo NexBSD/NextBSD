@@ -64,5 +64,5 @@ int ifmp_ring_enqueue(struct ifmp_ring *, void **, int, int);
 void ifmp_ring_check_drainage(struct ifmp_ring *, int);
 void ifmp_ring_reset_stats(struct ifmp_ring *);
 int ifmp_ring_is_idle(struct ifmp_ring *);
-
+int ifmp_ring_is_stalled(struct ifmp_ring *r);
 #endif
