@@ -506,7 +506,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 		struct ixgbe_tx_buf *buf = &txr->tx_buffers[j];
 		unsigned int *ptr = (unsigned int *)&txr->tx_base[j].read;
 
-		sbuf_printf(sb, "\tTXD[%d] [0]: %08x [1]: %08x [2]: %08x [3]: %08x  eop: %d DD=%d\n",
+		sbuf_printf(sb, "\tTXD[%03d] [0]: %08x [1]: %08x [2]: %08x [3]: %08x  eop: %d DD=%d\n",
 			    j, ptr[0], ptr[1], ptr[2], ptr[3], buf->eop,
 			    buf->eop != -1 ? txr->tx_base[buf->eop].wb.status & IXGBE_TXD_STAT_DD : 0);
 
