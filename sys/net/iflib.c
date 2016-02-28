@@ -1164,11 +1164,6 @@ iflib_txsd_alloc(iflib_txq_t txq)
 	iflib_sd_t txsd;
 	int err, i, nsegments, ntsosegments;
 
-	if (ctx->ifc_softc_ctx.isc_tx_nsegments > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
-		ctx->ifc_softc_ctx.isc_tx_nsegments = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
-	if (ctx->ifc_softc_ctx.isc_tx_tso_segments_max > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
-		ctx->ifc_softc_ctx.isc_tx_tso_segments_max = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
-
 	nsegments = ctx->ifc_softc_ctx.isc_tx_nsegments;
 	ntsosegments = ctx->ifc_softc_ctx.isc_tx_tso_segments_max;
 	MPASS(sctx->isc_ntxd > 0);
@@ -2376,7 +2371,7 @@ defrag:
 #define QIDX(ctx, m) (((m)->m_pkthdr.flowid % NQSETS(ctx)) + FIRST_QSET(ctx))
 #define DESC_RECLAIMABLE(q) ((int)((q)->ift_processed - (q)->ift_cleaned - (q)->ift_ctx->ifc_softc_ctx.isc_tx_nsegments))
 #define RECLAIM_THRESH(ctx) ((ctx)->ifc_sctx->isc_tx_reclaim_thresh)
-#define MAX_TX_DESC(ctx) ((ctx)->ifc_softc_ctx.isc_tx_nsegments)
+#define MAX_TX_DESC(ctx) ((ctx)->ifc_softc_ctx.isc_tx_tso_segments_max)
 
 
 
@@ -3076,6 +3071,7 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 {
 	int err, rid, msix, msix_bar;
 	if_ctx_t ctx;
+	if_t ifp;
 	if_softc_ctx_t scctx;
 
 
@@ -3104,6 +3100,19 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		ctx->ifc_flags |= IFC_DMAR;
 	scctx = &ctx->ifc_softc_ctx;
 	msix_bar = scctx->isc_msix_bar;
+
+	if (scctx->isc_tx_nsegments > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
+		scctx->isc_tx_nsegments = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
+	if (scctx->isc_tx_tso_segments_max > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
+		scctx->isc_tx_tso_segments_max = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
+
+#if __FreeBSD_version >= 1100045
+	ifp = ctx->ifc_ifp;
+	/* TSO parameters - dig these out of the data sheet - simply correspond to tag setup */
+	ifp->if_hw_tsomaxsegcount = scctx->isc_tx_tso_segments_max;
+	ifp->if_hw_tsomax = scctx->isc_tx_tso_size_max;
+	ifp->if_hw_tsomaxsegsize = scctx->isc_tx_tso_segsize_max;
+#endif
 
 	/*
 	** Now setup MSI or MSI/X, should
@@ -3414,7 +3423,6 @@ static int
 iflib_register(if_ctx_t ctx)
 {
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
-	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 	driver_t *driver = sctx->isc_driver;
 	device_t dev = ctx->ifc_dev;
 	if_t ifp;
@@ -3450,12 +3458,6 @@ iflib_register(if_ctx_t ctx)
 	if_setcapabilities(ifp, 0);
 	if_setcapenable(ifp, 0);
 
-#if __FreeBSD_version >= 1100045
-	/* TSO parameters - dig these out of the data sheet - simply correspond to tag setup */
-	ifp->if_hw_tsomaxsegcount = scctx->isc_tx_tso_segments_max;
-	ifp->if_hw_tsomax = scctx->isc_tx_tso_size_max;
-	ifp->if_hw_tsomaxsegsize = scctx->isc_tx_tso_segsize_max;
-#endif
 	ctx->ifc_vlan_attach_event =
 		EVENTHANDLER_REGISTER(vlan_config, iflib_vlan_register, ctx,
 							  EVENTHANDLER_PRI_FIRST);
