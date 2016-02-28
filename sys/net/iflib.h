@@ -87,12 +87,12 @@ typedef struct if_pkt_info {
 	uint16_t			ipi_mflags;	/* packet mbuf flags */
 	uint16_t			ipi_vtag;	/* VLAN tag */
 	uint16_t			ipi_etype;	/* ether header type */
+	uint32_t			ipi_tcp_seq;	/* tcp seqno */
 	uint8_t				ipi_ehdrlen;	/* ether header length */
 	uint8_t				ipi_ip_hlen;	/* ip header length */
 	uint8_t				ipi_tcp_hlen;	/* tcp header length */
 	uint8_t				ipi_tcp_hflags;	/* tcp header flags */
 	uint8_t				ipi_ipproto;	/* ip protocol */
-
 	/* implied padding */
 } *if_pkt_info_t;
 
