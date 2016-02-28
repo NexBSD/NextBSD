@@ -1811,6 +1811,7 @@ iflib_stop(if_ctx_t ctx)
 		txq->ift_processed = txq->ift_cleaned = txq->ift_cidx_processed = 0;
 		txq->ift_in_use = txq->ift_cidx = txq->ift_pidx = 0;
 		txq->ift_closed = 0;
+		ifmp_ring_reset_stats(txq->ift_br[0]);
 		qset = &ctx->ifc_qsets[txq->ift_id];
 		for (j = 0, di = qset->ifq_ifdi; j < qset->ifq_nhwqs; j++, di++)
 			bzero((void *)di->idi_vaddr, di->idi_size);
