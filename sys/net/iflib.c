@@ -413,9 +413,8 @@ static int enable_msix = 1;
 #define CTX_LOCK_DESTROY(ctx) mtx_destroy(&(ctx)->ifc_mtx)
 
 
-#define TX_LOCK(txq)	mtx_lock(&txq->ift_mtx)
-#define TX_TRY_LOCK(txq)	mtx_trylock(&txq->ift_mtx)
-#define TX_UNLOCK(txq) 	mtx_unlock(&txq->ift_mtx)
+#define CALLOUT_LOCK(txq)	mtx_lock(&txq->ift_mtx)
+#define CALLOUT_UNLOCK(txq) 	mtx_unlock(&txq->ift_mtx)
 
 
 /* Our boot-time initialization hook */
@@ -447,7 +446,10 @@ TASKQGROUP_DEFINE(if_config_tqg, 1, 1);
 static SYSCTL_NODE(_net, OID_AUTO, iflib, CTLFLAG_RD, 0,
                    "iflib driver parameters");
 
-static int iflib_min_tx_latency;
+/*
+ * Don't defer doorbells until this is fixed XXX
+ */
+static int iflib_min_tx_latency = 1;
 
 SYSCTL_INT(_net_iflib, OID_AUTO, min_tx_latency, CTLFLAG_RW,
 		   &iflib_min_tx_latency, 0, "minimize transmit latency at the possibel expense of throughput");
@@ -1681,11 +1683,14 @@ iflib_timer(void *arg)
 		(ctx->ifc_pause_frames == 0))
 		goto hung;
 
-	if (TXQ_AVAIL(txq) <= scctx->isc_tx_nsegments)
+	if (TXQ_AVAIL(txq) <= 2*scctx->isc_tx_nsegments)
 		GROUPTASK_ENQUEUE(&txq->ift_task);
 
 	ctx->ifc_pause_frames = 0;
-	callout_reset_on(&txq->ift_timer, hz/2, iflib_timer, txq, txq->ift_timer.c_cpu);
+	CALLOUT_LOCK(txq);
+	if (if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING) 
+		callout_reset_on(&txq->ift_timer, hz/2, iflib_timer, txq, txq->ift_timer.c_cpu);
+	CALLOUT_UNLOCK(txq);
 	return;
 hung:
 	CTX_LOCK(ctx);
@@ -1727,11 +1732,11 @@ iflib_init_locked(if_ctx_t ctx)
 		if_sethwassistbits(ifp, CSUM_IP6_TSO, 0);
 
 	for (i = 0, txq = ctx->ifc_txqs, rxq = ctx->ifc_rxqs; i < sctx->isc_nqsets; i++, txq++, rxq++) {
-		TX_LOCK(txq);
+		CALLOUT_LOCK(txq);
 		callout_stop(&txq->ift_timer);
 		callout_stop(&txq->ift_db_check);
+		CALLOUT_UNLOCK(txq);
 		iflib_netmap_txq_init(ctx, txq);
-		TX_UNLOCK(txq);
 		iflib_netmap_rxq_init(ctx, rxq);
 	}
 
@@ -1797,9 +1802,7 @@ iflib_stop(if_ctx_t ctx)
 
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
 	for (i = 0; i < scctx->isc_nqsets; i++, txq++, rxq++) {
-		/* make sure all transmitters have completed before proceeding */
-		TX_LOCK(txq);
-		TX_UNLOCK(txq);
+		/* make sure all transmitters have completed before proceeding XXX */
 
 		/* clean any enqueued buffers */
 		iflib_txq_check_drain(txq, 0);
@@ -2118,14 +2121,11 @@ iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring)
 #endif
 		dbval_prev = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
 		/* the lock will only ever be contended in the !min_latency case */
-		if (TX_TRY_LOCK(txq) == 0)
-			return;
 		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
 		if (dbval == dbval_prev) {
 			ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
 			txq->ift_db_pending = txq->ift_npending = 0;
 		}
-		TX_UNLOCK(txq);
 	}
 }
 
@@ -2490,9 +2490,10 @@ static uint32_t
 iflib_txq_can_drain(struct ifmp_ring *r)
 {
 	iflib_txq_t txq = r->cookie;
+	if_ctx_t ctx = txq->ift_ctx;
 
-	iflib_completed_tx_reclaim(txq, RECLAIM_THRESH(txq->ift_ctx));
-	return (TXQ_AVAIL(txq) >= MAX_TX_DESC(txq->ift_ctx));
+	return ((TXQ_AVAIL(txq) >= MAX_TX_DESC(ctx)) ||
+		ctx->isc_txd_credits_update(ctx->ifc_softc, txq->ift_id, txq->ift_cidx_processed, false));
 }
 
 static uint32_t
@@ -2516,10 +2517,10 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	iflib_completed_tx_reclaim(txq, RECLAIM_THRESH(ctx));
 	if (if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_OACTIVE ) {
 		txq->ift_qstatus = IFLIB_QUEUE_IDLE;
-		TX_LOCK(txq);
+		CALLOUT_LOCK(txq);
 		callout_stop(&txq->ift_timer);
 		callout_stop(&txq->ift_db_check);
-		TX_UNLOCK(txq);
+		CALLOUT_UNLOCK(txq);
 		DBG_COUNTER_INC(txq_drain_oactive);
 		return (0);
 	}
@@ -2554,7 +2555,7 @@ done:
 		iflib_txd_db_check(ctx, txq, 1);
 	else if (txq->ift_db_pending && (callout_pending(&txq->ift_db_check) == 0))
 		callout_reset_on(&txq->ift_db_check, 1, iflib_txd_deferred_db_check,
-		    txq, txq->ift_db_check.c_cpu);
+				 txq, txq->ift_db_check.c_cpu);
 skip_db:
 	if_inc_counter(ifp, IFCOUNTER_OBYTES, bytes_sent);
 	if_inc_counter(ifp, IFCOUNTER_OPACKETS, pkt_sent);
@@ -2614,9 +2615,9 @@ _task_fn_admin(void *context, int pending)
 
 	CTX_LOCK(ctx);
 	for (txq = ctx->ifc_txqs, i = 0; i < sctx->isc_nqsets; i++, txq++) {
-		TX_LOCK(txq);
+		CALLOUT_LOCK(txq);
 		callout_stop(&txq->ift_timer);
-		TX_UNLOCK(txq);
+		CALLOUT_UNLOCK(txq);
 	}
 	IFDI_UPDATE_ADMIN_STATUS(ctx);
 	for (txq = ctx->ifc_txqs, i = 0; i < sctx->isc_nqsets; i++, txq++)
@@ -3992,7 +3993,7 @@ iflib_tx_credits_update(if_ctx_t ctx, iflib_txq_t txq)
 	if (ctx->isc_txd_credits_update == NULL)
 		return (0);
 
-	if ((credits = ctx->isc_txd_credits_update(ctx->ifc_softc, txq->ift_id, txq->ift_cidx_processed)) == 0)
+	if ((credits = ctx->isc_txd_credits_update(ctx->ifc_softc, txq->ift_id, txq->ift_cidx_processed, true)) == 0)
 		return (0);
 
 	txq->ift_processed += credits;
