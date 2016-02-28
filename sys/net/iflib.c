@@ -4142,13 +4142,16 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 	iflib_rxq_t rxq;
 	int i, j;
 	char namebuf[NAME_BUFLEN];
-	struct sysctl_oid *queue_node, *fl_node;
+	struct sysctl_oid *queue_node, *fl_node, *node;
 	struct sysctl_oid_list *queue_list, *fl_list;
 	ctx_list = device_get_sysctl_ctx(dev);
 	child = SYSCTL_CHILDREN(device_get_sysctl_tree(dev));
 
+	node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, "iflib",
+					     CTLFLAG_RD, NULL, "IFLIB fields");
+	child = SYSCTL_CHILDREN(node);
 	for (i = 0, txq = ctx->ifc_txqs, rxq = ctx->ifc_rxqs; i < scctx->isc_nqsets; i++, txq++, rxq++) {
-		snprintf(namebuf, NAME_BUFLEN, "queue%d", i);
+		snprintf(namebuf, NAME_BUFLEN, "q%03d", i);
 		queue_node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, namebuf,
 					     CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
@@ -4156,7 +4159,7 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 			snprintf(namebuf, NAME_BUFLEN, "fl%d", i);
 			fl_node = SYSCTL_ADD_NODE(ctx_list, queue_list, OID_AUTO, namebuf,
 						     CTLFLAG_RD, NULL, "freelist Name");
-			fl_list = SYSCTL_CHILDREN(queue_node);
+			fl_list = SYSCTL_CHILDREN(fl_node);
 			SYSCTL_ADD_INT(ctx_list, fl_list, OID_AUTO, "pidx",
 				       CTLFLAG_RD,
 				       &fl->ifl_pidx, 1, "Producer Index");
@@ -4175,7 +4178,7 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 				   &txq->ift_cidx_processed, 1, "Consumer Index seen by credit update");
 		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_processed",
 				   CTLFLAG_RD,
-				   &txq->ift_cidx_processed, 1, "descriptors procesed for clean");
+				   &txq->ift_processed, 1, "descriptors procesed for clean");
 		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_in_use",
 				   CTLFLAG_RD,
 				   &txq->ift_in_use, 1, "descriptors in use");
