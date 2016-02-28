@@ -36,6 +36,7 @@
 #include <sys/module.h>
 #include <sys/kobj.h>
 #include <sys/rman.h>
+#include <sys/sbuf.h>
 #include <sys/smp.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
@@ -4137,6 +4138,28 @@ msi:
 
 	return (vectors);
 }
+static int
+mp_ring_state_handler(SYSCTL_HANDLER_ARGS)
+{
+	int rc;
+	uint16_t *state = ((uint16_t *)oidp->oid_arg1);
+	struct sbuf *sb;
+
+	/* XXX needed ? */
+	rc = sysctl_wire_old_buffer(req, 0);
+	MPASS(rc == 0);
+	if (rc != 0)
+		return (rc);
+	sb = sbuf_new_for_sysctl(NULL, NULL, 80, req);
+	MPASS(sb != NULL);
+	if (sb == NULL)
+		return (ENOMEM);
+	sbuf_printf(sb, "pidx_head: %04hx pidx_tail: %04hx cidx: %04hx flags: %04hx",
+		    state[0], state[1], state[2], state[3]);
+	rc = sbuf_finish(sb);
+	sbuf_delete(sb);
+        return(rc);
+}
 
 #define NAME_BUFLEN 32
 static void
@@ -4204,10 +4227,10 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cleaned",
 				   CTLFLAG_RD,
 				   &txq->ift_cleaned, 1, "total cleaned");
-		SYSCTL_ADD_UQUAD(ctx_list, queue_list, OID_AUTO, "ring_state",
-				 CTLFLAG_RD,  __DEVOLATILE(uint64_t *, &txq->ift_br[0]->state),
-				 "state of soft ring");
-
+		SYSCTL_ADD_PROC(ctx_list, queue_list, OID_AUTO, "ring_state",
+				CTLTYPE_UINT | CTLFLAG_RW, __DEVOLATILE(uint64_t *, &txq->ift_br[0]->state),
+				sizeof(&txq->ift_br[0]->state),
+				mp_ring_state_handler, "IU", "soft ring state");
 		SYSCTL_ADD_COUNTER_U64(ctx_list, queue_list, OID_AUTO, "r_enqueues",
 				       CTLFLAG_RD, &txq->ift_br[0]->enqueues,
 				       "# of enqueues to the mp_ring for this queue");
