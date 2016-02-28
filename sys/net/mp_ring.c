@@ -366,3 +366,15 @@ ifmp_ring_is_idle(struct ifmp_ring *r)
 
 	return (0);
 }
+
+int
+ifmp_ring_is_stalled(struct ifmp_ring *r)
+{
+	union ring_state s;
+
+	s.state = r->state;
+	if (s.pidx_head == s.pidx_tail && s.flags == STALLED)
+		return (1);
+
+	return (0);
+}
