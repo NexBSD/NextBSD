@@ -1687,10 +1687,8 @@ iflib_timer(void *arg)
 		GROUPTASK_ENQUEUE(&txq->ift_task);
 
 	ctx->ifc_pause_frames = 0;
-	CALLOUT_LOCK(txq);
 	if (if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING) 
 		callout_reset_on(&txq->ift_timer, hz/2, iflib_timer, txq, txq->ift_timer.c_cpu);
-	CALLOUT_UNLOCK(txq);
 	return;
 hung:
 	CTX_LOCK(ctx);
