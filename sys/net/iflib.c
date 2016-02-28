@@ -4161,7 +4161,7 @@ mp_ring_state_handler(SYSCTL_HANDLER_ARGS)
 	if (state[3] <= 3)
 		ring_state = ring_states[state[3]];
 
-	sbuf_printf(sb, "pidx_head: %04hx pidx_tail: %04hx cidx: %04hx state: %s",
+	sbuf_printf(sb, "pidx_head: %04hd pidx_tail: %04hd cidx: %04hd state: %s",
 		    state[0], state[1], state[2], ring_state);
 	rc = sbuf_finish(sb);
 	sbuf_delete(sb);
