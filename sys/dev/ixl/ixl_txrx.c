@@ -55,7 +55,7 @@ static void ixl_rx_checksum(if_rxd_info_t ri, u32 status, u32 error, u8 ptype);
 
 static int ixl_isc_txd_encap(void *arg, if_pkt_info_t pi);
 static void ixl_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx);
-static int ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx);
+static int ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx, bool clear);
 
 static void ixl_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count);
@@ -371,7 +371,7 @@ ixl_get_tx_head(struct ixl_queue *que)
  *
  **********************************************************************/
 static int
-ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx)
+ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx, bool clear)
 {
 	struct ixl_vsi		*vsi = arg;
 	struct ixl_queue	*que = &vsi->queues[qid];
@@ -410,15 +410,16 @@ ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx)
 	while (first != head) {
 		while (first != done) {
 			++processed;
-
-			buf->eop_index = -1;
+			if (clear)
+				buf->eop_index = -1;
 			if (++first == ixl_sctx->isc_ntxd)
 				first = 0;
 
 			buf = &txr->tx_buffers[first];
 			tx_desc = &txr->tx_base[first];
 		}
-		++txr->packets;
+		if (clear)
+			++txr->packets;
 		/* See if there is more work now */
 		last = buf->eop_index;
 		if (last == -1)

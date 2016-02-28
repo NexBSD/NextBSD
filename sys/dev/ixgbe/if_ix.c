@@ -350,10 +350,6 @@ SYSCTL_INT(_hw_ix, OID_AUTO, enable_msix, CTLFLAG_RDTUN, &ixgbe_enable_msix, 0,
  * can be overriden manually here.
  */
 #if 0
-/* determined by iflib */
-static int ixgbe_num_queues = 0;
-SYSCTL_INT(_hw_ix, OID_AUTO, num_queues, CTLFLAG_RDTUN, &ixgbe_num_queues, 0,
-    "Number of queues to configure, 0 indicates autoconfigure");
 #endif
 
 /*

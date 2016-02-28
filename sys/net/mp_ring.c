@@ -324,8 +324,7 @@ ifmp_ring_check_drainage(struct ifmp_ring *r, int budget)
 	union ring_state os, ns;
 
 	os.state = r->state;
-	if (os.flags != STALLED || os.pidx_head != os.pidx_tail ||
-	    r->can_drain(r) == 0)
+	if (os.flags != STALLED || os.pidx_head != os.pidx_tail || r->can_drain(r) == 0)
 		return;
 
 	MPASS(os.cidx != os.pidx_tail);	/* implied by STALLED */

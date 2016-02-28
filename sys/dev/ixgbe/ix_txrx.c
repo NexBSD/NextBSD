@@ -51,7 +51,7 @@
  *********************************************************************/
 static int ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi);
 static void ixgbe_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx);
-static int ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx);
+static int ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx, bool clear);
 
 static void ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count);
@@ -252,7 +252,7 @@ ixgbe_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx)
 }
 
 static int
-ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
+ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool clear)
 {
 	struct adapter   *sc = arg;
 	struct ix_queue  *que = &sc->queues[txqid];
@@ -280,7 +280,7 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
 		eopd = &txr->tx_base[eop];
 		if ((eopd->wb.status & IXGBE_TXD_STAT_DD) == 0) {
 			break;	/* I/O not complete */
-		} else
+		} else if (clear)
 			buf->eop = -1; /* clear indicate processed */
 
 		/*
@@ -297,7 +297,8 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
 			cidx = eop;
 		}
 		processed++;
-		++txr->packets;
+		if (clear)
+			++txr->packets;
 
 		/* Try the next packet */
 		txd++;
