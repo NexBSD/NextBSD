@@ -283,7 +283,6 @@ struct iflib_txq {
 	uint32_t	ift_size;
 	uint32_t	ift_processed; /* need to have device tx interrupt update this with credits */
 	uint32_t	ift_cleaned;
-	uint32_t	ift_stop_thres;
 	uint32_t	ift_cidx;
 	uint32_t	ift_cidx_processed;
 	uint32_t	ift_pidx;
@@ -297,6 +296,7 @@ struct iflib_txq {
 	uint64_t	ift_no_desc_avail;
 	uint64_t	ift_mbuf_defrag_failed;
 	uint64_t	ift_tx_irq;
+	uint32_t	ift_stop_thres;
 	int		ift_closed;
 	struct callout	ift_timer;
 	struct callout	ift_db_check;
@@ -1802,7 +1802,9 @@ iflib_stop(if_ctx_t ctx)
 		for (j = 0; j < sctx->isc_ntxd; j++, txsd++) {
 			iflib_txsd_free(ctx, txq, txsd);
 		}
-		txq->ift_cidx = txq->ift_pidx = 0;
+		txq->ift_processed = txq->ift_cleaned = txq->ift_cidx_processed = 0;
+		txq->ift_in_use = txq->ift_cidx = txq->ift_pidx = 0;
+		txq->ift_closed = 0;
 		qset = &ctx->ifc_qsets[txq->ift_id];
 		for (j = 0, di = qset->ifq_ifdi; j < qset->ifq_nhwqs; j++, di++)
 			bzero((void *)di->idi_vaddr, di->idi_size);
@@ -2187,7 +2189,6 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 			pi->ipi_tcp_hlen = th->th_off << 2;
 		}
 		if (IS_TSO4(pi)) {
-
 			if (__predict_false(ip->ip_p != IPPROTO_TCP))
 				return (ENXIO);
 
@@ -4195,8 +4196,5 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cleaned",
 				   CTLFLAG_RD,
 				   &txq->ift_cleaned, 1, "total cleaned");
-		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cidx",
-				   CTLFLAG_RD,
-				   &txq->ift_cidx, 1, "Consumer Index");
 	}
 }
