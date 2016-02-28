@@ -4097,21 +4097,21 @@ iflib_msix_init(if_ctx_t ctx)
 		queues = queuemsgs;
 #endif
 		queues = imin(CPU_COUNT(&ctx->ifc_cpus), queues);
-		if (iflib_num_queues > 0 && iflib_num_queues < queues)
-			queues = iflib_num_queues;
 		device_printf(dev, "pxm cpus: %d queue msgs: %d admincnt: %d\n",
 					  CPU_COUNT(&ctx->ifc_cpus), queuemsgs, admincnt);
 	} else {
 		device_printf(dev, "Unable to fetch CPU list\n");
 		/* Figure out a reasonable auto config value */
 		queues = min(queuemsgs, mp_ncpus);
-		device_printf(dev, "using %d queues\n", queues);
 	}
 #ifdef  RSS
 	/* If we're doing RSS, clamp at the number of RSS buckets */
 	if (queues > rss_getnumbuckets())
 		queues = rss_getnumbuckets();
 #endif
+	if (iflib_num_queues > 0 && iflib_num_queues < queues)
+		queues = iflib_num_queues;
+	device_printf(dev, "using %d queues\n", queues);
 
 	vectors = queues + admincnt;
 	if ((err = pci_alloc_msix(dev, &vectors)) == 0) {
@@ -4138,6 +4138,7 @@ msi:
 
 	return (vectors);
 }
+
 static int
 mp_ring_state_handler(SYSCTL_HANDLER_ARGS)
 {
