@@ -110,8 +110,6 @@ ixgbe_tx_ctx_setup(struct ixgbe_adv_tx_context_desc *TXD, if_pkt_info_t pi)
 	if (pi->ipi_csum_flags & CSUM_TSO) {
 		/* This is used in the transmit desc in encap */
 		pktlen = pi->ipi_len - pi->ipi_ehdrlen - pi->ipi_ip_hlen - pi->ipi_tcp_hlen;
-
-		olinfo_status |= pktlen << IXGBE_ADVTXD_PAYLEN_SHIFT;
 		mss_l4len_idx |= (pi->ipi_tso_segsz << IXGBE_ADVTXD_MSS_SHIFT);
 		mss_l4len_idx |= (pi->ipi_tcp_hlen << IXGBE_ADVTXD_L4LEN_SHIFT);
 	}
@@ -207,6 +205,8 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		/* Indicate the whole packet as payload when not doing TSO */
 		olinfo_status = pi->ipi_len << IXGBE_ADVTXD_PAYLEN_SHIFT;
 	}
+
+	olinfo_status |= IXGBE_ADVTXD_CC;
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seglen;
 		bus_addr_t segaddr;
