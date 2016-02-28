@@ -450,6 +450,11 @@ static int iflib_min_tx_latency;
 
 SYSCTL_INT(_net_iflib, OID_AUTO, min_tx_latency, CTLFLAG_RW,
 		   &iflib_min_tx_latency, 0, "minimize transmit latency at the possibel expense of throughput");
+/* determined by iflib */
+static int iflib_num_queues = 0;
+SYSCTL_INT(_net_iflib, OID_AUTO, num_queues, CTLFLAG_RDTUN, &iflib_num_queues, 0,
+    "Number of queues to configure, 0 indicates autoconfigure");
+
 
 
 #if IFLIB_DEBUG_COUNTERS
@@ -4090,6 +4095,8 @@ iflib_msix_init(if_ctx_t ctx)
 		queues = queuemsgs;
 #endif
 		queues = imin(CPU_COUNT(&ctx->ifc_cpus), queues);
+		if (iflib_num_queues > 0 && iflib_num_queues < queues)
+			queues = iflib_num_queues;
 		device_printf(dev, "pxm cpus: %d queue msgs: %d admincnt: %d\n",
 					  CPU_COUNT(&ctx->ifc_cpus), queuemsgs, admincnt);
 	} else {
