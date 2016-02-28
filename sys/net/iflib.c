@@ -443,9 +443,9 @@ static SYSCTL_NODE(_net, OID_AUTO, iflib, CTLFLAG_RD, 0,
                    "iflib driver parameters");
 
 /*
- * Don't defer doorbells until this is fixed XXX
+ * XXX need to ensure that this can't accidentally cause the head to be moved backwards 
  */
-static int iflib_min_tx_latency = 1;
+static int iflib_min_tx_latency = 0;
 
 SYSCTL_INT(_net_iflib, OID_AUTO, min_tx_latency, CTLFLAG_RW,
 		   &iflib_min_tx_latency, 0, "minimize transmit latency at the possibel expense of throughput");
@@ -2131,9 +2131,14 @@ iflib_txd_deferred_db_check(void * arg)
 	if_ctx_t ctx = txq->ift_ctx;
 	uint32_t dbval;
 
-	dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
-	ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
-	txq->ift_db_pending = txq->ift_npending = 0;
+	/* simple non-zero boolean so use bitwise OR */
+	if (txq->ift_db_pending | txq->ift_npending) {
+		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
+		ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
+		txq->ift_db_pending = txq->ift_npending = 0;
+	}
+	/* small value - just to handle breaking stalls */
+	iflib_txq_check_drain(txq, 4);
 }
 
 #ifdef PKT_DEBUG
@@ -2189,6 +2194,7 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		if (pi->ipi_ipproto == IPPROTO_TCP) {
 			pi->ipi_tcp_hflags = th->th_flags;
 			pi->ipi_tcp_hlen = th->th_off << 2;
+			pi->ipi_tcp_seq = th->th_seq;
 		}
 		if (IS_TSO4(pi)) {
 			if (__predict_false(ip->ip_p != IPPROTO_TCP))
@@ -2502,7 +2508,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	int i, count, pkt_sent, bytes_sent, mcast_sent, avail;
 
 	avail = IDXDIFF(pidx, cidx, r->size);
-	if (ctx->ifc_flags & IFC_QFLUSH) {
+	if (__predict_false(ctx->ifc_flags & IFC_QFLUSH)) {
 		DBG_COUNTER_INC(txq_drain_flushing);
 		for (i = 0; i < avail; i++) {
 			m_freem(r->items[(cidx + i) & (r->size-1)]);
@@ -2511,7 +2517,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		return (avail);
 	}
 	iflib_completed_tx_reclaim(txq, RECLAIM_THRESH(ctx));
-	if (if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_OACTIVE ) {
+	if (__predict_false(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_OACTIVE)) {
 		txq->ift_qstatus = IFLIB_QUEUE_IDLE;
 		CALLOUT_LOCK(txq);
 		callout_stop(&txq->ift_timer);
@@ -2523,13 +2529,13 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	mcast_sent = bytes_sent = pkt_sent = 0;
 	count = MIN(avail, TX_BATCH_SIZE);
 
-	if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING) ||
-		!LINK_ACTIVE(ctx)) {
+	if (__predict_false(!(if_getdrvflags(ifp) & IFF_DRV_RUNNING) ||
+			    !LINK_ACTIVE(ctx))) {
 		DBG_COUNTER_INC(txq_drain_notready);
 		goto skip_db;
 	}
 
-	for (i = 0; i < count && TXQ_AVAIL(txq) >= MAX_TX_DESC(txq->ift_ctx); i++) {
+	for (i = 0; i < count && TXQ_AVAIL(txq) >= MAX_TX_DESC(ctx); i++) {
 		mp = _ring_peek_one(r, cidx, i);
 
 		if(iflib_encap(txq, mp)) {
@@ -2545,11 +2551,14 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		iflib_txd_db_check(ctx, txq, 0);
 		ETHER_BPF_MTAP(ifp, m);
 	}
+	if (avail > count)
+		GROUPTASK_ENQUEUE(&txq->ift_task);
 done:
 
 	if ((iflib_min_tx_latency || iflib_txq_min_occupancy(txq)) && txq->ift_db_pending)
 		iflib_txd_db_check(ctx, txq, 1);
-	else if (txq->ift_db_pending && (callout_pending(&txq->ift_db_check) == 0))
+	else if ((txq->ift_db_pending || TXQ_AVAIL(txq) < MAX_TX_DESC(ctx)) &&
+		 (callout_pending(&txq->ift_db_check) == 0))
 		callout_reset_on(&txq->ift_db_check, 1, iflib_txd_deferred_db_check,
 				 txq, txq->ift_db_check.c_cpu);
 skip_db:
