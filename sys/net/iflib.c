@@ -2489,7 +2489,7 @@ iflib_txq_can_drain(struct ifmp_ring *r)
 {
 	iflib_txq_t txq = r->cookie;
 
-	iflib_completed_tx_reclaim(txq, RECLAIM_THRESH(ctx));
+	iflib_completed_tx_reclaim(txq, RECLAIM_THRESH(txq->ift_ctx));
 	return (TXQ_AVAIL(txq) >= MAX_TX_DESC(txq->ift_ctx));
 }
 
