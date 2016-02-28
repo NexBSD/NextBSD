@@ -4229,9 +4229,8 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 				   CTLFLAG_RD,
 				   &txq->ift_cleaned, 1, "total cleaned");
 		SYSCTL_ADD_PROC(ctx_list, queue_list, OID_AUTO, "ring_state",
-				CTLTYPE_UINT | CTLFLAG_RW, __DEVOLATILE(uint64_t *, &txq->ift_br[0]->state),
-				sizeof(&txq->ift_br[0]->state),
-				mp_ring_state_handler, "IU", "soft ring state");
+				CTLTYPE_STRING | CTLFLAG_RD, __DEVOLATILE(uint64_t *, &txq->ift_br[0]->state),
+				0, mp_ring_state_handler, "A", "soft ring state");
 		SYSCTL_ADD_COUNTER_U64(ctx_list, queue_list, OID_AUTO, "r_enqueues",
 				       CTLFLAG_RD, &txq->ift_br[0]->enqueues,
 				       "# of enqueues to the mp_ring for this queue");
