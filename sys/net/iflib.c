@@ -4139,12 +4139,15 @@ msi:
 	return (vectors);
 }
 
+char * ring_states[] = { "IDLE", "BUSY", "STALLED", "ABDICATED" };
+
 static int
 mp_ring_state_handler(SYSCTL_HANDLER_ARGS)
 {
 	int rc;
 	uint16_t *state = ((uint16_t *)oidp->oid_arg1);
 	struct sbuf *sb;
+	char *ring_state = "UNKNOWN";
 
 	/* XXX needed ? */
 	rc = sysctl_wire_old_buffer(req, 0);
@@ -4155,8 +4158,11 @@ mp_ring_state_handler(SYSCTL_HANDLER_ARGS)
 	MPASS(sb != NULL);
 	if (sb == NULL)
 		return (ENOMEM);
-	sbuf_printf(sb, "pidx_head: %04hx pidx_tail: %04hx cidx: %04hx flags: %04hx",
-		    state[0], state[1], state[2], state[3]);
+	if (state[3] <= 3)
+		ring_state = ring_states[state[3]];
+
+	sbuf_printf(sb, "pidx_head: %04hd pidx_tail: %04hd cidx: %04hd state: %s",
+		    state[0], state[1], state[2], ring_state);
 	rc = sbuf_finish(sb);
 	sbuf_delete(sb);
         return(rc);
