@@ -2279,20 +2279,21 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 retry:
 	err = bus_dmamap_load_mbuf_sg(desc_tag, map,
 	    *m_headp, segs, &nsegs, BUS_DMA_NOWAIT);
-
+defrag:
 	if (__predict_false(err)) {
 		switch (err) {
 		case EFBIG:
-			/* try defrag once */
-			if (remap > 2) {
-				remap++;
+			/* try collapse once and defrag once */
+			if (remap == 0)
 				m_head = m_collapse(*m_headp, M_NOWAIT, max_segs);
-				if (__predict_false(m_head == NULL))
-					goto defrag_failed;
-				txq->ift_mbuf_defrag++;
-				*m_headp = m_head;
-				goto retry;
-			}
+			if (remap == 1)
+				m_head = m_defrag(*m_headp, M_NOWAIT);
+			remap++;
+			if (__predict_false(m_head == NULL))
+				goto defrag_failed;
+			txq->ift_mbuf_defrag++;
+			*m_headp = m_head;
+			goto retry;
 			break;
 		case ENOMEM:
 			txq->ift_no_tx_dma_setup++;
@@ -2371,19 +2372,16 @@ retry:
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
 	} else if (__predict_false(err == EFBIG && remap < 2)) {
+		remap = 1;
 		txq->ift_txd_encap_efbig++;
-		m_head = m_defrag(*m_headp, M_NOWAIT);
-		if (__predict_false(m_head == NULL))
-			goto defrag_failed;
-		txq->ift_mbuf_defrag++;
-		*m_headp = m_head;
-		goto retry;
+		goto defrag;
 	} else
 		DBG_COUNTER_INC(encap_txd_encap_fail);
 	return (err);
 
 defrag_failed:
 	txq->ift_mbuf_defrag_failed++;
+	txq->ift_map_failed++;
 	m_freem(*m_headp);
 	DBG_COUNTER_INC(tx_frees);
 	*m_headp = NULL;
