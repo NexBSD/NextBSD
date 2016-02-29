@@ -88,17 +88,21 @@ extern if_shared_ctx_t ixl_sctx;
 static int
 ixl_tso_detect_sparse(bus_dma_segment_t *segs, int nsegs, int segsz)
 {
-	int		i, mss;
+	int		i, count, curseg;
 
-	mss = segsz;
-	if (nsegs <= IXL_SPARSE_CHAIN)
+	if (nsegs <= IXL_MAX_TX_SEGS)
 		return (0);
-	for (i = 0; i < nsegs; i++) {
-		mss -= segs[i].ds_len;
-		if (mss < 1)
-			break;
+	for (curseg = count = i = 0; i < nsegs; i++) {
+		curseg += segs[i].ds_len;
+		count++;
+		if (__predict_false(count == IXL_MAX_TX_SEGS))
+			return (1);
+		if (curseg > segsz) {
+			curseg -= segsz;
+			count = 0;
+		}
 	}
-	return (i > IXL_SPARSE_CHAIN);
+	return (0);
 }
 
 /*********************************************************************

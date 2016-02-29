@@ -212,7 +212,7 @@ MALLOC_DECLARE(M_IXL);
 
 #define IXL_BAR			3
 #define IXL_ADM_LIMIT		2
-#define IXL_TSO_SIZE		65535
+#define IXL_TSO_SIZE		((255*1024)-1)
 #define IXL_TX_BUF_SZ		((u32) 1514)
 #define IXL_AQ_BUF_SZ		((u32) 4096)
 #define IXL_RX_HDR		128
@@ -228,7 +228,6 @@ MALLOC_DECLARE(M_IXL);
 #define IXL_MAX_FRAME		0x2600
 #define IXL_MAX_TX_SEGS		8
 #define IXL_MAX_TSO_SEGS	66 
-#define IXL_SPARSE_CHAIN	6
 #define IXL_QUEUE_HUNG		0x80000000
 #define IXL_KEYSZ		10
 
