@@ -2258,6 +2258,7 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 {
 	if_ctx_t ctx = txq->ift_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
+	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 	bus_dma_segment_t	*segs = txq->ift_segs;
 	struct mbuf		*m_head = *m_headp;
 	int pidx = txq->ift_pidx;
@@ -2265,12 +2266,17 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	bus_dmamap_t		map = txsd->ifsd_map;
 	struct if_pkt_info pi;
 	bool remap = TRUE;
-	int err, nsegs, ndesc;
+	int err, nsegs, ndesc, max_segs;
 	bus_dma_tag_t desc_tag;
 
-	desc_tag = (m_head->m_pkthdr.csum_flags & CSUM_TSO) ? txq->ift_tso_desc_tag : txq->ift_desc_tag;
+	if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
+		desc_tag = txq->ift_tso_desc_tag;
+		max_segs = scctx->isc_tx_nsegments;
+	} else {
+		desc_tag = txq->ift_desc_tag;
+		max_segs = scctx->isc_tx_tso_segments_max;
+	}
 retry:
-
 	err = bus_dmamap_load_mbuf_sg(txq->ift_desc_tag, map,
 	    *m_headp, segs, &nsegs, BUS_DMA_NOWAIT);
 defrag:
@@ -2280,7 +2286,7 @@ defrag:
 			/* try defrag once */
 			if (remap == TRUE) {
 				remap = FALSE;
-				m_head = m_defrag(*m_headp, M_NOWAIT);
+				m_head = m_collapse(*m_headp, M_NOWAIT, max_segs);
 				if (m_head == NULL) {
 					txq->ift_mbuf_defrag_failed++;
 					m_freem(*m_headp);
