@@ -2271,10 +2271,10 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 
 	if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
 		desc_tag = txq->ift_tso_desc_tag;
-		max_segs = scctx->isc_tx_nsegments - 2;
+		max_segs = scctx->isc_tx_nsegments;
 	} else {
 		desc_tag = txq->ift_desc_tag;
-		max_segs = scctx->isc_tx_tso_segments_max - 2;
+		max_segs = scctx->isc_tx_tso_segments_max;
 	}
 retry:
 	err = bus_dmamap_load_mbuf_sg(desc_tag, map,
