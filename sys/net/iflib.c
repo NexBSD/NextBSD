@@ -1815,7 +1815,7 @@ iflib_stop(if_ctx_t ctx)
 		txq->ift_processed = txq->ift_cleaned = txq->ift_cidx_processed = 0;
 		txq->ift_in_use = txq->ift_cidx = txq->ift_pidx = txq->ift_no_desc_avail = 0;
 		txq->ift_closed = txq->ift_mbuf_defrag = txq->ift_mbuf_defrag_failed = 0;
-		txq->ift_no_tx_dma_setup = txq->ift_txd_encap_efbig = 0;
+		txq->ift_no_tx_dma_setup = txq->ift_txd_encap_efbig = txq->ift_map_failed = 0;
 		ifmp_ring_reset_stats(txq->ift_br[0]);
 		qset = &ctx->ifc_qsets[txq->ift_id];
 		for (j = 0, di = qset->ifq_ifdi; j < qset->ifq_nhwqs; j++, di++)
@@ -2277,7 +2277,7 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 		max_segs = scctx->isc_tx_tso_segments_max;
 	}
 retry:
-	err = bus_dmamap_load_mbuf_sg(txq->ift_desc_tag, map,
+	err = bus_dmamap_load_mbuf_sg(desc_tag, map,
 	    *m_headp, segs, &nsegs, BUS_DMA_NOWAIT);
 defrag:
 	if (__predict_false(err)) {
@@ -2320,7 +2320,7 @@ defrag:
 	 *        descriptors - this does not hold true on all drivers, e.g.
 	 *        cxgb
 	 */
-	if (nsegs > TXQ_AVAIL(txq)) {
+	if (nsegs + 2 > TXQ_AVAIL(txq)) {
 		txq->ift_no_desc_avail++;
 		bus_dmamap_unload(desc_tag, map);
 		DBG_COUNTER_INC(encap_txq_avail_fail);
