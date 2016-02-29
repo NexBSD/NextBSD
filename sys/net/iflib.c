@@ -293,6 +293,7 @@ struct iflib_txq {
 	uint64_t	ift_no_desc_avail;
 	uint64_t	ift_mbuf_defrag_failed;
 	uint64_t	ift_mbuf_defrag;
+	uint64_t	ift_map_failed;
 	uint64_t	ift_tx_irq;
 	int		ift_closed;
 	struct callout	ift_timer;
@@ -1160,12 +1161,13 @@ iflib_txsd_alloc(iflib_txq_t txq)
 {
 	if_ctx_t ctx = txq->ift_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
+	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 	device_t dev = ctx->ifc_dev;
 	iflib_sd_t txsd;
 	int err, i, nsegments, ntsosegments;
 
-	nsegments = ctx->ifc_softc_ctx.isc_tx_nsegments;
-	ntsosegments = ctx->ifc_softc_ctx.isc_tx_tso_segments_max;
+	nsegments = scctx->isc_tx_nsegments;
+	ntsosegments = scctx->isc_tx_tso_segments_max;
 	MPASS(sctx->isc_ntxd > 0);
 	MPASS(nsegments > 0);
 	MPASS(ntsosegments > 0);
@@ -1189,25 +1191,33 @@ iflib_txsd_alloc(iflib_txq_t txq)
 					  sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
 		goto fail;
 	}
-
+#ifdef INVARIANTS
+	device_printf(dev,"maxsize: %ld nsegments: %d maxsegsize: %ld\n",
+		      sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
+#endif
 	if ((err = bus_dma_tag_create(bus_get_dma_tag(dev),
 			       1, 0,			/* alignment, bounds */
 			       BUS_SPACE_MAXADDR,	/* lowaddr */
 			       BUS_SPACE_MAXADDR,	/* highaddr */
 			       NULL, NULL,		/* filter, filterarg */
-			       sctx->isc_tx_maxsize,		/* maxsize */
+			       scctx->isc_tx_tso_size_max,		/* maxsize */
 			       ntsosegments,	/* nsegments */
-			       sctx->isc_tx_maxsegsize,	/* maxsegsize */
+			       scctx->isc_tx_tso_segsize_max,	/* maxsegsize */
 			       0,			/* flags */
 			       NULL,			/* lockfunc */
 			       NULL,			/* lockfuncarg */
 			       &txq->ift_tso_desc_tag))) {
 		device_printf(dev,"Unable to allocate TX TSO DMA tag: %d\n", err);
-		device_printf(dev,"maxsize: %ld ntsosegments: %d maxsegsize: %ld\n",
-					  sctx->isc_tx_maxsize, ntsosegments, sctx->isc_tx_maxsegsize);
+		device_printf(dev,"TSO maxsize: %d ntsosegments: %d maxsegsize: %d\n",
+			      scctx->isc_tx_tso_size_max, ntsosegments,
+			      scctx->isc_tx_tso_segsize_max);
 		goto fail;
 	}
-
+#ifdef INVARIANTS
+	device_printf(dev,"TSO maxsize: %d ntsosegments: %d maxsegsize: %d\n",
+		      scctx->isc_tx_tso_size_max, ntsosegments,
+		      scctx->isc_tx_tso_segsize_max);
+#endif
 	if (!(txq->ift_sds =
 	    (iflib_sd_t) malloc(sizeof(struct iflib_sw_desc) *
 	    sctx->isc_ntxd, M_IFLIB, M_NOWAIT | M_ZERO))) {
@@ -2292,6 +2302,7 @@ defrag:
 			*m_headp = NULL;
 			break;
 		}
+		txq->ift_map_failed++;
 		DBG_COUNTER_INC(encap_load_mbuf_fail);
 		return (err);
 	}
@@ -3560,8 +3571,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 		txq->ift_ifdi = &qset->ifq_ifdi[0];
 
 		if (iflib_txsd_alloc(txq)) {
-			device_printf(dev,
-						  "Critical Failure setting up transmit buffers\n");
+			device_printf(dev, "Critical Failure setting up TX buffers\n");
 			err = ENOMEM;
 			goto err_tx_desc;
 		}
@@ -4233,6 +4243,12 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "no_desc_avail",
 				   CTLFLAG_RD,
 				   &txq->ift_mbuf_defrag_failed, "# of times no descriptors were available");
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "tx_map_failed",
+				   CTLFLAG_RD,
+				   &txq->ift_map_failed, "# of times dma map failed");
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "no_tx_dma_setup",
+				   CTLFLAG_RD,
+				   &txq->ift_no_tx_dma_setup, "# of times map failed for other than EFBIG");
 		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_pidx",
 				   CTLFLAG_RD,
 				   &txq->ift_pidx, 1, "Producer Index");
