@@ -99,8 +99,10 @@ ixl_tso_detect_sparse(bus_dma_segment_t *segs, int nsegs, int segsz)
 			return (1);
 		if (curseg > segsz) {
 			curseg -= segsz;
-			count = 0;
+			count = 1;
 		}
+		if (curseg == segsz)
+			curseg = count = 0;
 	}
 	return (0);
 }
