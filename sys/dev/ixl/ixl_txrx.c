@@ -90,12 +90,12 @@ ixl_tso_detect_sparse(bus_dma_segment_t *segs, int nsegs, int segsz)
 {
 	int		i, count, curseg;
 
-	if (nsegs <= IXL_MAX_TX_SEGS)
+	if (nsegs <= IXL_MAX_TX_SEGS-2)
 		return (0);
 	for (curseg = count = i = 0; i < nsegs; i++) {
 		curseg += segs[i].ds_len;
 		count++;
-		if (__predict_false(count == IXL_MAX_TX_SEGS))
+		if (__predict_false(count == IXL_MAX_TX_SEGS-2))
 			return (1);
 		if (curseg > segsz) {
 			curseg -= segsz;
