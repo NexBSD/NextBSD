@@ -294,6 +294,7 @@ struct iflib_txq {
 	uint64_t	ift_mbuf_defrag_failed;
 	uint64_t	ift_mbuf_defrag;
 	uint64_t	ift_map_failed;
+	uint64_t	ift_txd_encap_efbig;
 	uint64_t	ift_tx_irq;
 	int		ift_closed;
 	struct callout	ift_timer;
@@ -1814,6 +1815,7 @@ iflib_stop(if_ctx_t ctx)
 		txq->ift_processed = txq->ift_cleaned = txq->ift_cidx_processed = 0;
 		txq->ift_in_use = txq->ift_cidx = txq->ift_pidx = txq->ift_no_desc_avail = 0;
 		txq->ift_closed = txq->ift_mbuf_defrag = txq->ift_mbuf_defrag_failed = 0;
+		txq->ift_no_tx_dma_setup = txq->ift_txd_encap_efbig = 0;
 		ifmp_ring_reset_stats(txq->ift_br[0]);
 		qset = &ctx->ifc_qsets[txq->ift_id];
 		for (j = 0, di = qset->ifq_ifdi; j < qset->ifq_nhwqs; j++, di++)
@@ -2368,9 +2370,10 @@ defrag:
 		txq->ift_in_use += ndesc;
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
-	} else if (err == EFBIG && remap == TRUE)
+	} else if (err == EFBIG && remap == TRUE) {
+		txq->ift_txd_encap_efbig++;
 		goto defrag;
-	else
+	} else
 		DBG_COUNTER_INC(encap_txd_encap_fail);
 	return (err);
 }
@@ -2511,7 +2514,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	if_ctx_t ctx = txq->ift_ctx;
 	if_t ifp = ctx->ifc_ifp;
 	struct mbuf **mp, *m;
-	int i, count, pkt_sent, bytes_sent, mcast_sent, avail;
+	int i, count, pkt_sent, bytes_sent, mcast_sent, avail, err;
 
 	avail = IDXDIFF(pidx, cidx, r->size);
 	if (__predict_false(ctx->ifc_flags & IFC_QFLUSH)) {
@@ -2544,7 +2547,10 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	for (i = 0; i < count && TXQ_AVAIL(txq) >= MAX_TX_DESC(ctx); i++) {
 		mp = _ring_peek_one(r, cidx, i);
 
-		if(iflib_encap(txq, mp)) {
+		/*
+		 * What other errors should we bail out for?
+		 */
+		if((err = iflib_encap(txq, mp)) && err == ENOBUFS) {
 			DBG_COUNTER_INC(txq_drain_encapfail);
 			goto done;
 		}
@@ -4246,6 +4252,9 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "tx_map_failed",
 				   CTLFLAG_RD,
 				   &txq->ift_map_failed, "# of times dma map failed");
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "txd_encap_efbig",
+				   CTLFLAG_RD,
+				   &txq->ift_txd_encap_efbig, "# of times txd_encap returned EFBIG");
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "no_tx_dma_setup",
 				   CTLFLAG_RD,
 				   &txq->ift_no_tx_dma_setup, "# of times map failed for other than EFBIG");
