@@ -2292,7 +2292,7 @@ defrag:
 					m_freem(*m_headp);
 					DBG_COUNTER_INC(tx_frees);
 					*m_headp = NULL;
-					err = ENOBUFS;
+					err = ENOMEM;
 				} else {
 					txq->ift_mbuf_defrag++;
 					*m_headp = m_head;
@@ -2553,10 +2553,10 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	for (i = 0; i < count && TXQ_AVAIL(txq) >= MAX_TX_DESC(ctx); i++) {
 		mp = _ring_peek_one(r, cidx, i);
 
+		err = iflib_encap(txq, mp);
 		/*
 		 * What other errors should we bail out for?
 		 */
-		err = iflib_encap(txq, mp);
 		if (err == ENOBUFS) {
 			DBG_COUNTER_INC(txq_drain_encapfail);
 			goto done;
