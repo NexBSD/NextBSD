@@ -2265,39 +2265,33 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	iflib_sd_t txsd = &txq->ift_sds[pidx];
 	bus_dmamap_t		map = txsd->ifsd_map;
 	struct if_pkt_info pi;
-	bool remap = TRUE;
+	int remap = 0;
 	int err, nsegs, ndesc, max_segs;
 	bus_dma_tag_t desc_tag;
 
 	if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
 		desc_tag = txq->ift_tso_desc_tag;
-		max_segs = scctx->isc_tx_nsegments;
+		max_segs = scctx->isc_tx_nsegments - 2;
 	} else {
 		desc_tag = txq->ift_desc_tag;
-		max_segs = scctx->isc_tx_tso_segments_max;
+		max_segs = scctx->isc_tx_tso_segments_max - 2;
 	}
 retry:
 	err = bus_dmamap_load_mbuf_sg(desc_tag, map,
 	    *m_headp, segs, &nsegs, BUS_DMA_NOWAIT);
-defrag:
+
 	if (__predict_false(err)) {
 		switch (err) {
 		case EFBIG:
 			/* try defrag once */
-			if (remap == TRUE) {
-				remap = FALSE;
+			if (remap > 2) {
+				remap++;
 				m_head = m_collapse(*m_headp, M_NOWAIT, max_segs);
-				if (m_head == NULL) {
-					txq->ift_mbuf_defrag_failed++;
-					m_freem(*m_headp);
-					DBG_COUNTER_INC(tx_frees);
-					*m_headp = NULL;
-					err = ENOMEM;
-				} else {
-					txq->ift_mbuf_defrag++;
-					*m_headp = m_head;
-					goto retry;
-				}
+				if (__predict_false(m_head == NULL))
+					goto defrag_failed;
+				txq->ift_mbuf_defrag++;
+				*m_headp = m_head;
+				goto retry;
 			}
 			break;
 		case ENOMEM:
@@ -2320,7 +2314,7 @@ defrag:
 	 *        descriptors - this does not hold true on all drivers, e.g.
 	 *        cxgb
 	 */
-	if (nsegs + 2 > TXQ_AVAIL(txq)) {
+	if (__predict_false(nsegs + 2 > TXQ_AVAIL(txq))) {
 		txq->ift_no_desc_avail++;
 		bus_dmamap_unload(desc_tag, map);
 		DBG_COUNTER_INC(encap_txq_avail_fail);
@@ -2376,12 +2370,24 @@ defrag:
 		txq->ift_in_use += ndesc;
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
-	} else if (err == EFBIG && remap == TRUE) {
+	} else if (__predict_false(err == EFBIG && remap < 2)) {
 		txq->ift_txd_encap_efbig++;
-		goto defrag;
+		m_head = m_defrag(*m_headp, M_NOWAIT);
+		if (__predict_false(m_head == NULL))
+			goto defrag_failed;
+		txq->ift_mbuf_defrag++;
+		*m_headp = m_head;
+		goto retry;
 	} else
 		DBG_COUNTER_INC(encap_txd_encap_fail);
 	return (err);
+
+defrag_failed:
+	txq->ift_mbuf_defrag_failed++;
+	m_freem(*m_headp);
+	DBG_COUNTER_INC(tx_frees);
+	*m_headp = NULL;
+	return (ENOMEM);
 }
 
 /* forward compatibility for cxgb */
