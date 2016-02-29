@@ -2556,10 +2556,13 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		/*
 		 * What other errors should we bail out for?
 		 */
-		if((err = iflib_encap(txq, mp)) && err == ENOBUFS) {
+		err = iflib_encap(txq, mp);
+		if (err == ENOBUFS) {
 			DBG_COUNTER_INC(txq_drain_encapfail);
 			goto done;
-		}
+		} else if (err)
+			continue;
+
 		m = *mp;
 		DBG_COUNTER_INC(tx_sent);
 		pkt_sent++;
