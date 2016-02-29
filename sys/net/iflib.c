@@ -2520,7 +2520,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	if_ctx_t ctx = txq->ift_ctx;
 	if_t ifp = ctx->ifc_ifp;
 	struct mbuf **mp, *m;
-	int i, count, pkt_sent, bytes_sent, mcast_sent, avail, err;
+	int i, count, consumed, pkt_sent, bytes_sent, mcast_sent, avail, err;
 
 	avail = IDXDIFF(pidx, cidx, r->size);
 	if (__predict_false(ctx->ifc_flags & IFC_QFLUSH)) {
@@ -2541,7 +2541,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		DBG_COUNTER_INC(txq_drain_oactive);
 		return (0);
 	}
-	mcast_sent = bytes_sent = pkt_sent = 0;
+	consumed = mcast_sent = bytes_sent = pkt_sent = 0;
 	count = MIN(avail, TX_BATCH_SIZE);
 
 	if (__predict_false(!(if_getdrvflags(ifp) & IFF_DRV_RUNNING) ||
@@ -2560,12 +2560,14 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		if (err == ENOBUFS) {
 			DBG_COUNTER_INC(txq_drain_encapfail);
 			goto done;
-		} else if (err)
+		}
+		consumed++;
+		if (err)
 			continue;
 
+		pkt_sent++;
 		m = *mp;
 		DBG_COUNTER_INC(tx_sent);
-		pkt_sent++;
 		bytes_sent += m->m_pkthdr.len;
 		if (m->m_flags & M_MCAST)
 			mcast_sent++;
@@ -2588,7 +2590,7 @@ skip_db:
 	if (mcast_sent)
 		if_inc_counter(ifp, IFCOUNTER_OMCASTS, mcast_sent);
 
-	return (pkt_sent);
+	return (consumed);
 }
 
 static void
