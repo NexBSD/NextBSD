@@ -88,17 +88,23 @@ extern if_shared_ctx_t ixl_sctx;
 static int
 ixl_tso_detect_sparse(bus_dma_segment_t *segs, int nsegs, int segsz)
 {
-	int		i, mss;
+	int		i, count, curseg;
 
-	mss = segsz;
-	if (nsegs <= IXL_SPARSE_CHAIN)
+	if (nsegs <= IXL_MAX_TX_SEGS-2)
 		return (0);
-	for (i = 0; i < nsegs; i++) {
-		mss -= segs[i].ds_len;
-		if (mss < 1)
-			break;
+	for (curseg = count = i = 0; i < nsegs; i++) {
+		curseg += segs[i].ds_len;
+		count++;
+		if (__predict_false(count == IXL_MAX_TX_SEGS-2))
+			return (1);
+		if (curseg > segsz) {
+			curseg -= segsz;
+			count = 1;
+		}
+		if (curseg == segsz)
+			curseg = count = 0;
 	}
-	return (i > IXL_SPARSE_CHAIN);
+	return (0);
 }
 
 /*********************************************************************
@@ -116,11 +122,7 @@ ixl_tx_setup_offload(struct ixl_queue *que,
 	switch (pi->ipi_etype) {
 #ifdef INET
 		case ETHERTYPE_IP:
-			/* The IP checksum must be recalculated with TSO */
-			if (pi->ipi_csum_flags & CSUM_TSO)
-				*cmd |= I40E_TX_DESC_CMD_IIPT_IPV4_CSUM;
-			else
-				*cmd |= I40E_TX_DESC_CMD_IIPT_IPV4;
+			*cmd |= I40E_TX_DESC_CMD_IIPT_IPV4_CSUM;
 			break;
 #endif
 #ifdef INET6
@@ -135,9 +137,6 @@ ixl_tx_setup_offload(struct ixl_queue *que,
 	*off |= (pi->ipi_ehdrlen >> 1) << I40E_TX_DESC_LENGTH_MACLEN_SHIFT;
 	*off |= (pi->ipi_ip_hlen >> 2) << I40E_TX_DESC_LENGTH_IPLEN_SHIFT;
 
-	MPASS(pi->ipi_ip_hlen);
-	MPASS(pi->ipi_ehdrlen);
-
 	switch (pi->ipi_ipproto) {
 		case IPPROTO_TCP:
 			if (pi->ipi_csum_flags & (CSUM_TCP|CSUM_TCP_IPV6)) {
@@ -145,8 +144,6 @@ ixl_tx_setup_offload(struct ixl_queue *que,
 				*off |= (pi->ipi_tcp_hlen >> 2) <<
 				    I40E_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
 			}
-			MPASS(pi->ipi_tcp_hlen);
-
 #ifdef IXL_FDIR
 			ixl_atr(que, pi->ipi_tcp_hflags, pi->ipi_etype);
 #endif
@@ -178,9 +175,8 @@ ixl_tx_setup_offload(struct ixl_queue *que,
  *
  **********************************************************************/
 static int
-ixl_tso_setup(struct ixl_queue *que, if_pkt_info_t pi)
+ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 {
-	struct tx_ring			*txr = &que->txr;
 	struct i40e_tx_context_desc	*TXD;
 	struct ixl_tx_buf		*buf;
 	u32				cmd, mss, type, tsolen;
@@ -196,8 +192,6 @@ ixl_tso_setup(struct ixl_queue *que, if_pkt_info_t pi)
 	cmd = I40E_TX_CTX_DESC_TSO;
 	mss = pi->ipi_tso_segsz;
 
-	MPASS(pi->ipi_ipproto == IPPROTO_TCP);
-	MPASS(mss);
 	type_cmd_tso_mss = ((u64)type << I40E_TXD_CTX_QW1_DTYPE_SHIFT) |
 	    ((u64)cmd << I40E_TXD_CTX_QW1_CMD_SHIFT) |
 	    ((u64)tsolen << I40E_TXD_CTX_QW1_TSO_LEN_SHIFT) |
@@ -258,7 +252,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 			if (ixl_tso_detect_sparse(segs, nsegs, pi->ipi_tso_segsz))
 				return (EFBIG);
 
-			i = ixl_tso_setup(que, pi);
+			i = ixl_tso_setup(txr, pi);
 		}
 		ixl_tx_setup_offload(que, pi, &cmd, &off);
 	}
@@ -295,10 +289,8 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	    htole64(((u64)IXL_TXD_CMD << I40E_TXD_QW1_CMD_SHIFT));
 	pi->ipi_new_pidx = i;
 
-
 	/* Set the index of the descriptor that will be marked done */
-	buf = &txr->tx_buffers[first];
-	buf->eop_index = last;
+	txr->tx_buffers[first].eop_index = last;
 
 	++txr->total_packets;
 	return (0);

@@ -312,16 +312,6 @@ TUNABLE_INT("hw.ixl.ringsz", &ixl_ringsz);
 SYSCTL_INT(_hw_ixl, OID_AUTO, ring_size, CTLFLAG_RDTUN,
     &ixl_ringsz, 0, "Descriptor Ring Size");
 
-/* 
-** This can be set manually, if left as 0 the
-** number of queues will be calculated based
-** on cpus and msix vectors available.
-*/
-int ixl_max_queues = 0;
-TUNABLE_INT("hw.ixl.max_queues", &ixl_max_queues);
-SYSCTL_INT(_hw_ixl, OID_AUTO, max_queues, CTLFLAG_RDTUN,
-    &ixl_max_queues, 0, "Number of Queues");
-
 /*
 ** Controls for Interrupt Throttling 
 **	- true/false for dynamic adjustment
