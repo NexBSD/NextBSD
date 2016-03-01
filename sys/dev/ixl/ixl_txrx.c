@@ -562,62 +562,66 @@ ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	u64		qword;
 	u8		ptype;
 	bool		eop;
+	int i, cidx;
 
-	ri->iri_qidx = 0;
-	cur = &rxr->rx_base[ri->iri_cidx];
-	qword = le64toh(cur->wb.qword1.status_error_len);
-	status = (qword & I40E_RXD_QW1_STATUS_MASK)
-		>> I40E_RXD_QW1_STATUS_SHIFT;
-	error = (qword & I40E_RXD_QW1_ERROR_MASK)
-		>> I40E_RXD_QW1_ERROR_SHIFT;
-	plen = (qword & I40E_RXD_QW1_LENGTH_PBUF_MASK)
-		>> I40E_RXD_QW1_LENGTH_PBUF_SHIFT;
-	hlen = (qword & I40E_RXD_QW1_LENGTH_HBUF_MASK)
-		>> I40E_RXD_QW1_LENGTH_HBUF_SHIFT;
-	ptype = (qword & I40E_RXD_QW1_PTYPE_MASK)
-		    >> I40E_RXD_QW1_PTYPE_SHIFT;
+	cidx = ri->iri_cidx;
+	i = 0;
+	do {
+		cur = &rxr->rx_base[cidx];
+		qword = le64toh(cur->wb.qword1.status_error_len);
+		status = (qword & I40E_RXD_QW1_STATUS_MASK)
+			>> I40E_RXD_QW1_STATUS_SHIFT;
+		error = (qword & I40E_RXD_QW1_ERROR_MASK)
+			>> I40E_RXD_QW1_ERROR_SHIFT;
+		plen = (qword & I40E_RXD_QW1_LENGTH_PBUF_MASK)
+			>> I40E_RXD_QW1_LENGTH_PBUF_SHIFT;
+		hlen = (qword & I40E_RXD_QW1_LENGTH_HBUF_MASK)
+			>> I40E_RXD_QW1_LENGTH_HBUF_SHIFT;
+		ptype = (qword & I40E_RXD_QW1_PTYPE_MASK)
+			>> I40E_RXD_QW1_PTYPE_SHIFT;
 
-	/* we should never be called without a valid descriptor */
-	MPASS((status & (1 << I40E_RX_DESC_STATUS_DD_SHIFT)) != 0);
+		/* we should never be called without a valid descriptor */
+		MPASS((status & (1 << I40E_RX_DESC_STATUS_DD_SHIFT)) != 0);
 
-	ri->iri_len = plen;
-	rxr->rx_bytes += plen;
+		ri->iri_len += plen;
+		rxr->rx_bytes += plen;
 
-	cur->wb.qword1.status_error_len = 0;
-	eop = (status & (1 << I40E_RX_DESC_STATUS_EOF_SHIFT));
-	if (status & (1 << I40E_RX_DESC_STATUS_L2TAG1P_SHIFT))
-		vtag = le16toh(cur->wb.qword0.lo_dword.l2tag1);
-	else
-		vtag = 0;
+		cur->wb.qword1.status_error_len = 0;
+		eop = (status & (1 << I40E_RX_DESC_STATUS_EOF_SHIFT));
+		if (status & (1 << I40E_RX_DESC_STATUS_L2TAG1P_SHIFT))
+			vtag = le16toh(cur->wb.qword0.lo_dword.l2tag1);
+		else
+			vtag = 0;
 
-	/*
-	** Make sure bad packets are discarded,
-	** note that only EOP descriptor has valid
-	** error results.
-	*/
-	if (eop && (error & (1 << I40E_RX_DESC_ERROR_RXE_SHIFT))) {
-		rxr->discarded++;
-		return (EBADMSG);
-	}
-
-	/* Prefetch the next buffer */
-	if (!eop) {
-		ri->iri_next_offset = 1;
-	} else {
-		rxr->rx_packets++;
-		/* capture data for dynamic ITR adjustment */
-		rxr->packets++;
-		if ((vsi->ifp->if_capenable & IFCAP_RXCSUM) != 0)
-			ixl_rx_checksum(ri, status, error, ptype);
-		ri->iri_flowid = le32toh(cur->wb.qword0.hi_dword.rss);
-		ri->iri_rsstype = ixl_ptype_to_hash(ptype);
-
-		if (vtag) {
-			ri->iri_vtag = vtag;
-			ri->iri_flags |= M_VLANTAG;
+		/*
+		** Make sure bad packets are discarded,
+		** note that only EOP descriptor has valid
+		** error results.
+		*/
+		if (eop && (error & (1 << I40E_RX_DESC_ERROR_RXE_SHIFT))) {
+			rxr->discarded++;
+			return (EBADMSG);
 		}
-		ri->iri_next_offset = 0;	
-	}
+		ri->iri_frags[i].irf_flid = 0;
+		ri->iri_frags[i].irf_idx = cidx;
+		if (++cidx == ixl_sctx->isc_ntxd)
+			cidx = 0;
+		i++;
+		/* even a 16K packet shouldn't consume more than 8 clusters */
+		MPASS(i < 9);
+	} while (!eop);
+
+	rxr->rx_packets++;
+	/* capture data for dynamic ITR adjustment */
+	rxr->packets++;
+	if ((vsi->ifp->if_capenable & IFCAP_RXCSUM) != 0)
+		ixl_rx_checksum(ri, status, error, ptype);
+	ri->iri_flowid = le32toh(cur->wb.qword0.hi_dword.rss);
+	ri->iri_rsstype = ixl_ptype_to_hash(ptype);
+	ri->iri_vtag = vtag;
+	ri->iri_nfrags = i;
+	if (vtag)
+		ri->iri_flags |= M_VLANTAG;
 	return (0);
 }
 

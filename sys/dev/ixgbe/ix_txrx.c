@@ -186,8 +186,6 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	flags = (pi->ipi_flags & IPI_TX_INTR) ? IXGBE_TXD_CMD_RS : 0;
 
 	TXD = (struct ixgbe_adv_tx_context_desc *) &txr->tx_base[first];
-
-
 	if (pi->ipi_csum_flags & CSUM_OFFLOAD || IXGBE_IS_X550VF(sc) || pi->ipi_vtag) {
 		/*********************************************
 		 * Set up the appropriate offload context
@@ -388,65 +386,69 @@ ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	struct ifnet             *ifp = iflib_get_ifp(adapter->ctx);
 	union ixgbe_adv_rx_desc  *rxd;
 
-	u16                      pkt_info, len;
+	u16                      pkt_info, len, cidx, i;
 	u16                      vtag = 0;
 	u32                      ptype;
 	u32                      staterr = 0;
 	bool                     eop;
-  
-	rxd = &rxr->rx_base[ri->iri_cidx];
-	staterr = le32toh(rxd->wb.upper.status_error);
-	pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
 
-	/* Error Checking then decrement count */
-	MPASS ((staterr & IXGBE_RXD_STAT_DD) != 0);
+	i = 0;
+	cidx = ri->iri_cidx;
+	do {
+		rxd = &rxr->rx_base[cidx];
+		staterr = le32toh(rxd->wb.upper.status_error);
+		pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
 
-	len = le16toh(rxd->wb.upper.length);
-	ptype = le32toh(rxd->wb.lower.lo_dword.data) &
-		IXGBE_RXDADV_PKTTYPE_MASK;
-   
-	ri->iri_len = len;
-	rxr->bytes += len;
+		/* Error Checking then decrement count */
+		MPASS ((staterr & IXGBE_RXD_STAT_DD) != 0);
 
-	rxd->wb.upper.status_error = 0;
-	eop = ((staterr & IXGBE_RXD_STAT_EOP) != 0);
-	if (staterr & IXGBE_RXD_STAT_VP) {
-		vtag = le16toh(rxd->wb.upper.vlan);
-	} else {
-		vtag = 0;
-	}
+		len = le16toh(rxd->wb.upper.length);
+		ptype = le32toh(rxd->wb.lower.lo_dword.data) &
+			IXGBE_RXDADV_PKTTYPE_MASK;
+
+		ri->iri_len += len;
+		rxr->bytes += len;
+
+		rxd->wb.upper.status_error = 0;
+		eop = ((staterr & IXGBE_RXD_STAT_EOP) != 0);
+		if (staterr & IXGBE_RXD_STAT_VP) {
+			vtag = le16toh(rxd->wb.upper.vlan);
+		} else {
+			vtag = 0;
+		}
 	
-	/* Make sure bad packets are discarded */
-	if (eop && (staterr & IXGBE_RXDADV_ERR_FRAME_ERR_MASK) != 0) {
+		/* Make sure bad packets are discarded */
+		if (eop && (staterr & IXGBE_RXDADV_ERR_FRAME_ERR_MASK) != 0) {
 
 #if __FreeBSD_version >= 1100036
-		if (IXGBE_IS_VF(adapter))
-			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+			if (IXGBE_IS_VF(adapter))
+				if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 #endif
 
-		rxr->rx_discarded++;
-		return (EBADMSG);
-	}
-
-	/* Prefetch the next buffer */
-	if (!eop) {
-		ri->iri_next_offset = 1;
-	} else {
-		rxr->rx_packets++;
-		rxr->packets++;
-
-		if ((ifp->if_capenable & IFCAP_RXCSUM) != 0)
-			ixgbe_rx_checksum(staterr, ri,  ptype);
-
-		ri->iri_flowid =
-			le32toh(rxd->wb.lower.hi_dword.rss);
-		ri->iri_rsstype = ixgbe_determine_rsstype(pkt_info);
-		if (vtag) {
-			ri->iri_vtag = vtag;
-			ri->iri_flags |= M_VLANTAG;
+			rxr->rx_discarded++;
+			return (EBADMSG);
 		}
-		ri->iri_next_offset = 0;
-	}
+		ri->iri_frags[i].irf_flid = 0;
+		ri->iri_frags[i].irf_idx = cidx;
+		if (++cidx == ixgbe_sctx->isc_ntxd)
+			cidx = 0;
+		i++;
+		/* even a 16K packet shouldn't consume more than 8 clusters */
+		MPASS(i < 9);
+	} while (!eop);
+
+	rxr->rx_packets++;
+	rxr->packets++;
+
+	if ((ifp->if_capenable & IFCAP_RXCSUM) != 0)
+		ixgbe_rx_checksum(staterr, ri,  ptype);
+
+	ri->iri_flowid = le32toh(rxd->wb.lower.hi_dword.rss);
+	ri->iri_rsstype = ixgbe_determine_rsstype(pkt_info);
+	ri->iri_vtag = vtag;
+	ri->iri_nfrags = i;
+	if (vtag)
+		ri->iri_flags |= M_VLANTAG;
 	return (0);
 }
 
