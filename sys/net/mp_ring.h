@@ -66,5 +66,4 @@ void ifmp_ring_check_drainage(struct ifmp_ring *, int);
 void ifmp_ring_reset_stats(struct ifmp_ring *);
 int ifmp_ring_is_idle(struct ifmp_ring *);
 int ifmp_ring_is_stalled(struct ifmp_ring *r);
-void ifmp_ring_serialize(struct ifmp_ring *r, mp_ring_serial_t f);
 #endif

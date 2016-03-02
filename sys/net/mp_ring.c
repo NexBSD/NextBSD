@@ -342,33 +342,6 @@ ifmp_ring_check_drainage(struct ifmp_ring *r, int budget)
 }
 
 void
-ifmp_ring_serialize(struct ifmp_ring *r, mp_ring_serial_t f)
-{
-	union ring_state os, ns;
-
-	ns.state = os.state = r->state;
-	if (os.flags != IDLE)
-		return;
-	ns.flags = BUSY;
-
-	/*
-	 * The acquire style atomic guarantees visibility of items associated
-	 * with the pidx that we read here.
-	 */
-	critical_enter();
-	if (!atomic_cmpset_acq_64(&r->state, os.state, ns.state)) {
-		critical_exit();
-		return;
-	}
-	(*f)(r);
-	do {
-		os.state = ns.state = r->state;
-		ns.flags = IDLE;
-	} while (!atomic_cmpset_acq_64(&r->state, os.state, ns.state));
-	critical_exit();
-}
-
-void
 ifmp_ring_reset_stats(struct ifmp_ring *r)
 {
 
