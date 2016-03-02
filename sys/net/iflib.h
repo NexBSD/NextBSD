@@ -49,23 +49,28 @@ typedef struct if_int_delay_info  *if_int_delay_info_t;
  *  - iflib core functions
  */
 
+typedef struct if_rxd_frag {
+	uint8_t irf_flid;
+	uint16_t irf_idx;
+} *if_rxd_frag_t;
+
 typedef struct if_rxd_info {
+	/* set by iflib */
 	uint16_t iri_qsidx;		/* qset index */
 	uint16_t iri_vtag;		/* vlan tag - if flag set */
 	uint16_t iri_len;		/* packet length */
-	uint16_t iri_next_offset; /* 0 for eop */
-	uint32_t iri_cidx;		/* consumer index of cq */
-	uint32_t iri_flowid;	/* RSS hash for packet */
-	int      iri_flags;		/* mbuf flags for packet */
-	uint32_t iri_csum_flags; /* m_pkthdr csum flags */
-	uint32_t iri_csum_data;	/* m_pkthdr csum data */
-	struct mbuf *iri_m;		/* for driver paths that manage their own rx */
-	struct ifnet *iri_ifp;	/* some drivers >1 interface per softc */
-	uint8_t	 iri_rsstype; /* RSS hash type */
+	uint16_t iri_cidx;		/* consumer index of cq */
+	struct ifnet *iri_ifp;		/* some drivers >1 interface per softc */
+
+	/* updated by driver */
+	uint16_t iri_flags;		/* mbuf flags for packet */
+	uint32_t iri_flowid;		/* RSS hash for packet */
+	uint32_t iri_csum_flags;	/* m_pkthdr csum flags */
+	uint32_t iri_csum_data;		/* m_pkthdr csum data */
+	uint8_t	 iri_nfrags;		/* number of fragments in packet */
+	uint8_t	 iri_rsstype;		/* RSS hash type */
 	uint8_t	 iri_pad;		/* any padding in the received data */
-	int8_t	 iri_qidx;		/* == -1 -> completion queue event
-							 * >=  0 -> free list id
-							 */
+	if_rxd_frag_t iri_frags;
 } *if_rxd_info_t;
 
 #define IPI_TX_INTR	0x1		/* send an interrupt when this packet is sent */
@@ -87,13 +92,14 @@ typedef struct if_pkt_info {
 	uint16_t			ipi_mflags;	/* packet mbuf flags */
 	uint16_t			ipi_vtag;	/* VLAN tag */
 	uint16_t			ipi_etype;	/* ether header type */
-	uint32_t			ipi_tcp_seq;	/* tcp seqno */
 	uint8_t				ipi_ehdrlen;	/* ether header length */
 	uint8_t				ipi_ip_hlen;	/* ip header length */
 	uint8_t				ipi_tcp_hlen;	/* tcp header length */
 	uint8_t				ipi_tcp_hflags;	/* tcp header flags */
 	uint8_t				ipi_ipproto;	/* ip protocol */
 	/* implied padding */
+	uint32_t			ipi_tcp_seq;	/* tcp seqno */
+	uint32_t			ipi_tcp_sum;	/* tcp csum */
 } *if_pkt_info_t;
 
 typedef struct if_irq {

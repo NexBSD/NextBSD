@@ -29,7 +29,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	if (rc != 0)
 	  return (rc);
 
-	sb = sbuf_new_for_sysctl(NULL, NULL, 32*400, req);
+	sb = sbuf_new_for_sysctl(NULL, NULL, 32*PAGE_SIZE, req);
 	MPASS(sb != NULL);
 	if (sb == NULL)
 	  return (ENOMEM);
@@ -502,7 +502,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 		sbuf_printf(sb, "\tReceive Descriptor Address %d: %08lx  Error:%d  Length:%d\n", j, rxr->rx_base[j].read.pkt_addr, staterr, length);
 	}
 
-	for (j = 0; j < ntxd; j++) {
+	for (j = 0; j < min(ntxd, 256); j++) {
 		struct ixgbe_tx_buf *buf = &txr->tx_buffers[j];
 		unsigned int *ptr = (unsigned int *)&txr->tx_base[j].read;
 

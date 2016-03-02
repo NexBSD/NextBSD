@@ -257,6 +257,7 @@ typedef struct iflib_sw_desc {
 
 /* magic number that should be high enough for any hardware */
 #define IFLIB_MAX_TX_SEGS		128
+#define IFLIB_MAX_RX_SEGS		32
 #define IFLIB_RX_COPY_THRESH		128
 #define IFLIB_QUEUE_IDLE		0
 #define IFLIB_QUEUE_HUNG		1
@@ -331,6 +332,7 @@ struct iflib_fl {
 	iflib_sd_t	ifl_sds;
 	iflib_rxq_t	ifl_rxq;
 	uint8_t		ifl_id;
+	bus_dma_tag_t           ifl_desc_tag;
 	iflib_dma_info_t	ifl_ifdi;
 	uint64_t	ifl_bus_addrs[256];
 	caddr_t		ifl_vm_addrs[256];
@@ -368,38 +370,39 @@ typedef struct iflib_global_context {
 struct iflib_global_context global_ctx, *gctx;
 
 struct iflib_rxq {
-	if_ctx_t	ifr_ctx;
+	/* If there is a separate completion queue -
+	 * these are the cq cidx and pidx. Otherwise
+	 * these are unused.
+	 */
 	uint32_t	ifr_size;
 	uint32_t	ifr_cidx;
-	uint32_t	ifr_pidx; /* if there is a separate completion queue -
-				     * these are the cq cidx and pidx otherwise
-					 * these are unused
-					 */
+	uint32_t	ifr_pidx;
 	uint32_t	ifr_gen;
+
+	if_ctx_t	ifr_ctx;
 	uint64_t	ifr_rx_irq;
 	uint16_t	ifr_id;
 	int			ifr_lro_enabled;
 	iflib_fl_t	ifr_fl;
 	uint8_t		ifr_nfl;
 	struct lro_ctrl			ifr_lc;
-	struct mtx				ifr_mtx;
 	struct grouptask        ifr_task;
 	struct iflib_filter_info ifr_filter_info;
-	bus_dma_tag_t           ifr_desc_tag;
 	iflib_dma_info_t		ifr_ifdi;
-	char                    ifr_mtx_name[MTX_NAME_LEN];
+	/* dynamically allocate if any drivers need a value substantially larger than this */
+	struct if_rxd_frag	ifr_frags[IFLIB_MAX_RX_SEGS] __aligned(CACHE_LINE_SIZE);
 };
-
-
-static int enable_msix = 1;
-
-#define mtx_held(m)	(((m)->mtx_lock & ~MTX_FLAGMASK) != (uintptr_t)0)
 
 /*
  * Only allow a single packet to take up most 1/nth of the tx ring
  */
 #define MAX_SINGLE_PACKET_FRACTION 12
 #define IF_BAD_DMA (uint64_t)-1
+
+static int enable_msix = 1;
+
+#define mtx_held(m)	(((m)->mtx_lock & ~MTX_FLAGMASK) != (uintptr_t)0)
+
 
 
 #define CTX_ACTIVE(ctx) ((if_getdrvflags((ctx)->ifc_ifp) & IFF_DRV_RUNNING))
@@ -806,8 +809,8 @@ iflib_netmap_rxsync(struct netmap_kring *kring, int flags)
 	ri.iri_ifp = ctx->ifc_ifp;
 	/* XXX check sync modes */
 	for (i = 0, fl = rxq->ifr_fl; i < rxq->ifr_nfl; i++, fl++)
-		bus_dmamap_sync(rxq->ifr_desc_tag, fl->ifl_ifdi->idi_map,
-						BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_sync(rxq->ifr_fl[i].ifl_desc_tag, fl->ifl_ifdi->idi_map,
+				BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	/*
 	 * First part: import newly received packets.
@@ -1366,7 +1369,7 @@ iflib_rxsd_alloc(iflib_rxq_t rxq)
 								 0,			/* flags */
 								 NULL,			/* lockfunc */
 								 NULL,			/* lockarg */
-								 &rxq->ifr_desc_tag);
+								 &fl->ifl_desc_tag);
 		if (err) {
 			device_printf(dev, "%s: bus_dma_tag_create failed %d\n",
 				__func__, err);
@@ -1375,7 +1378,7 @@ iflib_rxsd_alloc(iflib_rxq_t rxq)
 
 		rxsd = fl->ifl_sds;
 		for (int i = 0; i < sctx->isc_nrxd; i++, rxsd++) {
-			err = bus_dmamap_create(rxq->ifr_desc_tag, 0, &rxsd->ifsd_map);
+			err = bus_dmamap_create(fl->ifl_desc_tag, 0, &rxsd->ifsd_map);
 			if (err) {
 				device_printf(dev, "%s: bus_dmamap_create failed: %d\n",
 					__func__, err);
@@ -1486,7 +1489,7 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 
 			cb_arg.error = 0;
 			q = fl->ifl_rxq;
-			err = bus_dmamap_load(q->ifr_desc_tag, rxsd->ifsd_map,
+			err = bus_dmamap_load(fl->ifl_desc_tag, rxsd->ifsd_map,
 		         cl, fl->ifl_buf_size, _rxq_refill_cb, &cb_arg, 0);
 
 			if (err != 0 || cb_arg.error) {
@@ -1553,15 +1556,15 @@ static void
 iflib_fl_bufs_free(iflib_fl_t fl)
 {
 	uint32_t cidx = fl->ifl_cidx;
-	iflib_dma_info_t idi = fl->ifl_rxq->ifr_ifdi;
+	iflib_dma_info_t idi = fl->ifl_ifdi;
 
 	MPASS(fl->ifl_credits >= 0);
 	while (fl->ifl_credits) {
 		iflib_sd_t d = &fl->ifl_sds[cidx];
 
 		if (d->ifsd_flags & RX_SW_DESC_INUSE) {
-			bus_dmamap_unload(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
-			bus_dmamap_destroy(fl->ifl_rxq->ifr_desc_tag, d->ifsd_map);
+			bus_dmamap_unload(fl->ifl_desc_tag, d->ifsd_map);
+			bus_dmamap_destroy(fl->ifl_desc_tag, d->ifsd_map);
 			if (d->ifsd_m != NULL) {
 				m_init(d->ifsd_m, M_NOWAIT, MT_DATA, 0);
 				uma_zfree(zone_mbuf, d->ifsd_m);
@@ -1632,8 +1635,8 @@ iflib_fl_setup(iflib_fl_t fl)
 	 * handle failure
 	 */
 	MPASS(rxq != NULL);
-	MPASS(rxq->ifr_ifdi != NULL);
-	bus_dmamap_sync(rxq->ifr_ifdi->idi_tag, rxq->ifr_ifdi->idi_map,
+	MPASS(fl->ifl_ifdi != NULL);
+	bus_dmamap_sync(fl->ifl_ifdi->idi_tag, fl->ifl_ifdi->idi_map,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	return (0);
 }
@@ -1646,19 +1649,23 @@ iflib_fl_setup(iflib_fl_t fl)
 static void
 iflib_rx_sds_free(iflib_rxq_t rxq)
 {
+	iflib_fl_t fl;
+	int i;
 
 	if (rxq->ifr_fl != NULL) {
+		for (i = 0; i < rxq->ifr_nfl; i++) {
+			fl = &rxq->ifr_fl[i];
+			if (fl->ifl_desc_tag != NULL) {
+				bus_dma_tag_destroy(fl->ifl_desc_tag);
+				fl->ifl_desc_tag = NULL;
+			}
+		}
 		if (rxq->ifr_fl->ifl_sds != NULL)
 			free(rxq->ifr_fl->ifl_sds, M_IFLIB);
 
 		free(rxq->ifr_fl, M_IFLIB);
 		rxq->ifr_fl = NULL;
 		rxq->ifr_gen = rxq->ifr_cidx = rxq->ifr_pidx = 0;
-	}
-
-	if (rxq->ifr_desc_tag != NULL) {
-		bus_dma_tag_destroy(rxq->ifr_desc_tag);
-		rxq->ifr_desc_tag = NULL;
 	}
 }
 
@@ -1828,104 +1835,82 @@ iflib_stop(if_ctx_t ctx)
 }
 
 static struct mbuf *
-assemble_segments(iflib_fl_t fl, if_rxd_info_t ri, iflib_sd_t sd, struct mbuf *m, int len)
+assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri)
 {
-	iflib_sd_t sd_next;
-	int cidx_next;
+	int i, flid, cidx, padlen , flags;
+	struct mbuf *m, *mh, *mt;
+	iflib_sd_t sd;
+	caddr_t cl;
+	iflib_dma_info_t di;
+	iflib_fl_t fl;
 
-	if (sd->ifsd_mh == NULL)
-		m->m_pkthdr.len = len;
-	else
-		sd->ifsd_mh->m_pkthdr.len += len;
+	i = 0;
+	do {
+		flid = ri->iri_frags[i].irf_flid;
+		cidx = ri->iri_frags[i].irf_idx;
+		fl = &rxq->ifr_fl[flid];
+		fl->ifl_credits--;
 
-	if (sd->ifsd_mh != NULL && ri->iri_next_offset != 0) {
-		/* We're in the middle of a packet and thus
-		 * need to pass this packet's data on to the
-		 * next descriptor
-		 */
-		cidx_next = ri->iri_cidx + ri->iri_next_offset;
-		if (cidx_next >= fl->ifl_size)
-			cidx_next -= fl->ifl_size;
-		sd_next = &fl->ifl_sds[cidx_next];
-		sd_next->ifsd_mh = sd->ifsd_mh;
-		sd_next->ifsd_mt = sd->ifsd_mt;
-		sd->ifsd_mh = sd->ifsd_mt = NULL;
-		sd_next->ifsd_mt->m_next = m;
-		sd_next->ifsd_mt = m;
-		m = NULL;
-	} else if (sd->ifsd_mh == NULL && ri->iri_next_offset != 0) {
+		di = fl->ifl_ifdi;
+		bus_dmamap_sync(di->idi_tag, di->idi_map,
+				BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+
+		sd = &fl->ifl_sds[cidx];
+		MPASS(sd->ifsd_cl != NULL);
+		MPASS(sd->ifsd_m != NULL);
+
+		/* not valid assert if bxe really does SGE from non-contiguous elements */
+		MPASS(fl->ifl_cidx == cidx);
+
+		m = sd->ifsd_m;
+		if (i == 0) {
+			flags = M_PKTHDR|M_EXT;
+			mh = mt = m;
+			padlen = ri->iri_pad;
+		} else {
+			flags = M_EXT;
+			mt->m_next = m;
+			mt = m;
+			/* assuming padding is only on the first fragment */
+			padlen = 0;
+		}
+		sd->ifsd_m = NULL;
+		bus_dmamap_unload(fl->ifl_desc_tag, sd->ifsd_map);
+		cl = sd->ifsd_cl;
+		sd->ifsd_cl = NULL;
+
+		/* Can these two be made one ? */
+		m_init(m, M_NOWAIT, MT_DATA, flags);
+		m_cljset(m, cl, fl->ifl_cltype);
 		/*
-		 * We're at the start of a multi-fragment packet
+		 * These must follow m_init and m_cljset
 		 */
-		cidx_next = ri->iri_cidx + ri->iri_next_offset;
-		if (cidx_next >= fl->ifl_size)
-			cidx_next -= fl->ifl_size;
-		sd_next = &fl->ifl_sds[cidx_next];
-		sd_next->ifsd_mh = sd_next->ifsd_mt = m;
-		m = NULL;
-	} else if (sd->ifsd_mh != NULL && ri->iri_next_offset == 0) {
-		/*
-		 * We're at the end of a multi-fragment packet
-		 */
-		sd->ifsd_mt->m_next = m;
-		sd->ifsd_mt = m;
-		m = sd->ifsd_mh;
-		sd->ifsd_mh = sd->ifsd_mt = NULL;
-	}
-	return (m);
+		m->m_data += padlen;
+		ri->iri_len -= padlen;
+		m->m_len = ri->iri_len;
+		if (__predict_false(++fl->ifl_cidx == fl->ifl_size)) {
+			fl->ifl_cidx = 0;
+			fl->ifl_gen = 0;
+		}
+	} while (++i < ri->iri_nfrags);
+
+	return (mh);
 }
-
 
 /*
  * Process one software descriptor
  */
 static struct mbuf *
-iflib_rxd_pkt_get(iflib_fl_t fl, if_rxd_info_t ri)
+iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 {
-	iflib_sd_t sd = &fl->ifl_sds[fl->ifl_cidx];
-	uint32_t flags = 0;
-	caddr_t cl;
 	struct mbuf *m;
-	int len = ri->iri_len;
 
-	MPASS(sd->ifsd_cl != NULL);
-	MPASS(sd->ifsd_m != NULL);
-
-	fl->ifl_credits--;
-	m = sd->ifsd_m;
-	sd->ifsd_m = NULL;
-	if (__predict_true(sd->ifsd_mh == NULL))
-		flags |= M_PKTHDR;
-
-	/* SYNC ? */
-	if (ri->iri_len <= IFLIB_RX_COPY_THRESH) {
-		m_init(m, M_NOWAIT, MT_DATA, flags);
-		memcpy(m->m_data, sd->ifsd_cl, ri->iri_len);
-	} else {
-		bus_dmamap_unload(fl->ifl_rxq->ifr_desc_tag, sd->ifsd_map);
-		cl = sd->ifsd_cl;
-		sd->ifsd_cl = NULL;
-
-		flags |= M_EXT;
-		m_init(m, M_NOWAIT, MT_DATA, flags);
-		m_cljset(m, cl, fl->ifl_cltype);
-	}
-
-	m->m_data += ri->iri_pad;
-	len -= ri->iri_pad;
-	m->m_len = len;
-
-	if ((fl->ifl_rxq->ifr_ctx->ifc_flags & IFC_MULTISEG) &&
-	    (m = assemble_segments(fl, ri, sd, m, len)) == NULL)
-		return (NULL);
-	else
-		m->m_pkthdr.len = len;
-
+	/* should I merge this back in now that the two paths are basically duplicated? */
+	m = assemble_segments(rxq, ri);
+	m->m_pkthdr.len = ri->iri_len;
 	m->m_pkthdr.rcvif = ri->iri_ifp;
 	m->m_flags |= ri->iri_flags;
-
-	if (ri->iri_flags & M_VLANTAG)
-		if_setvtag(m, ri->iri_vtag);
+	m->m_pkthdr.ether_vtag = ri->iri_vtag;
 	m->m_pkthdr.flowid = ri->iri_flowid;
 	M_HASHTYPE_SET(m, ri->iri_rsstype);
 	m->m_pkthdr.csum_flags = ri->iri_csum_flags;
@@ -1938,15 +1923,12 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 {
 	if_ctx_t ctx = rxq->ifr_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
-	int avail, fl_cidx, cidx, gen, fl_gen, i;
-	int *cidxp, *genp;
+	int avail, i, *cidxp;
 	struct if_rxd_info ri;
-	iflib_dma_info_t di;
 	int err, budget_left, rx_bytes, rx_pkts;
 	iflib_fl_t fl;
 	struct ifnet *ifp;
 	struct lro_entry *queued;
-	int8_t qidx;
 	/*
 	 * XXX early demux data packets so that if_input processing only handles
 	 * acks in interrupt context
@@ -1957,20 +1939,14 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		return (FALSE);
 	}
 
-	if (sctx->isc_flags & IFLIB_HAS_CQ) {
-		cidxp  = &rxq->ifr_cidx;
-		genp =  &rxq->ifr_gen;
-	} else {
-		cidxp = &rxq->ifr_fl[0].ifl_cidx;
-		genp = &rxq->ifr_fl[0].ifl_gen;
-	}
-	cidx = *cidxp;
-	gen = *genp;
 	mh = mt = NULL;
 	MPASS(budget > 0);
 	rx_pkts	= rx_bytes = 0;
-
-	if ((avail = iflib_rxd_avail(ctx, rxq, cidx)) == 0) {
+	if (sctx->isc_flags & IFLIB_HAS_CQ)
+		cidxp = &rxq->ifr_cidx;
+	else
+		cidxp = &rxq->ifr_fl[0].ifl_cidx;
+	if ((avail = iflib_rxd_avail(ctx, rxq, *cidxp)) == 0) {
 		for (i = 0, fl = &rxq->ifr_fl[0]; i < sctx->isc_nfl; i++, fl++)
 			__iflib_fl_refill_lt(ctx, fl, budget + 8);
 		DBG_COUNTER_INC(rx_unavail);
@@ -1982,74 +1958,40 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 			DBG_COUNTER_INC(rx_ctx_inactive);
 			break;
 		}
-		di = rxq->ifr_ifdi;
-		bus_dmamap_sync(di->idi_tag, di->idi_map,
-		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-
 		/*
 		 * Reset client set fields to their default values
 		 */
 		bzero(&ri, sizeof(ri));
 		ri.iri_qsidx = rxq->ifr_id;
-		ri.iri_cidx = cidx;
+		ri.iri_cidx = *cidxp;
 		ri.iri_ifp = ctx->ifc_ifp;
+		ri.iri_frags = rxq->ifr_frags;
 		err = ctx->isc_rxd_pkt_get(ctx->ifc_softc, &ri);
 
 		/* in lieu of handling correctly - make sure it isn't being unhandled */
 		MPASS(err == 0);
-
-		qidx = ri.iri_qidx;
-		if (++cidx == sctx->isc_nrxd) {
-			cidx = 0;
-			gen = 0;
-		}
 		if (sctx->isc_flags & IFLIB_HAS_CQ) {
-			if (ri.iri_m != NULL) {
-				m = ri.iri_m;
-				ri.iri_m = NULL;
-				goto imm_pkt;
+			/* we know we consumed _one_ CQ entry */
+			if (++rxq->ifr_cidx == sctx->isc_nrxd) {
+				rxq->ifr_cidx = 0;
+				rxq->ifr_gen = 0;
 			}
 			/* was this only a completion queue message? */
-			if (qidx == -1)
+			if (__predict_false(ri.iri_nfrags == 0))
 				continue;
 		}
-		fl = &rxq->ifr_fl[qidx];
-		fl_cidx = fl->ifl_cidx;
-		fl_gen = fl->ifl_gen;
-		bus_dmamap_unload(rxq->ifr_desc_tag, fl->ifl_sds[fl_cidx].ifsd_map);
-
-		if (ri.iri_len == 0) {
-			DBG_COUNTER_INC(rx_zero_len);
-			m_freem(fl->ifl_sds[fl_cidx].ifsd_m);
-			fl->ifl_sds[fl_cidx].ifsd_m = NULL;
-			/*
-			 * XXX Note currently we don't free the initial pieces
-			 * of a multi-fragment packet
-			 */
-			if (++fl_cidx == fl->ifl_size) {
-				fl_cidx = 0;
-				fl_gen = 0;
-			}
-			fl->ifl_cidx = fl_cidx;
-			fl->ifl_gen = fl_gen;
-			continue;
-		}
-		m = iflib_rxd_pkt_get(fl, &ri);
-		if (++fl_cidx == fl->ifl_size) {
-			fl_cidx = 0;
-			fl_gen = 0;
-		}
-		fl->ifl_cidx = fl_cidx;
-		fl->ifl_gen = fl_gen;
+		MPASS(ri.iri_nfrags != 0);
+		MPASS(ri.iri_len != 0);
+		m = iflib_rxd_pkt_get(rxq, &ri);
 
 		if (avail == 0 && budget_left)
-			avail = iflib_rxd_avail(ctx, rxq, cidx);
+			avail = iflib_rxd_avail(ctx, rxq, *cidxp);
 
-		if (m == NULL) {
+		if (__predict_false(m == NULL)) {
 			DBG_COUNTER_INC(rx_mbuf_null);
 			continue;
 		}
-	imm_pkt:
+		/* imm_pkt: -- cxgb */
 		if (mh == NULL)
 			mh = mt = m;
 		else {
@@ -2084,14 +2026,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		SLIST_REMOVE_HEAD(&rxq->ifr_lc.lro_active, next);
 		tcp_lro_flush(&rxq->ifr_lc, queued);
 	}
-
-	if ((sctx->isc_flags & IFLIB_HAS_CQ) == 0)
-		MPASS(cidx == *cidxp);
-
-	if (sctx->isc_flags & IFLIB_HAS_CQ)
-		*cidxp = cidx;
-	*genp = gen;
-	return (iflib_rxd_avail(ctx, rxq, cidx));
+	return (iflib_rxd_avail(ctx, rxq, *cidxp));
 }
 
 #define M_CSUM_FLAGS(m) ((m)->m_pkthdr.csum_flags)
@@ -2132,18 +2067,26 @@ iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring)
 }
 
 static void
-iflib_txd_deferred_db_check(void * arg)
+ifmp_txd_db_check(struct ifmp_ring *r)
 {
-	iflib_txq_t txq = arg;
+	iflib_txq_t txq = r->cookie;
 	if_ctx_t ctx = txq->ift_ctx;
 	uint32_t dbval;
 
+	dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
+	ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
+	txq->ift_db_pending = txq->ift_npending = 0;
+}
+
+static void
+iflib_txd_deferred_db_check(void * arg)
+{
+	iflib_txq_t txq = arg;
+
 	/* simple non-zero boolean so use bitwise OR */
-	if (txq->ift_db_pending | txq->ift_npending) {
-		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
-		ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
-		txq->ift_db_pending = txq->ift_npending = 0;
-	}
+	if (txq->ift_db_pending | txq->ift_npending)
+		ifmp_ring_serialize(txq->ift_br[0], ifmp_txd_db_check);
+
 	/* small value - just to handle breaking stalls */
 	iflib_txq_check_drain(txq, 4);
 }
@@ -3138,14 +3081,11 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	if (scctx->isc_tx_tso_segments_max > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
 		scctx->isc_tx_tso_segments_max = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
 
-#if __FreeBSD_version >= 1100045
 	ifp = ctx->ifc_ifp;
 	/* TSO parameters - dig these out of the data sheet - simply correspond to tag setup */
 	ifp->if_hw_tsomaxsegcount = scctx->isc_tx_tso_segments_max;
 	ifp->if_hw_tsomax = scctx->isc_tx_tso_size_max;
 	ifp->if_hw_tsomaxsegsize = scctx->isc_tx_tso_segsize_max;
-#endif
-
 	/*
 	** Now setup MSI or MSI/X, should
 	** return us the number of supported
@@ -3514,7 +3454,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 	iflib_rxq_t rxq;
 	iflib_qset_t qset;
 	iflib_fl_t fl = NULL;
-	int i, j, err, txconf, rxconf;
+	int i, j, err, txconf, rxconf, fl_ifdi_offset;
 	iflib_dma_info_t ifdip;
 	uint32_t *qsizes = sctx->isc_qsizes;
 	uint8_t nqs = sctx->isc_nqs;
@@ -3620,7 +3560,13 @@ iflib_queues_alloc(if_ctx_t ctx)
 	 */
 		rxq->ifr_ctx = ctx;
 		rxq->ifr_id = i;
-		rxq->ifr_ifdi = &qset->ifq_ifdi[1];
+		if (sctx->isc_flags & IFLIB_HAS_CQ) {
+			rxq->ifr_ifdi = &qset->ifq_ifdi[1];
+			fl_ifdi_offset = 2;
+		} else {
+			fl_ifdi_offset = 1;
+			rxq->ifr_ifdi = NULL;
+		}
 		rxq->ifr_nfl = nfree_lists;
 		if (!(fl =
 			  (iflib_fl_t) malloc(sizeof(struct iflib_fl) * nfree_lists, M_IFLIB, M_NOWAIT | M_ZERO))) {
@@ -3632,6 +3578,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 		for (j = 0; j < nfree_lists; j++) {
 			rxq->ifr_fl[j].ifl_rxq = rxq;
 			rxq->ifr_fl[j].ifl_id = j;
+			rxq->ifr_fl[j].ifl_ifdi = &qset->ifq_ifdi[j + fl_ifdi_offset];
 		}
         /* Allocate receive buffers for the ring*/
 		if (iflib_rxsd_alloc(rxq)) {
@@ -3640,11 +3587,6 @@ iflib_queues_alloc(if_ctx_t ctx)
 			err = ENOMEM;
 			goto err_rx_desc;
 		}
-
-		/* Initialize the RX lock */
-		snprintf(rxq->ifr_mtx_name, MTX_NAME_LEN, "%s:rx(%d)",
-		    device_get_nameunit(dev), rxq->ifr_id);
-		mtx_init(&rxq->ifr_mtx, rxq->ifr_mtx_name, NULL, MTX_DEF);
 	}
 
 	vaddrs = malloc(sizeof(caddr_t)*nqsets*nqs, M_IFLIB, M_WAITOK);
@@ -4211,6 +4153,7 @@ mp_ring_state_handler(SYSCTL_HANDLER_ARGS)
 static void
 iflib_add_device_sysctl(if_ctx_t ctx)
 {
+	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
         device_t dev = iflib_get_dev(ctx);
 	struct sysctl_oid_list *child;
@@ -4240,6 +4183,14 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 		queue_node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, namebuf,
 					     CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
+		if (sctx->isc_flags & IFLIB_HAS_CQ) {
+			SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "rxq_cq_pidx",
+				       CTLFLAG_RD,
+				       &rxq->ifr_pidx, 1, "Producer Index");
+			SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "rxq_cq_cidx",
+				       CTLFLAG_RD,
+				       &rxq->ifr_cidx, 1, "Consumer Index");
+		}
 		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++) {
 			snprintf(namebuf, NAME_BUFLEN, "rxq_fl%d", j);
 			fl_node = SYSCTL_ADD_NODE(ctx_list, queue_list, OID_AUTO, namebuf,
