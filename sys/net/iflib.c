@@ -263,6 +263,7 @@ typedef struct iflib_sw_desc {
 #define IFLIB_QUEUE_HUNG		1
 #define IFLIB_QUEUE_WORKING		2
 
+/* this should really scale with ring size - 32 is a fairly arbitrary value for this */
 #define TX_BATCH_SIZE			32
 
 #define IFLIB_BUDGET			64
@@ -302,6 +303,7 @@ struct iflib_txq {
 	struct callout	ift_db_check;
 
 	struct mtx              ift_mtx;
+	struct mtx              ift_db_mtx;
 	int                     ift_id;
 	iflib_sd_t              ift_sds;
 	int                     ift_nbr;
@@ -316,6 +318,7 @@ struct iflib_txq {
 	iflib_dma_info_t	ift_ifdi;
 #define MTX_NAME_LEN 16
 	char                    ift_mtx_name[MTX_NAME_LEN];
+	char                    ift_db_mtx_name[MTX_NAME_LEN];
 	bus_dma_segment_t	ift_segs[IFLIB_MAX_TX_SEGS]  __aligned(CACHE_LINE_SIZE);
 };
 
@@ -413,6 +416,12 @@ static int enable_msix = 1;
 #define CTX_UNLOCK(ctx) mtx_unlock(&(ctx)->ifc_mtx)
 #define CTX_LOCK_DESTROY(ctx) mtx_destroy(&(ctx)->ifc_mtx)
 
+
+#define TXDB_LOCK_INIT(txq)  mtx_init(&(txq)->ift_db_mtx, (txq)->ift_db_mtx_name, NULL, MTX_DEF)
+#define TXDB_TRYLOCK(txq) mtx_trylock(&(txq)->ift_db_mtx)
+#define TXDB_LOCK(txq) mtx_lock(&(txq)->ift_db_mtx)
+#define TXDB_UNLOCK(txq) mtx_unlock(&(txq)->ift_db_mtx)
+#define TXDB_LOCK_DESTROY(txq) mtx_destroy(&(txq)->ift_db_mtx)
 
 #define CALLOUT_LOCK(txq)	mtx_lock(&txq->ift_mtx)
 #define CALLOUT_UNLOCK(txq) 	mtx_unlock(&txq->ift_mtx)
@@ -2035,47 +2044,18 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 static __inline void
 iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring)
 {
-	uint32_t dbval, dbval_prev;
-
-	if (ring || ++txq->ift_db_pending >= 32) {
-#ifdef notyet
-		iflib_sd_t txsd = &txq->ift_sds[txq->ift_pidx];
-
-		/*
-		 * Flush deferred buffers first
-		 */
-		/* XXX only do this on cards like T3 that can batch packets in a descriptor
-		 * and only do this if pidx != cidx
-		 */
-		if (__predict_false(txsd->ifsd_m != NULL)) {
-			struct if_pkt_info pi;
-
-			pi.ipi_qsidx = txq->ift_id;
-			pi.ipi_pidx = txq->ift_pidx;
-			ctx->isc_txd_encap(ctx->ifc_softc, &pi);
-			txq->ift_pidx = pi.ipi_new_pidx;
-		}
-#endif
-		dbval_prev = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
-		/* the lock will only ever be contended in the !min_latency case */
-		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
-		if (dbval == dbval_prev) {
-			ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
-			txq->ift_db_pending = txq->ift_npending = 0;
-		}
-	}
-}
-
-static void
-ifmp_txd_db_check(struct ifmp_ring *r)
-{
-	iflib_txq_t txq = r->cookie;
-	if_ctx_t ctx = txq->ift_ctx;
 	uint32_t dbval;
 
-	dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
-	ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
-	txq->ift_db_pending = txq->ift_npending = 0;
+	if (ring || ++txq->ift_db_pending >= TX_BATCH_SIZE) {
+
+		/* the lock will only ever be contended in the !min_latency case */
+		if (!TXDB_TRYLOCK(txq))
+			return;
+		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
+		ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
+		txq->ift_db_pending = txq->ift_npending = 0;
+		TXDB_UNLOCK(txq);
+	}
 }
 
 static void
@@ -2085,10 +2065,10 @@ iflib_txd_deferred_db_check(void * arg)
 
 	/* simple non-zero boolean so use bitwise OR */
 	if (txq->ift_db_pending | txq->ift_npending)
-		ifmp_ring_serialize(txq->ift_br[0], ifmp_txd_db_check);
+		iflib_txd_db_check(txq->ift_ctx, txq, TRUE);
 
-	/* small value - just to handle breaking stalls */
-	iflib_txq_check_drain(txq, 4);
+	if (ifmp_ring_is_stalled(txq->ift_br[0]))
+		iflib_txq_check_drain(txq, 4);
 }
 
 #ifdef PKT_DEBUG
@@ -3538,11 +3518,14 @@ iflib_queues_alloc(if_ctx_t ctx)
 		}
 
 		/* Initialize the TX lock */
-		snprintf(txq->ift_mtx_name, MTX_NAME_LEN, "%s:tx(%d)",
+		snprintf(txq->ift_mtx_name, MTX_NAME_LEN, "%s:tx(%d):callout",
 		    device_get_nameunit(dev), txq->ift_id);
 		mtx_init(&txq->ift_mtx, txq->ift_mtx_name, NULL, MTX_DEF);
 		callout_init_mtx(&txq->ift_timer, &txq->ift_mtx, 0);
 		callout_init_mtx(&txq->ift_db_check, &txq->ift_mtx, 0);
+
+		snprintf(txq->ift_db_mtx_name, MTX_NAME_LEN, "%s:tx(%d):db",
+		    device_get_nameunit(dev), txq->ift_id);
 
 		/* Allocate a buf ring */
 		txq->ift_br = brscp + i*nbuf_rings;

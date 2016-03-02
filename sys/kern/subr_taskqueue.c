@@ -754,13 +754,6 @@ taskqueue_create_fast(const char *name, int mflags,
 			MTX_SPIN, "fast_taskqueue");
 }
 
-/* NB: for backwards compatibility */
-int
-taskqueue_enqueue_fast(struct taskqueue *queue, struct task *task)
-{
-	return taskqueue_enqueue(queue, task);
-}
-
 static void	*taskqueue_fast_ih;
 
 static void
@@ -987,7 +980,7 @@ taskqgroup_bind(struct taskqgroup *qgroup)
 		task = malloc(sizeof (*task), M_DEVBUF, M_NOWAIT);
 		TASK_INIT(&task->bt_task, 0, taskqgroup_binder, task);
 		task->bt_cpuid = qgroup->tqg_queue[i].tgc_cpu;
-		taskqueue_enqueue_fast(qgroup->tqg_queue[i].tgc_taskq,
+		taskqueue_enqueue(qgroup->tqg_queue[i].tgc_taskq,
 		    &task->bt_task);
 	}
 }
