@@ -3525,13 +3525,13 @@ iflib_queues_alloc(if_ctx_t ctx)
 		callout_init_mtx(&txq->ift_db_check, &txq->ift_mtx, 0);
 
 		snprintf(txq->ift_db_mtx_name, MTX_NAME_LEN, "%s:tx(%d):db",
-		    device_get_nameunit(dev), txq->ift_id);
+			 device_get_nameunit(dev), txq->ift_id);
+		TXDB_LOCK_INIT(txq);
 
-		/* Allocate a buf ring */
 		txq->ift_br = brscp + i*nbuf_rings;
 		for (j = 0; j < nbuf_rings; j++) {
 			err = ifmp_ring_alloc(&txq->ift_br[j], 2048, txq, iflib_txq_drain,
-								iflib_txq_can_drain, M_IFLIB, M_WAITOK);
+					      iflib_txq_can_drain, M_IFLIB, M_WAITOK);
 			if (err) {
 				/* XXX free any allocated rings */
 				device_printf(dev, "Unable to allocate buf_ring\n");
@@ -3539,8 +3539,8 @@ iflib_queues_alloc(if_ctx_t ctx)
 			}
 		}
 		/*
-     * Next the RX queues...
-	 */
+		 * Next the RX queues...
+		 */
 		rxq->ifr_ctx = ctx;
 		rxq->ifr_id = i;
 		if (sctx->isc_flags & IFLIB_HAS_CQ) {
