@@ -38,6 +38,7 @@
 struct ifmp_ring;
 typedef u_int (*mp_ring_drain_t)(struct ifmp_ring *, u_int, u_int);
 typedef u_int (*mp_ring_can_drain_t)(struct ifmp_ring *);
+typedef void (*mp_ring_serial_t)(struct ifmp_ring *);
 
 struct ifmp_ring {
 	volatile uint64_t	state __aligned(CACHE_LINE_SIZE);
@@ -65,4 +66,5 @@ void ifmp_ring_check_drainage(struct ifmp_ring *, int);
 void ifmp_ring_reset_stats(struct ifmp_ring *);
 int ifmp_ring_is_idle(struct ifmp_ring *);
 int ifmp_ring_is_stalled(struct ifmp_ring *r);
+void ifmp_ring_serialize(struct ifmp_ring *r, mp_ring_serial_t f);
 #endif

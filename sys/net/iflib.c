@@ -2067,18 +2067,26 @@ iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring)
 }
 
 static void
-iflib_txd_deferred_db_check(void * arg)
+ifmp_txd_db_check(struct ifmp_ring *r)
 {
-	iflib_txq_t txq = arg;
+	iflib_txq_t txq = r->cookie;
 	if_ctx_t ctx = txq->ift_ctx;
 	uint32_t dbval;
 
+	dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
+	ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
+	txq->ift_db_pending = txq->ift_npending = 0;
+}
+
+static void
+iflib_txd_deferred_db_check(void * arg)
+{
+	iflib_txq_t txq = arg;
+
 	/* simple non-zero boolean so use bitwise OR */
-	if (txq->ift_db_pending | txq->ift_npending) {
-		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
-		ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
-		txq->ift_db_pending = txq->ift_npending = 0;
-	}
+	if (txq->ift_db_pending | txq->ift_npending)
+		ifmp_ring_serialize(txq->ift_br[0], ifmp_txd_db_check);
+
 	/* small value - just to handle breaking stalls */
 	iflib_txq_check_drain(txq, 4);
 }
