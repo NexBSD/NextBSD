@@ -1843,34 +1843,53 @@ iflib_stop(if_ctx_t ctx)
 	IFDI_STOP(ctx);
 }
 
+static iflib_sd_t
+rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int *cltype, int unload)
+{
+	int flid, cidx;
+	iflib_sd_t sd;
+	iflib_fl_t fl;
+	iflib_dma_info_t di;
+
+	flid = irf->irf_flid;
+	cidx = irf->irf_idx;
+	fl = &rxq->ifr_fl[flid];
+	fl->ifl_credits--;
+
+	sd = &fl->ifl_sds[cidx];
+	di = fl->ifl_ifdi;
+	bus_dmamap_sync(di->idi_tag, di->idi_map,
+			BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+
+	/* not valid assert if bxe really does SGE from non-contiguous elements */
+	MPASS(fl->ifl_cidx == cidx);
+	if (unload)
+		bus_dmamap_unload(fl->ifl_desc_tag, sd->ifsd_map);
+
+	if (__predict_false(++fl->ifl_cidx == fl->ifl_size)) {
+		fl->ifl_cidx = 0;
+		fl->ifl_gen = 0;
+	}
+	/* YES ick */
+	if (cltype)
+		*cltype = fl->ifl_cltype;
+	return (sd);
+}
+
 static struct mbuf *
 assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri)
 {
-	int i, flid, cidx, padlen , flags;
+	int i, padlen , flags, cltype;
 	struct mbuf *m, *mh, *mt;
 	iflib_sd_t sd;
 	caddr_t cl;
-	iflib_dma_info_t di;
-	iflib_fl_t fl;
 
 	i = 0;
 	do {
-		flid = ri->iri_frags[i].irf_flid;
-		cidx = ri->iri_frags[i].irf_idx;
-		fl = &rxq->ifr_fl[flid];
-		fl->ifl_credits--;
+		sd = rxd_frag_to_sd(rxq, &ri->iri_frags[0], &cltype, TRUE);
 
-		di = fl->ifl_ifdi;
-		bus_dmamap_sync(di->idi_tag, di->idi_map,
-				BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-
-		sd = &fl->ifl_sds[cidx];
 		MPASS(sd->ifsd_cl != NULL);
 		MPASS(sd->ifsd_m != NULL);
-
-		/* not valid assert if bxe really does SGE from non-contiguous elements */
-		MPASS(fl->ifl_cidx == cidx);
-
 		m = sd->ifsd_m;
 		if (i == 0) {
 			flags = M_PKTHDR|M_EXT;
@@ -1884,27 +1903,24 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri)
 			padlen = 0;
 		}
 		sd->ifsd_m = NULL;
-		bus_dmamap_unload(fl->ifl_desc_tag, sd->ifsd_map);
 		cl = sd->ifsd_cl;
 		sd->ifsd_cl = NULL;
 
 		/* Can these two be made one ? */
 		m_init(m, M_NOWAIT, MT_DATA, flags);
-		m_cljset(m, cl, fl->ifl_cltype);
+		m_cljset(m, cl, cltype);
 		/*
 		 * These must follow m_init and m_cljset
 		 */
 		m->m_data += padlen;
 		ri->iri_len -= padlen;
 		m->m_len = ri->iri_len;
-		if (__predict_false(++fl->ifl_cidx == fl->ifl_size)) {
-			fl->ifl_cidx = 0;
-			fl->ifl_gen = 0;
-		}
 	} while (++i < ri->iri_nfrags);
 
 	return (mh);
 }
+
+
 
 /*
  * Process one software descriptor
@@ -1913,9 +1929,19 @@ static struct mbuf *
 iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 {
 	struct mbuf *m;
+	iflib_sd_t sd;
 
 	/* should I merge this back in now that the two paths are basically duplicated? */
-	m = assemble_segments(rxq, ri);
+	if (ri->iri_len <= IFLIB_RX_COPY_THRESH) {
+		sd = rxd_frag_to_sd(rxq, &ri->iri_frags[0], NULL, FALSE);
+		m = sd->ifsd_m;
+		sd->ifsd_m = NULL;
+		m_init(m, M_NOWAIT, MT_DATA, M_PKTHDR);
+		memcpy(m->m_data, sd->ifsd_cl, ri->iri_len);
+		m->m_len = ri->iri_len;
+       } else {
+		m = assemble_segments(rxq, ri);
+	}
 	m->m_pkthdr.len = ri->iri_len;
 	m->m_pkthdr.rcvif = ri->iri_ifp;
 	m->m_flags |= ri->iri_flags;
