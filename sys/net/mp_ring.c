@@ -347,6 +347,8 @@ ifmp_ring_serialize(struct ifmp_ring *r, mp_ring_serial_t f)
 	union ring_state os, ns;
 
 	ns.state = os.state = r->state;
+	if (os.flags != IDLE)
+		return;
 	ns.flags = BUSY;
 
 	/*
