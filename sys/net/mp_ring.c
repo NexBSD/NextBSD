@@ -345,8 +345,11 @@ void
 ifmp_ring_serialize(struct ifmp_ring *r, mp_ring_serial_t f)
 {
 	union ring_state os, ns;
+	uint16_t oflags;
 
 	ns.state = os.state = r->state;
+	if ((oflags = os.flags) == BUSY)
+		return;
 	ns.flags = BUSY;
 
 	/*
@@ -361,7 +364,7 @@ ifmp_ring_serialize(struct ifmp_ring *r, mp_ring_serial_t f)
 	(*f)(r);
 	do {
 		os.state = ns.state = r->state;
-		ns.flags = IDLE;
+		ns.flags = oflags;
 	} while (!atomic_cmpset_acq_64(&r->state, os.state, ns.state));
 	critical_exit();
 }
