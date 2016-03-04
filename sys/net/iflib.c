@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2014-2015, Matthew Macy <mmacy@nextbsd.org>
+ * Copyright (c) 2014-2016, Matthew Macy <mmacy@nextbsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -61,7 +61,6 @@
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
 
-
 #include <machine/bus.h>
 #include <machine/in_cksum.h>
 
@@ -80,6 +79,28 @@
 #include "opt_inet6.h"
 
 #include "ifdi_if.h"
+
+/*
+ * NB:
+ * - TX_BATCH_SIZE will consume too many segments in one go (66*32) before
+ *   trying to clean again. Thus many still hot in cache mbufs/clusters will
+ *   have been needlessly displaced. This loop needs to be tuned accordingly.
+ *
+ * - Prefetching in tx cleaning should perhaps be a tunable. The distance ahead
+ *   we prefetch needs to be determined by the time spent in m_free vis a vis
+ *   the cost of a prefetch. This will of course vary based on the workload:
+ *      - NFLX's m_free path is dominated by vm-based M_EXT manipulation which
+ *        is quite expensive, thus suggesting very little prefetch.
+ *      - small packet forwarding which is just returning a single mbuf to
+ *        UMA will typically be very fast vis a vis the cost of a memory
+ *        access.
+ *
+ *  - We need a way for the NIC to specify it's RX indirection table size.
+ *    Then you do 2 mods to get the ring.
+ *    Eg: r = (flowid % indir_size) % num_txq
+ *
+ */
+
 
 /*
  * File organization:
@@ -243,17 +264,20 @@ struct iflib_qset {
 #define RX_SW_DESC_INUSE        (1 << 3)
 #define TX_SW_DESC_MAPPED       (1 << 4)
 
-typedef struct iflib_sw_desc {
+typedef struct iflib_sw_rx_desc {
 	bus_dmamap_t    ifsd_map;         /* bus_dma map for packet */
-	struct mbuf    *ifsd_m;           /* rx: uninitialized mbuf
-									   * tx: pkthdr for the packet
-									   */
+	struct mbuf    *ifsd_m;           /* rx: uninitialized mbuf */
 	caddr_t         ifsd_cl;          /* direct cluster pointer for rx */
-	int             ifsd_flags;
+	uint16_t	ifsd_flags;
+} *iflib_rxsd_t;
 
-	struct mbuf		*ifsd_mh;
-	struct mbuf		*ifsd_mt;
-} *iflib_sd_t;
+typedef struct iflib_sw_tx_desc {
+	bus_dmamap_t    ifsd_map;         /* bus_dma map for packet */
+	struct mbuf    *ifsd_m;           /* pkthdr mbuf */
+	uint16_t	ifsd_flags;
+	uint16_t	ifsd_next;	/* next descriptor */
+} *iflib_txsd_t;
+
 
 /* magic number that should be high enough for any hardware */
 #define IFLIB_MAX_TX_SEGS		128
@@ -277,40 +301,41 @@ typedef struct iflib_sw_desc {
 #define CSUM_OFFLOAD		(CSUM_IP_TSO|CSUM_IP6_TSO|CSUM_IP| \
 				 CSUM_IP_UDP|CSUM_IP_TCP|CSUM_IP_SCTP| \
 				 CSUM_IP6_UDP|CSUM_IP6_TCP|CSUM_IP6_SCTP)
-
-
 struct iflib_txq {
-	if_ctx_t	ift_ctx;
-	uint32_t	ift_in_use;
-	uint32_t	ift_size;
-	uint32_t	ift_processed;
-	uint32_t	ift_cleaned;
-	uint32_t	ift_cidx;
-	uint32_t	ift_cidx_processed;
-	uint32_t	ift_pidx;
-	uint32_t	ift_gen;
-	uint32_t	ift_db_pending;
-	uint32_t	ift_npending;
+	uint16_t	ift_in_use;
+	uint16_t	ift_cidx;
+	uint16_t	ift_cidx_processed;
+	uint16_t	ift_pidx;
+	uint8_t		ift_gen;
+	uint8_t		ift_db_pending;
+	uint8_t		ift_npending;
+	/* implicit pad */
+	uint64_t	ift_processed;
+	uint64_t	ift_cleaned;
 	uint64_t	ift_no_tx_dma_setup;
 	uint64_t	ift_no_desc_avail;
 	uint64_t	ift_mbuf_defrag_failed;
 	uint64_t	ift_mbuf_defrag;
 	uint64_t	ift_map_failed;
 	uint64_t	ift_txd_encap_efbig;
-	uint64_t	ift_tx_irq;
-	int		ift_closed;
+
+	struct mtx	ift_mtx;
+	struct mtx	ift_db_mtx;
+
+	/* constant values */
+	if_ctx_t	ift_ctx  __aligned(CACHE_LINE_SIZE);
+	struct ifmp_ring        **ift_br;
+	struct grouptask	ift_task;
+	uint16_t	ift_size;
+	uint16_t	ift_id;
 	struct callout	ift_timer;
 	struct callout	ift_db_check;
 
-	struct mtx              ift_mtx;
-	struct mtx              ift_db_mtx;
-	int                     ift_id;
-	iflib_sd_t              ift_sds;
-	int                     ift_nbr;
-	struct ifmp_ring        **ift_br;
-	struct grouptask	ift_task;
-	int			ift_qstatus;
-	int                     ift_active;
+	iflib_txsd_t		ift_sds;
+	uint8_t			ift_nbr;
+	uint8_t			ift_qstatus;
+	uint8_t			ift_active;
+	uint8_t			ift_closed;
 	int			ift_watchdog_time;
 	struct iflib_filter_info ift_filter_info;
 	bus_dma_tag_t		ift_desc_tag;
@@ -320,26 +345,28 @@ struct iflib_txq {
 	char                    ift_mtx_name[MTX_NAME_LEN];
 	char                    ift_db_mtx_name[MTX_NAME_LEN];
 	bus_dma_segment_t	ift_segs[IFLIB_MAX_TX_SEGS]  __aligned(CACHE_LINE_SIZE);
-};
+} __aligned(CACHE_LINE_SIZE);
 
 struct iflib_fl {
-	uint32_t	ifl_cidx;
-	uint32_t	ifl_pidx;
-	uint32_t	ifl_gen;
-	uint32_t	ifl_size;
-	uint32_t	ifl_credits;
-	uint32_t	ifl_buf_size;
-	int		ifl_cltype;
-	uma_zone_t	ifl_zone;
+	uint16_t	ifl_cidx;
+	uint16_t	ifl_pidx;
+	uint16_t	ifl_credits;
+	uint8_t		ifl_gen;
+	/* implicit pad */
 
-	iflib_sd_t	ifl_sds;
+	/* constant */
+	uint16_t	ifl_size;
+	uint16_t	ifl_buf_size;
+	uint16_t	ifl_cltype;
+	uma_zone_t	ifl_zone;
+	iflib_rxsd_t	ifl_sds;
 	iflib_rxq_t	ifl_rxq;
 	uint8_t		ifl_id;
 	bus_dma_tag_t           ifl_desc_tag;
 	iflib_dma_info_t	ifl_ifdi;
-	uint64_t	ifl_bus_addrs[256];
-	caddr_t		ifl_vm_addrs[256];
-};
+	uint64_t	ifl_bus_addrs[256] __aligned(CACHE_LINE_SIZE);
+	caddr_t		ifl_vm_addrs[256] __aligned(CACHE_LINE_SIZE);
+}  __aligned(CACHE_LINE_SIZE);
 
 static inline int
 get_inuse(int size, int cidx, int pidx, int gen)
@@ -377,16 +404,16 @@ struct iflib_rxq {
 	 * these are the cq cidx and pidx. Otherwise
 	 * these are unused.
 	 */
-	uint32_t	ifr_size;
-	uint32_t	ifr_cidx;
-	uint32_t	ifr_pidx;
-	uint32_t	ifr_gen;
+	uint16_t	ifr_size;
+	uint16_t	ifr_cidx;
+	uint16_t	ifr_pidx;
+	uint8_t		ifr_gen;
 
 	if_ctx_t	ifr_ctx;
+	iflib_fl_t	ifr_fl;
 	uint64_t	ifr_rx_irq;
 	uint16_t	ifr_id;
-	int			ifr_lro_enabled;
-	iflib_fl_t	ifr_fl;
+	uint8_t		ifr_lro_enabled;
 	uint8_t		ifr_nfl;
 	struct lro_ctrl			ifr_lc;
 	struct grouptask        ifr_task;
@@ -394,7 +421,7 @@ struct iflib_rxq {
 	iflib_dma_info_t		ifr_ifdi;
 	/* dynamically allocate if any drivers need a value substantially larger than this */
 	struct if_rxd_frag	ifr_frags[IFLIB_MAX_RX_SEGS] __aligned(CACHE_LINE_SIZE);
-};
+}  __aligned(CACHE_LINE_SIZE);
 
 /*
  * Only allow a single packet to take up most 1/nth of the tx ring
@@ -948,7 +975,7 @@ iflib_netmap_txq_init(if_ctx_t ctx, iflib_txq_t txq)
 {
 	struct netmap_adapter *na = NA(ctx->ifc_ifp);
 	struct netmap_slot *slot;
-	iflib_sd_t sd;
+	iflib_txsd_t sd;
 
 	slot = netmap_reset(na, NR_TX, txq->ift_id, 0);
 	if (slot == 0)
@@ -973,7 +1000,7 @@ iflib_netmap_rxq_init(if_ctx_t ctx, iflib_rxq_t rxq)
 {
 	struct netmap_adapter *na = NA(ctx->ifc_ifp);
 	struct netmap_slot *slot;
-	iflib_sd_t sd;
+	iflib_rxsd_t sd;
 	int nrxd;
 
 	slot = netmap_reset(na, NR_RX, rxq->ifr_id, 0);
@@ -1176,7 +1203,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 	device_t dev = ctx->ifc_dev;
-	iflib_sd_t txsd;
+	iflib_txsd_t txsd;
 	int err, i, nsegments, ntsosegments;
 
 	nsegments = scctx->isc_tx_nsegments;
@@ -1232,7 +1259,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
 		      scctx->isc_tx_tso_segsize_max);
 #endif
 	if (!(txq->ift_sds =
-	    (iflib_sd_t) malloc(sizeof(struct iflib_sw_desc) *
+	    (iflib_txsd_t) malloc(sizeof(struct iflib_sw_tx_desc) *
 	    sctx->isc_ntxd, M_IFLIB, M_NOWAIT | M_ZERO))) {
 		device_printf(dev, "Unable to allocate tx_buffer memory\n");
 		err = ENOMEM;
@@ -1262,7 +1289,7 @@ fail:
  */
 
 static void
-iflib_txsd_destroy(if_ctx_t ctx, iflib_txq_t txq, iflib_sd_t txsd)
+iflib_txsd_destroy(if_ctx_t ctx, iflib_txq_t txq, iflib_txsd_t txsd)
 {
 	if (txsd->ifsd_m != NULL) {
 		if (txsd->ifsd_map != NULL) {
@@ -1283,10 +1310,10 @@ iflib_txq_destroy(iflib_txq_t txq)
 {
 	if_ctx_t ctx = txq->ift_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
-	iflib_sd_t sd = txq->ift_sds;
+	iflib_txsd_t txsd = txq->ift_sds;
 
-	for (int i = 0; i < sctx->isc_ntxd; i++, sd++)
-		iflib_txsd_destroy(ctx, txq, sd);
+	for (int i = 0; i < sctx->isc_ntxd; i++, txsd++)
+		iflib_txsd_destroy(ctx, txq, txsd);
 	if (txq->ift_sds != NULL) {
 		free(txq->ift_sds, M_IFLIB);
 		txq->ift_sds = NULL;
@@ -1298,7 +1325,7 @@ iflib_txq_destroy(iflib_txq_t txq)
 }
 
 static void
-iflib_txsd_free(if_ctx_t ctx, iflib_txq_t txq, iflib_sd_t txsd)
+iflib_txsd_free(if_ctx_t ctx, iflib_txq_t txq, iflib_txsd_t txsd)
 {
 	if (txsd->ifsd_m == NULL)
 		return;
@@ -1353,14 +1380,14 @@ iflib_rxsd_alloc(iflib_rxq_t rxq)
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	device_t dev = ctx->ifc_dev;
 	iflib_fl_t fl;
-	iflib_sd_t	rxsd;
+	iflib_rxsd_t	rxsd;
 	int			err;
 
 	MPASS(sctx->isc_nrxd > 0);
 
 	fl = rxq->ifr_fl;
 	for (int i = 0; i <  rxq->ifr_nfl; i++, fl++) {
-		fl->ifl_sds = malloc(sizeof(struct iflib_sw_desc) *
+		fl->ifl_sds = malloc(sizeof(struct iflib_sw_rx_desc) *
 							 sctx->isc_nrxd, M_IFLIB, M_WAITOK | M_ZERO);
 		if (fl->ifl_sds == NULL) {
 			device_printf(dev, "Unable to allocate rx sw desc memory\n");
@@ -1438,7 +1465,7 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 {
 	struct mbuf *m;
 	int pidx = fl->ifl_pidx;
-	iflib_sd_t rxsd = &fl->ifl_sds[pidx];
+	iflib_rxsd_t rxsd = &fl->ifl_sds[pidx];
 	caddr_t cl;
 	int n, i = 0;
 	uint64_t bus_addr;
@@ -1569,7 +1596,7 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 
 	MPASS(fl->ifl_credits >= 0);
 	while (fl->ifl_credits) {
-		iflib_sd_t d = &fl->ifl_sds[cidx];
+		iflib_rxsd_t d = &fl->ifl_sds[cidx];
 
 		if (d->ifsd_flags & RX_SW_DESC_INUSE) {
 			bus_dmamap_unload(fl->ifl_desc_tag, d->ifsd_map);
@@ -1808,7 +1835,7 @@ iflib_stop(if_ctx_t ctx)
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	iflib_qset_t qset;
 	iflib_dma_info_t di;
-	iflib_sd_t txsd;
+	iflib_txsd_t txsd;
 	iflib_fl_t fl;
 	int i, j;
 
@@ -1843,11 +1870,11 @@ iflib_stop(if_ctx_t ctx)
 	IFDI_STOP(ctx);
 }
 
-static iflib_sd_t
+static iflib_rxsd_t
 rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int *cltype, int unload)
 {
 	int flid, cidx;
-	iflib_sd_t sd;
+	iflib_rxsd_t sd;
 	iflib_fl_t fl;
 	iflib_dma_info_t di;
 
@@ -1881,7 +1908,7 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri)
 {
 	int i, padlen , flags, cltype;
 	struct mbuf *m, *mh, *mt;
-	iflib_sd_t sd;
+	iflib_rxsd_t sd;
 	caddr_t cl;
 
 	i = 0;
@@ -1929,7 +1956,7 @@ static struct mbuf *
 iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 {
 	struct mbuf *m;
-	iflib_sd_t sd;
+	iflib_rxsd_t sd;
 
 	/* should I merge this back in now that the two paths are basically duplicated? */
 	if (ri->iri_len <= IFLIB_RX_COPY_THRESH) {
@@ -1958,7 +1985,8 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 {
 	if_ctx_t ctx = rxq->ifr_ctx;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
-	int avail, i, *cidxp;
+	int avail, i;
+	uint16_t *cidxp;
 	struct if_rxd_info ri;
 	int err, budget_left, rx_bytes, rx_pkts;
 	iflib_fl_t fl;
@@ -2205,18 +2233,39 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 static int
 iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 {
-	if_ctx_t ctx = txq->ift_ctx;
-	if_shared_ctx_t sctx = ctx->ifc_sctx;
-	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
-	bus_dma_segment_t	*segs = txq->ift_segs;
-	struct mbuf		*m_head = *m_headp;
-	int pidx = txq->ift_pidx;
-	iflib_sd_t txsd = &txq->ift_sds[pidx];
-	bus_dmamap_t		map = txsd->ifsd_map;
-	struct if_pkt_info pi;
+	if_ctx_t		ctx;
+	if_shared_ctx_t		sctx;
+	if_softc_ctx_t		scctx;
+	bus_dma_segment_t	*segs;
+	struct mbuf		*m_head;
+	iflib_txsd_t		txsd;
+	bus_dmamap_t		map;
+	struct if_pkt_info	pi;
 	int remap = 0;
-	int err, nsegs, ndesc, max_segs;
+	int err, nsegs, ndesc, max_segs, pidx, cidx;
 	bus_dma_tag_t desc_tag;
+
+	segs = txq->ift_segs;
+	ctx = txq->ift_ctx;
+	sctx = ctx->ifc_sctx;
+	scctx = &ctx->ifc_softc_ctx;
+	segs = txq->ift_segs;
+	m_head = *m_headp;
+
+	/*
+	 * If we're doing TSO the next descriptor to clean may be quite far ahead
+	 */
+	cidx = txq->ift_cidx;
+	txsd = &txq->ift_sds[cidx];
+	prefetch(&txq->ift_sds[txsd->ifsd_next]);
+
+	/*
+	 * The txsds should really be converted to a SoA
+	 * to allow better prefetching
+	 */
+	pidx = txq->ift_pidx;
+	txsd = &txq->ift_sds[pidx];
+	map = txsd->ifsd_map;
 
 	if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
 		desc_tag = txq->ift_tso_desc_tag;
@@ -2318,7 +2367,7 @@ defrag:
 		MPASS(pi.ipi_new_pidx != pidx);
 		MPASS(ndesc > 0);
 		txq->ift_in_use += ndesc;
-		txq->ift_pidx = pi.ipi_new_pidx;
+		txsd->ifsd_next = txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
 	} else if (__predict_false(err == EFBIG && remap < 2)) {
 		remap = 1;
@@ -2363,7 +2412,7 @@ iflib_txq_min_occupancy(iflib_txq_t txq)
 static void
 iflib_tx_desc_free(iflib_txq_t txq, int n)
 {
-	iflib_sd_t txsd;
+	iflib_txsd_t txsd;
 	uint32_t qsize, cidx, mask, gen;
 	struct mbuf *m;
 
@@ -2374,12 +2423,16 @@ iflib_tx_desc_free(iflib_txq_t txq, int n)
 	txsd = &txq->ift_sds[cidx];
 
 	while (n--) {
-		prefetch(txq->ift_sds[(cidx + 1) & mask].ifsd_m);
-		prefetch(txq->ift_sds[(cidx + 2) & mask].ifsd_m);
+		prefetch(txq->ift_sds[(cidx + 3) & mask].ifsd_m);
+		prefetch(txq->ift_sds[(cidx + 4) & mask].ifsd_m);
 
 		if (txsd->ifsd_m != NULL) {
+			prefetch(&txq->ift_sds[txsd->ifsd_next]);
 			if (txsd->ifsd_flags & TX_SW_DESC_MAPPED) {
-				/* does it matter if it's not the TSO tag? */
+				/*
+				 * does it matter if it's not the TSO tag? If so we'll
+				 * have to add the type to flags
+				 */
 				bus_dmamap_unload(txq->ift_desc_tag, txsd->ifsd_map);
 				txsd->ifsd_flags &= ~TX_SW_DESC_MAPPED;
 			}
@@ -2395,6 +2448,9 @@ iflib_tx_desc_free(iflib_txq_t txq, int n)
 			}
 		}
 
+		/*
+		 * Should I simply jump ahead to ifsd_next?
+		 */
 		++txsd;
 		if (++cidx == qsize) {
 			cidx = 0;
@@ -2424,7 +2480,7 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 	if (reclaim <= thresh /* + MAX_TX_DESC(txq->ift_ctx) */) {
 #ifdef INVARIANTS
 		if (iflib_verbose_debug) {
-			printf("%s processed=%d cleaned=%d tx_nsegments=%d reclaim=%d thresh=%d\n", __FUNCTION__,
+			printf("%s processed=%zu cleaned=%zu tx_nsegments=%d reclaim=%d thresh=%d\n", __FUNCTION__,
 			       txq->ift_processed, txq->ift_cleaned, txq->ift_ctx->ifc_softc_ctx.isc_tx_nsegments,
 			       reclaim, thresh);
 
@@ -4193,10 +4249,10 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 					     CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 		if (sctx->isc_flags & IFLIB_HAS_CQ) {
-			SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "rxq_cq_pidx",
+			SYSCTL_ADD_U16(ctx_list, queue_list, OID_AUTO, "rxq_cq_pidx",
 				       CTLFLAG_RD,
 				       &rxq->ifr_pidx, 1, "Producer Index");
-			SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "rxq_cq_cidx",
+			SYSCTL_ADD_U16(ctx_list, queue_list, OID_AUTO, "rxq_cq_cidx",
 				       CTLFLAG_RD,
 				       &rxq->ifr_cidx, 1, "Consumer Index");
 		}
@@ -4205,13 +4261,13 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 			fl_node = SYSCTL_ADD_NODE(ctx_list, queue_list, OID_AUTO, namebuf,
 						     CTLFLAG_RD, NULL, "freelist Name");
 			fl_list = SYSCTL_CHILDREN(fl_node);
-			SYSCTL_ADD_INT(ctx_list, fl_list, OID_AUTO, "pidx",
+			SYSCTL_ADD_U16(ctx_list, fl_list, OID_AUTO, "pidx",
 				       CTLFLAG_RD,
 				       &fl->ifl_pidx, 1, "Producer Index");
-			SYSCTL_ADD_INT(ctx_list, fl_list, OID_AUTO, "cidx",
+			SYSCTL_ADD_U16(ctx_list, fl_list, OID_AUTO, "cidx",
 				       CTLFLAG_RD,
 				       &fl->ifl_cidx, 1, "Consumer Index");
-			SYSCTL_ADD_INT(ctx_list, fl_list, OID_AUTO, "credits",
+			SYSCTL_ADD_U16(ctx_list, fl_list, OID_AUTO, "credits",
 				       CTLFLAG_RD,
 				       &fl->ifl_credits, 1, "credits available");
 		}
@@ -4233,24 +4289,24 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "no_tx_dma_setup",
 				   CTLFLAG_RD,
 				   &txq->ift_no_tx_dma_setup, "# of times map failed for other than EFBIG");
-		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_pidx",
+		SYSCTL_ADD_U16(ctx_list, queue_list, OID_AUTO, "txq_pidx",
 				   CTLFLAG_RD,
 				   &txq->ift_pidx, 1, "Producer Index");
-		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cidx",
+		SYSCTL_ADD_U16(ctx_list, queue_list, OID_AUTO, "txq_cidx",
 				   CTLFLAG_RD,
 				   &txq->ift_cidx, 1, "Consumer Index");
-		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cidx_processed",
+		SYSCTL_ADD_U16(ctx_list, queue_list, OID_AUTO, "txq_cidx_processed",
 				   CTLFLAG_RD,
 				   &txq->ift_cidx_processed, 1, "Consumer Index seen by credit update");
-		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_processed",
-				   CTLFLAG_RD,
-				   &txq->ift_processed, 1, "descriptors procesed for clean");
-		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_in_use",
+		SYSCTL_ADD_U16(ctx_list, queue_list, OID_AUTO, "txq_in_use",
 				   CTLFLAG_RD,
 				   &txq->ift_in_use, 1, "descriptors in use");
-		SYSCTL_ADD_INT(ctx_list, queue_list, OID_AUTO, "txq_cleaned",
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "txq_processed",
 				   CTLFLAG_RD,
-				   &txq->ift_cleaned, 1, "total cleaned");
+				   &txq->ift_processed, "descriptors procesed for clean");
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "txq_cleaned",
+				   CTLFLAG_RD,
+				   &txq->ift_cleaned, "total cleaned");
 		SYSCTL_ADD_PROC(ctx_list, queue_list, OID_AUTO, "ring_state",
 				CTLTYPE_STRING | CTLFLAG_RD, __DEVOLATILE(uint64_t *, &txq->ift_br[0]->state),
 				0, mp_ring_state_handler, "A", "soft ring state");
