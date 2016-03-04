@@ -1990,6 +1990,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	iflib_fl_t fl;
 	struct ifnet *ifp;
 	struct lro_entry *queued;
+	int lro_enabled;
 	/*
 	 * XXX early demux data packets so that if_input processing only handles
 	 * acks in interrupt context
@@ -2065,14 +2066,15 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		__iflib_fl_refill_lt(ctx, fl, budget + 8);
 
 	ifp = ctx->ifc_ifp;
+	lro_enabled = (if_getcapenable(ifp) & IFCAP_LRO);
+
 	while (mh != NULL) {
 		m = mh;
 		mh = mh->m_nextpkt;
 		m->m_nextpkt = NULL;
 		rx_bytes += m->m_pkthdr.len;
 		rx_pkts++;
-		if (rxq->ifr_lc.lro_cnt != 0 &&
-			tcp_lro_rx(&rxq->ifr_lc, m, 0) == 0)
+		if (lro_enabled && tcp_lro_rx(&rxq->ifr_lc, m, 0) == 0)
 			continue;
 		DBG_COUNTER_INC(rx_if_input);
 		ifp->if_input(ifp, m);
@@ -3750,15 +3752,12 @@ iflib_rx_structures_setup(if_ctx_t ctx)
 
 	for (q = 0; q < ctx->ifc_softc_ctx.isc_nqsets; q++, rxq++) {
 		tcp_lro_free(&rxq->ifr_lc);
-		if (ctx->ifc_ifp->if_capenable & IFCAP_LRO) {
-			if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
-				device_printf(ctx->ifc_dev, "LRO Initialization failed!\n");
-				goto fail;
-			}
-			rxq->ifr_lro_enabled = TRUE;
-			rxq->ifr_lc.ifp = ctx->ifc_ifp;
+		if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
+			device_printf(ctx->ifc_dev, "LRO Initialization failed!\n");
+			goto fail;
 		}
-
+		rxq->ifr_lro_enabled = TRUE;
+		rxq->ifr_lc.ifp = ctx->ifc_ifp;
 		IFDI_RXQ_SETUP(ctx, rxq->ifr_id);
 	}
 	return (0);
