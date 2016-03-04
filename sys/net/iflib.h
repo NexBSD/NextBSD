@@ -34,6 +34,15 @@
 #include <sys/bus_dma.h>
 #include <sys/nv.h>
 
+
+/*
+ * Most cards can handle much larger TSO requests
+ * but the FreeBSD TCP stack will break on larger
+ * values
+ */
+#define FREEBSD_TSO_SIZE_MAX 65518
+
+
 struct iflib_ctx;
 typedef struct iflib_ctx *if_ctx_t;
 struct if_shared_ctx;

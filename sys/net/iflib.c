@@ -3162,6 +3162,13 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		scctx->isc_tx_tso_segments_max = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
 
 	ifp = ctx->ifc_ifp;
+
+	/*
+	 * Protect the stack against modern hardware
+	 */
+	if (scctx->isc_tx_tso_size_max > FREEBSD_TSO_SIZE_MAX)
+		scctx->isc_tx_tso_size_max = FREEBSD_TSO_SIZE_MAX;
+
 	/* TSO parameters - dig these out of the data sheet - simply correspond to tag setup */
 	ifp->if_hw_tsomaxsegcount = scctx->isc_tx_tso_segments_max;
 	ifp->if_hw_tsomax = scctx->isc_tx_tso_size_max;
