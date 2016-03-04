@@ -95,9 +95,6 @@
  *        UMA will typically be very fast vis a vis the cost of a memory
  *        access.
  *
- *  - We need a way for the NIC to specify it's RX indirection table size.
- *    Then you do 2 mods to get the ring.
- *    Eg: r = (flowid % indir_size) % num_txq
  *
  */
 
@@ -283,6 +280,7 @@ typedef struct iflib_sw_tx_desc {
 #define IFLIB_MAX_TX_SEGS		128
 #define IFLIB_MAX_RX_SEGS		32
 #define IFLIB_RX_COPY_THRESH		128
+#define IFLIB_MAX_RX_REFRESH		32
 #define IFLIB_QUEUE_IDLE		0
 #define IFLIB_QUEUE_HUNG		1
 #define IFLIB_QUEUE_WORKING		2
@@ -364,8 +362,8 @@ struct iflib_fl {
 	uint8_t		ifl_id;
 	bus_dma_tag_t           ifl_desc_tag;
 	iflib_dma_info_t	ifl_ifdi;
-	uint64_t	ifl_bus_addrs[256] __aligned(CACHE_LINE_SIZE);
-	caddr_t		ifl_vm_addrs[256];
+	uint64_t	ifl_bus_addrs[IFLIB_MAX_RX_REFRESH] __aligned(CACHE_LINE_SIZE);
+	caddr_t		ifl_vm_addrs[IFLIB_MAX_RX_REFRESH];
 }  __aligned(CACHE_LINE_SIZE);
 
 static inline int
@@ -1556,7 +1554,7 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 			fl->ifl_gen = 1;
 			rxsd = fl->ifl_sds;
 		}
-		if (n == 0 || i == 256) {
+		if (n == 0 || i == IFLIB_MAX_RX_REFRESH) {
 			ctx->isc_rxd_refill(ctx->ifc_softc, fl->ifl_rxq->ifr_id, fl->ifl_id, pidx,
 								 fl->ifl_bus_addrs, fl->ifl_vm_addrs, i);
 			i = 0;
@@ -1992,6 +1990,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	iflib_fl_t fl;
 	struct ifnet *ifp;
 	struct lro_entry *queued;
+	int lro_enabled;
 	/*
 	 * XXX early demux data packets so that if_input processing only handles
 	 * acks in interrupt context
@@ -2067,14 +2066,15 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		__iflib_fl_refill_lt(ctx, fl, budget + 8);
 
 	ifp = ctx->ifc_ifp;
+	lro_enabled = (if_getcapenable(ifp) & IFCAP_LRO);
+
 	while (mh != NULL) {
 		m = mh;
 		mh = mh->m_nextpkt;
 		m->m_nextpkt = NULL;
 		rx_bytes += m->m_pkthdr.len;
 		rx_pkts++;
-		if (rxq->ifr_lc.lro_cnt != 0 &&
-			tcp_lro_rx(&rxq->ifr_lc, m, 0) == 0)
+		if (lro_enabled && tcp_lro_rx(&rxq->ifr_lc, m, 0) == 0)
 			continue;
 		DBG_COUNTER_INC(rx_if_input);
 		ifp->if_input(ifp, m);
@@ -2402,7 +2402,7 @@ defrag_failed:
 #define FIRST_QSET(ctx) 0
 
 #define NQSETS(ctx) ((ctx)->ifc_softc_ctx.isc_nqsets)
-#define QIDX(ctx, m) (((m)->m_pkthdr.flowid % NQSETS(ctx)) + FIRST_QSET(ctx))
+#define QIDX(ctx, m) ((((m)->m_pkthdr.flowid % ctx->ifc_softc_ctx.isc_rss_table_size) % NQSETS(ctx)) + FIRST_QSET(ctx))
 #define DESC_RECLAIMABLE(q) ((int)((q)->ift_processed - (q)->ift_cleaned - (q)->ift_ctx->ifc_softc_ctx.isc_tx_nsegments))
 #define RECLAIM_THRESH(ctx) ((ctx)->ifc_sctx->isc_tx_reclaim_thresh)
 #define MAX_TX_DESC(ctx) ((ctx)->ifc_softc_ctx.isc_tx_tso_segments_max)
@@ -3145,8 +3145,14 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		return (err);
 	}
 
+	/*
+	 *
+	 * Note that this is erroneously telling us that we're using an IOMMU when we're not
+	 *
+	 */
 	if (bus_get_dma_tag(dev) != pci_get_dma_tag(dev, device_get_parent(dev)))
 		ctx->ifc_flags |= IFC_DMAR;
+
 	scctx = &ctx->ifc_softc_ctx;
 	msix_bar = scctx->isc_msix_bar;
 
@@ -3160,6 +3166,8 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	ifp->if_hw_tsomaxsegcount = scctx->isc_tx_tso_segments_max;
 	ifp->if_hw_tsomax = scctx->isc_tx_tso_size_max;
 	ifp->if_hw_tsomaxsegsize = scctx->isc_tx_tso_segsize_max;
+	if (scctx->isc_rss_table_size == 0)
+		scctx->isc_rss_table_size = 64;
 	/*
 	** Now setup MSI or MSI/X, should
 	** return us the number of supported
@@ -3744,15 +3752,12 @@ iflib_rx_structures_setup(if_ctx_t ctx)
 
 	for (q = 0; q < ctx->ifc_softc_ctx.isc_nqsets; q++, rxq++) {
 		tcp_lro_free(&rxq->ifr_lc);
-		if (ctx->ifc_ifp->if_capenable & IFCAP_LRO) {
-			if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
-				device_printf(ctx->ifc_dev, "LRO Initialization failed!\n");
-				goto fail;
-			}
-			rxq->ifr_lro_enabled = TRUE;
-			rxq->ifr_lc.ifp = ctx->ifc_ifp;
+		if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
+			device_printf(ctx->ifc_dev, "LRO Initialization failed!\n");
+			goto fail;
 		}
-
+		rxq->ifr_lro_enabled = TRUE;
+		rxq->ifr_lc.ifp = ctx->ifc_ifp;
 		IFDI_RXQ_SETUP(ctx, rxq->ifr_id);
 	}
 	return (0);

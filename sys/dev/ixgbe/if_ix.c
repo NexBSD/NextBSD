@@ -156,7 +156,7 @@ static void ixgbe_free_pci_resources(if_ctx_t ctx);
 
 static int ixgbe_msix_link(void *arg);
 static int ixgbe_msix_que(void *arg);
-static void ixgbe_initialise_rss_mapping(struct adapter *adapter);
+static void ixgbe_initialize_rss_mapping(struct adapter *adapter);
 static void ixgbe_initialize_receive_units(if_ctx_t ctx);
 static void ixgbe_initialize_transmit_units(if_ctx_t ctx);
 
@@ -542,7 +542,7 @@ ixgbe_if_queues_free(if_ctx_t ctx)
 }
 
 static void
-ixgbe_initialise_rss_mapping(struct adapter *adapter)
+ixgbe_initialize_rss_mapping(struct adapter *adapter)
 {
 	struct ixgbe_hw	*hw = &adapter->hw;
 	u32 reta = 0, mrqc, rss_key[10];
@@ -766,7 +766,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 
 	rxcsum = IXGBE_READ_REG(hw, IXGBE_RXCSUM);
 
-	ixgbe_initialise_rss_mapping(adapter);
+	ixgbe_initialize_rss_mapping(adapter);
 
 	if (adapter->num_queues > 1) {
 		/* RSS and RX IPP Checksum are mutually exclusive */
@@ -1016,6 +1016,14 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	ixgbe_setup_optics(adapter);
 
 	iflib_set_mac(ctx, hw->mac.addr);
+	switch (adapter->hw.mac.type) {
+	case ixgbe_mac_X550:
+	case ixgbe_mac_X550EM_x:
+		adapter->shared->isc_rss_table_size = 512;
+		break;
+	default:
+		adapter->shared->isc_rss_table_size = 128;
+	}
 	return (0);
 err_late:
 	free(adapter->mta, M_DEVBUF);
