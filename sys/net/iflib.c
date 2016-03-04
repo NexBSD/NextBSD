@@ -95,9 +95,6 @@
  *        UMA will typically be very fast vis a vis the cost of a memory
  *        access.
  *
- *  - We need a way for the NIC to specify it's RX indirection table size.
- *    Then you do 2 mods to get the ring.
- *    Eg: r = (flowid % indir_size) % num_txq
  *
  */
 
@@ -283,6 +280,7 @@ typedef struct iflib_sw_tx_desc {
 #define IFLIB_MAX_TX_SEGS		128
 #define IFLIB_MAX_RX_SEGS		32
 #define IFLIB_RX_COPY_THRESH		128
+#define IFLIB_MAX_RX_REFRESH		32
 #define IFLIB_QUEUE_IDLE		0
 #define IFLIB_QUEUE_HUNG		1
 #define IFLIB_QUEUE_WORKING		2
@@ -364,8 +362,8 @@ struct iflib_fl {
 	uint8_t		ifl_id;
 	bus_dma_tag_t           ifl_desc_tag;
 	iflib_dma_info_t	ifl_ifdi;
-	uint64_t	ifl_bus_addrs[256] __aligned(CACHE_LINE_SIZE);
-	caddr_t		ifl_vm_addrs[256];
+	uint64_t	ifl_bus_addrs[IFLIB_MAX_RX_REFRESH] __aligned(CACHE_LINE_SIZE);
+	caddr_t		ifl_vm_addrs[IFLIB_MAX_RX_REFRESH];
 }  __aligned(CACHE_LINE_SIZE);
 
 static inline int
@@ -1556,7 +1554,7 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 			fl->ifl_gen = 1;
 			rxsd = fl->ifl_sds;
 		}
-		if (n == 0 || i == 256) {
+		if (n == 0 || i == IFLIB_MAX_RX_REFRESH) {
 			ctx->isc_rxd_refill(ctx->ifc_softc, fl->ifl_rxq->ifr_id, fl->ifl_id, pidx,
 								 fl->ifl_bus_addrs, fl->ifl_vm_addrs, i);
 			i = 0;
@@ -3145,8 +3143,14 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		return (err);
 	}
 
+	/*
+	 *
+	 * Note that this is erroneously telling us that we're using an IOMMU when we're not
+	 *
+	 */
 	if (bus_get_dma_tag(dev) != pci_get_dma_tag(dev, device_get_parent(dev)))
 		ctx->ifc_flags |= IFC_DMAR;
+
 	scctx = &ctx->ifc_softc_ctx;
 	msix_bar = scctx->isc_msix_bar;
 
