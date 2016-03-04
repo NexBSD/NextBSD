@@ -644,7 +644,11 @@ ixl_if_attach_pre(if_ctx_t ctx)
 
 	/* Initialize mac filter list for VSI */
 	SLIST_INIT(&vsi->ftl);
-	device_printf(dev, "%s success!\n", __FUNCTION__);
+
+	/*
+	 * Tell iflib what the correct modulus is
+	 */
+	vsi->shared->isc_rss_table_size = pf->hw.func_caps.rss_table_size;
 	return (0);
 
 err_mac_hmc:
