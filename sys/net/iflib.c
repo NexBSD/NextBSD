@@ -323,7 +323,7 @@ struct iflib_txq {
 	struct mtx	ift_db_mtx;
 
 	/* constant values */
-	if_ctx_t	ift_ctx  __aligned(CACHE_LINE_SIZE);
+	if_ctx_t	ift_ctx;
 	struct ifmp_ring        **ift_br;
 	struct grouptask	ift_task;
 	uint16_t	ift_size;
@@ -365,7 +365,7 @@ struct iflib_fl {
 	bus_dma_tag_t           ifl_desc_tag;
 	iflib_dma_info_t	ifl_ifdi;
 	uint64_t	ifl_bus_addrs[256] __aligned(CACHE_LINE_SIZE);
-	caddr_t		ifl_vm_addrs[256] __aligned(CACHE_LINE_SIZE);
+	caddr_t		ifl_vm_addrs[256];
 }  __aligned(CACHE_LINE_SIZE);
 
 static inline int
@@ -2259,10 +2259,6 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	txsd = &txq->ift_sds[cidx];
 	prefetch(&txq->ift_sds[txsd->ifsd_next]);
 
-	/*
-	 * The txsds should really be converted to a SoA
-	 * to allow better prefetching
-	 */
 	pidx = txq->ift_pidx;
 	txsd = &txq->ift_sds[pidx];
 	map = txsd->ifsd_map;
@@ -2344,6 +2340,8 @@ defrag:
 	print_pkt(&pi);
 #endif
 	if ((err = ctx->isc_txd_encap(ctx->ifc_softc, &pi)) == 0) {
+		int i, next, mask;
+
 		bus_dmamap_sync(txq->ift_ifdi->idi_tag, txq->ift_ifdi->idi_map,
 						BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
@@ -2351,12 +2349,10 @@ defrag:
 		MPASS(txsd->ifsd_m == NULL);
 #ifdef INVARIANTS
 		{
-			int i;
 			for (i = 0; i < sctx->isc_ntxd; i++)
 				MPASS(txq->ift_sds[i].ifsd_m != m_head);
 		}
 #endif
-		txsd->ifsd_m = m_head;
 		MPASS(pi.ipi_new_pidx >= 0 && pi.ipi_new_pidx < sctx->isc_ntxd);
 
 		ndesc = pi.ipi_new_pidx - pi.ipi_pidx;
@@ -2367,6 +2363,22 @@ defrag:
 		MPASS(pi.ipi_new_pidx != pidx);
 		MPASS(ndesc > 0);
 		txq->ift_in_use += ndesc;
+		i = 0;
+		next = pidx;
+		mask = (sctx->isc_ntxd-1);
+		do {
+			txsd = &txq->ift_sds[next];
+			txsd->ifsd_m = m_head;
+			m_head = m_head->m_next;
+			txsd->ifsd_m->m_next = NULL;
+
+			txsd->ifsd_next = next = (++i + pidx) & mask;
+		} while (m_head != NULL);
+
+		/*
+		 * We update the last software descriptor again here because there may
+		 * be a sentinel and/or there may be more mbufs than segments
+		 */
 		txsd->ifsd_next = txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
 	} else if (__predict_false(err == EFBIG && remap < 2)) {
