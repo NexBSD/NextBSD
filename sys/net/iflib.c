@@ -288,7 +288,6 @@ typedef struct iflib_sw_tx_desc {
 /* this should really scale with ring size - 32 is a fairly arbitrary value for this */
 #define TX_BATCH_SIZE			32
 
-#define IFLIB_BUDGET			64
 #define IFLIB_RESTART_BUDGET		8
 
 #define	IFC_LEGACY		0x1
@@ -2543,6 +2542,12 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	struct mbuf **mp, *m;
 	int i, count, consumed, pkt_sent, bytes_sent, mcast_sent, avail, err;
 
+	if (__predict_false(!(if_getdrvflags(ifp) & IFF_DRV_RUNNING) ||
+			    !LINK_ACTIVE(ctx))) {
+		DBG_COUNTER_INC(txq_drain_notready);
+		return (0);
+	}
+
 	avail = IDXDIFF(pidx, cidx, r->size);
 	if (__predict_false(ctx->ifc_flags & IFC_QFLUSH)) {
 		DBG_COUNTER_INC(txq_drain_flushing);
@@ -2565,12 +2570,6 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	consumed = mcast_sent = bytes_sent = pkt_sent = 0;
 	count = MIN(avail, TX_BATCH_SIZE);
 
-	if (__predict_false(!(if_getdrvflags(ifp) & IFF_DRV_RUNNING) ||
-			    !LINK_ACTIVE(ctx))) {
-		DBG_COUNTER_INC(txq_drain_notready);
-		goto skip_db;
-	}
-
 	for (i = 0; i < count && TXQ_AVAIL(txq) > MAX_TX_DESC(ctx) + 2; i++) {
 		mp = _ring_peek_one(r, cidx, i);
 
@@ -2580,7 +2579,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		 */
 		if (err == ENOBUFS) {
 			DBG_COUNTER_INC(txq_drain_encapfail);
-			goto done;
+			break;
 		}
 		consumed++;
 		if (err)
@@ -2594,6 +2593,8 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 			mcast_sent++;
 		iflib_txd_db_check(ctx, txq, 0);
 		ETHER_BPF_MTAP(ifp, m);
+		if (__predict_false(!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING)))
+			goto done;
 	}
 	if (avail > count)
 		GROUPTASK_ENQUEUE(&txq->ift_task);
@@ -2605,7 +2606,6 @@ done:
 		 (callout_pending(&txq->ift_db_check) == 0))
 		callout_reset_on(&txq->ift_db_check, 1, iflib_txd_deferred_db_check,
 				 txq, txq->ift_db_check.c_cpu);
-skip_db:
 	if_inc_counter(ifp, IFCOUNTER_OBYTES, bytes_sent);
 	if_inc_counter(ifp, IFCOUNTER_OPACKETS, pkt_sent);
 	if (mcast_sent)
@@ -2622,7 +2622,7 @@ _task_fn_tx(void *context, int pending)
 
 	if (!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING))
 		return;
-	ifmp_ring_check_drainage(txq->ift_br[0], IFLIB_BUDGET);
+	ifmp_ring_check_drainage(txq->ift_br[0], TX_BATCH_SIZE);
 }
 
 static void
@@ -2633,10 +2633,10 @@ _task_fn_rx(void *context, int pending)
 	bool more;
 
 	DBG_COUNTER_INC(task_fn_rxs);
-	if (!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING))
+	if (__predict_false(!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING)))
 		return;
 
-	if ((more = iflib_rxeof(rxq, 8 /* XXX */)) == false) {
+	if ((more = iflib_rxeof(rxq, 16 /* XXX */)) == false) {
 		if (ctx->ifc_flags & IFC_LEGACY)
 			IFDI_INTR_ENABLE(ctx);
 		else {
@@ -2644,7 +2644,7 @@ _task_fn_rx(void *context, int pending)
 			IFDI_QUEUE_INTR_ENABLE(ctx, rxq->ifr_id);
 		}
 	}
-	if (!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING))
+	if (__predict_false(!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING)))
 		return;
 	if (more)
 		GROUPTASK_ENQUEUE(&rxq->ifr_task);
@@ -2729,7 +2729,7 @@ iflib_if_init(void *arg)
 	CTX_UNLOCK(ctx);
 
 	/* wait for any rx to return */
-	pause("iflib_init", hz/4);
+	pause("iflib_init", hz/2);
 
 	CTX_LOCK(ctx);
 	iflib_stop(ctx);
@@ -2743,7 +2743,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	if_ctx_t	ctx = if_getsoftc(ifp);
 
 	iflib_txq_t txq;
-	struct mbuf *marr[16], **mp, *next;
+	struct mbuf *marr[8], **mp, *next;
 	int err, i, count, qidx;
 
 	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx)) {
@@ -2779,7 +2779,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		next = next->m_nextpkt;
 	} while (next != NULL);
 
-	if (count > 16)
+	if (count > 8)
 		if ((mp = malloc(count*sizeof(struct mbuf *), M_IFLIB, M_NOWAIT)) == NULL) {
 			/* XXX check nextpkt */
 			m_freem(m);
@@ -2793,7 +2793,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		mp[i]->m_nextpkt = NULL;
 	}
 	DBG_COUNTER_INC(tx_seen);
-	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)mp, count, IFLIB_BUDGET);
+	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)mp, count, TX_BATCH_SIZE);
 	/* drain => err = iflib_txq_transmit(ifp, txq, m); */
 	if (err) {
 		/* support forthcoming later */
