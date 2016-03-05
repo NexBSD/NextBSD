@@ -2828,6 +2828,13 @@ iflib_if_qflush(if_t ifp)
 	if_qflush(ifp);
 }
 
+#define IFCAP_REINIT (IFCAP_HWCSUM|IFCAP_TSO4|IFCAP_TSO6|IFCAP_VLAN_HWTAGGING|IFCAP_VLAN_MTU | \
+		      IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTSO)
+
+#define IFCAP_FLAGS (IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6 | IFCAP_HWCSUM | IFCAP_LRO | \
+		     IFCAP_TSO4 | IFCAP_TSO6 | IFCAP_VLAN_HWTAGGING |	\
+		     IFCAP_VLAN_MTU | IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTSO)
+
 static int
 iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 {
@@ -2937,43 +2944,16 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	    {
 		    int mask, setmask, bits;
 
-#define IFCAP_REINIT (IFCAP_HWCSUM|IFCAP_TSO4|IFCAP_TSO6|IFCAP_VLAN_HWTAGGING|IFCAP_VLAN_MTU | \
-		      IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTSO)
-		mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
-		setmask = 0;
+		    mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
+		    setmask = 0;
 #ifdef TCP_OFFLOAD
-		if (mask & IFCAP_TOE4)
-			setmask  |= IFCAP_TOE4;
-		if (mask & IFCAP_TOE6)
-			setmask  |= IFCAP_TOE6;
+		setmask |= mask & (IFCAP_TOE4|IFCAP_TOE6);
 #endif
-		if (mask & IFCAP_RXCSUM)
-			setmask |= IFCAP_RXCSUM;
-		if (mask & IFCAP_RXCSUM_IPV6)
-			setmask |= IFCAP_RXCSUM_IPV6;
-		if (mask & IFCAP_HWCSUM)
-			setmask |= IFCAP_HWCSUM;
-		if (mask & IFCAP_LRO)
-			setmask |= IFCAP_LRO;
-		if (mask & IFCAP_TSO4)
-			setmask |= IFCAP_TSO4;
-		if (mask & IFCAP_TSO6)
-			setmask |= IFCAP_TSO6;
-		if (mask & IFCAP_VLAN_HWTAGGING)
-			setmask |= IFCAP_VLAN_HWTAGGING;
-		if (mask & IFCAP_VLAN_MTU)
-			setmask |= IFCAP_VLAN_MTU;
-		if (mask & IFCAP_VLAN_HWFILTER)
-			setmask |= IFCAP_VLAN_HWFILTER;
-		if (mask & IFCAP_VLAN_HWTSO)
-			setmask |= IFCAP_VLAN_HWTSO;
+		setmask |= (mask & IFCAP_FLAGS);
+
 		if ((mask & IFCAP_WOL) &&
-		    (if_getcapabilities(ifp) & IFCAP_WOL) != 0) {
-			if (mask & IFCAP_WOL_MCAST)
-				setmask |= IFCAP_WOL_MCAST;
-			if (mask & IFCAP_WOL_MAGIC)
-				setmask |= IFCAP_WOL_MAGIC;
-		}
+		    (if_getcapabilities(ifp) & IFCAP_WOL) != 0)
+			setmask |= (mask & (IFCAP_WOL_MCAST|IFCAP_WOL_MAGIC));
 		if_vlancap(ifp);
 		/*
 		 * want to ensure that traffic has stopped before we change any of the flags
