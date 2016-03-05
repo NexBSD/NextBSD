@@ -3008,9 +3008,8 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		err = ether_ioctl(ifp, command, data);
 		break;
 	}
-	if (reinit && (if_getdrvflags(ifp) & IFF_DRV_RUNNING)) {
+	if (reinit)
 		iflib_if_init(ctx);
-	}
 	return (err);
 }
 
