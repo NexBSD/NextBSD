@@ -2717,23 +2717,24 @@ iflib_sysctl_int_delay(SYSCTL_HANDLER_ARGS)
  **********************************************************************/
 
 static void
+iflib_if_init_locked(if_ctx_t ctx)
+{
+	/* Tell the stack that the interface is no longer active */
+	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
+	IFDI_INTR_DISABLE(ctx);
+	msleep(ctx, &ctx->ifc_mtx, PUSER, "iflib_init", hz/2);
+	iflib_stop(ctx);
+	iflib_init_locked(ctx);
+}
+
+
+static void
 iflib_if_init(void *arg)
 {
 	if_ctx_t ctx = arg;
 
 	CTX_LOCK(ctx);
-	/* Tell the stack that the interface is no longer active */
-	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
-
-	IFDI_INTR_DISABLE(ctx);
-	CTX_UNLOCK(ctx);
-
-	/* wait for any rx to return */
-	pause("iflib_init", hz/2);
-
-	CTX_LOCK(ctx);
-	iflib_stop(ctx);
-	iflib_init_locked(ctx);
+	iflib_if_init_locked(ctx);
 	CTX_UNLOCK(ctx);
 }
 
@@ -2746,7 +2747,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	struct mbuf *marr[8], **mp, *next;
 	int err, i, count, qidx;
 
-	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx)) {
+	if (__predict_false((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx))) {
 		DBG_COUNTER_INC(tx_frees);
 		m_freem(m);
 		return (0);
@@ -2839,7 +2840,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	struct ifaddr	*ifa = (struct ifaddr *)data;
 #endif
 	bool		avoid_reset = FALSE;
-	int		err = 0;
+	int		err = 0, reinit = 0;
 
 	switch (command) {
 	case SIOCSIFADDR:
@@ -2858,7 +2859,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		if (avoid_reset) {
 			if_setflagbits(ifp, IFF_UP,0);
 			if (!(if_getdrvflags(ifp)& IFF_DRV_RUNNING))
-				iflib_if_init(ctx);
+				reinit = 1;
 #ifdef INET
 			if (!(if_getflags(ifp) & IFF_NOARP))
 				arp_ifinit(ifp, ifa);
@@ -2870,7 +2871,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		CTX_LOCK(ctx);
 		/* detaching ?*/
 		if ((err = IFDI_MTU_SET(ctx, ifr->ifr_mtu)) == 0) {
-			iflib_init_locked(ctx);
+			reinit = 1;
 			if (ifr->ifr_mtu > ctx->ifc_max_fl_buf_size)
 				ctx->ifc_flags |= IFC_MULTISEG;
 			else
@@ -2888,7 +2889,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 					err = IFDI_PROMISC_SET(ctx, if_getflags(ifp));
 				}
 			} else
-				iflib_init_locked(ctx);
+				reinit = 1;
 		} else if (if_getdrvflags(ifp) & IFF_DRV_RUNNING) {
 			iflib_stop(ctx);
 		}
@@ -2937,11 +2938,17 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	}
 	case SIOCSIFCAP:
 	    {
-		int mask, reinit;
+		    int mask, bits;
 
-		reinit = 0;
 		mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
 
+		CTX_LOCK(ctx);
+		bits = if_getdrvflags(ifp);
+		if_setdrvflagbits(ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
+		/*
+		 * want to ensure that traffic has stopped before we change any of the flags
+		 */
+		msleep(ctx, &ctx->ifc_mtx, PUSER, "iflib_init", hz/2);
 #ifdef TCP_OFFLOAD
 		if (mask & IFCAP_TOE4) {
 			if_togglecapenable(ifp, IFCAP_TOE4);
@@ -2958,11 +2965,14 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		}
 		if (mask & IFCAP_LRO)
 			if_togglecapenable(ifp, IFCAP_LRO);
+
 		if (mask & IFCAP_TSO4) {
 			if_togglecapenable(ifp, IFCAP_TSO4);
+			reinit = 1;
 		}
 		if (mask & IFCAP_TSO6) {
 			if_togglecapenable(ifp, IFCAP_TSO6);
+			reinit = 1;
 		}
 		if (mask & IFCAP_VLAN_HWTAGGING) {
 			if_togglecapenable(ifp, IFCAP_VLAN_HWTAGGING);
@@ -2987,10 +2997,13 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 			if (mask & IFCAP_WOL_MAGIC)
 				if_togglecapenable(ifp, IFCAP_WOL_MAGIC);
 		}
-		if (reinit && (if_getdrvflags(ifp) & IFF_DRV_RUNNING)) {
-			iflib_if_init(ctx);
-		}
 		if_vlancap(ifp);
+		if (reinit && (bits & IFF_DRV_RUNNING))
+			iflib_if_init_locked(ctx);
+		else
+			if_setdrvflagbits(ifp, bits, 0);
+		reinit = 0;
+		CTX_UNLOCK(ctx);
 		break;
 	    }
 
@@ -2998,7 +3011,9 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		err = ether_ioctl(ifp, command, data);
 		break;
 	}
-
+	if (reinit && (if_getdrvflags(ifp) & IFF_DRV_RUNNING)) {
+		iflib_if_init(ctx);
+	}
 	return (err);
 }
 
