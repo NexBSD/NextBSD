@@ -1840,7 +1840,7 @@ iflib_stop(if_ctx_t ctx)
 	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
 
 	IFDI_INTR_DISABLE(ctx);
-	msleep(ctx, &ctx->ifc_mtx, PUSER, "iflib_init", hz/2);
+	msleep(ctx, &ctx->ifc_mtx, PUSER, "iflib_init", hz);
 
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
 	for (i = 0; i < scctx->isc_nqsets; i++, txq++, rxq++) {
@@ -2935,72 +2935,60 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	}
 	case SIOCSIFCAP:
 	    {
-		    int mask, bits;
+		    int mask, setmask, bits;
 
+#define IFCAP_REINIT (IFCAP_HWCSUM|IFCAP_TSO4|IFCAP_TSO6|IFCAP_VLAN_HWTAGGING|IFCAP_VLAN_MTU | \
+		      IFCAP_VLAN_HWFILTER | IFCAP_VLAN_HWTSO)
 		mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
-
-		CTX_LOCK(ctx);
-		bits = if_getdrvflags(ifp);
-		if_setdrvflagbits(ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
-		/*
-		 * want to ensure that traffic has stopped before we change any of the flags
-		 */
-		msleep(ctx, &ctx->ifc_mtx, PUSER, "iflib_init", hz/2);
+		setmask = 0;
 #ifdef TCP_OFFLOAD
-		if (mask & IFCAP_TOE4) {
-			if_togglecapenable(ifp, IFCAP_TOE4);
-			reinit = 1;
-		}
+		if (mask & IFCAP_TOE4)
+			setmask  |= IFCAP_TOE4;
+		if (mask & IFCAP_TOE6)
+			setmask  |= IFCAP_TOE6;
 #endif
 		if (mask & IFCAP_RXCSUM)
-			if_togglecapenable(ifp, IFCAP_RXCSUM);
+			setmask |= IFCAP_RXCSUM;
 		if (mask & IFCAP_RXCSUM_IPV6)
-			if_togglecapenable(ifp, IFCAP_RXCSUM_IPV6);
-		if (mask & IFCAP_HWCSUM) {
-			if_togglecapenable(ifp, IFCAP_HWCSUM);
-			reinit = 1;
-		}
+			setmask |= IFCAP_RXCSUM_IPV6;
+		if (mask & IFCAP_HWCSUM)
+			setmask |= IFCAP_HWCSUM;
 		if (mask & IFCAP_LRO)
-			if_togglecapenable(ifp, IFCAP_LRO);
-
-		if (mask & IFCAP_TSO4) {
-			if_togglecapenable(ifp, IFCAP_TSO4);
-			reinit = 1;
-		}
-		if (mask & IFCAP_TSO6) {
-			if_togglecapenable(ifp, IFCAP_TSO6);
-			reinit = 1;
-		}
-		if (mask & IFCAP_VLAN_HWTAGGING) {
-			if_togglecapenable(ifp, IFCAP_VLAN_HWTAGGING);
-			reinit = 1;
-		}
-		if (mask & IFCAP_VLAN_MTU) {
-			if_togglecapenable(ifp, IFCAP_VLAN_MTU);
-			reinit = 1;
-		}
-		if (mask & IFCAP_VLAN_HWFILTER) {
-			if_togglecapenable(ifp, IFCAP_VLAN_HWFILTER);
-			reinit = 1;
-		}
-		if (mask & IFCAP_VLAN_HWTSO) {
-			if_togglecapenable(ifp, IFCAP_VLAN_HWTSO);
-			reinit = 1;
-		}
+			setmask |= IFCAP_LRO;
+		if (mask & IFCAP_TSO4)
+			setmask |= IFCAP_TSO4;
+		if (mask & IFCAP_TSO6)
+			setmask |= IFCAP_TSO6;
+		if (mask & IFCAP_VLAN_HWTAGGING)
+			setmask |= IFCAP_VLAN_HWTAGGING;
+		if (mask & IFCAP_VLAN_MTU)
+			setmask |= IFCAP_VLAN_MTU;
+		if (mask & IFCAP_VLAN_HWFILTER)
+			setmask |= IFCAP_VLAN_HWFILTER;
+		if (mask & IFCAP_VLAN_HWTSO)
+			setmask |= IFCAP_VLAN_HWTSO;
 		if ((mask & IFCAP_WOL) &&
 		    (if_getcapabilities(ifp) & IFCAP_WOL) != 0) {
 			if (mask & IFCAP_WOL_MCAST)
-				if_togglecapenable(ifp, IFCAP_WOL_MCAST);
+				setmask |= IFCAP_WOL_MCAST;
 			if (mask & IFCAP_WOL_MAGIC)
-				if_togglecapenable(ifp, IFCAP_WOL_MAGIC);
+				setmask |= IFCAP_WOL_MAGIC;
 		}
 		if_vlancap(ifp);
-		if (reinit && (bits & IFF_DRV_RUNNING))
-			iflib_if_init_locked(ctx);
-		else
+		/*
+		 * want to ensure that traffic has stopped before we change any of the flags
+		 */
+		if (setmask) {
+			CTX_LOCK(ctx);
+			bits = if_getdrvflags(ifp);
+			if (setmask & IFCAP_REINIT)
+				iflib_stop(ctx);
+			if_togglecapenable(ifp, setmask);
+			if (setmask & IFCAP_REINIT)
+				iflib_init_locked(ctx);
 			if_setdrvflags(ifp, bits);
-		reinit = 0;
-		CTX_UNLOCK(ctx);
+			CTX_UNLOCK(ctx);
+		}
 		break;
 	    }
 
