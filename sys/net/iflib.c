@@ -1840,6 +1840,7 @@ iflib_stop(if_ctx_t ctx)
 	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
 
 	IFDI_INTR_DISABLE(ctx);
+	msleep(ctx, &ctx->ifc_mtx, PUSER, "iflib_init", hz/2);
 
 	/* Wait for current tx queue users to exit to disarm watchdog timer. */
 	for (i = 0; i < scctx->isc_nqsets; i++, txq++, rxq++) {
@@ -2719,10 +2720,6 @@ iflib_sysctl_int_delay(SYSCTL_HANDLER_ARGS)
 static void
 iflib_if_init_locked(if_ctx_t ctx)
 {
-	/* Tell the stack that the interface is no longer active */
-	if_setdrvflagbits(ctx->ifc_ifp, IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
-	IFDI_INTR_DISABLE(ctx);
-	msleep(ctx, &ctx->ifc_mtx, PUSER, "iflib_init", hz/2);
 	iflib_stop(ctx);
 	iflib_init_locked(ctx);
 }
@@ -3001,7 +2998,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		if (reinit && (bits & IFF_DRV_RUNNING))
 			iflib_if_init_locked(ctx);
 		else
-			if_setdrvflagbits(ifp, bits, 0);
+			if_setdrvflags(ifp, bits);
 		reinit = 0;
 		CTX_UNLOCK(ctx);
 		break;
