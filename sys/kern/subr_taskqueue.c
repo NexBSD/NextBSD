@@ -960,6 +960,10 @@ taskqgroup_binder(void *ctx, int pending)
 	CPU_ZERO(&mask);
 	CPU_SET(task->bt_cpuid, &mask);
 	error = cpuset_setthread(curthread->td_tid, &mask);
+	thread_lock(curthread);
+	sched_bind(curthread, task->bt_cpuid);
+	thread_unlock(curthread);
+
 	if (error)
 		printf("taskqgroup_binder: setaffinity failed: %d\n",
 		    error);
