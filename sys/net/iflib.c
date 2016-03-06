@@ -2402,7 +2402,7 @@ defrag_failed:
 #define FIRST_QSET(ctx) 0
 
 #define NQSETS(ctx) ((ctx)->ifc_softc_ctx.isc_nqsets)
-#define QIDX(ctx, m) ((((m)->m_pkthdr.flowid % ctx->ifc_softc_ctx.isc_rss_table_size) % NQSETS(ctx)) + FIRST_QSET(ctx))
+#define QIDX(ctx, m) ((((m)->m_pkthdr.flowid & ctx->ifc_softc_ctx.isc_rss_table_mask) % NQSETS(ctx)) + FIRST_QSET(ctx))
 #define DESC_RECLAIMABLE(q) ((int)((q)->ift_processed - (q)->ift_cleaned - (q)->ift_ctx->ifc_softc_ctx.isc_tx_nsegments))
 #define RECLAIM_THRESH(ctx) ((ctx)->ifc_sctx->isc_tx_reclaim_thresh)
 #define MAX_TX_DESC(ctx) ((ctx)->ifc_softc_ctx.isc_tx_tso_segments_max)
@@ -3143,6 +3143,10 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	ifp = ctx->ifc_ifp;
 
 	/*
+	 * XXX sanity check that ntxd & nrxd are a power of 2
+	 */
+
+	/*
 	 * Protect the stack against modern hardware
 	 */
 	if (scctx->isc_tx_tso_size_max > FREEBSD_TSO_SIZE_MAX)
@@ -3154,6 +3158,7 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	ifp->if_hw_tsomaxsegsize = scctx->isc_tx_tso_segsize_max;
 	if (scctx->isc_rss_table_size == 0)
 		scctx->isc_rss_table_size = 64;
+	scctx->isc_rss_table_mask = scctx->isc_rss_table_size-1;;
 	/*
 	** Now setup MSI or MSI/X, should
 	** return us the number of supported
