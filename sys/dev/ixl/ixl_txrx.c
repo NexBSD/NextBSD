@@ -219,7 +219,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	int			nsegs = pi->ipi_nsegs;
 	bus_dma_segment_t *segs = pi->ipi_segs;
 	struct i40e_tx_desc	*txd = NULL;
-	int             	i, j, first;
+	int             	i, j, first, mask;
 	u32			cmd, off;
 
 	cmd = off = 0;
@@ -250,7 +250,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		cmd |= I40E_TX_DESC_CMD_IL2TAG1;
 
 	cmd |= I40E_TX_DESC_CMD_ICRC;
-
+	mask = ixl_sctx->isc_ntxd-1;
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seglen;
 
@@ -265,9 +265,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		    | ((u64)seglen  << I40E_TXD_QW1_TX_BUF_SZ_SHIFT)
 	            | ((u64)htole16(pi->ipi_vtag)  << I40E_TXD_QW1_L2TAG1_SHIFT));
 
-		if (++i == ixl_sctx->isc_ntxd)
-			i = 0;
-
+		i = (i+1) & mask;
 	}
 	/* Set the last descriptor for report */
 	txd->cmd_type_offset_bsz |=
@@ -369,13 +367,13 @@ ixl_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 {
 	struct ixl_vsi		*vsi = arg;
 	struct rx_ring		*rxr = &vsi->queues[rxqid].rxr;
-	int			i;
+	int			i, mask;
 	uint32_t next_pidx;
 
+	mask = ixl_sctx->isc_nrxd-1;
 	for (i = 0, next_pidx = pidx; i < count; i++) {
 		rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
-		if (++next_pidx == ixl_sctx->isc_nrxd)
-			next_pidx = 0;
+		next_pidx = (next_pidx + 1) & mask;
 	}
 }
 
@@ -396,8 +394,9 @@ ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 	union i40e_rx_desc	*cur;
 	u64 qword;
 	uint32_t status;
-	int cnt, i;
+	int cnt, i, mask;
 
+	mask = ixl_sctx->isc_nrxd-1;
 	for (cnt = 0, i = idx; cnt < ixl_sctx->isc_nrxd;) {
 		cur = &rxr->rx_base[i];
 		qword = le64toh(cur->wb.qword1.status_error_len);
@@ -406,10 +405,8 @@ ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 		if ((status & (1 << I40E_RX_DESC_STATUS_DD_SHIFT)) == 0)
 			break;
 		cnt++;
-		if (++i == ixl_sctx->isc_nrxd)
-			i = 0;
+		i = (i + 1) & mask;
 	}
-
 	return (cnt);
 }
 
@@ -468,7 +465,6 @@ ixl_ptype_to_hash(u8 ptype)
 	/* We should never get here!! */
 	return M_HASHTYPE_OPAQUE;
 }
-
 
 /*********************************************************************
  *
@@ -552,7 +548,6 @@ ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		ri->iri_flags |= M_VLANTAG;
 	return (0);
 }
-
 
 /*********************************************************************
  *
