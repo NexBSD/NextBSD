@@ -351,10 +351,6 @@ typedef struct _ixl_vendor_info_t {
 } ixl_vendor_info_t;
 
 
-struct ixl_tx_buf {
-	u32		eop_index;
-};
-
 /*
 ** This struct has multiple uses, multicast
 ** addresses, vlans, and mac filters all use it.
@@ -379,8 +375,6 @@ struct tx_ring {
 	u16			atr_count;
 	u16			itr;
 	u16			latency;
-	struct ixl_tx_buf	*tx_buffers;
-
 
 	/* Used for Dynamic ITR calculation */
 	u32			packets;

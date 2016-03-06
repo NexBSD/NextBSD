@@ -78,8 +78,6 @@ struct if_txrx ixl_txrx  = {
 
 extern if_shared_ctx_t ixl_sctx;
 
-
-
 /*
 ** Find mbuf chains passed to the driver 
 ** that are 'sparse', using more than 8
@@ -178,13 +176,11 @@ static int
 ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 {
 	struct i40e_tx_context_desc	*TXD;
-	struct ixl_tx_buf		*buf;
 	u32				cmd, mss, type, tsolen;
 	int				idx;
 	u64				type_cmd_tso_mss;
 
 	idx = pi->ipi_pidx;
-	buf = &txr->tx_buffers[idx];
 	TXD = (struct i40e_tx_context_desc *) &txr->tx_base[idx];
 	tsolen = pi->ipi_len - (pi->ipi_ehdrlen + pi->ipi_ip_hlen + pi->ipi_tcp_hlen);
 
@@ -199,11 +195,8 @@ ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 	TXD->type_cmd_tso_mss = htole64(type_cmd_tso_mss);
 
 	TXD->tunneling_params = htole32(0);
-	buf->eop_index = -1;
 
-	if (++idx == ixl_sctx->isc_ntxd)
-		idx = 0;
-	return (idx);
+	return ((idx + 1) & (ixl_sctx->isc_ntxd-1));
 }
 
 
@@ -225,11 +218,8 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	struct tx_ring		*txr = &que->txr;
 	int			nsegs = pi->ipi_nsegs;
 	bus_dma_segment_t *segs = pi->ipi_segs;
-	struct ixl_tx_buf	*buf;
 	struct i40e_tx_desc	*txd = NULL;
-	int             	i, j;
-	int			first, last = 0;
-
+	int             	i, j, first;
 	u32			cmd, off;
 
 	cmd = off = 0;
@@ -240,7 +230,6 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
          * the one we tell the hardware to report back
          */
 	i = first = pi->ipi_pidx;
-	buf = &txr->tx_buffers[first];
 
 	if (pi->ipi_flags & IPI_TX_INTR)
 		cmd |= (I40E_TX_DESC_CMD_RS << I40E_TXD_QW1_CMD_SHIFT);
@@ -265,7 +254,6 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seglen;
 
-		buf = &txr->tx_buffers[i];
 		txd = &txr->tx_base[i];
 		seglen = segs[j].ds_len;
 
@@ -277,20 +265,14 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		    | ((u64)seglen  << I40E_TXD_QW1_TX_BUF_SZ_SHIFT)
 	            | ((u64)htole16(pi->ipi_vtag)  << I40E_TXD_QW1_L2TAG1_SHIFT));
 
-		last = i; /* descriptor that will get completion IRQ */
-
 		if (++i == ixl_sctx->isc_ntxd)
 			i = 0;
 
-		buf->eop_index = -1;
 	}
 	/* Set the last descriptor for report */
 	txd->cmd_type_offset_bsz |=
 	    htole64(((u64)IXL_TXD_CMD << I40E_TXD_QW1_CMD_SHIFT));
 	pi->ipi_new_pidx = i;
-
-	/* Set the index of the descriptor that will be marked done */
-	txr->tx_buffers[first].eop_index = last;
 
 	++txr->total_packets;
 	return (0);
@@ -319,7 +301,6 @@ void
 ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_queue *que)
 {
 	struct tx_ring *txr = &que->txr;
-	struct ixl_tx_buf *buf;
 
 	/* Clear the old ring contents */
 	bzero((void *)txr->tx_base,
@@ -330,15 +311,8 @@ ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_queue *que)
 	txr->atr_rate = ixl_atr_rate;
 	txr->atr_count = 0;
 #endif
-
 	wr32(vsi->hw, I40E_QTX_TAIL(que->me), 0);
 	wr32(vsi->hw, I40E_QTX_HEAD(que->me), 0);
-	buf = txr->tx_buffers;
-	for (int i = 0; i < ixl_sctx->isc_ntxd; i++, buf++) {
-
-		/* Clear the EOP index */
-		buf->eop_index = -1;
-	}
 }
 
 
@@ -618,5 +592,4 @@ ixl_rx_checksum(if_rxd_info_t ri, u32 status, u32 error, u8 ptype)
 		    (CSUM_DATA_VALID | CSUM_PSEUDO_HDR);
 		ri->iri_csum_data |= htons(0xffff);
 	}
-	return;
 }
