@@ -199,8 +199,6 @@ ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 	return ((idx + 1) & (ixl_sctx->isc_ntxd-1));
 }
 
-
-
 /*********************************************************************
  *
  *  This routine maps the mbufs to tx descriptors, allowing the
@@ -219,17 +217,11 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	int			nsegs = pi->ipi_nsegs;
 	bus_dma_segment_t *segs = pi->ipi_segs;
 	struct i40e_tx_desc	*txd = NULL;
-	int             	i, j, first, mask;
+	int             	i, j, mask;
 	u32			cmd, off;
 
 	cmd = off = 0;
-
-        /*
-         * Important to capture the first descriptor
-         * used because it will contain the index of
-         * the one we tell the hardware to report back
-         */
-	i = first = pi->ipi_pidx;
+	i = pi->ipi_pidx;
 
 	if (pi->ipi_flags & IPI_TX_INTR)
 		cmd |= (I40E_TX_DESC_CMD_RS << I40E_TXD_QW1_CMD_SHIFT);
