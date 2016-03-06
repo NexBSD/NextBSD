@@ -1184,14 +1184,11 @@ ixgbe_interface_setup(if_ctx_t ctx)
 	return (0);
 }
 
-#if __FreeBSD_version >= 1100036
 static uint64_t
 ixgbe_if_get_counter(if_ctx_t ctx, ift_counter cnt)
 {
-	struct adapter *adapter;
+	struct adapter *adapter = iflib_get_softc(ctx);
 	if_t ifp = iflib_get_ifp(ctx);
-
-	adapter = if_getsoftc(ifp);
 
 	switch (cnt) {
 	case IFCOUNTER_IPACKETS:
@@ -1218,7 +1215,6 @@ ixgbe_if_get_counter(if_ctx_t ctx, ift_counter cnt)
 		return (if_get_counter_default(ifp, cnt));
 	}
 }
-#endif
 
 static void
 ixgbe_add_media_types(if_ctx_t ctx)
