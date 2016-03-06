@@ -1085,7 +1085,7 @@ iflib_dma_alloc(if_ctx_t ctx, bus_size_t size, iflib_dma_info_t dma,
 	}
 
 	err = bus_dmamem_alloc(dma->idi_tag, (void**) &dma->idi_vaddr,
-	    BUS_DMA_NOWAIT | BUS_DMA_COHERENT, &dma->idi_map);
+	    BUS_DMA_NOWAIT | BUS_DMA_COHERENT | BUS_DMA_ZERO, &dma->idi_map);
 	if (err) {
 		device_printf(dev,
 		    "%s: bus_dmamem_alloc(%ju) failed: %d\n",
@@ -2941,11 +2941,11 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		break;
 	}
 	case SIOCSIFCAP:
-	    {
-		    int mask, setmask, bits;
+	{
+		int mask, setmask, bits;
 
-		    mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
-		    setmask = 0;
+		mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
+		setmask = 0;
 #ifdef TCP_OFFLOAD
 		setmask |= mask & (IFCAP_TOE4|IFCAP_TOE6);
 #endif
@@ -2971,7 +2971,11 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		}
 		break;
 	    }
-
+	case SIOCGPRIVATE_0:
+		CTX_LOCK(ctx);
+		err = IFDI_PRIV_IOCTL(ctx, ifr);
+		CTX_UNLOCK(ctx);
+		break;
 	default:
 		err = ether_ioctl(ifp, command, data);
 		break;

@@ -102,6 +102,11 @@ CODE {
 		return (ENOTSUP);
 	}
 
+	static int
+	null_priv_ioctl(if_ctx_t _ctx __unused, struct ifreq *_ifr __unused)
+	{
+		return (ENOTSUP);
+	}
 };
 
 #
@@ -256,9 +261,14 @@ METHOD int media_change {
 };
 
 METHOD uint64_t get_counter {
-	if_ctx_t _sctx;
+	if_ctx_t _ctx;
 	ift_counter cnt;
 };
+
+METHOD int priv_ioctl {
+	if_ctx_t _ctx;
+	struct ifreq *_ifr;
+} DEFAULT null_priv_ioctl;
 
 #
 # optional methods
