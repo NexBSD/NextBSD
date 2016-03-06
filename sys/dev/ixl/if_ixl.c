@@ -214,7 +214,7 @@ static void	ixl_if_media_status(if_ctx_t, struct ifmediareq *);
 
 static void ixl_if_vlan_register(if_ctx_t ctx, u16 vtag);
 static void ixl_if_vlan_unregister(if_ctx_t ctx, u16 vtag);
-
+static uint64_t ixl_if_get_counter(if_ctx_t ctx, ift_counter cnt);
 
 
 static void ixl_if_timer(if_ctx_t, uint16_t);
@@ -279,6 +279,7 @@ static device_method_t ixl_if_methods[] = {
 	DEVMETHOD(ifdi_iov_uninit, ixl_if_iov_uninit),
 	DEVMETHOD(ifdi_iov_vf_add, ixl_if_vf_add),
 #endif
+	DEVMETHOD(ifdi_get_counter, ixl_if_get_counter),
 	DEVMETHOD_END
 };
 
@@ -5718,3 +5719,41 @@ out:
 	return (error);
 }
 #endif /* PCI_IOV */
+
+static uint64_t
+ixl_if_get_counter(if_ctx_t ctx, ift_counter cnt)
+{
+	struct ixl_vsi *vsi = iflib_get_softc(ctx);
+	if_t ifp = iflib_get_ifp(ctx);
+
+	switch (cnt) {
+	case IFCOUNTER_IPACKETS:
+		return (vsi->ipackets);
+	case IFCOUNTER_IERRORS:
+		return (vsi->ierrors);
+	case IFCOUNTER_OPACKETS:
+		return (vsi->opackets);
+	case IFCOUNTER_OERRORS:
+		return (vsi->oerrors);
+	case IFCOUNTER_COLLISIONS:
+		/* Collisions are by standard impossible in 40G/10G Ethernet */
+		return (0);
+	case IFCOUNTER_IBYTES:
+		return (vsi->ibytes);
+	case IFCOUNTER_OBYTES:
+		return (vsi->obytes);
+	case IFCOUNTER_IMCASTS:
+		return (vsi->imcasts);
+	case IFCOUNTER_OMCASTS:
+		return (vsi->omcasts);
+	case IFCOUNTER_IQDROPS:
+		return (vsi->iqdrops);
+	case IFCOUNTER_OQDROPS:
+		return (vsi->oqdrops);
+	case IFCOUNTER_NOPROTO:
+		return (vsi->noproto);
+	default:
+		return (if_get_counter_default(ifp, cnt));
+	}
+}
+

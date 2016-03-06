@@ -367,62 +367,16 @@ ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx, bool clear)
 {
 	struct ixl_vsi		*vsi = arg;
 	struct ixl_queue	*que = &vsi->queues[qid];
-	struct tx_ring		*txr = &que->txr;
-	u32			first, last, head, done, processed;
-	struct ixl_tx_buf	*buf;
-	struct i40e_tx_desc	*tx_desc, *eop_desc;
 
-	processed = 0;
-	first = cidx;
-	buf = &txr->tx_buffers[first];
-	tx_desc = (struct i40e_tx_desc *)&txr->tx_base[first];
-	last = buf->eop_index;
-	if (last == -1)
-		return (0);
-	eop_desc = (struct i40e_tx_desc *)&txr->tx_base[last];
+	int head, credits;
 
 	/* Get the Head WB value */
 	head = ixl_get_tx_head(que);
 
-	/*
-	** Get the index of the first descriptor
-	** BEYOND the EOP and call that 'done'.
-	** I do this so the comparison in the
-	** inner while loop below can be simple
-	*/
-	if (++last == ixl_sctx->isc_ntxd) last = 0;
-	done = last;
-
-	/*
-	** The HEAD index of the ring is written in a 
-	** defined location, this rather than a done bit
-	** is what is used to keep track of what must be
-	** 'cleaned'.
-	*/
-	while (first != head) {
-		while (first != done) {
-			++processed;
-			if (clear)
-				buf->eop_index = -1;
-			if (++first == ixl_sctx->isc_ntxd)
-				first = 0;
-
-			buf = &txr->tx_buffers[first];
-			tx_desc = &txr->tx_base[first];
-		}
-		if (clear)
-			++txr->packets;
-		/* See if there is more work now */
-		last = buf->eop_index;
-		if (last == -1)
-			break;
-		eop_desc = &txr->tx_base[last];
-		/* Get next done point */
-		if (++last == ixl_sctx->isc_ntxd) last = 0;
-			done = last;
-
-	}
-	return (processed);
+	credits = head - cidx;
+	if (credits < 0)
+		credits += ixl_sctx->isc_ntxd;
+	return (credits);
 }
 
 /*********************************************************************
@@ -507,34 +461,34 @@ ixl_ptype_to_hash(u8 ptype)
 	/* Note: anything that gets to this point is IP */
         if (decoded.outer_ip_ver == I40E_RX_PTYPE_OUTER_IPV6) { 
 		switch (decoded.inner_prot) {
-			case I40E_RX_PTYPE_INNER_PROT_TCP:
-				if (ex)
-					return M_HASHTYPE_RSS_TCP_IPV6_EX;
-				else
-					return M_HASHTYPE_RSS_TCP_IPV6;
-			case I40E_RX_PTYPE_INNER_PROT_UDP:
-				if (ex)
-					return M_HASHTYPE_RSS_UDP_IPV6_EX;
-				else
-					return M_HASHTYPE_RSS_UDP_IPV6;
-			default:
-				if (ex)
-					return M_HASHTYPE_RSS_IPV6_EX;
-				else
-					return M_HASHTYPE_RSS_IPV6;
+		case I40E_RX_PTYPE_INNER_PROT_TCP:
+			if (ex)
+				return M_HASHTYPE_RSS_TCP_IPV6_EX;
+			else
+				return M_HASHTYPE_RSS_TCP_IPV6;
+		case I40E_RX_PTYPE_INNER_PROT_UDP:
+			if (ex)
+				return M_HASHTYPE_RSS_UDP_IPV6_EX;
+			else
+				return M_HASHTYPE_RSS_UDP_IPV6;
+		default:
+			if (ex)
+				return M_HASHTYPE_RSS_IPV6_EX;
+			else
+				return M_HASHTYPE_RSS_IPV6;
 		}
 	}
         if (decoded.outer_ip_ver == I40E_RX_PTYPE_OUTER_IPV4) { 
 		switch (decoded.inner_prot) {
-			case I40E_RX_PTYPE_INNER_PROT_TCP:
-					return M_HASHTYPE_RSS_TCP_IPV4;
-			case I40E_RX_PTYPE_INNER_PROT_UDP:
-				if (ex)
-					return M_HASHTYPE_RSS_UDP_IPV4_EX;
-				else
-					return M_HASHTYPE_RSS_UDP_IPV4;
-			default:
-					return M_HASHTYPE_RSS_IPV4;
+		case I40E_RX_PTYPE_INNER_PROT_TCP:
+			return M_HASHTYPE_RSS_TCP_IPV4;
+		case I40E_RX_PTYPE_INNER_PROT_UDP:
+			if (ex)
+				return M_HASHTYPE_RSS_UDP_IPV4_EX;
+			else
+				return M_HASHTYPE_RSS_UDP_IPV4;
+		default:
+			return M_HASHTYPE_RSS_IPV4;
 		}
 	}
 	/* We should never get here!! */
@@ -639,7 +593,6 @@ ixl_rx_checksum(if_rxd_info_t ri, u32 status, u32 error, u8 ptype)
 	struct i40e_rx_ptype_decoded decoded;
 
 	decoded = decode_rx_desc_ptype(ptype);
-
 	/* Errors? */
  	if (error & ((1 << I40E_RX_DESC_ERROR_IPE_SHIFT) |
 	    (1 << I40E_RX_DESC_ERROR_L4E_SHIFT))) {
@@ -655,7 +608,6 @@ ixl_rx_checksum(if_rxd_info_t ri, u32 status, u32 error, u8 ptype)
 			ri->iri_csum_flags = 0;
 			return;
 		}
-
  
 	/* IP Checksum Good */
 	ri->iri_csum_flags = CSUM_IP_CHECKED;
@@ -668,44 +620,3 @@ ixl_rx_checksum(if_rxd_info_t ri, u32 status, u32 error, u8 ptype)
 	}
 	return;
 }
-
-#if __FreeBSD_version >= 1100000
-uint64_t
-ixl_get_counter(if_t ifp, ift_counter cnt)
-{
-	struct ixl_vsi *vsi;
-
-	vsi = if_getsoftc(ifp);
-
-	switch (cnt) {
-	case IFCOUNTER_IPACKETS:
-		return (vsi->ipackets);
-	case IFCOUNTER_IERRORS:
-		return (vsi->ierrors);
-	case IFCOUNTER_OPACKETS:
-		return (vsi->opackets);
-	case IFCOUNTER_OERRORS:
-		return (vsi->oerrors);
-	case IFCOUNTER_COLLISIONS:
-		/* Collisions are by standard impossible in 40G/10G Ethernet */
-		return (0);
-	case IFCOUNTER_IBYTES:
-		return (vsi->ibytes);
-	case IFCOUNTER_OBYTES:
-		return (vsi->obytes);
-	case IFCOUNTER_IMCASTS:
-		return (vsi->imcasts);
-	case IFCOUNTER_OMCASTS:
-		return (vsi->omcasts);
-	case IFCOUNTER_IQDROPS:
-		return (vsi->iqdrops);
-	case IFCOUNTER_OQDROPS:
-		return (vsi->oqdrops);
-	case IFCOUNTER_NOPROTO:
-		return (vsi->noproto);
-	default:
-		return (if_get_counter_default(ifp, cnt));
-	}
-}
-#endif
-

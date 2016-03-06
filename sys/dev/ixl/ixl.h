@@ -576,9 +576,6 @@ void	ixl_init_tx_ring(struct ixl_vsi *, struct ixl_queue *);
 #ifdef IXL_FDIR
 void	ixl_atr(struct ixl_queue *, struct tcphdr *, int);
 #endif
-#if __FreeBSD_version >= 1100000
-uint64_t ixl_get_counter(if_t ifp, ift_counter cnt);
-#endif
 
 /*********************************************************************
  *  common Function prototypes
