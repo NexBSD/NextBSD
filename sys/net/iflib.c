@@ -108,14 +108,6 @@
  *  - iflib public core functions
  *
  *
- * Next steps:
- *
- *  - validate queue teardown
- *  - validate that all structure fields are initialized
-
- *  - add SW RSS to demux received data packets to buf_rings for deferred processing
- *    look at handling tx ack processing
- *
  */
 static MALLOC_DEFINE(M_IFLIB, "iflib", "ifnet library");
 
@@ -239,17 +231,6 @@ iflib_get_sctx(if_ctx_t ctx)
 
 #define LINK_ACTIVE(ctx) ((ctx)->ifc_link_state == LINK_STATE_UP)
 #define CTX_IS_VF(ctx) ((ctx)->ifc_sctx->isc_flags & IFLIB_IS_VF)
-
-
-typedef struct iflib_dma_info {
-	bus_addr_t		idi_paddr;
-	caddr_t			idi_vaddr;
-	bus_dma_tag_t		idi_tag;
-	bus_dmamap_t		idi_map;
-	bus_dma_segment_t	idi_seg;
-	int			idi_nseg;
-	uint32_t		idi_size;
-} *iflib_dma_info_t;
 
 struct iflib_qset {
 	iflib_dma_info_t ifq_ifdi;
@@ -1056,8 +1037,7 @@ _iflib_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 }
 
 static int
-iflib_dma_alloc(if_ctx_t ctx, bus_size_t size, iflib_dma_info_t dma,
-				int mapflags)
+iflib_dma_alloc(if_ctx_t ctx, int size, iflib_dma_info_t dma, int mapflags)
 {
 	int err;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
@@ -1116,6 +1096,22 @@ fail_0:
 	return (err);
 }
 
+int
+iflib_dma_alloc_multi(if_ctx_t ctx, int *sizes, iflib_dma_info_t *dmalist, int mapflags, int count)
+{
+	int i, err;
+	iflib_dma_info_t *dmaiter;
+
+	dmaiter = dmalist;
+	for (i = 0; i < count; i++, dmaiter++) {
+		if ((err = iflib_dma_alloc(ctx, sizes[i], *dmaiter, mapflags)) != 0)
+			break;
+	}
+	if (err)
+		iflib_dma_free_multi(dmalist, i);
+	return (err);
+}
+
 static void
 iflib_dma_free(iflib_dma_info_t dma)
 {
@@ -1133,6 +1129,16 @@ iflib_dma_free(iflib_dma_info_t dma)
 	}
 	bus_dma_tag_destroy(dma->idi_tag);
 	dma->idi_tag = NULL;
+}
+
+void
+iflib_dma_free_multi(iflib_dma_info_t *dmalist, int count)
+{
+	int i;
+	iflib_dma_info_t *dmaiter = dmalist;
+
+	for (i = 0; i < count; i++, dmaiter++)
+		iflib_dma_free(*dmaiter);
 }
 
 static int

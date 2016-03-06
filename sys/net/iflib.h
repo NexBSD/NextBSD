@@ -209,6 +209,14 @@ struct if_shared_ctx {
 	char *isc_driver_version;
 };
 
+typedef struct iflib_dma_info {
+	bus_addr_t		idi_paddr;
+	caddr_t			idi_vaddr;
+	bus_dma_tag_t		idi_tag;
+	bus_dmamap_t		idi_map;
+	uint32_t		idi_size;
+} *iflib_dma_info_t;
+
 #define IFLIB_MAGIC 0xCAFEF00D
 
 typedef enum {
@@ -304,7 +312,9 @@ void iflib_iov_intr_deferred(if_ctx_t ctx);
 void iflib_link_state_change(if_ctx_t ctx, int linkstate);
 
 
+int iflib_dma_alloc_multi(if_ctx_t ctx, int *sizes, iflib_dma_info_t *dmalist, int mapflags, int count);
 
+void iflib_dma_free_multi(iflib_dma_info_t *dmalist, int count);
 
 
 struct mtx *iflib_ctx_lock_get(if_ctx_t);
