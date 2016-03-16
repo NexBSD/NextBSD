@@ -77,6 +77,7 @@
 
 #include "opt_inet.h"
 #include "opt_inet6.h"
+#include "opt_acpi.h"
 
 #include "ifdi_if.h"
 
@@ -383,9 +384,9 @@ struct iflib_rxq {
 	 * these are unused.
 	 */
 	uint16_t	ifr_size;
-	uint16_t	ifr_cidx;
-	uint16_t	ifr_pidx;
-	uint8_t		ifr_gen;
+	uint16_t	ifr_cq_cidx;
+	uint16_t	ifr_cq_pidx;
+	uint8_t		ifr_cq_gen;
 
 	if_ctx_t	ifr_ctx;
 	iflib_fl_t	ifr_fl;
@@ -1454,6 +1455,12 @@ _rxq_refill_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
 }
 
 
+#ifdef ACPI_DMAR
+#define IS_DMAR(ctx) (ctx->ifc_flags & IFC_DMAR)
+#else
+#define IS_DMAR(ctx) (0)
+#endif
+
 /**
  *	rxq_refill - refill an rxq  free-buffer list
  *	@ctx: the iflib context
@@ -1518,7 +1525,7 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 		}
 #endif
 #if defined(__i386__) || defined(__amd64__)
-		if (__predict_true(!(ctx->ifc_flags & IFC_DMAR))) {
+		if (!IS_DMAR(ctx)) {
 			bus_addr = pmap_kextract((vm_offset_t)cl);
 		} else
 #endif
@@ -1704,7 +1711,7 @@ iflib_rx_sds_free(iflib_rxq_t rxq)
 
 		free(rxq->ifr_fl, M_IFLIB);
 		rxq->ifr_fl = NULL;
-		rxq->ifr_gen = rxq->ifr_cidx = rxq->ifr_pidx = 0;
+		rxq->ifr_cq_gen = rxq->ifr_cq_cidx = rxq->ifr_cq_pidx = 0;
 	}
 }
 
@@ -2011,7 +2018,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	MPASS(budget > 0);
 	rx_pkts	= rx_bytes = 0;
 	if (sctx->isc_flags & IFLIB_HAS_CQ)
-		cidxp = &rxq->ifr_cidx;
+		cidxp = &rxq->ifr_cq_cidx;
 	else
 		cidxp = &rxq->ifr_fl[0].ifl_cidx;
 	if ((avail = iflib_rxd_avail(ctx, rxq, *cidxp)) == 0) {
@@ -2040,9 +2047,9 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		MPASS(err == 0);
 		if (sctx->isc_flags & IFLIB_HAS_CQ) {
 			/* we know we consumed _one_ CQ entry */
-			if (++rxq->ifr_cidx == sctx->isc_nrxd) {
-				rxq->ifr_cidx = 0;
-				rxq->ifr_gen = 0;
+			if (++rxq->ifr_cq_cidx == sctx->isc_nrxd) {
+				rxq->ifr_cq_cidx = 0;
+				rxq->ifr_cq_gen = 0;
 			}
 			/* was this only a completion queue message? */
 			if (__predict_false(ri.iri_nfrags == 0))
@@ -3133,14 +3140,10 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
 		return (err);
 	}
-
-	/*
-	 *
-	 * Note that this is erroneously telling us that we're using an IOMMU when we're not
-	 *
-	 */
-	if (bus_get_dma_tag(dev) != pci_get_dma_tag(dev, device_get_parent(dev)))
+#ifdef ACPI_DMAR
+	if (dmar_get_dma_tag(device_get_parent(dev), dev) != NULL)
 		ctx->ifc_flags |= IFC_DMAR;
+#endif
 
 	scctx = &ctx->ifc_softc_ctx;
 	msix_bar = scctx->isc_msix_bar;
@@ -3771,7 +3774,7 @@ fail:
 	rxq = ctx->ifc_rxqs;
 	for (i = 0; i < q; ++i, rxq++) {
 		iflib_rx_sds_free(rxq);
-		rxq->ifr_gen = rxq->ifr_cidx = rxq->ifr_pidx = 0;
+		rxq->ifr_cq_gen = rxq->ifr_cq_cidx = rxq->ifr_cq_pidx = 0;
 	}
 	return (err);
 }
@@ -4269,10 +4272,10 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 		if (sctx->isc_flags & IFLIB_HAS_CQ) {
 			SYSCTL_ADD_U16(ctx_list, queue_list, OID_AUTO, "rxq_cq_pidx",
 				       CTLFLAG_RD,
-				       &rxq->ifr_pidx, 1, "Producer Index");
+				       &rxq->ifr_cq_pidx, 1, "Producer Index");
 			SYSCTL_ADD_U16(ctx_list, queue_list, OID_AUTO, "rxq_cq_cidx",
 				       CTLFLAG_RD,
-				       &rxq->ifr_cidx, 1, "Consumer Index");
+				       &rxq->ifr_cq_cidx, 1, "Consumer Index");
 		}
 		for (j = 0, fl = rxq->ifr_fl; j < rxq->ifr_nfl; j++, fl++) {
 			snprintf(namebuf, NAME_BUFLEN, "rxq_fl%d", j);
