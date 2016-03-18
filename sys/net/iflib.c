@@ -303,6 +303,7 @@ struct iflib_txq {
 	uint16_t	ift_pidx;
 	uint8_t		ift_gen;
 	uint8_t		ift_db_pending;
+	uint8_t		ift_db_pending_queued;
 	uint8_t		ift_npending;
 	/* implicit pad */
 	uint64_t	ift_processed;
@@ -2149,19 +2150,21 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 #define M_HAS_VLANTAG(m) (m->m_flags & M_VLANTAG)
 
 static __inline void
-iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring)
+iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring, int deferred)
 {
 	uint32_t dbval;
+	int pending = callout_pending(&txq->ift_db_check) || deferred;
 
-	if (ring || ++txq->ift_db_pending >= TX_BATCH_SIZE) {
+	if (ring || txq->ift_db_pending >= TX_BATCH_SIZE) {
 
 		/* the lock will only ever be contended in the !min_latency case */
-		if (!TXDB_TRYLOCK(txq))
+		if (pending && !TXDB_TRYLOCK(txq))
 			return;
 		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
 		ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
 		txq->ift_db_pending = txq->ift_npending = 0;
-		TXDB_UNLOCK(txq);
+		if (pending)
+			TXDB_UNLOCK(txq);
 	}
 }
 
@@ -2171,9 +2174,10 @@ iflib_txd_deferred_db_check(void * arg)
 	iflib_txq_t txq = arg;
 
 	/* simple non-zero boolean so use bitwise OR */
-	if (txq->ift_db_pending | txq->ift_npending)
-		iflib_txd_db_check(txq->ift_ctx, txq, TRUE);
-
+	if ((txq->ift_db_pending | txq->ift_npending) &&
+	    txq->ift_db_pending >= txq->ift_db_pending_queued)
+		iflib_txd_db_check(txq->ift_ctx, txq, TRUE, TRUE);
+	txq->ift_db_pending_queued = 0;
 	if (ifmp_ring_is_stalled(txq->ift_br[0]))
 		iflib_txq_check_drain(txq, 4);
 }
@@ -2786,7 +2790,9 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		bytes_sent += m->m_pkthdr.len;
 		if (m->m_flags & M_MCAST)
 			mcast_sent++;
-		iflib_txd_db_check(ctx, txq, 0);
+
+		++txq->ift_db_pending;
+		iflib_txd_db_check(ctx, txq, FALSE, FALSE);
 		ETHER_BPF_MTAP(ifp, m);
 		if (__predict_false(!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING)))
 			goto done;
@@ -2796,11 +2802,13 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 done:
 
 	if ((iflib_min_tx_latency || iflib_txq_min_occupancy(txq)) && txq->ift_db_pending)
-		iflib_txd_db_check(ctx, txq, 1);
+		iflib_txd_db_check(ctx, txq, TRUE, FALSE);
 	else if ((txq->ift_db_pending || TXQ_AVAIL(txq) < MAX_TX_DESC(ctx)) &&
-		 (callout_pending(&txq->ift_db_check) == 0))
+		 (callout_pending(&txq->ift_db_check) == 0)) {
+		txq->ift_db_pending_queued = txq->ift_db_pending;
 		callout_reset_on(&txq->ift_db_check, 1, iflib_txd_deferred_db_check,
 				 txq, txq->ift_db_check.c_cpu);
+	}
 	if_inc_counter(ifp, IFCOUNTER_OBYTES, bytes_sent);
 	if_inc_counter(ifp, IFCOUNTER_OPACKETS, pkt_sent);
 	if (mcast_sent)
