@@ -1463,12 +1463,6 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 	char namebuf[QUEUE_NAME_LEN];
 
 	/* Driver Statistics */
-	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "dropped",
-			CTLFLAG_RD, &adapter->dropped_pkts,
-			"Driver dropped packets");
-	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "mbuf_defrag_failed",
-			CTLFLAG_RD, &adapter->mbuf_defrag_failed,
-			"m_defrag() failed");
 	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "watchdog_events",
 			CTLFLAG_RD, &adapter->watchdog_events,
 			"Watchdog timeouts");
@@ -1502,12 +1496,6 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "tso_tx",
 				CTLFLAG_RD, &txr->tso_tx,
 				"TSO");
-		SYSCTL_ADD_ULONG(ctx, queue_list, OID_AUTO, "no_tx_dma_setup",
-				CTLFLAG_RD,  &txr->no_tx_dma_setup,
-				"Driver tx dma failure in xmit");
-		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "no_desc_avail",
-				CTLFLAG_RD,  &txr->no_desc_avail,
-				"Queue No Descriptor Available");
 		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "tx_packets",
 				CTLFLAG_RD,  &txr->total_packets,
 				"Queue Packets Transmitted");

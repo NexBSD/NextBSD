@@ -11,15 +11,18 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 {
         struct adapter *adapter = (struct adapter *) arg1;
 	struct ixgbe_hw *hw = &adapter->hw;
+#ifdef PRINT_QSET
 	struct ix_queue *que = &adapter->queues[0];
 	struct rx_ring *rxr = &que->rxr;
 	struct tx_ring *txr = &que->txr;
 	int ntxd = ixgbe_sctx->isc_ntxd;
 	int nrxd = ixgbe_sctx->isc_nrxd;
+	int j;
+#endif
 
 	struct sbuf *sb;
 	u32 *regs_buff = (u32 *)malloc(sizeof(u32) * IXGBE_REGS_LEN, M_DEVBUF, M_NOWAIT);
-	u8 i, j;
+	int i;
 	int rc;
 
 	memset(regs_buff, 0, IXGBE_REGS_LEN * sizeof(u32));
@@ -495,7 +498,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	regs_buff[1136] = IXGBE_READ_REG(hw, IXGBE_RTTBCNRD);
 	/* same as RTTQCNRR */
 	sbuf_printf(sb, "\tIXGBE_RTTBCNRD\t %08x\n", regs_buff[1136]);
-
+#ifdef PRINT_QSET
 	for (j = 0; j < nrxd; j++) {
 		u32 staterr = le32toh(rxr->rx_base[j].wb.upper.status_error);
 		u32 length =  le32toh(rxr->rx_base[j].wb.upper.length);
@@ -511,6 +514,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 			    buf->eop != -1 ? txr->tx_base[buf->eop].wb.status & IXGBE_TXD_STAT_DD : 0);
 
 	}
+#endif
 	/* X540 specific DCB registers
 	regs_buff[1137] = IXGBE_READ_REG(hw, IXGBE_RTTQCNCR);
 	regs_buff[1138] = IXGBE_READ_REG(hw, IXGBE_RTTQCNTG); */

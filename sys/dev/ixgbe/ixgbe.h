@@ -335,9 +335,6 @@ struct tx_ring {
 	u32			packets;
 	/* Soft Stats */
 	unsigned long   	tso_tx;
-	unsigned long   	no_tx_map_avail;
-	unsigned long   	no_tx_dma_setup;
-	u64			no_desc_avail;
         u64			total_packets;
 };
 
@@ -513,8 +510,6 @@ struct adapter {
 
 	/* Misc stats maintained by the driver */
         unsigned long           rx_mbuf_sz;
-	unsigned long   	dropped_pkts;
-	unsigned long   	mbuf_defrag_failed;
 	unsigned long   	mbuf_header_failed;
 	unsigned long   	mbuf_packet_failed;
 	unsigned long   	watchdog_events;
