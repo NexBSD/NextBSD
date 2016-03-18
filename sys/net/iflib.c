@@ -90,6 +90,12 @@
 #include <x86/iommu/busdma_dmar.h>
 #endif
 
+
+/*
+ * enable accounting of every mbuf as it comes in to and goes out of iflib's software descriptor references
+ */
+#define MEMORY_LOGGING
+
 /*
  * NB:
  * - TX_BATCH_SIZE will consume too many segments in one go (66*32) before
@@ -308,6 +314,10 @@ struct iflib_txq {
 	/* implicit pad */
 	uint64_t	ift_processed;
 	uint64_t	ift_cleaned;
+#ifdef MEMORY_LOGGING
+	uint64_t	ift_enqueued;
+	uint64_t	ift_dequeued;
+#endif
 	uint64_t	ift_no_tx_dma_setup;
 	uint64_t	ift_no_desc_avail;
 	uint64_t	ift_mbuf_defrag_failed;
@@ -348,6 +358,12 @@ struct iflib_fl {
 	uint16_t	ifl_pidx;
 	uint16_t	ifl_credits;
 	uint8_t		ifl_gen;
+#ifdef MEMORY_LOGGING
+	uint64_t	ifl_m_enqueued;
+	uint64_t	ifl_m_dequeued;
+	uint64_t	ifl_cl_enqueued;
+	uint64_t	ifl_cl_dequeued;
+#endif
 	/* implicit pad */
 
 	/* constant */
@@ -1547,12 +1563,20 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 		 *
 		 * If the cluster is still set then we know a minimum sized packet was received
 		 */
-		if ((cl = rxsd->ifsd_cl) == NULL &&
-			(cl = rxsd->ifsd_cl = m_cljget(NULL, M_NOWAIT, fl->ifl_buf_size)) == NULL)
-			break;
+		if ((cl = rxsd->ifsd_cl) == NULL) {
+			if ((cl = rxsd->ifsd_cl = m_cljget(NULL, M_NOWAIT, fl->ifl_buf_size)) == NULL)
+				break;
+#ifdef MEMORY_LOGGING
+			fl->ifl_cl_enqueued++;
+#endif
+		}
 		if ((m = m_gethdr(M_NOWAIT, MT_NOINIT)) == NULL) {
 			break;
 		}
+#ifdef MEMORY_LOGGING
+		fl->ifl_m_enqueued++;
+#endif
+
 		DBG_COUNTER_INC(rx_allocs);
 #ifdef notyet
 		if ((rxsd->ifsd_flags & RX_SW_DESC_MAP_CREATED) == 0) {
@@ -1664,6 +1688,10 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 			MPASS(d->ifsd_cl == NULL);
 			MPASS(d->ifsd_m == NULL);
 		}
+#ifdef MEMORY_LOGGING
+		fl->ifl_m_dequeued++;
+		fl->ifl_cl_dequeued++;
+#endif
 		d->ifsd_cl = NULL;
 		d->ifsd_m = NULL;
 		if (++cidx == fl->ifl_size)
@@ -1934,7 +1962,11 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int *cltype, int unload)
 	cidx = irf->irf_idx;
 	fl = &rxq->ifr_fl[flid];
 	fl->ifl_credits--;
-
+#ifdef MEMORY_LOGGING
+	fl->ifl_m_dequeued++;
+	if (cltype)
+		fl->ifl_cl_dequeued++;
+#endif
 	sd = &fl->ifl_sds[cidx];
 	di = fl->ifl_ifdi;
 	bus_dmamap_sync(di->idi_tag, di->idi_map,
@@ -2332,6 +2364,9 @@ iflib_rebuild_mbuf(iflib_txq_t txq)
 	ntxd = sctx->isc_ntxd;
 	mh = m = ifsd_m[pidx];
 	ifsd_m[pidx] = NULL;
+#ifdef MEMORY_LOGGING
+	txq->ift_dequeued++;
+#endif
 	len = m->m_len;
 	mhlen = m->m_pkthdr.len;
 	i = 0;
@@ -2339,6 +2374,9 @@ iflib_rebuild_mbuf(iflib_txq_t txq)
 	while (len < mhlen) {
 		m->m_next = ifsd_m[(pidx + i) & (ntxd-1)];
 		ifsd_m[(pidx + i) & (ntxd -1)] = NULL;
+#ifdef MEMORY_LOGGING
+		txq->ift_dequeued++;
+#endif
 		m = m->m_next;
 		len += m->m_len;
 		i++;
@@ -2416,6 +2454,9 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			 */
 			next = (pidx + count) & (ntxd-1);
 			MPASS(ifsd_m[next] == NULL);
+#ifdef MEMORY_LOGGING
+			txq->ift_enqueued++;
+#endif
 			ifsd_m[next] = m;
 			while (buflen > 0) {
 				max_sgsize = MIN(buflen, maxsegsz);
@@ -2660,6 +2701,9 @@ iflib_tx_desc_free(iflib_txq_t txq, int n)
 
 				m_freem(m);
 				ifsd_m[cidx] = NULL;
+#ifdef MEMORY_LOGGING
+				txq->ift_dequeued++;
+#endif
 				DBG_COUNTER_INC(tx_frees);
 			}
 		}
@@ -4480,7 +4524,30 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 			SYSCTL_ADD_U16(ctx_list, fl_list, OID_AUTO, "credits",
 				       CTLFLAG_RD,
 				       &fl->ifl_credits, 1, "credits available");
+#ifdef MEMORY_LOGGING
+			SYSCTL_ADD_QUAD(ctx_list, fl_list, OID_AUTO, "fl_m_enqueued",
+					CTLFLAG_RD,
+					&fl->ifl_m_enqueued, "mbufs allocated");
+			SYSCTL_ADD_QUAD(ctx_list, fl_list, OID_AUTO, "fl_m_dequeued",
+					CTLFLAG_RD,
+					&fl->ifl_m_dequeued, "mbufs freed");
+			SYSCTL_ADD_QUAD(ctx_list, fl_list, OID_AUTO, "fl_cl_enqueued",
+					CTLFLAG_RD,
+					&fl->ifl_cl_enqueued, "clusters allocated");
+			SYSCTL_ADD_QUAD(ctx_list, fl_list, OID_AUTO, "fl_cl_dequeued",
+					CTLFLAG_RD,
+					&fl->ifl_cl_dequeued, "clusters freed");
+#endif
+
 		}
+#ifdef MEMORY_LOGGING
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "txq_dequeued",
+				CTLFLAG_RD,
+				&txq->ift_dequeued, "total mbufs freed");
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "txq_enqueued",
+				CTLFLAG_RD,
+				&txq->ift_enqueued, "total mbufs enqueued");
+#endif
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "mbuf_defrag",
 				   CTLFLAG_RD,
 				   &txq->ift_mbuf_defrag, "# of times m_defrag was called");
