@@ -78,8 +78,6 @@ struct if_txrx ixl_txrx  = {
 
 extern if_shared_ctx_t ixl_sctx;
 
-
-
 /*
 ** Find mbuf chains passed to the driver 
 ** that are 'sparse', using more than 8
@@ -178,13 +176,11 @@ static int
 ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 {
 	struct i40e_tx_context_desc	*TXD;
-	struct ixl_tx_buf		*buf;
 	u32				cmd, mss, type, tsolen;
 	int				idx;
 	u64				type_cmd_tso_mss;
 
 	idx = pi->ipi_pidx;
-	buf = &txr->tx_buffers[idx];
 	TXD = (struct i40e_tx_context_desc *) &txr->tx_base[idx];
 	tsolen = pi->ipi_len - (pi->ipi_ehdrlen + pi->ipi_ip_hlen + pi->ipi_tcp_hlen);
 
@@ -199,14 +195,9 @@ ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 	TXD->type_cmd_tso_mss = htole64(type_cmd_tso_mss);
 
 	TXD->tunneling_params = htole32(0);
-	buf->eop_index = -1;
 
-	if (++idx == ixl_sctx->isc_ntxd)
-		idx = 0;
-	return (idx);
+	return ((idx + 1) & (ixl_sctx->isc_ntxd-1));
 }
-
-
 
 /*********************************************************************
  *
@@ -225,22 +216,12 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	struct tx_ring		*txr = &que->txr;
 	int			nsegs = pi->ipi_nsegs;
 	bus_dma_segment_t *segs = pi->ipi_segs;
-	struct ixl_tx_buf	*buf;
 	struct i40e_tx_desc	*txd = NULL;
-	int             	i, j;
-	int			first, last = 0;
-
+	int             	i, j, mask;
 	u32			cmd, off;
 
 	cmd = off = 0;
-
-        /*
-         * Important to capture the first descriptor
-         * used because it will contain the index of
-         * the one we tell the hardware to report back
-         */
-	i = first = pi->ipi_pidx;
-	buf = &txr->tx_buffers[first];
+	i = pi->ipi_pidx;
 
 	if (pi->ipi_flags & IPI_TX_INTR)
 		cmd |= (I40E_TX_DESC_CMD_RS << I40E_TXD_QW1_CMD_SHIFT);
@@ -261,11 +242,10 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		cmd |= I40E_TX_DESC_CMD_IL2TAG1;
 
 	cmd |= I40E_TX_DESC_CMD_ICRC;
-
+	mask = ixl_sctx->isc_ntxd-1;
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seglen;
 
-		buf = &txr->tx_buffers[i];
 		txd = &txr->tx_base[i];
 		seglen = segs[j].ds_len;
 
@@ -277,20 +257,12 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		    | ((u64)seglen  << I40E_TXD_QW1_TX_BUF_SZ_SHIFT)
 	            | ((u64)htole16(pi->ipi_vtag)  << I40E_TXD_QW1_L2TAG1_SHIFT));
 
-		last = i; /* descriptor that will get completion IRQ */
-
-		if (++i == ixl_sctx->isc_ntxd)
-			i = 0;
-
-		buf->eop_index = -1;
+		i = (i+1) & mask;
 	}
 	/* Set the last descriptor for report */
 	txd->cmd_type_offset_bsz |=
 	    htole64(((u64)IXL_TXD_CMD << I40E_TXD_QW1_CMD_SHIFT));
 	pi->ipi_new_pidx = i;
-
-	/* Set the index of the descriptor that will be marked done */
-	txr->tx_buffers[first].eop_index = last;
 
 	++txr->total_packets;
 	return (0);
@@ -319,7 +291,6 @@ void
 ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_queue *que)
 {
 	struct tx_ring *txr = &que->txr;
-	struct ixl_tx_buf *buf;
 
 	/* Clear the old ring contents */
 	bzero((void *)txr->tx_base,
@@ -330,15 +301,8 @@ ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_queue *que)
 	txr->atr_rate = ixl_atr_rate;
 	txr->atr_count = 0;
 #endif
-
 	wr32(vsi->hw, I40E_QTX_TAIL(que->me), 0);
 	wr32(vsi->hw, I40E_QTX_HEAD(que->me), 0);
-	buf = txr->tx_buffers;
-	for (int i = 0; i < ixl_sctx->isc_ntxd; i++, buf++) {
-
-		/* Clear the EOP index */
-		buf->eop_index = -1;
-	}
 }
 
 
@@ -367,62 +331,16 @@ ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx, bool clear)
 {
 	struct ixl_vsi		*vsi = arg;
 	struct ixl_queue	*que = &vsi->queues[qid];
-	struct tx_ring		*txr = &que->txr;
-	u32			first, last, head, done, processed;
-	struct ixl_tx_buf	*buf;
-	struct i40e_tx_desc	*tx_desc, *eop_desc;
 
-	processed = 0;
-	first = cidx;
-	buf = &txr->tx_buffers[first];
-	tx_desc = (struct i40e_tx_desc *)&txr->tx_base[first];
-	last = buf->eop_index;
-	if (last == -1)
-		return (0);
-	eop_desc = (struct i40e_tx_desc *)&txr->tx_base[last];
+	int head, credits;
 
 	/* Get the Head WB value */
 	head = ixl_get_tx_head(que);
 
-	/*
-	** Get the index of the first descriptor
-	** BEYOND the EOP and call that 'done'.
-	** I do this so the comparison in the
-	** inner while loop below can be simple
-	*/
-	if (++last == ixl_sctx->isc_ntxd) last = 0;
-	done = last;
-
-	/*
-	** The HEAD index of the ring is written in a 
-	** defined location, this rather than a done bit
-	** is what is used to keep track of what must be
-	** 'cleaned'.
-	*/
-	while (first != head) {
-		while (first != done) {
-			++processed;
-			if (clear)
-				buf->eop_index = -1;
-			if (++first == ixl_sctx->isc_ntxd)
-				first = 0;
-
-			buf = &txr->tx_buffers[first];
-			tx_desc = &txr->tx_base[first];
-		}
-		if (clear)
-			++txr->packets;
-		/* See if there is more work now */
-		last = buf->eop_index;
-		if (last == -1)
-			break;
-		eop_desc = &txr->tx_base[last];
-		/* Get next done point */
-		if (++last == ixl_sctx->isc_ntxd) last = 0;
-			done = last;
-
-	}
-	return (processed);
+	credits = head - cidx;
+	if (credits < 0)
+		credits += ixl_sctx->isc_ntxd;
+	return (credits);
 }
 
 /*********************************************************************
@@ -441,13 +359,13 @@ ixl_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 {
 	struct ixl_vsi		*vsi = arg;
 	struct rx_ring		*rxr = &vsi->queues[rxqid].rxr;
-	int			i;
+	int			i, mask;
 	uint32_t next_pidx;
 
+	mask = ixl_sctx->isc_nrxd-1;
 	for (i = 0, next_pidx = pidx; i < count; i++) {
 		rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
-		if (++next_pidx == ixl_sctx->isc_nrxd)
-			next_pidx = 0;
+		next_pidx = (next_pidx + 1) & mask;
 	}
 }
 
@@ -468,8 +386,9 @@ ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 	union i40e_rx_desc	*cur;
 	u64 qword;
 	uint32_t status;
-	int cnt, i;
+	int cnt, i, mask;
 
+	mask = ixl_sctx->isc_nrxd-1;
 	for (cnt = 0, i = idx; cnt < ixl_sctx->isc_nrxd;) {
 		cur = &rxr->rx_base[i];
 		qword = le64toh(cur->wb.qword1.status_error_len);
@@ -478,10 +397,8 @@ ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 		if ((status & (1 << I40E_RX_DESC_STATUS_DD_SHIFT)) == 0)
 			break;
 		cnt++;
-		if (++i == ixl_sctx->isc_nrxd)
-			i = 0;
+		i = (i + 1) & mask;
 	}
-
 	return (cnt);
 }
 
@@ -507,40 +424,39 @@ ixl_ptype_to_hash(u8 ptype)
 	/* Note: anything that gets to this point is IP */
         if (decoded.outer_ip_ver == I40E_RX_PTYPE_OUTER_IPV6) { 
 		switch (decoded.inner_prot) {
-			case I40E_RX_PTYPE_INNER_PROT_TCP:
-				if (ex)
-					return M_HASHTYPE_RSS_TCP_IPV6_EX;
-				else
-					return M_HASHTYPE_RSS_TCP_IPV6;
-			case I40E_RX_PTYPE_INNER_PROT_UDP:
-				if (ex)
-					return M_HASHTYPE_RSS_UDP_IPV6_EX;
-				else
-					return M_HASHTYPE_RSS_UDP_IPV6;
-			default:
-				if (ex)
-					return M_HASHTYPE_RSS_IPV6_EX;
-				else
-					return M_HASHTYPE_RSS_IPV6;
+		case I40E_RX_PTYPE_INNER_PROT_TCP:
+			if (ex)
+				return M_HASHTYPE_RSS_TCP_IPV6_EX;
+			else
+				return M_HASHTYPE_RSS_TCP_IPV6;
+		case I40E_RX_PTYPE_INNER_PROT_UDP:
+			if (ex)
+				return M_HASHTYPE_RSS_UDP_IPV6_EX;
+			else
+				return M_HASHTYPE_RSS_UDP_IPV6;
+		default:
+			if (ex)
+				return M_HASHTYPE_RSS_IPV6_EX;
+			else
+				return M_HASHTYPE_RSS_IPV6;
 		}
 	}
         if (decoded.outer_ip_ver == I40E_RX_PTYPE_OUTER_IPV4) { 
 		switch (decoded.inner_prot) {
-			case I40E_RX_PTYPE_INNER_PROT_TCP:
-					return M_HASHTYPE_RSS_TCP_IPV4;
-			case I40E_RX_PTYPE_INNER_PROT_UDP:
-				if (ex)
-					return M_HASHTYPE_RSS_UDP_IPV4_EX;
-				else
-					return M_HASHTYPE_RSS_UDP_IPV4;
-			default:
-					return M_HASHTYPE_RSS_IPV4;
+		case I40E_RX_PTYPE_INNER_PROT_TCP:
+			return M_HASHTYPE_RSS_TCP_IPV4;
+		case I40E_RX_PTYPE_INNER_PROT_UDP:
+			if (ex)
+				return M_HASHTYPE_RSS_UDP_IPV4_EX;
+			else
+				return M_HASHTYPE_RSS_UDP_IPV4;
+		default:
+			return M_HASHTYPE_RSS_IPV4;
 		}
 	}
 	/* We should never get here!! */
 	return M_HASHTYPE_OPAQUE;
 }
-
 
 /*********************************************************************
  *
@@ -625,7 +541,6 @@ ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	return (0);
 }
 
-
 /*********************************************************************
  *
  *  Verify that the hardware indicated that the checksum is valid.
@@ -639,7 +554,6 @@ ixl_rx_checksum(if_rxd_info_t ri, u32 status, u32 error, u8 ptype)
 	struct i40e_rx_ptype_decoded decoded;
 
 	decoded = decode_rx_desc_ptype(ptype);
-
 	/* Errors? */
  	if (error & ((1 << I40E_RX_DESC_ERROR_IPE_SHIFT) |
 	    (1 << I40E_RX_DESC_ERROR_L4E_SHIFT))) {
@@ -655,7 +569,6 @@ ixl_rx_checksum(if_rxd_info_t ri, u32 status, u32 error, u8 ptype)
 			ri->iri_csum_flags = 0;
 			return;
 		}
-
  
 	/* IP Checksum Good */
 	ri->iri_csum_flags = CSUM_IP_CHECKED;
@@ -666,46 +579,4 @@ ixl_rx_checksum(if_rxd_info_t ri, u32 status, u32 error, u8 ptype)
 		    (CSUM_DATA_VALID | CSUM_PSEUDO_HDR);
 		ri->iri_csum_data |= htons(0xffff);
 	}
-	return;
 }
-
-#if __FreeBSD_version >= 1100000
-uint64_t
-ixl_get_counter(if_t ifp, ift_counter cnt)
-{
-	struct ixl_vsi *vsi;
-
-	vsi = if_getsoftc(ifp);
-
-	switch (cnt) {
-	case IFCOUNTER_IPACKETS:
-		return (vsi->ipackets);
-	case IFCOUNTER_IERRORS:
-		return (vsi->ierrors);
-	case IFCOUNTER_OPACKETS:
-		return (vsi->opackets);
-	case IFCOUNTER_OERRORS:
-		return (vsi->oerrors);
-	case IFCOUNTER_COLLISIONS:
-		/* Collisions are by standard impossible in 40G/10G Ethernet */
-		return (0);
-	case IFCOUNTER_IBYTES:
-		return (vsi->ibytes);
-	case IFCOUNTER_OBYTES:
-		return (vsi->obytes);
-	case IFCOUNTER_IMCASTS:
-		return (vsi->imcasts);
-	case IFCOUNTER_OMCASTS:
-		return (vsi->omcasts);
-	case IFCOUNTER_IQDROPS:
-		return (vsi->iqdrops);
-	case IFCOUNTER_OQDROPS:
-		return (vsi->oqdrops);
-	case IFCOUNTER_NOPROTO:
-		return (vsi->noproto);
-	default:
-		return (if_get_counter_default(ifp, cnt));
-	}
-}
-#endif
-

@@ -68,6 +68,7 @@ struct taskqueue {
 	TAILQ_HEAD(, taskqueue_busy) tq_active;
 	struct mtx		tq_mutex;
 	struct thread		**tq_threads;
+	struct thread		*tq_curthread;
 	int			tq_tcount;
 	int			tq_spin;
 	int			tq_flags;
@@ -220,7 +221,7 @@ taskqueue_enqueue_locked(struct taskqueue *queue, struct task *task)
 	 * Count multiple enqueues.
 	 */
 	if (task->ta_pending) {
-		if (task->ta_pending < USHRT_MAX)
+		if (task->ta_pending < UCHAR_MAX)
 			task->ta_pending++;
 		TQ_UNLOCK(queue);
 		return (0);
@@ -254,6 +255,22 @@ taskqueue_enqueue_locked(struct taskqueue *queue, struct task *task)
 		TQ_UNLOCK(queue);
 
 	/* Return with lock released. */
+	return (0);
+}
+
+int
+grouptaskqueue_enqueue(struct taskqueue *queue, struct task *task)
+{
+	TQ_LOCK(queue);
+	if (task->ta_pending) {
+		TQ_UNLOCK(queue);
+		return (0);
+	}
+	STAILQ_INSERT_TAIL(&queue->tq_queue, task, ta_link);
+	task->ta_pending = 1;
+	TQ_UNLOCK(queue);
+	if ((queue->tq_flags & TQ_FLAGS_BLOCKED) == 0)
+		queue->tq_enqueue(queue->tq_context);
 	return (0);
 }
 
@@ -447,7 +464,8 @@ taskqueue_run_locked(struct taskqueue *queue)
 
 		TQ_LOCK(queue);
 		tb.tb_running = NULL;
-		wakeup(task);
+		if ((task->ta_flags & TASK_SKIP_WAKEUP) == 0)
+			wakeup(task);
 
 		TAILQ_REMOVE(&queue->tq_active, &tb, tb_link);
 		tb_first = TAILQ_FIRST(&queue->tq_active);
@@ -462,7 +480,9 @@ taskqueue_run(struct taskqueue *queue)
 {
 
 	TQ_LOCK(queue);
+	queue->tq_curthread = curthread;
 	taskqueue_run_locked(queue);
+	queue->tq_curthread = NULL;
 	TQ_UNLOCK(queue);
 }
 
@@ -695,6 +715,7 @@ taskqueue_thread_loop(void *arg)
 	tq = *tqp;
 	taskqueue_run_callback(tq, TASKQUEUE_CALLBACK_TYPE_INIT);
 	TQ_LOCK(tq);
+	tq->tq_curthread = curthread;
 	while ((tq->tq_flags & TQ_FLAGS_ACTIVE) != 0) {
 		/* XXX ? */
 		taskqueue_run_locked(tq);
@@ -708,7 +729,7 @@ taskqueue_thread_loop(void *arg)
 		TQ_SLEEP(tq, tq, &tq->tq_mutex, 0, "-", 0);
 	}
 	taskqueue_run_locked(tq);
-
+	tq->tq_curthread = NULL;
 	/*
 	 * This thread is on its way out, so just drop the lock temporarily
 	 * in order to call the shutdown callback.  This allows the callback
@@ -732,8 +753,8 @@ taskqueue_thread_enqueue(void *context)
 
 	tqp = context;
 	tq = *tqp;
-
-	wakeup_one(tq);
+	if (tq->tq_curthread != curthread)
+		wakeup_one(tq);
 }
 
 TASKQUEUE_DEFINE(swi, taskqueue_swi_enqueue, NULL,
@@ -960,6 +981,10 @@ taskqgroup_binder(void *ctx, int pending)
 	CPU_ZERO(&mask);
 	CPU_SET(task->bt_cpuid, &mask);
 	error = cpuset_setthread(curthread->td_tid, &mask);
+	thread_lock(curthread);
+	sched_bind(curthread, task->bt_cpuid);
+	thread_unlock(curthread);
+
 	if (error)
 		printf("taskqgroup_binder: setaffinity failed: %d\n",
 		    error);

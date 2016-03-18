@@ -34,6 +34,15 @@
 #include <sys/bus_dma.h>
 #include <sys/nv.h>
 
+
+/*
+ * Most cards can handle much larger TSO requests
+ * but the FreeBSD TCP stack will break on larger
+ * values
+ */
+#define FREEBSD_TSO_SIZE_MAX 65518
+
+
 struct iflib_ctx;
 typedef struct iflib_ctx *if_ctx_t;
 struct if_shared_ctx;
@@ -162,6 +171,7 @@ typedef struct if_softc_ctx {
 	int isc_tx_tso_size_max;
 	int isc_tx_tso_segsize_max;
 	int isc_rss_table_size;
+	int isc_rss_table_mask;
 
 	iflib_intr_mode_t isc_intr;
 	uint16_t isc_max_frame_size; /* set at init time by driver */
@@ -198,6 +208,14 @@ struct if_shared_ctx {
 	pci_vendor_info_t *isc_vendor_info;
 	char *isc_driver_version;
 };
+
+typedef struct iflib_dma_info {
+	bus_addr_t		idi_paddr;
+	caddr_t			idi_vaddr;
+	bus_dma_tag_t		idi_tag;
+	bus_dmamap_t		idi_map;
+	uint32_t		idi_size;
+} *iflib_dma_info_t;
 
 #define IFLIB_MAGIC 0xCAFEF00D
 
@@ -294,7 +312,9 @@ void iflib_iov_intr_deferred(if_ctx_t ctx);
 void iflib_link_state_change(if_ctx_t ctx, int linkstate);
 
 
+int iflib_dma_alloc_multi(if_ctx_t ctx, int *sizes, iflib_dma_info_t *dmalist, int mapflags, int count);
 
+void iflib_dma_free_multi(iflib_dma_info_t *dmalist, int count);
 
 
 struct mtx *iflib_ctx_lock_get(if_ctx_t);
