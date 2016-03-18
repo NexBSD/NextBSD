@@ -2180,6 +2180,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 
 #define M_CSUM_FLAGS(m) ((m)->m_pkthdr.csum_flags)
 #define M_HAS_VLANTAG(m) (m->m_flags & M_VLANTAG)
+#define TXQ_MAX_DB_DEFERRED(ctx) (ctx->ifc_sctx->isc_ntxd >> 5)
 
 static __inline void
 iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring, int deferred)
@@ -2187,7 +2188,7 @@ iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring, int deferred)
 	uint32_t dbval;
 	int pending = callout_pending(&txq->ift_db_check) || deferred;
 
-	if (ring || txq->ift_db_pending >= TX_BATCH_SIZE) {
+	if (ring || txq->ift_db_pending >= TXQ_MAX_DB_DEFERRED(ctx)) {
 
 		/* the lock will only ever be contended in the !min_latency case */
 		if (pending && !TXDB_TRYLOCK(txq))
@@ -2369,9 +2370,9 @@ iflib_rebuild_mbuf(iflib_txq_t txq)
 #endif
 	len = m->m_len;
 	mhlen = m->m_pkthdr.len;
-	i = 0;
+	i = 1;
 
-	while (len < mhlen) {
+	while (len < mhlen && (m->m_next == NULL)) {
 		m->m_next = ifsd_m[(pidx + i) & (ntxd-1)];
 		ifsd_m[(pidx + i) & (ntxd -1)] = NULL;
 #ifdef MEMORY_LOGGING
@@ -2526,10 +2527,10 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 
 	if (m_head->m_pkthdr.csum_flags & CSUM_TSO) {
 		desc_tag = txq->ift_tso_desc_tag;
-		max_segs = scctx->isc_tx_nsegments;
+		max_segs = scctx->isc_tx_tso_segments_max;
 	} else {
 		desc_tag = txq->ift_desc_tag;
-		max_segs = scctx->isc_tx_tso_segments_max;
+		max_segs = scctx->isc_tx_nsegments;
 	}
 retry:
 	err = iflib_busdma_load_mbuf_sg(txq, desc_tag, map, m_headp, segs, &nsegs, max_segs, BUS_DMA_NOWAIT);
@@ -2652,14 +2653,18 @@ defrag_failed:
 
 /* if there are more than TXQ_MIN_OCCUPANCY packets pending we consider deferring
  * doorbell writes
+ *
+ * ORing with 2 assures that min occupancy is never less than 2 without any conditional logic
  */
-#define TXQ_MIN_OCCUPANCY 8
+#define TXQ_MIN_OCCUPANCY(ctx) ((ctx->ifc_sctx->isc_ntxd >> 6)| 0x2)
 
 static inline int
 iflib_txq_min_occupancy(iflib_txq_t txq)
 {
+	if_ctx_t ctx;
 
-	return (get_inuse(txq->ift_size, txq->ift_cidx, txq->ift_pidx, txq->ift_gen) < TXQ_MIN_OCCUPANCY + MAX_TX_DESC(txq->ift_ctx));
+	ctx = txq->ift_ctx;
+	return (get_inuse(txq->ift_size, txq->ift_cidx, txq->ift_pidx, txq->ift_gen) < TXQ_MIN_OCCUPANCY(ctx) + MAX_TX_DESC(ctx));
 }
 
 static void
@@ -2783,7 +2788,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	if_ctx_t ctx = txq->ift_ctx;
 	if_t ifp = ctx->ifc_ifp;
 	struct mbuf **mp, *m;
-	int i, count, consumed, pkt_sent, bytes_sent, mcast_sent, avail, err;
+	int i, count, consumed, pkt_sent, bytes_sent, mcast_sent, avail, err, in_use_prev;
 
 	if (__predict_false(!(if_getdrvflags(ifp) & IFF_DRV_RUNNING) ||
 			    !LINK_ACTIVE(ctx))) {
@@ -2815,7 +2820,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 
 	for (i = 0; i < count && TXQ_AVAIL(txq) > MAX_TX_DESC(ctx) + 2; i++) {
 		mp = _ring_peek_one(r, cidx, i);
-
+		in_use_prev = txq->ift_in_use;
 		err = iflib_encap(txq, mp);
 		/*
 		 * What other errors should we bail out for?
@@ -2835,7 +2840,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		if (m->m_flags & M_MCAST)
 			mcast_sent++;
 
-		++txq->ift_db_pending;
+		txq->ift_db_pending += (txq->ift_in_use - in_use_prev);
 		iflib_txd_db_check(ctx, txq, FALSE, FALSE);
 		ETHER_BPF_MTAP(ifp, m);
 		if (__predict_false(!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING)))
