@@ -98,10 +98,6 @@
 
 /*
  * NB:
- * - TX_BATCH_SIZE will consume too many segments in one go (66*32) before
- *   trying to clean again. Thus many still hot in cache mbufs/clusters will
- *   have been needlessly displaced. This loop needs to be tuned accordingly.
- *
  * - Prefetching in tx cleaning should perhaps be a tunable. The distance ahead
  *   we prefetch needs to be determined by the time spent in m_free vis a vis
  *   the cost of a prefetch. This will of course vary based on the workload:
@@ -110,9 +106,6 @@
  *      - small packet forwarding which is just returning a single mbuf to
  *        UMA will typically be very fast vis a vis the cost of a memory
  *        access.
- * - Don't lock the doorbell update if no callout is enqueued, don't update doorbell from callout
- *   if it has already been updated in the meantime
- *
  */
 
 
@@ -2183,21 +2176,19 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 #define TXQ_MAX_DB_DEFERRED(ctx) (ctx->ifc_sctx->isc_ntxd >> 5)
 
 static __inline void
-iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring, int deferred)
+iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring)
 {
 	uint32_t dbval;
-	int pending = callout_pending(&txq->ift_db_check) || deferred;
 
 	if (ring || txq->ift_db_pending >= TXQ_MAX_DB_DEFERRED(ctx)) {
 
 		/* the lock will only ever be contended in the !min_latency case */
-		if (pending && !TXDB_TRYLOCK(txq))
+		if (!TXDB_TRYLOCK(txq))
 			return;
 		dbval = txq->ift_npending ? txq->ift_npending : txq->ift_pidx;
 		ctx->isc_txd_flush(ctx->ifc_softc, txq->ift_id, dbval);
 		txq->ift_db_pending = txq->ift_npending = 0;
-		if (pending)
-			TXDB_UNLOCK(txq);
+		TXDB_UNLOCK(txq);
 	}
 }
 
@@ -2209,7 +2200,7 @@ iflib_txd_deferred_db_check(void * arg)
 	/* simple non-zero boolean so use bitwise OR */
 	if ((txq->ift_db_pending | txq->ift_npending) &&
 	    txq->ift_db_pending >= txq->ift_db_pending_queued)
-		iflib_txd_db_check(txq->ift_ctx, txq, TRUE, TRUE);
+		iflib_txd_db_check(txq->ift_ctx, txq, TRUE);
 	txq->ift_db_pending_queued = 0;
 	if (ifmp_ring_is_stalled(txq->ift_br[0]))
 		iflib_txq_check_drain(txq, 4);
@@ -2841,7 +2832,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 			mcast_sent++;
 
 		txq->ift_db_pending += (txq->ift_in_use - in_use_prev);
-		iflib_txd_db_check(ctx, txq, FALSE, FALSE);
+		iflib_txd_db_check(ctx, txq, FALSE);
 		ETHER_BPF_MTAP(ifp, m);
 		if (__predict_false(!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING)))
 			goto done;
@@ -2851,7 +2842,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 done:
 
 	if ((iflib_min_tx_latency || iflib_txq_min_occupancy(txq)) && txq->ift_db_pending)
-		iflib_txd_db_check(ctx, txq, TRUE, FALSE);
+		iflib_txd_db_check(ctx, txq, TRUE);
 	else if ((txq->ift_db_pending || TXQ_AVAIL(txq) < MAX_TX_DESC(ctx)) &&
 		 (callout_pending(&txq->ift_db_check) == 0)) {
 		txq->ift_db_pending_queued = txq->ift_db_pending;
@@ -3322,15 +3313,18 @@ iflib_device_probe(device_t dev)
 	pci_subvendor_id = pci_get_subvendor(dev);
 	pci_subdevice_id = pci_get_subdevice(dev);
 	pci_rev_id = pci_get_revid(dev);
+	if (sctx->isc_parse_devinfo != NULL)
+		sctx->isc_parse_devinfo(&pci_device_id, &pci_subvendor_id, &pci_subdevice_id, &pci_rev_id);
 
 	ent = sctx->isc_vendor_info;
 	while (ent->pvi_vendor_id != 0) {
-		if ((pci_vendor_id == ent->pvi_vendor_id) &&
-		    (pci_device_id == ent->pvi_device_id) &&
-
+		if (pci_vendor_id != ent->pvi_vendor_id) {
+			ent++;
+			continue;
+		}
+		if ((pci_device_id == ent->pvi_device_id) &&
 		    ((pci_subvendor_id == ent->pvi_subvendor_id) ||
 		     (ent->pvi_subvendor_id == 0)) &&
-
 		    ((pci_subdevice_id == ent->pvi_subdevice_id) ||
 		     (ent->pvi_subdevice_id == 0)) &&
 		    ((pci_rev_id == ent->pvi_rev_id) ||
