@@ -98,10 +98,6 @@
 
 /*
  * NB:
- * - TX_BATCH_SIZE will consume too many segments in one go (66*32) before
- *   trying to clean again. Thus many still hot in cache mbufs/clusters will
- *   have been needlessly displaced. This loop needs to be tuned accordingly.
- *
  * - Prefetching in tx cleaning should perhaps be a tunable. The distance ahead
  *   we prefetch needs to be determined by the time spent in m_free vis a vis
  *   the cost of a prefetch. This will of course vary based on the workload:
@@ -110,9 +106,6 @@
  *      - small packet forwarding which is just returning a single mbuf to
  *        UMA will typically be very fast vis a vis the cost of a memory
  *        access.
- * - Don't lock the doorbell update if no callout is enqueued, don't update doorbell from callout
- *   if it has already been updated in the meantime
- *
  */
 
 
@@ -3320,15 +3313,18 @@ iflib_device_probe(device_t dev)
 	pci_subvendor_id = pci_get_subvendor(dev);
 	pci_subdevice_id = pci_get_subdevice(dev);
 	pci_rev_id = pci_get_revid(dev);
+	if (sctx->isc_parse_devinfo != NULL)
+		sctx->isc_parse_devinfo(&pci_device_id, &pci_subvendor_id, &pci_subdevice_id, &pci_rev_id);
 
 	ent = sctx->isc_vendor_info;
 	while (ent->pvi_vendor_id != 0) {
-		if ((pci_vendor_id == ent->pvi_vendor_id) &&
-		    (pci_device_id == ent->pvi_device_id) &&
-
+		if (pci_vendor_id != ent->pvi_vendor_id) {
+			ent++;
+			continue;
+		}
+		if ((pci_device_id == ent->pvi_device_id) &&
 		    ((pci_subvendor_id == ent->pvi_subvendor_id) ||
 		     (ent->pvi_subvendor_id == 0)) &&
-
 		    ((pci_subdevice_id == ent->pvi_subdevice_id) ||
 		     (ent->pvi_subdevice_id == 0)) &&
 		    ((pci_rev_id == ent->pvi_rev_id) ||
