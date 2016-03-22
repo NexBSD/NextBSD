@@ -47,6 +47,51 @@ __FBSDID("$FreeBSD$");
 #include <sys/domain.h>
 #include <sys/protosw.h>
 #include <sys/uio.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(mbuf);
+
+SDT_PROBE_DEFINE5_XLATE(mbuf, , , m__init,
+    "struct mbuf *", "mbufinfo_t *",
+    "uint32_t", "uint32_t",
+    "uint16_t", "uint16_t",
+    "uint32_t", "uint32_t",
+    "uint32_t", "uint32_t");
+
+SDT_PROBE_DEFINE3_XLATE(mbuf, , , m__gethdr,
+    "uint32_t", "uint32_t",
+    "uint16_t", "uint16_t",
+    "struct mbuf *", "mbufinfo_t *");
+
+SDT_PROBE_DEFINE3_XLATE(mbuf, , , m__get,
+    "uint32_t", "uint32_t",
+    "uint16_t", "uint16_t",
+    "struct mbuf *", "mbufinfo_t *");
+
+SDT_PROBE_DEFINE4_XLATE(mbuf, , , m__getcl,
+    "uint32_t", "uint32_t",
+    "uint16_t", "uint16_t",
+    "uint32_t", "uint32_t",
+    "struct mbuf *", "mbufinfo_t *");
+
+SDT_PROBE_DEFINE3_XLATE(mbuf, , , m__clget,
+    "struct mbuf *", "mbufinfo_t *",
+    "uint32_t", "uint32_t",
+    "uint32_t", "uint32_t");
+
+SDT_PROBE_DEFINE4_XLATE(mbuf, , , m__cljget,
+    "struct mbuf *", "mbufinfo_t *",
+    "uint32_t", "uint32_t",
+    "uint32_t", "uint32_t",
+    "void*", "void*");
+
+SDT_PROBE_DEFINE(mbuf, , , m__cljset);
+
+SDT_PROBE_DEFINE1_XLATE(mbuf, , , m__free,
+        "struct mbuf *", "mbufinfo_t *");
+
+SDT_PROBE_DEFINE1_XLATE(mbuf, , , m__freem,
+    "struct mbuf *", "mbufinfo_t *");
 
 #include <security/mac/mac_framework.h>
 
@@ -138,29 +183,31 @@ CTASSERT(sizeof(m_assertbuf.m_stailqpkt) == sizeof(m_assertbuf.m_nextpkt));
  * and bump the refcount of the cluster.
  */
 void
-mb_dupcl(struct mbuf *n, const struct mbuf *m)
+mb_dupcl(struct mbuf *n, struct mbuf *m)
 {
+	volatile u_int *refcnt;
 
 	KASSERT(m->m_flags & M_EXT, ("%s: M_EXT not set on %p", __func__, m));
 	KASSERT(!(n->m_flags & M_EXT), ("%s: M_EXT set on %p", __func__, n));
 
-	switch (m->m_ext.ext_type) {
-	case EXT_SFBUF:
-	case EXT_SFBUF_NOCACHE:
-		sf_ext_ref(m->m_ext.ext_arg1, m->m_ext.ext_arg2);
-		break;
-	default:
-		KASSERT(m->m_ext.ext_cnt != NULL,
-		    ("%s: no refcounting pointer on %p", __func__, m));
-		if (*(m->m_ext.ext_cnt) == 1)
-			*(m->m_ext.ext_cnt) += 1;
-		else
-			atomic_add_int(m->m_ext.ext_cnt, 1);
-	}
-
 	n->m_ext = m->m_ext;
 	n->m_flags |= M_EXT;
 	n->m_flags |= m->m_flags & M_RDONLY;
+
+	/* See if this is the mbuf that holds the embedded refcount. */
+	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
+		refcnt = n->m_ext.ext_cnt = &m->m_ext.ext_count;
+		n->m_ext.ext_flags &= ~EXT_FLAG_EMBREF;
+	} else {
+		KASSERT(m->m_ext.ext_cnt != NULL,
+		    ("%s: no refcounting pointer on %p", __func__, m));
+		refcnt = m->m_ext.ext_cnt;
+	}
+
+	if (*refcnt == 1)
+		*refcnt += 1;
+	else
+		atomic_add_int(refcnt, 1);
 }
 
 void
@@ -394,7 +441,7 @@ m_prepend(struct mbuf *m, int len, int how)
  * only their reference counts are incremented.
  */
 struct mbuf *
-m_copym(const struct mbuf *m, int off0, int len, int wait)
+m_copym(struct mbuf *m, int off0, int len, int wait)
 {
 	struct mbuf *n, **np;
 	int off = off0;
