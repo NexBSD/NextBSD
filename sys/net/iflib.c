@@ -1264,6 +1264,9 @@ iflib_txsd_alloc(iflib_txq_t txq)
 	device_printf(dev,"maxsize: %ld nsegments: %d maxsegsize: %ld\n",
 		      sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
 #endif
+	device_printf(dev,"TSO maxsize: %d ntsosegments: %d maxsegsize: %d\n",
+		      scctx->isc_tx_tso_size_max, ntsosegments,
+		      scctx->isc_tx_tso_segsize_max);
 	if ((err = bus_dma_tag_create(bus_get_dma_tag(dev),
 			       1, 0,			/* alignment, bounds */
 			       BUS_SPACE_MAXADDR,	/* lowaddr */
@@ -1277,9 +1280,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
 			       NULL,			/* lockfuncarg */
 			       &txq->ift_tso_desc_tag))) {
 		device_printf(dev,"Unable to allocate TX TSO DMA tag: %d\n", err);
-		device_printf(dev,"TSO maxsize: %d ntsosegments: %d maxsegsize: %d\n",
-			      scctx->isc_tx_tso_size_max, ntsosegments,
-			      scctx->isc_tx_tso_segsize_max);
+
 		goto fail;
 	}
 #ifdef INVARIANTS
@@ -2295,7 +2296,12 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 
 			if (__predict_false(ip6->ip6_nxt != IPPROTO_TCP))
 				return (ENXIO);
-
+			/*
+			 * The corresponding flag is set by the stack in the IPv4
+			 * TSO case, but not in IPv6 (at least in FreeBSD 10.2).
+			 * So, set it here because the rest of the flow requires it.
+			 */
+			pi->ipi_csum_flags |= CSUM_TCP_IPV6;
 			MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
 			th->th_sum = in6_cksum_pseudo(ip6, 0, IPPROTO_TCP, 0);
 			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
@@ -3214,8 +3220,10 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		break;
 	    }
 	case SIOCGPRIVATE_0:
+	case SIOCSDRVSPEC:
+	case SIOCGDRVSPEC:
 		CTX_LOCK(ctx);
-		err = IFDI_PRIV_IOCTL(ctx, ifr);
+		err = IFDI_PRIV_IOCTL(ctx, data);
 		CTX_UNLOCK(ctx);
 		break;
 	default:

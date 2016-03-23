@@ -103,7 +103,7 @@ CODE {
 	}
 
 	static int
-	null_priv_ioctl(if_ctx_t _ctx __unused, struct ifreq *_ifr __unused)
+	null_priv_ioctl(if_ctx_t _ctx __unused, caddr_t *data __unused)
 	{
 		return (ENOTSUP);
 	}
@@ -267,7 +267,7 @@ METHOD uint64_t get_counter {
 
 METHOD int priv_ioctl {
 	if_ctx_t _ctx;
-	struct ifreq *_ifr;
+	caddr_t _data;
 } DEFAULT null_priv_ioctl;
 
 #
