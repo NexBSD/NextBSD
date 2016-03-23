@@ -1711,10 +1711,6 @@ ixv_add_stats_sysctls(struct adapter *adapter)
 	SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "tx_packets",
 			CTLFLAG_RD, &(txr->total_packets),
 			"TX Packets");
-
-	SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "tx_no_desc",
-			CTLFLAG_RD, &(txr->no_desc_avail),
-			"# of times not enough descriptors were available during TX");
 }
 
 static void 
@@ -1757,8 +1753,6 @@ ixv_print_debug_info(struct adapter *adapter)
                     rxr->me, (long)rxr->rx_bytes);
                 device_printf(dev,"TX(%d) Packets Sent: %lu\n",
                     txr->me, (long)txr->total_packets);
-                device_printf(dev,"TX(%d) NO Desc Avail: %lu\n",
-                    txr->me, (long)txr->no_desc_avail);
         }
 
         device_printf(dev,"MBX IRQ Handled: %lu\n",
