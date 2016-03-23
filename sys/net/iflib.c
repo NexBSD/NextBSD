@@ -2175,6 +2175,7 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 #define M_CSUM_FLAGS(m) ((m)->m_pkthdr.csum_flags)
 #define M_HAS_VLANTAG(m) (m->m_flags & M_VLANTAG)
 #define TXQ_MAX_DB_DEFERRED(ctx) (ctx->ifc_sctx->isc_ntxd >> 5)
+#define TXQ_MAX_DB_CONSUMED(ctx) (ctx->ifc_sctx->isc_ntxd >> 4)
 
 static __inline void
 iflib_txd_db_check(if_ctx_t ctx, iflib_txq_t txq, int ring)
@@ -2785,7 +2786,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	if_ctx_t ctx = txq->ift_ctx;
 	if_t ifp = ctx->ifc_ifp;
 	struct mbuf **mp, *m;
-	int i, count, consumed, pkt_sent, bytes_sent, mcast_sent, avail, err, in_use_prev;
+	int i, count, consumed, pkt_sent, bytes_sent, mcast_sent, avail, err, in_use_prev, desc_used;
 
 	if (__predict_false(!(if_getdrvflags(ifp) & IFF_DRV_RUNNING) ||
 			    !LINK_ACTIVE(ctx))) {
@@ -2815,7 +2816,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	consumed = mcast_sent = bytes_sent = pkt_sent = 0;
 	count = MIN(avail, TX_BATCH_SIZE);
 
-	for (i = 0; i < count && TXQ_AVAIL(txq) > MAX_TX_DESC(ctx) + 2; i++) {
+	for (desc_used = i = 0; i < count && TXQ_AVAIL(txq) > MAX_TX_DESC(ctx) + 2; i++) {
 		mp = _ring_peek_one(r, cidx, i);
 		in_use_prev = txq->ift_in_use;
 		err = iflib_encap(txq, mp);
@@ -2838,14 +2839,15 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 			mcast_sent++;
 
 		txq->ift_db_pending += (txq->ift_in_use - in_use_prev);
+		desc_used += (txq->ift_in_use - in_use_prev);
 		iflib_txd_db_check(ctx, txq, FALSE);
 		ETHER_BPF_MTAP(ifp, m);
 		if (__predict_false(!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING)))
-			goto done;
+			break;
+
+		if (desc_used > TXQ_MAX_DB_CONSUMED(ctx))
+			break;
 	}
-	if (avail > count)
-		GROUPTASK_ENQUEUE(&txq->ift_task);
-done:
 
 	if ((iflib_min_tx_latency || iflib_txq_min_occupancy(txq)) && txq->ift_db_pending)
 		iflib_txd_db_check(ctx, txq, TRUE);
@@ -3040,7 +3042,9 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	}
 	DBG_COUNTER_INC(tx_seen);
 	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)mp, count, TX_BATCH_SIZE);
-	/* drain => err = iflib_txq_transmit(ifp, txq, m); */
+
+	if (iflib_txq_can_drain(txq->ift_br[0]))
+		GROUPTASK_ENQUEUE(&txq->ift_task);
 	if (err) {
 		/* support forthcoming later */
 #ifdef DRIVER_BACKPRESSURE
