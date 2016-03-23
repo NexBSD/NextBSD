@@ -940,6 +940,9 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 		adapter->shared->isc_msix_bar = PCIR_BAR(MSIX_82599_BAR);
 	}
 
+	adapter->shared->isc_tx_tso_segments_max = adapter->shared->isc_tx_nsegments;
+	adapter->shared->isc_tx_tso_size_max = IXGBE_TSO_SIZE;
+	adapter->shared->isc_tx_tso_segsize_max = PAGE_SIZE;
 	/* Sysctls */
 	ixgbe_add_device_sysctls(ctx);
 
