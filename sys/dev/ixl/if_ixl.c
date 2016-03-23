@@ -56,7 +56,7 @@
 /*********************************************************************
  *  Driver version
  *********************************************************************/
-char ixl_driver_version[] = "1.4.3";
+char ixl_driver_version[] = "1.4.27";
 
 /*********************************************************************
  *  PCI Device ID Table
@@ -108,11 +108,13 @@ static void	ixl_config_rss(struct ixl_vsi *);
 static void	ixl_set_queue_rx_itr(struct ixl_queue *);
 static void	ixl_set_queue_tx_itr(struct ixl_queue *);
 static int	ixl_set_advertised_speeds(struct ixl_pf *, int);
+static void	ixl_get_initial_advertised_speeds(struct ixl_pf *);
 
 static int	ixl_enable_rings(struct ixl_vsi *);
 static int	ixl_disable_rings(struct ixl_vsi *);
+#if 0
 static void	ixl_enable_intr(struct ixl_vsi *);
-
+#endif
 static void     ixl_enable_adminq(struct i40e_hw *);
 static void     ixl_disable_adminq(struct i40e_hw *);
 static void     ixl_enable_legacy(struct i40e_hw *);
@@ -132,11 +134,24 @@ static struct ixl_mac_filter *
 static void	ixl_add_mc_filter(struct ixl_vsi *, u8 *);
 static void	ixl_free_mac_filters(struct ixl_vsi *vsi);
 
+/* Sysctl handlers */
+static void	ixl_add_device_sysctls(struct ixl_pf *);
+
+static int	ixl_set_flowcntl(SYSCTL_HANDLER_ARGS);
+static int	ixl_set_advertise(SYSCTL_HANDLER_ARGS);
+static int	ixl_current_speed(SYSCTL_HANDLER_ARGS);
+static int	ixl_sysctl_show_fw(SYSCTL_HANDLER_ARGS);
 
 /* Sysctl debug interface */
 #ifdef IXL_DEBUG_SYSCTL
 static int	ixl_debug_info(SYSCTL_HANDLER_ARGS);
 static void	ixl_print_debug_info(struct ixl_pf *);
+
+static int 	ixl_sysctl_link_status(SYSCTL_HANDLER_ARGS);
+static int	ixl_sysctl_phy_abilities(SYSCTL_HANDLER_ARGS);
+static int	ixl_sysctl_sw_filter_list(SYSCTL_HANDLER_ARGS);
+static int	ixl_sysctl_hw_res_alloc(SYSCTL_HANDLER_ARGS);
+static int	ixl_sysctl_switch_config(SYSCTL_HANDLER_ARGS);
 #endif
 
 /* The MSI/X Interrupt handlers */
@@ -144,12 +159,6 @@ int	ixl_intr(void *);
 static int	ixl_msix_que(void *);
 static int	ixl_msix_adminq(void *);
 static void	ixl_handle_mdd_event(struct ixl_pf *);
-
-/* Sysctl handlers */
-static int	ixl_set_flowcntl(SYSCTL_HANDLER_ARGS);
-static int	ixl_set_advertise(SYSCTL_HANDLER_ARGS);
-static int	ixl_current_speed(SYSCTL_HANDLER_ARGS);
-static int	ixl_sysctl_show_fw(SYSCTL_HANDLER_ARGS);
 
 /* Statistics */
 static void     ixl_add_hw_stats(struct ixl_pf *);
@@ -166,14 +175,17 @@ static void	ixl_vsi_reset_stats(struct ixl_vsi *);
 static void	ixl_stat_update48(struct i40e_hw *, u32, u32, bool,
 		    u64 *, u64 *);
 static void	ixl_stat_update32(struct i40e_hw *, u32, bool,
-		    u64 *, u64 *);
+				  u64 *, u64 *);
 
-#ifdef IXL_DEBUG_SYSCTL
-static int 	ixl_sysctl_link_status(SYSCTL_HANDLER_ARGS);
-static int	ixl_sysctl_phy_abilities(SYSCTL_HANDLER_ARGS);
-static int	ixl_sysctl_sw_filter_list(SYSCTL_HANDLER_ARGS);
-static int	ixl_sysctl_hw_res_alloc(SYSCTL_HANDLER_ARGS);
-static int	ixl_sysctl_switch_config(SYSCTL_HANDLER_ARGS);
+/* NVM update */
+static int	ixl_handle_nvmupd_cmd(struct ixl_pf *, struct ifdrv *);
+static void	ixl_handle_empr_reset(struct ixl_pf *);
+static int	ixl_rebuild_hw_structs_after_reset(struct ixl_pf *);
+
+/* Debug helper functions */
+#ifdef IXL_DEBUG
+static void	ixl_print_nvm_cmd(device_t, struct i40e_nvm_access *);
+
 #endif
 
 #ifdef PCI_IOV
@@ -215,7 +227,7 @@ static void	ixl_if_media_status(if_ctx_t, struct ifmediareq *);
 static void ixl_if_vlan_register(if_ctx_t ctx, u16 vtag);
 static void ixl_if_vlan_unregister(if_ctx_t ctx, u16 vtag);
 static uint64_t ixl_if_get_counter(if_ctx_t ctx, ift_counter cnt);
-
+static int ixl_if_priv_ioctl(if_ctx_t ctx, caddr_t data);
 
 static void ixl_if_timer(if_ctx_t, uint16_t);
 static int ixl_if_promisc_set(if_ctx_t ctx, int flags);
@@ -280,6 +292,7 @@ static device_method_t ixl_if_methods[] = {
 	DEVMETHOD(ifdi_iov_vf_add, ixl_if_vf_add),
 #endif
 	DEVMETHOD(ifdi_get_counter, ixl_if_get_counter),
+	DEVMETHOD(ifdi_priv_ioctl, ixl_if_priv_ioctl),
 	DEVMETHOD_END
 };
 
@@ -318,12 +331,12 @@ SYSCTL_INT(_hw_ixl, OID_AUTO, ring_size, CTLFLAG_RDTUN,
 **	- true/false for dynamic adjustment
 ** 	- default values for static ITR
 */
-int ixl_dynamic_rx_itr = 0;
+int ixl_dynamic_rx_itr = 1;
 TUNABLE_INT("hw.ixl.dynamic_rx_itr", &ixl_dynamic_rx_itr);
 SYSCTL_INT(_hw_ixl, OID_AUTO, dynamic_rx_itr, CTLFLAG_RDTUN,
     &ixl_dynamic_rx_itr, 0, "Dynamic RX Interrupt Rate");
 
-int ixl_dynamic_tx_itr = 0;
+int ixl_dynamic_tx_itr = 1;
 TUNABLE_INT("hw.ixl.dynamic_tx_itr", &ixl_dynamic_tx_itr);
 SYSCTL_INT(_hw_ixl, OID_AUTO, dynamic_tx_itr, CTLFLAG_RDTUN,
     &ixl_dynamic_tx_itr, 0, "Dynamic TX Interrupt Rate");
@@ -453,89 +466,6 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	*/
 	vsi = &pf->vsi;
 
-	/* Set up sysctls */
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "fc", CTLTYPE_INT | CTLFLAG_RW,
-	    pf, 0, ixl_set_flowcntl, "I", "Flow Control");
-
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "advertise_speed", CTLTYPE_INT | CTLFLAG_RW,
-	    pf, 0, ixl_set_advertise, "I", "Advertised Speed");
-
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "current_speed", CTLTYPE_STRING | CTLFLAG_RD,
-	    pf, 0, ixl_current_speed, "A", "Current Port Speed");
-
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "fw_version", CTLTYPE_STRING | CTLFLAG_RD,
-	    pf, 0, ixl_sysctl_show_fw, "A", "Firmware version");
-
-	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "rx_itr", CTLFLAG_RW,
-	    &ixl_rx_itr, IXL_ITR_8K, "RX ITR");
-
-	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "dynamic_rx_itr", CTLFLAG_RW,
-	    &ixl_dynamic_rx_itr, 0, "Dynamic RX ITR");
-
-	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "tx_itr", CTLFLAG_RW,
-	    &ixl_tx_itr, IXL_ITR_4K, "TX ITR");
-
-	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "dynamic_tx_itr", CTLFLAG_RW,
-	    &ixl_dynamic_tx_itr, 0, "Dynamic TX ITR");
-
-#ifdef IXL_DEBUG_SYSCTL
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "debug", CTLTYPE_INT|CTLFLAG_RW, pf, 0,
-	    ixl_debug_info, "I", "Debug Information");
-
-	/* Debug shared-code message level */
-	SYSCTL_ADD_UINT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "debug_mask", CTLFLAG_RW,
-	    &pf->hw.debug_mask, 0, "Debug Message Level");
-
-	SYSCTL_ADD_UINT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "vc_debug_level", CTLFLAG_RW, &pf->vc_debug_lvl,
-	    0, "PF/VF Virtual Channel debug level");
-
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "link_status", CTLTYPE_STRING | CTLFLAG_RD,
-	    pf, 0, ixl_sysctl_link_status, "A", "Current Link Status");
-
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "phy_abilities", CTLTYPE_STRING | CTLFLAG_RD,
-	    pf, 0, ixl_sysctl_phy_abilities, "A", "PHY Abilities");
-
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "filter_list", CTLTYPE_STRING | CTLFLAG_RD,
-	    pf, 0, ixl_sysctl_sw_filter_list, "A", "SW Filter List");
-
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "hw_res_alloc", CTLTYPE_STRING | CTLFLAG_RD,
-	    pf, 0, ixl_sysctl_hw_res_alloc, "A", "HW Resource Allocation");
-
-	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "switch_config", CTLTYPE_STRING | CTLFLAG_RD,
-	    pf, 0, ixl_sysctl_switch_config, "A", "HW Switch Configuration");
-#endif
 
 	/* Save off the PCI information */
 	hw->vendor_id = pci_get_vendor(dev);
@@ -583,16 +513,27 @@ ixl_if_attach_pre(if_ctx_t ctx)
 		goto err_out;
 	}
 
+	/* Initialize mac filter list for VSI */
+	SLIST_INIT(&vsi->ftl);
+
 	/* Set up the admin queue */
 	error = i40e_init_adminq(hw);
-	if (error) {
+	if (error && error != I40E_ERR_FIRMWARE_API_VERSION) {
+		device_printf(dev, "Unable to initialize Admin Queue, error %d\n",
+		    error);
+		error = EIO;
+		goto err_out;
+	}
+	ixl_print_nvm_version(pf);
+
+	if (error == I40E_ERR_FIRMWARE_API_VERSION) {
 		device_printf(dev, "The driver for the device stopped "
 		    "because the NVM image is newer than expected.\n"
 		    "You must install the most recent version of "
 		    " the network driver.\n");
+		error = EIO;
 		goto err_out;
 	}
-	device_printf(dev, "%s\n", ixl_fw_version_str(hw));
 
 	if (hw->aq.api_maj_ver == I40E_FW_API_VERSION_MAJOR &&
 	    hw->aq.api_min_ver > I40E_FW_API_VERSION_MINOR)
@@ -630,7 +571,9 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	}
 
 	/* Disable LLDP from the firmware */
-	i40e_aq_stop_lldp(hw, TRUE, NULL);
+	if (((pf->hw.aq.fw_maj_ver == 4) && (pf->hw.aq.fw_min_ver < 3)) ||
+	    (pf->hw.aq.fw_maj_ver < 4))
+		i40e_aq_stop_lldp(hw, TRUE, NULL);
 
 	i40e_get_mac_addr(hw, hw->mac.addr);
 	error = i40e_validate_mac_addr(hw->mac.addr);
@@ -642,9 +585,6 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	iflib_set_mac(ctx, hw->mac.addr);
 
 	i40e_get_port_mac_addr(hw, hw->mac.port_addr);
-
-	/* Initialize mac filter list for VSI */
-	SLIST_INIT(&vsi->ftl);
 
 	/*
 	 * Tell iflib what the correct modulus is
@@ -696,7 +636,7 @@ ixl_if_attach_post(if_ctx_t ctx)
 	}
 
 	/* Determine link state */
-	i40e_aq_get_link_info(hw, TRUE, NULL, NULL);
+	hw->phy.get_link_info = TRUE;
 	i40e_get_link_status(hw, &pf->link_up);
 
 	if (ixl_setup_interface(dev, vsi) != 0) {
@@ -716,15 +656,21 @@ ixl_if_attach_post(if_ctx_t ctx)
 		goto err_mac_hmc;
 	}
 
-	/* Limit phy interrupts to link and modules failure */
-	error = i40e_aq_set_phy_int_mask(hw, ~(I40E_AQ_EVENT_LINK_UPDOWN |
-		I40E_AQ_EVENT_MODULE_QUAL_FAIL), NULL);
-	if (error)
-		device_printf(dev, "set phy mask failed: %d\n", error);
+	/* Limit PHY interrupts to link, autoneg, and modules failure */
+	error = i40e_aq_set_phy_int_mask(hw, IXL_DEFAULT_PHY_INT_MASK,
+	    NULL);
+        if (error) {
+		device_printf(dev, "i40e_aq_set_phy_mask() failed: err %d,"
+		    " aq_err %d\n", error, hw->aq.asq_last_status);
+		goto err_mac_hmc;
+	}
 
 	/* Get the bus configuration and set the shared code */
 	bus = ixl_get_bus_info(hw, dev);
 	i40e_set_pci_config_data(hw, bus);
+
+	/* Initialize statistics & add sysctls */
+	ixl_add_device_sysctls(pf);
 
 	/* Initialize statistics */
 	ixl_pf_reset_stats(pf);
@@ -870,6 +816,130 @@ retry:
 	return (error);
 }
 
+static int
+ixl_teardown_hw_structs(struct ixl_pf *pf)
+{
+	enum i40e_status_code status = 0;
+	struct i40e_hw *hw = &pf->hw;
+	device_t dev = pf->dev;
+
+	/* Shutdown LAN HMC */
+	if (hw->hmc.hmc_obj) {
+		status = i40e_shutdown_lan_hmc(hw);
+		if (status) {
+			device_printf(dev,
+			    "init: LAN HMC shutdown failure; status %d\n", status);
+			goto err_out;
+		}
+	}
+
+	// XXX: This gets called when we know the adminq is inactive;
+	// so we already know it's setup when we get here.
+
+	/* Shutdown admin queue */
+	status = i40e_shutdown_adminq(hw);
+	if (status)
+		device_printf(dev,
+		    "init: Admin Queue shutdown failure; status %d\n", status);
+
+err_out:
+	return (status);
+}
+
+static int
+ixl_reset(struct ixl_pf *pf)
+{
+	struct i40e_hw *hw = &pf->hw;
+	device_t dev = pf->dev;
+	u8 set_fc_err_mask;
+	int error = 0;
+
+	// XXX: clear_hw() actually writes to hw registers -- maybe this isn't necessary
+	i40e_clear_hw(hw);
+	error = i40e_pf_reset(hw);
+	if (error) {
+		device_printf(dev, "init: PF reset failure");
+		error = EIO;
+		goto err_out;
+	}
+
+	error = i40e_init_adminq(hw);
+	if (error) {
+		device_printf(dev, "init: Admin queue init failure;"
+		    " status code %d", error);
+		error = EIO;
+		goto err_out;
+	}
+
+	i40e_clear_pxe_mode(hw);
+
+	error = ixl_get_hw_capabilities(pf);
+	if (error) {
+		device_printf(dev, "init: Error retrieving HW capabilities;"
+		    " status code %d\n", error);
+		goto err_out;
+	}
+
+	error = i40e_init_lan_hmc(hw, hw->func_caps.num_tx_qp,
+	    hw->func_caps.num_rx_qp, 0, 0);
+	if (error) {
+		device_printf(dev, "init: LAN HMC init failed; status code %d\n",
+		    error);
+		error = EIO;
+		goto err_out;
+	}
+
+	error = i40e_configure_lan_hmc(hw, I40E_HMC_MODEL_DIRECT_ONLY);
+	if (error) {
+		device_printf(dev, "init: LAN HMC config failed; status code %d\n",
+		    error);
+		error = EIO;
+		goto err_out;
+	}
+
+	// XXX: possible fix for panic, but our failure recovery is still broken
+	error = ixl_switch_config(pf);
+	if (error) {
+		device_printf(dev, "init: ixl_switch_config() failed: %d\n",
+		     error);
+		goto err_out;
+	}
+
+	error = i40e_aq_set_phy_int_mask(hw, IXL_DEFAULT_PHY_INT_MASK,
+	    NULL);
+        if (error) {
+		device_printf(dev, "init: i40e_aq_set_phy_mask() failed: err %d,"
+		    " aq_err %d\n", error, hw->aq.asq_last_status);
+		error = EIO;
+		goto err_out;
+	}
+
+	error = i40e_set_fc(hw, &set_fc_err_mask, true);
+	if (error) {
+		device_printf(dev, "init: setting link flow control failed; retcode %d,"
+		    " fc_err_mask 0x%02x\n", error, set_fc_err_mask);
+		goto err_out;
+	}
+
+	// XXX: (Rebuild VSIs?)
+
+	/* Firmware delay workaround */
+	if (((hw->aq.fw_maj_ver == 4) && (hw->aq.fw_min_ver < 33)) ||
+	    (hw->aq.fw_maj_ver < 4)) {
+		i40e_msec_delay(75);
+		error = i40e_aq_set_link_restart_an(hw, TRUE, NULL);
+		if (error) {
+			device_printf(dev, "init: link restart failed, aq_err %d\n",
+			    hw->aq.asq_last_status);
+			goto err_out;
+		}
+	}
+
+
+err_out:
+	return (error);
+}
+
 /*********************************************************************
  *  Ioctl mtu entry point
  *
@@ -886,7 +956,7 @@ ixl_if_mtu_set(if_ctx_t ctx, uint32_t mtu)
 		ETHER_VLAN_ENCAP_LEN)
 		return (EINVAL);
 
-	vsi->max_frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN +
+	vsi->if_max_frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN +
 		ETHER_VLAN_ENCAP_LEN;
 	return (0);
 }
@@ -916,6 +986,11 @@ ixl_if_init(if_ctx_t ctx)
 
 	INIT_DEBUGOUT("ixl_init: begin");
 
+	if (!i40e_check_asq_alive(&pf->hw)) {
+		device_printf(dev, "Admin Queue is down; resetting...\n");
+		ixl_teardown_hw_structs(pf);
+		ixl_reset(pf);
+	}
 	/* Get the latest mac address... User might use a LAA */
 	bcopy(IF_LLADDR(iflib_get_ifp(ctx)), tmpaddr,
 	      I40E_ETH_LENGTH_OF_ADDRESS);
@@ -931,10 +1006,10 @@ ixl_if_init(if_ctx_t ctx)
 			device_printf(dev, "LLA address"
 			 "change failed!!\n");
 			return;
-		} else {
-			ixl_add_filter(vsi, hw->mac.addr, IXL_VLAN_ANY);
 		}
 	}
+
+	ixl_add_filter(vsi, hw->mac.addr, IXL_VLAN_ANY);
 
 	/* Set up the device filtering */
 	bzero(&filter, sizeof(filter));
@@ -945,7 +1020,7 @@ ixl_if_init(if_ctx_t ctx)
 #endif
 	filter.hash_lut_size = I40E_HASH_LUT_SIZE_512;
 	if (i40e_set_filter_control(hw, &filter))
-		device_printf(dev, "set_filter_control() failed\n");
+		device_printf(dev, "i40e_set_filter_control() failed\n");
 
 	/* Set up RSS */
 	ixl_config_rss(vsi);
@@ -977,13 +1052,44 @@ ixl_if_init(if_ctx_t ctx)
 
 	ixl_reconfigure_filters(vsi);
 
-	/* Set MTU in hardware*/
-	int aq_error = i40e_aq_set_mac_config(hw, vsi->max_frame_size,
-	    TRUE, 0, NULL);
-	if (aq_error)
-		device_printf(dev,
-			"aq_set_mac_config in init error, code %d\n",
-		    aq_error);
+	/* Get link info */
+	hw->phy.get_link_info = TRUE;
+	i40e_get_link_status(hw, &pf->link_up);
+	ixl_update_link_status(pf);
+
+	/* Set initial advertised speed sysctl value */
+	ixl_get_initial_advertised_speeds(pf);
+}
+
+/* For the set_advertise sysctl */
+static void
+ixl_get_initial_advertised_speeds(struct ixl_pf *pf)
+{
+	struct i40e_hw *hw = &pf->hw;
+	device_t dev = pf->dev;
+	enum i40e_status_code status;
+	struct i40e_aq_get_phy_abilities_resp abilities;
+
+	/* Set initial sysctl values */
+	status = i40e_aq_get_phy_capabilities(hw, FALSE, false, &abilities,
+					      NULL);
+	if (status) {
+		/* Non-fatal error */
+		device_printf(dev, "%s: i40e_aq_get_phy_capabilities() error %d\n",
+		     __func__, status);
+		return;
+	}
+
+	if (abilities.link_speed & I40E_LINK_SPEED_40GB)
+		pf->advertised_speed |= 0x10;
+	if (abilities.link_speed & I40E_LINK_SPEED_20GB)
+		pf->advertised_speed |= 0x8;
+	if (abilities.link_speed & I40E_LINK_SPEED_10GB)
+		pf->advertised_speed |= 0x4;
+	if (abilities.link_speed & I40E_LINK_SPEED_1GB)
+		pf->advertised_speed |= 0x2;
+	if (abilities.link_speed & I40E_LINK_SPEED_100MB)
+		pf->advertised_speed |= 0x1;
 }
 
 /*********************************************************************
@@ -1058,12 +1164,14 @@ ixl_msix_que(void *arg)
  *  MSIX Admin Queue Interrupt Service routine
  *
  **********************************************************************/
-int
+
+static int
 ixl_msix_adminq(void *arg)
 {
 	struct ixl_pf	*pf = arg;
 	struct i40e_hw	*hw = &pf->hw;
-	u32		reg, mask;
+	u32		reg, mask, rstat_reg;
+	bool		do_task = FALSE;
 
 	++pf->admin_irq;
 
@@ -1071,12 +1179,55 @@ ixl_msix_adminq(void *arg)
 	mask = rd32(hw, I40E_PFINT_ICR0_ENA);
 
 	/* Check on the cause */
-	if (reg & I40E_PFINT_ICR0_ADMINQ_MASK)
-		mask &= ~I40E_PFINT_ICR0_ENA_ADMINQ_MASK;
+	if (reg & I40E_PFINT_ICR0_ADMINQ_MASK) {
+		mask &= ~I40E_PFINT_ICR0_ADMINQ_MASK;
+		do_task = TRUE;
+	}
 
 	if (reg & I40E_PFINT_ICR0_MAL_DETECT_MASK) {
 		ixl_handle_mdd_event(pf);
-		mask &= ~I40E_PFINT_ICR0_ENA_MAL_DETECT_MASK;
+		mask &= ~I40E_PFINT_ICR0_MAL_DETECT_MASK;
+	}
+
+	/*
+	 * XXX move to admin update - we're in an actual interrupt here folks
+	 */
+	if (reg & I40E_PFINT_ICR0_GRST_MASK) {
+		device_printf(pf->dev, "Reset Requested!\n");
+		rstat_reg = rd32(hw, I40E_GLGEN_RSTAT);
+		rstat_reg = (rstat_reg & I40E_GLGEN_RSTAT_RESET_TYPE_MASK)
+		    >> I40E_GLGEN_RSTAT_RESET_TYPE_SHIFT;
+		device_printf(pf->dev, "Reset type: ");
+		switch (rstat_reg) {
+		/* These others might be handled similarly to an EMPR reset */
+		case I40E_RESET_CORER:
+			printf("CORER\n");
+			break;
+		case I40E_RESET_GLOBR:
+			printf("GLOBR\n");
+			break;
+		case I40E_RESET_EMPR:
+			printf("EMPR\n");
+			atomic_set_int(&pf->state, IXL_PF_STATE_EMPR_RESETTING);
+			break;
+		default:
+			printf("?\n");
+			break;
+		}
+		// overload admin queue task to check reset progress?
+		do_task = TRUE;
+	}
+
+	if (reg & I40E_PFINT_ICR0_ECC_ERR_MASK) {
+		device_printf(pf->dev, "ECC Error detected!\n");
+	}
+
+	if (reg & I40E_PFINT_ICR0_HMC_ERR_MASK) {
+		device_printf(pf->dev, "HMC Error detected!\n");
+	}
+
+	if (reg & I40E_PFINT_ICR0_PCI_EXCEPTION_MASK) {
+		device_printf(pf->dev, "PCI Exception detected!\n");
 	}
 
 #ifdef PCI_IOV
@@ -1090,7 +1241,8 @@ ixl_msix_adminq(void *arg)
 	reg = reg | I40E_PFINT_DYN_CTL0_CLEARPBA_MASK;
 	wr32(hw, I40E_PFINT_DYN_CTL0, reg);
 
-	iflib_admin_intr_deferred(pf->vsi.ctx);
+	if (do_task)
+		iflib_admin_intr_deferred(pf->vsi.ctx);
 	return (FILTER_HANDLED);
 }
 
@@ -1199,6 +1351,9 @@ ixl_if_media_status(if_ctx_t ctx, struct ifmediareq * ifmr)
 		case I40E_PHY_TYPE_1000BASE_LX:
 			ifmr->ifm_active |= IFM_1000_LX;
 			break;
+		case I40E_PHY_TYPE_1000BASE_T_OPTICAL:
+			ifmr->ifm_active |= IFM_OTHER;
+			break;
 		/* 10 G */
 		case I40E_PHY_TYPE_10GBASE_SFPP_CU:
 			ifmr->ifm_active |= IFM_10G_TWINAX;
@@ -1212,6 +1367,11 @@ ixl_if_media_status(if_ctx_t ctx, struct ifmediareq * ifmr)
 		case I40E_PHY_TYPE_10GBASE_T:
 			ifmr->ifm_active |= IFM_10G_T;
 			break;
+		case I40E_PHY_TYPE_XAUI:
+		case I40E_PHY_TYPE_XFI:
+		case I40E_PHY_TYPE_10GBASE_AOC:
+			ifmr->ifm_active |= IFM_OTHER;
+			break;
 		/* 40 G */
 		case I40E_PHY_TYPE_40GBASE_CR4:
 		case I40E_PHY_TYPE_40GBASE_CR4_CU:
@@ -1223,9 +1383,15 @@ ixl_if_media_status(if_ctx_t ctx, struct ifmediareq * ifmr)
 		case I40E_PHY_TYPE_40GBASE_LR4:
 			ifmr->ifm_active |= IFM_40G_LR4;
 			break;
+		case I40E_PHY_TYPE_XLAUI:
+			ifmr->ifm_active |= IFM_OTHER;
+			break;
 #ifndef IFM_ETH_XTYPE
 		case I40E_PHY_TYPE_1000BASE_KX:
 			ifmr->ifm_active |= IFM_1000_CX;
+			break;
+		case I40E_PHY_TYPE_SGMII:
+			ifmr->ifm_active |= IFM_OTHER;
 			break;
 		case I40E_PHY_TYPE_10GBASE_CR1_CU:
 		case I40E_PHY_TYPE_10GBASE_CR1:
@@ -1237,13 +1403,20 @@ ixl_if_media_status(if_ctx_t ctx, struct ifmediareq * ifmr)
 		case I40E_PHY_TYPE_10GBASE_KR:
 			ifmr->ifm_active |= IFM_10G_SR;
 			break;
+		case I40E_PHY_TYPE_SFI:
+			ifmr->ifm_active |= IFM_OTHER;
+			break;	
 		case I40E_PHY_TYPE_40GBASE_KR4:
 		case I40E_PHY_TYPE_XLPPI:
+		case I40E_PHY_TYPE_40GBASE_AOC:
 			ifmr->ifm_active |= IFM_40G_SR4;
 			break;
 #else
 		case I40E_PHY_TYPE_1000BASE_KX:
 			ifmr->ifm_active |= IFM_1000_KX;
+			break;
+		case I40E_PHY_TYPE_SGMII:
+			ifmr->ifm_active |= IFM_1000_SGMII;
 			break;
 		/* ERJ: What's the difference between these? */
 		case I40E_PHY_TYPE_10GBASE_CR1_CU:
@@ -1256,6 +1429,10 @@ ixl_if_media_status(if_ctx_t ctx, struct ifmediareq * ifmr)
 		case I40E_PHY_TYPE_10GBASE_KR:
 			ifmr->ifm_active |= IFM_10G_KR;
 			break;
+		case I40E_PHY_TYPE_SFI:
+			ifmr->ifm_active |= IFM_10G_SFI;
+			break;
+		/* Our single 20G media type */
 		case I40E_PHY_TYPE_20GBASE_KR2:
 			ifmr->ifm_active |= IFM_20G_KR2;
 			break;
@@ -1263,6 +1440,7 @@ ixl_if_media_status(if_ctx_t ctx, struct ifmediareq * ifmr)
 			ifmr->ifm_active |= IFM_40G_KR4;
 			break;
 		case I40E_PHY_TYPE_XLPPI:
+		case I40E_PHY_TYPE_40GBASE_AOC:
 			ifmr->ifm_active |= IFM_40G_XLPPI;
 			break;
 #endif
@@ -1350,6 +1528,20 @@ ixl_atr(struct ixl_queue *que, int hflags, int etype)
 	FDIR->dtype_cmd_cntindex = htole32(dtype);
 }
 #endif
+
+static int
+ixl_if_priv_ioctl(if_ctx_t ctx, caddr_t data)
+{
+	struct ifdrv	*ifd = (struct ifdrv *)data;
+	struct ixl_vsi *vsi = iflib_get_softc(ctx);
+	struct ixl_pf *pf = vsi->back;
+
+	/* NVM update command */
+	if (ifd->ifd_cmd != I40E_NVM_ACCESS)
+		return (EINVAL);
+
+	return (ixl_handle_nvmupd_cmd(pf, ifd));
+}
 
 static int
 ixl_if_promisc_set(if_ctx_t ctx, int flags)
@@ -1560,7 +1752,7 @@ ixl_configure_msix(struct ixl_pf *pf)
 
 	reg = I40E_PFINT_ICR0_ENA_ECC_ERR_MASK |
 	    I40E_PFINT_ICR0_ENA_GRST_MASK |
-	    I40E_PFINT_ICR0_HMC_ERR_MASK |
+	    I40E_PFINT_ICR0_ENA_HMC_ERR_MASK |
 	    I40E_PFINT_ICR0_ENA_ADMINQ_MASK |
 	    I40E_PFINT_ICR0_ENA_MAL_DETECT_MASK |
 	    I40E_PFINT_ICR0_ENA_VFLR_MASK |
@@ -1645,16 +1837,7 @@ ixl_configure_legacy(struct ixl_pf *pf)
 	    | (IXL_QUEUE_EOL << I40E_QINT_TQCTL_NEXTQ_INDX_SHIFT);
 	wr32(hw, I40E_QINT_TQCTL(0), reg);
 
-	/* Next enable the queue pair */
-	reg = rd32(hw, I40E_QTX_ENA(0));
-	reg |= I40E_QTX_ENA_QENA_REQ_MASK;
-	wr32(hw, I40E_QTX_ENA(0), reg);
-
-	reg = rd32(hw, I40E_QRX_ENA(0));
-	reg |= I40E_QRX_ENA_QENA_REQ_MASK;
-	wr32(hw, I40E_QRX_ENA(0), reg);
 }
-
 
 /*
  * Set the Initial ITR state
@@ -1667,11 +1850,7 @@ ixl_configure_itr(struct ixl_pf *pf)
 	struct ixl_queue	*que = vsi->queues;
 
 	vsi->rx_itr_setting = ixl_rx_itr;
-	if (ixl_dynamic_rx_itr)
-		vsi->rx_itr_setting |= IXL_ITR_DYNAMIC;
 	vsi->tx_itr_setting = ixl_tx_itr;
-	if (ixl_dynamic_tx_itr)
-		vsi->tx_itr_setting |= IXL_ITR_DYNAMIC;
 	
 	for (int i = 0; i < vsi->num_queues; i++, que++) {
 		struct tx_ring	*txr = &que->txr;
@@ -1849,7 +2028,7 @@ ixl_setup_interface(device_t dev, struct ixl_vsi *vsi)
 	if_setcapabilitiesbit(ifp, cap, 0);
 	if_setcapenable(ifp, if_getcapabilities(ifp));
     if_setbaudrate(ifp, 4000000000);
-	vsi->max_frame_size =
+	vsi->if_max_frame_size =
 	    ifp->if_mtu + ETHER_HDR_LEN + ETHER_CRC_LEN
 	    + ETHER_VLAN_ENCAP_LEN;
 
@@ -1900,11 +2079,9 @@ ixl_link_event(struct ixl_pf *pf, struct i40e_arq_event_info *e)
 	struct i40e_hw	*hw = &pf->hw; 
 	struct i40e_aqc_get_link_status *status =
 	    (struct i40e_aqc_get_link_status *)&e->desc.params.raw;
-	bool check;
 
 	hw->phy.get_link_info = TRUE;
-	i40e_get_link_status(hw, &check);
-	pf->link_up = check;
+	i40e_get_link_status(hw, &pf->link_up);
 #ifdef IXL_DEBUG
 	printf("Link is %s\n", check ? "up":"down");
 #endif
@@ -1914,8 +2091,8 @@ ixl_link_event(struct ixl_pf *pf, struct i40e_arq_event_info *e)
 	    (!(status->link_info & I40E_AQ_LINK_UP)))
 		device_printf(iflib_get_dev(pf->vsi.ctx), "Link failed because "
 		    "an unqualified module was detected\n");
-
-	return;
+	/* Update OS link info */
+	ixl_update_link_status(pf);
 }
 
 /*********************************************************************
@@ -2013,15 +2190,9 @@ ixl_initialize_vsi(struct ixl_vsi *vsi)
 	ctxt.info.mapping_flags |= I40E_AQ_VSI_QUE_MAP_CONTIG;
 	/* In contig mode, que_mapping[0] is first queue index used by this VSI */
 	ctxt.info.queue_mapping[0] = 0;
-	/*
-	 * This VSI will only use traffic class 0; start traffic class 0's
-	 * queue allocation at queue 0, and assign it 64 (2^6) queues (though
-	 * the driver may not use all of them).
-	 */
-	ctxt.info.tc_mapping[0] = ((0 << I40E_AQ_VSI_TC_QUE_OFFSET_SHIFT)
-	    & I40E_AQ_VSI_TC_QUE_OFFSET_MASK) |
-	    ((6 << I40E_AQ_VSI_TC_QUE_NUMBER_SHIFT)
-	    & I40E_AQ_VSI_TC_QUE_NUMBER_MASK);
+
+	/* This VSI is assigned 64 queues (we may not use all of them) */
+	ctxt.info.tc_mapping[0] = 0x0c00;
 
 	/* Set VLAN receive stripping mode */
 	ctxt.info.valid_sections |= I40E_AQ_VSI_PROP_VLAN_VALID;
@@ -2092,7 +2263,7 @@ ixl_initialize_vsi(struct ixl_vsi *vsi)
 		ixl_init_tx_ring(vsi, que);
 
 		/* Next setup the HMC RX Context  */
-		if (vsi->max_frame_size <= MCLBYTES)
+		if (vsi->if_max_frame_size <= MCLBYTES)
 			rxr->mbuf_sz = MCLBYTES;
 		else
 			rxr->mbuf_sz = MJUMPAGESIZE;
@@ -2104,8 +2275,8 @@ ixl_initialize_vsi(struct ixl_vsi *vsi)
 		rctx.dbuff = rxr->mbuf_sz >> I40E_RXQ_CTX_DBUFF_SHIFT;
 		/* ignore header split for now */
 		rctx.hbuff = 0 >> I40E_RXQ_CTX_HBUFF_SHIFT;
-		rctx.rxmax = (vsi->max_frame_size < max_rxmax) ?
-		    vsi->max_frame_size : max_rxmax;
+		rctx.rxmax = (vsi->if_max_frame_size < max_rxmax) ?
+		    vsi->if_max_frame_size : max_rxmax;
 		rctx.dtype = 0;
 		rctx.dsize = 1;	/* do 32byte descriptors */
 		rctx.hsplit_0 = 0;  /* no HDR split initially */
@@ -2321,6 +2492,52 @@ ixl_add_vsi_sysctls(struct ixl_pf *pf, struct ixl_vsi *vsi,
 	ixl_add_sysctls_eth_stats(ctx, vsi_list, &vsi->eth_stats);
 }
 
+#ifdef IXL_DEBUG
+/**
+ * ixl_sysctl_qtx_tail_handler
+ * Retrieves I40E_QTX_TAIL value from hardware
+ * for a sysctl.
+ */
+static int
+ixl_sysctl_qtx_tail_handler(SYSCTL_HANDLER_ARGS)
+{
+	struct ixl_queue *que;
+	int error;
+	u32 val;
+
+	que = ((struct ixl_queue *)oidp->oid_arg1);
+	if (!que) return 0;
+
+	val = rd32(que->vsi->hw, que->txr.tail);
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || !req->newptr)
+		return error;
+	return (0);
+}
+
+/**
+ * ixl_sysctl_qrx_tail_handler
+ * Retrieves I40E_QRX_TAIL value from hardware
+ * for a sysctl.
+ */
+static int
+ixl_sysctl_qrx_tail_handler(SYSCTL_HANDLER_ARGS)
+{
+	struct ixl_queue *que;
+	int error;
+	u32 val;
+
+	que = ((struct ixl_queue *)oidp->oid_arg1);
+	if (!que) return 0;
+
+	val = rd32(que->vsi->hw, que->rxr.tail);
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || !req->newptr)
+		return error;
+	return (0);
+}
+#endif
+
 static void
 ixl_add_hw_stats(struct ixl_pf *pf)
 {
@@ -2362,9 +2579,6 @@ ixl_add_hw_stats(struct ixl_pf *pf)
 		txr = &(queues[q].txr);
 		rxr = &(queues[q].rxr);
 
-		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "dropped",
-				CTLFLAG_RD, &(queues[q].dropped_pkts),
-				"Driver dropped packets");
 		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "irqs",
 				CTLFLAG_RD, &(queues[q].irqs),
 				"irqs on this queue");
@@ -2383,6 +2597,37 @@ ixl_add_hw_stats(struct ixl_pf *pf)
 		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "rx_bytes",
 				CTLFLAG_RD, &(rxr->rx_bytes),
 				"Queue Bytes Received");
+
+		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "rx_desc_err",
+				CTLFLAG_RD, &(rxr->desc_errs),
+				"Queue Rx Descriptor Errors");
+		SYSCTL_ADD_UINT(ctx, queue_list, OID_AUTO, "rx_itr",
+				CTLFLAG_RD, &(rxr->itr), 0,
+				"Queue Rx ITR Interval");
+		SYSCTL_ADD_UINT(ctx, queue_list, OID_AUTO, "tx_itr",
+				CTLFLAG_RD, &(txr->itr), 0,
+				"Queue Tx ITR Interval");
+		// Not actual latency; just a calculated value to put in a register
+		// TODO: Put in better descriptions here
+		SYSCTL_ADD_UINT(ctx, queue_list, OID_AUTO, "rx_latency",
+				CTLFLAG_RD, &(rxr->latency), 0,
+				"Queue Rx ITRL Average Interval");
+		SYSCTL_ADD_UINT(ctx, queue_list, OID_AUTO, "tx_latency",
+				CTLFLAG_RD, &(txr->latency), 0,
+				"Queue Tx ITRL Average Interval");
+
+#ifdef IXL_DEBUG
+		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "qtx_tail",
+				CTLTYPE_UINT | CTLFLAG_RD, &queues[q],
+				sizeof(struct ixl_queue),
+				ixl_sysctl_qtx_tail_handler, "IU",
+				"Queue Transmit Descriptor Tail");
+		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "qrx_tail",
+				CTLTYPE_UINT | CTLFLAG_RD, &queues[q],
+				sizeof(struct ixl_queue),
+				ixl_sysctl_qrx_tail_handler, "IU",
+				"Queue Receive Descriptor Tail");
+#endif
 	}
 
 	/* MAC stats */
@@ -2511,7 +2756,7 @@ static void ixl_config_rss(struct ixl_vsi *vsi)
 
 	/* Fill out hash function seed */
 	for (i = 0; i < IXL_KEYSZ; i++)
-                wr32(hw, I40E_PFQF_HKEY(i), rss_seed[i]);
+                  i40e_write_rx_ctl(hw, I40E_PFQF_HKEY(i), rss_seed[i]);
 
 	/* Enable PCTYPES for RSS: */
 #ifdef RSS
@@ -2544,11 +2789,11 @@ static void ixl_config_rss(struct ixl_vsi *vsi)
 		((u64)1 << I40E_FILTER_PCTYPE_FRAG_IPV6) |
 		((u64)1 << I40E_FILTER_PCTYPE_L2_PAYLOAD);
 #endif
-	hena = (u64)rd32(hw, I40E_PFQF_HENA(0)) |
-	    ((u64)rd32(hw, I40E_PFQF_HENA(1)) << 32);
+	hena = (u64)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(0)) |
+	    ((u64)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(1)) << 32);
 	hena |= set_hena;
-	wr32(hw, I40E_PFQF_HENA(0), (u32)hena);
-	wr32(hw, I40E_PFQF_HENA(1), (u32)(hena >> 32));
+	i40e_write_rx_ctl(hw, I40E_PFQF_HENA(0), (u32)hena);
+	i40e_write_rx_ctl(hw, I40E_PFQF_HENA(1), (u32)(hena >> 32));
 
 	/* configure the RSS table size */
 	qf_ctl = rd32(hw, I40E_PFQF_CTL_0);
@@ -2627,6 +2872,12 @@ ixl_init_filters(struct ixl_vsi *vsi)
 {
 	/* Add broadcast address */
 	ixl_add_filter(vsi, ixl_bcast_addr, IXL_VLAN_ANY);
+
+	/*
+	 * Prevent Tx flow control frames from being sent out by
+	 * non-firmware transmitters.
+	 */
+	i40e_add_filter_to_drop_tx_flow_control_frames(vsi->hw, vsi->seid);
 }
 
 /*
@@ -3060,7 +3311,8 @@ ixl_disable_rings(struct ixl_vsi *vsi)
  * Called from interrupt handler to identify possibly malicious vfs
  * (But also detects events from the PF, as well)
  **/
-static void ixl_handle_mdd_event(struct ixl_pf *pf)
+static void
+ixl_handle_mdd_event(struct ixl_pf *pf)
 {
 	struct i40e_hw *hw = &pf->hw;
 	device_t dev = iflib_get_dev(pf->vsi.ctx);
@@ -3126,6 +3378,7 @@ static void ixl_handle_mdd_event(struct ixl_pf *pf)
 	ixl_flush(hw);
 }
 
+#if 0
 static void
 ixl_enable_intr(struct ixl_vsi *vsi)
 {
@@ -3133,12 +3386,13 @@ ixl_enable_intr(struct ixl_vsi *vsi)
 	struct ixl_queue	*que = vsi->queues;
 
 	if (ixl_enable_msix) {
-		ixl_enable_adminq(hw);
+		//ixl_enable_adminq(hw);
 		for (int i = 0; i < vsi->num_queues; i++, que++)
 			ixl_if_queue_intr_enable(vsi->ctx, que->me);
 	} else
 		ixl_enable_legacy(hw);
 }
+#endif
 
 static void
 ixl_enable_adminq(struct i40e_hw *hw)
@@ -3150,7 +3404,6 @@ ixl_enable_adminq(struct i40e_hw *hw)
 	    (IXL_ITR_NONE << I40E_PFINT_DYN_CTL0_ITR_INDX_SHIFT);
 	wr32(hw, I40E_PFINT_DYN_CTL0, reg);
 	ixl_flush(hw);
-	return;
 }
 
 static void
@@ -3160,8 +3413,6 @@ ixl_disable_adminq(struct i40e_hw *hw)
 
 	reg = IXL_ITR_NONE << I40E_PFINT_DYN_CTL0_ITR_INDX_SHIFT;
 	wr32(hw, I40E_PFINT_DYN_CTL0, reg);
-
-	return;
 }
 
 static void
@@ -3181,8 +3432,6 @@ ixl_disable_legacy(struct i40e_hw *hw)
 
 	reg = IXL_ITR_NONE << I40E_PFINT_DYN_CTL0_ITR_INDX_SHIFT;
 	wr32(hw, I40E_PFINT_DYN_CTL0, reg);
-
-	return;
 }
 
 static void
@@ -3361,6 +3610,82 @@ ixl_update_stats_counters(struct ixl_pf *pf)
 	}
 }
 
+
+static int
+ixl_rebuild_hw_structs_after_reset(struct ixl_pf *pf)
+{
+	struct i40e_hw *hw = &pf->hw;
+	struct ixl_vsi *vsi = &pf->vsi;
+	device_t dev = pf->dev;
+	bool is_up = false;
+	int error = 0;
+
+	is_up = !!(vsi->ifp->if_drv_flags & IFF_DRV_RUNNING);
+
+	/* Teardown */
+	if (is_up)
+		ixl_if_stop(vsi->ctx);
+	error = i40e_shutdown_lan_hmc(hw);
+	if (error)
+		device_printf(dev,
+		    "Shutdown LAN HMC failed with code %d\n", error);
+	ixl_disable_adminq(hw);
+	error = i40e_shutdown_adminq(hw);
+	if (error)
+		device_printf(dev,
+		    "Shutdown Admin queue failed with code %d\n", error);
+
+	/* Setup */
+	error = i40e_init_adminq(hw);
+	if (error != 0 && error != I40E_ERR_FIRMWARE_API_VERSION) {
+		device_printf(dev, "Unable to initialize Admin Queue, error %d\n",
+		    error);
+	}
+	ixl_enable_adminq(hw);
+	error = i40e_init_lan_hmc(hw, hw->func_caps.num_tx_qp,
+	    hw->func_caps.num_rx_qp, 0, 0);
+	if (error) {
+		device_printf(dev, "init_lan_hmc failed: %d\n", error);
+	}
+	error = i40e_configure_lan_hmc(hw, I40E_HMC_MODEL_DIRECT_ONLY);
+	if (error) {
+		device_printf(dev, "configure_lan_hmc failed: %d\n", error);
+	}
+	if (is_up)
+		ixl_if_init(vsi->ctx);
+
+	return (0);
+}
+
+static void
+ixl_handle_empr_reset(struct ixl_pf *pf)
+{
+	struct i40e_hw *hw = &pf->hw;
+	device_t dev = pf->dev;
+	int count = 0;
+	u32 reg;
+
+	/* Typically finishes within 3-4 seconds */
+	while (count++ < 100) {
+		reg = rd32(hw, I40E_GLGEN_RSTAT)
+		    & I40E_GLGEN_RSTAT_DEVSTATE_MASK;
+		if (reg)
+			i40e_msec_delay(100);
+		else
+			break;
+	}
+#ifdef IXL_DEBUG
+	// Reset-related
+	device_printf(dev, "EMPR reset wait count: %d\n", count);
+#endif
+
+	device_printf(dev, "Rebuilding driver state...\n");
+	ixl_rebuild_hw_structs_after_reset(pf);
+	device_printf(dev, "Rebuilding driver state done.\n");
+
+	atomic_clear_int(&pf->state, IXL_PF_STATE_EMPR_RESETTING);
+}
+
 /*
 ** Tasklet handler for MSIX Adminq interrupts
 **  - do outside interrupt since it might sleep
@@ -3369,18 +3694,26 @@ static void
 ixl_if_update_admin_status(if_ctx_t ctx)
 {
 	struct ixl_vsi			*vsi = iflib_get_softc(ctx);
+	device_t			dev = iflib_get_dev(ctx);
 	struct ixl_pf			*pf = vsi->back; 
 	struct i40e_hw			*hw = &pf->hw;
 	struct i40e_arq_event_info	event;
 	i40e_status			ret;
-	u32				reg, loop = 0;
+	u32				loop = 0;
 	u16				opcode, result;
 
+	if (pf->state & IXL_PF_STATE_EMPR_RESETTING) {
+		/* Flag cleared at end of this function */
+		ixl_handle_empr_reset(pf);
+		return;
+	}
+
+	/* Admin Queue handling */
 	event.buf_len = IXL_AQ_BUF_SZ;
 	event.msg_buf = malloc(event.buf_len,
 	    M_IXL, M_NOWAIT | M_ZERO);
 	if (!event.msg_buf) {
-		printf("Unable to allocate adminq memory\n");
+		device_printf(dev, "Unable to allocate memory for adminq event\n");
 		return;
 	}
 
@@ -3393,7 +3726,6 @@ ixl_if_update_admin_status(if_ctx_t ctx)
 		switch (opcode) {
 		case i40e_aqc_opc_get_link_status:
 			ixl_link_event(pf, &event);
-			ixl_update_link_status(pf);
 			break;
 		case i40e_aqc_opc_send_msg_to_pf:
 #ifdef PCI_IOV
@@ -3411,9 +3743,6 @@ ixl_if_update_admin_status(if_ctx_t ctx)
 
 	} while (result && (loop++ < IXL_ADM_LIMIT));
 
-	reg = rd32(hw, I40E_PFINT_ICR0_ENA);
-	reg |= I40E_PFINT_ICR0_ENA_ADMINQ_MASK;
-	wr32(hw, I40E_PFINT_ICR0_ENA, reg);
 	free(event.msg_buf, M_IXL);
 
 	/*
@@ -3423,72 +3752,8 @@ ixl_if_update_admin_status(if_ctx_t ctx)
 	if (result > 0)
 		iflib_admin_intr_deferred(ctx);
 	else
-		ixl_enable_intr(vsi);
-
+		ixl_enable_adminq(hw);
 }
-
-#ifdef IXL_DEBUG_SYSCTL
-static int
-ixl_debug_info(SYSCTL_HANDLER_ARGS)
-{
-	struct ixl_pf	*pf;
-	int		error, input = 0;
-
-	error = sysctl_handle_int(oidp, &input, 0, req);
-
-	if (error || !req->newptr)
-		return (error);
-
-	if (input == 1) {
-		pf = (struct ixl_pf *)arg1;
-		ixl_print_debug_info(pf);
-	}
-
-	return (error);
-}
-
-static void
-ixl_print_debug_info(struct ixl_pf *pf)
-{
-	struct i40e_hw		*hw = &pf->hw;
-	struct ixl_vsi		*vsi = &pf->vsi;
-	struct ixl_queue	*que = vsi->queues;
-	struct rx_ring		*rxr = &que->rxr;
-	u32			reg;	
-
-
-	printf("Queue irqs = %jx\n", (uintmax_t)que->irqs);
-	printf("AdminQ irqs = %jx\n", (uintmax_t)pf->admin_irq);
-	printf("RX packets = %jx\n", (uintmax_t)rxr->rx_packets);
-
-	reg = rd32(hw, I40E_GLV_GORCL(0xc));
-	 printf("RX Bytes = %x\n", reg);
-	reg = rd32(hw, I40E_GLPRT_GORCL(hw->port));
-	 printf("Port RX Bytes = %x\n", reg);
-	reg = rd32(hw, I40E_GLV_RDPC(0xc));
-	 printf("RX discard = %x\n", reg);
-	reg = rd32(hw, I40E_GLPRT_RDPC(hw->port));
-	 printf("Port RX discard = %x\n", reg);
-
-	reg = rd32(hw, I40E_GLV_TEPC(0xc));
-	 printf("TX errors = %x\n", reg);
-	reg = rd32(hw, I40E_GLV_GOTCL(0xc));
-	 printf("TX Bytes = %x\n", reg);
-
-	reg = rd32(hw, I40E_GLPRT_RUC(hw->port));
-	 printf("RX undersize = %x\n", reg);
-	reg = rd32(hw, I40E_GLPRT_RFC(hw->port));
-	 printf("RX fragments = %x\n", reg);
-	reg = rd32(hw, I40E_GLPRT_ROC(hw->port));
-	 printf("RX oversize = %x\n", reg);
-	reg = rd32(hw, I40E_GLPRT_RLEC(hw->port));
-	 printf("RX length error = %x\n", reg);
-	reg = rd32(hw, I40E_GLPRT_MRFC(hw->port));
-	 printf("mac remote fault = %x\n", reg);
-	reg = rd32(hw, I40E_GLPRT_MLFC(hw->port));
-	 printf("mac local fault = %x\n", reg);
-}
-#endif
 
 /**
  * Update VSI-specific ethernet statistics counters.
@@ -3662,6 +3927,101 @@ ixl_stat_update32(struct i40e_hw *hw, u32 reg,
 		*stat = (u32)((new_data + ((u64)1 << 32)) - *offset);
 }
 
+static void
+ixl_add_device_sysctls(struct ixl_pf *pf)
+{
+	device_t dev = pf->dev;
+
+	/* Set up sysctls */
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "fc", CTLTYPE_INT | CTLFLAG_RW,
+	    pf, 0, ixl_set_flowcntl, "I", IXL_SYSCTL_HELP_FC);
+
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "advertise_speed", CTLTYPE_INT | CTLFLAG_RW,
+	    pf, 0, ixl_set_advertise, "I", IXL_SYSCTL_HELP_SET_ADVERTISE);
+
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "current_speed", CTLTYPE_STRING | CTLFLAG_RD,
+	    pf, 0, ixl_current_speed, "A", "Current Port Speed");
+
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "fw_version", CTLTYPE_STRING | CTLFLAG_RD,
+	    pf, 0, ixl_sysctl_show_fw, "A", "Firmware version");
+
+#if 0
+	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "rx_itr", CTLFLAG_RW,
+	    &ixl_rx_itr, 0, "RX ITR");
+
+	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "dynamic_rx_itr", CTLFLAG_RW,
+	    &ixl_dynamic_rx_itr, 0, "Dynamic RX ITR");
+
+	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "tx_itr", CTLFLAG_RW,
+	    &ixl_tx_itr, 0, "TX ITR");
+
+	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "dynamic_tx_itr", CTLFLAG_RW,
+	    &ixl_dynamic_tx_itr, 0, "Dynamic TX ITR");
+#endif
+
+#ifdef IXL_DEBUG_SYSCTL
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "debug", CTLTYPE_INT|CTLFLAG_RW, pf, 0,
+	    ixl_debug_info, "I", "Debug Information");
+
+	/* Shared-code debug message level */
+	SYSCTL_ADD_UINT(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "debug_mask", CTLFLAG_RW,
+	    &pf->hw.debug_mask, 0, "Debug Message Level");
+
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "link_status", CTLTYPE_STRING | CTLFLAG_RD,
+	    pf, 0, ixl_sysctl_link_status, "A", IXL_SYSCTL_HELP_LINK_STATUS);
+
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "phy_abilities", CTLTYPE_STRING | CTLFLAG_RD,
+	    pf, 0, ixl_sysctl_phy_abilities, "A", "PHY Abilities");
+
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "filter_list", CTLTYPE_STRING | CTLFLAG_RD,
+	    pf, 0, ixl_sysctl_sw_filter_list, "A", "SW Filter List");
+
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "hw_res_alloc", CTLTYPE_STRING | CTLFLAG_RD,
+	    pf, 0, ixl_sysctl_hw_res_alloc, "A", "HW Resource Allocation");
+
+	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "switch_config", CTLTYPE_STRING | CTLFLAG_RD,
+	    pf, 0, ixl_sysctl_switch_config, "A", "HW Switch Configuration");
+
+#ifdef PCI_IOV
+	SYSCTL_ADD_UINT(device_get_sysctl_ctx(dev),
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+	    OID_AUTO, "vc_debug_level", CTLFLAG_RW, &pf->vc_debug_lvl,
+	    0, "PF/VF Virtual Channel debug level");
+#endif
+#endif
+}
+
+
 /*
 ** Set flow control using sysctl:
 ** 	0 - off
@@ -3682,12 +4042,13 @@ ixl_set_flowcntl(SYSCTL_HANDLER_ARGS)
 	struct ixl_pf *pf = (struct ixl_pf *)arg1;
 	struct i40e_hw *hw = &pf->hw;
 	device_t dev = iflib_get_dev(pf->vsi.ctx);
-	int error = 0;
+	int requested_fc, error = 0;
 	enum i40e_status_code aq_error = 0;
 	u8 fc_aq_err = 0;
 
 	/* Get request */
-	error = sysctl_handle_int(oidp, &pf->fc, 0, req);
+	requested_fc = pf->fc;
+	error = sysctl_handle_int(oidp, &requested_fc, 0, req);
 	if ((error) || (req->newptr == NULL))
 		return (error);
 	if (pf->fc < 0 || pf->fc > 3) {
@@ -3696,27 +4057,21 @@ ixl_set_flowcntl(SYSCTL_HANDLER_ARGS)
 		return (EINVAL);
 	}
 
-	/*
-	** Changing flow control mode currently does not work on
-	** 40GBASE-CR4 PHYs
-	*/
-	if (hw->phy.link_info.phy_type == I40E_PHY_TYPE_40GBASE_CR4
-	    || hw->phy.link_info.phy_type == I40E_PHY_TYPE_40GBASE_CR4_CU) {
-		device_printf(dev, "Changing flow control mode unsupported"
-		    " on 40GBase-CR4 media.\n");
-		return (ENODEV);
-	}
-
 	/* Set fc ability for port */
-	hw->fc.requested_mode = pf->fc;
+	hw->fc.requested_mode = requested_fc;
 	aq_error = i40e_set_fc(hw, &fc_aq_err, TRUE);
 	if (aq_error) {
 		device_printf(dev,
 		    "%s: Error setting new fc mode %d; fc_err %#x\n",
 		    __func__, aq_error, fc_aq_err);
-		return (EAGAIN);
+		return (EIO);
 	}
+	pf->fc = requested_fc;
 
+	/* Get new link state */
+	i40e_msec_delay(250);
+	hw->phy.get_link_info = TRUE;
+	i40e_get_link_status(hw, &pf->link_up);
 	return (0);
 }
 
@@ -3827,12 +4182,13 @@ ixl_set_advertised_speeds(struct ixl_pf *pf, int speeds)
 /*
 ** Control link advertise speed:
 **	Flags:
-**	0x1 - advertise 100 Mb
-**	0x2 - advertise 1G
-**	0x4 - advertise 10G
-**	0x8 - advertise 20G
+**	0x1  - advertise 100 Mb
+**	0x2  - advertise 1G
+**	0x4  - advertise 10G
+**	0x8  - advertise 20G
+**	0x10 - advertise 40G
 **
-** Does not work on 40G devices.
+** Set to 0 to disable link
 */
 static int
 ixl_set_advertise(SYSCTL_HANDLER_ARGS)
@@ -3843,41 +4199,49 @@ ixl_set_advertise(SYSCTL_HANDLER_ARGS)
 	int requested_ls = 0;
 	int error = 0;
 
-	/*
-	** FW doesn't support changing advertised speed
-	** for 40G devices; speed is always 40G.
-	*/
-	if (i40e_is_40G_device(hw->device_id))
-		return (ENODEV);
-
 	/* Read in new mode */
 	requested_ls = pf->advertised_speed;
 	error = sysctl_handle_int(oidp, &requested_ls, 0, req);
 	if ((error) || (req->newptr == NULL))
 		return (error);
 	/* Check for sane value */
-	if (requested_ls < 0x1 || requested_ls > 0xE) {
+	if (requested_ls > 0x10) {
 		device_printf(dev, "Invalid advertised speed; "
-		    "valid modes are 0x1 through 0xE\n");
+		    "valid modes are 0x1 through 0x10\n");
 		return (EINVAL);
 	}
 	/* Then check for validity based on adapter type */
 	switch (hw->device_id) {
 	case I40E_DEV_ID_10G_BASE_T:
-		if (requested_ls & 0x8) {
+	case I40E_DEV_ID_10G_BASE_T4:
+		/* BaseT */
+		if (requested_ls & ~0x7) {
 			device_printf(dev,
-			    "20Gbs speed not supported on this device.\n");
+				"Only 100M/1G/10G speeds supported on this device.\n");
 			return (EINVAL);
 		}
 		break;
 	case I40E_DEV_ID_20G_KR2:
-		if (requested_ls & 0x1) {
+	case I40E_DEV_ID_20G_KR2_A:
+		/* 20G */
+		if (requested_ls & ~0xE) {
 			device_printf(dev,
-			    "100Mbs speed not supported on this device.\n");
+			    "Only 1G/10G/20G speeds supported on this device.\n");
+			return (EINVAL);
+		}
+		break;
+		case I40E_DEV_ID_KX_B:
+	case I40E_DEV_ID_QSFP_A:
+	case I40E_DEV_ID_QSFP_B:
+		/* 40G */
+		if (requested_ls & ~(0x10)) {
+			device_printf(dev,
+			    "Only 40G speeds supported on this device.\n");
 			return (EINVAL);
 		}
 		break;
 	default:
+		/* 10G (1G) */
 		if (requested_ls & ~0x6) {
 			device_printf(dev,
 			    "Only 1/10Gbs speeds are supported on this device.\n");
@@ -3971,25 +4335,114 @@ ixl_get_bus_info(struct i40e_hw *hw, device_t dev)
         return (link);
 }
 
+
 static int
 ixl_sysctl_show_fw(SYSCTL_HANDLER_ARGS)
 {
 	struct ixl_pf	*pf = (struct ixl_pf *)arg1;
 	struct i40e_hw	*hw = &pf->hw;
-	char		buf[32];
+	struct sbuf	*sbuf;
 
-	snprintf(buf, sizeof(buf),
-	    "f%d.%d a%d.%d n%02x.%02x e%08x",
-	    hw->aq.fw_maj_ver, hw->aq.fw_min_ver,
-	    hw->aq.api_maj_ver, hw->aq.api_min_ver,
-	    (hw->nvm.version & IXL_NVM_VERSION_HI_MASK) >>
-	    IXL_NVM_VERSION_HI_SHIFT,
-	    (hw->nvm.version & IXL_NVM_VERSION_LO_MASK) >>
-	    IXL_NVM_VERSION_LO_SHIFT,
-	    hw->nvm.eetrack);
-	return (sysctl_handle_string(oidp, buf, strlen(buf), req));
+	sbuf = sbuf_new_for_sysctl(NULL, NULL, 128, req);
+	ixl_nvm_version_str(hw, sbuf);
+	sbuf_finish(sbuf);
+	sbuf_delete(sbuf);
+
+	return 0;
 }
 
+#ifdef IXL_DEBUG
+static void
+ixl_print_nvm_cmd(device_t dev, struct i40e_nvm_access *nvma)
+{
+	if ((nvma->command == I40E_NVM_READ) &&
+	    ((nvma->config & 0xFF) == 0xF) &&
+	    (((nvma->config & 0xF00) >> 8) == 0xF) &&
+	    (nvma->offset == 0) &&
+	    (nvma->data_size == 1)) {
+		// device_printf(dev, "- Get Driver Status Command\n");
+	}
+	else if (nvma->command == I40E_NVM_READ) {
+
+	}
+	else {
+		switch (nvma->command) {
+		case 0xB:
+			device_printf(dev, "- command: I40E_NVM_READ\n");
+			break;
+		case 0xC:
+			device_printf(dev, "- command: I40E_NVM_WRITE\n");
+			break;
+		default:
+			device_printf(dev, "- command: unknown 0x%08x\n", nvma->command);
+			break;
+		}
+
+		device_printf(dev, "- config (ptr)  : 0x%02x\n", nvma->config & 0xFF);
+		device_printf(dev, "- config (flags): 0x%01x\n", (nvma->config & 0xF00) >> 8);
+		device_printf(dev, "- offset : 0x%08x\n", nvma->offset);
+		device_printf(dev, "- data_s : 0x%08x\n", nvma->data_size);
+	}
+}
+#endif
+
+static int
+ixl_handle_nvmupd_cmd(struct ixl_pf *pf, struct ifdrv *ifd)
+{
+	struct i40e_hw *hw = &pf->hw;
+	struct i40e_nvm_access *nvma;
+	device_t dev = pf->dev;
+	enum i40e_status_code status = 0;
+	int perrno;
+
+	DEBUGFUNC("ixl_handle_nvmupd_cmd");
+
+	/* Sanity checks */
+	if (ifd->ifd_len < sizeof(struct i40e_nvm_access) ||
+	    ifd->ifd_data == NULL) {
+		device_printf(dev, "%s: incorrect ifdrv length or data pointer\n",
+		    __func__);
+		device_printf(dev, "%s: ifdrv length: %lu, sizeof(struct i40e_nvm_access): %lu\n",
+		    __func__, ifd->ifd_len, sizeof(struct i40e_nvm_access));
+		device_printf(dev, "%s: data pointer: %p\n", __func__,
+		    ifd->ifd_data);
+		return (EINVAL);
+	}
+
+	nvma = (struct i40e_nvm_access *)ifd->ifd_data;
+
+#ifdef IXL_DEBUG
+	ixl_print_nvm_cmd(dev, nvma);
+#endif
+
+	if (pf->state & IXL_PF_STATE_EMPR_RESETTING) {
+		int count = 0;
+		while (count++ < 100) {
+			i40e_msec_delay(100);
+			if (!(pf->state & IXL_PF_STATE_EMPR_RESETTING))
+				break;
+		}
+	}
+
+	if (!(pf->state & IXL_PF_STATE_EMPR_RESETTING)) {
+		status = i40e_nvmupd_command(hw, nvma, nvma->data, &perrno);
+	} else {
+		perrno = -EBUSY;
+	}
+
+	if (status)
+		device_printf(dev, "i40e_nvmupd_command status %d, perrno %d\n",
+		    status, perrno);
+
+	/*
+	 * -EPERM is actually ERESTART, which the kernel interprets as it needing
+	 * to run this ioctl again. So use -EACCES for -EPERM instead.
+	 */
+	if (perrno == -EPERM)
+		return (-EACCES);
+	else
+		return (perrno);
+}
 
 #ifdef IXL_DEBUG_SYSCTL
 static int
@@ -4013,10 +4466,14 @@ ixl_sysctl_link_status(SYSCTL_HANDLER_ARGS)
 	    "Speed    : %#04x\n" 
 	    "Link info: %#04x\n" 
 	    "AN info  : %#04x\n" 
-	    "Ext info : %#04x", 
+	    "Ext info : %#04x\n"
+	    "Max Frame: %d\n"
+	    "Pacing   : %#04x\n"
+	    "CRC En?  : %d",
 	    link_status.phy_type, link_status.link_speed, 
 	    link_status.link_info, link_status.an_info,
-	    link_status.ext_info);
+	    link_status.ext_info, link_status.max_frame_size,
+	    link_status.pacing, link_status.crc_enable);		
 
 	return (sysctl_handle_string(oidp, buf, strlen(buf), req));
 }
@@ -4109,6 +4566,41 @@ ixl_res_alloc_cmp(const void *a, const void *b)
 	return ((int)one->resource_type - (int)two->resource_type);
 }
 
+/*
+ * Longest string length: 25 
+ */
+static char *
+ixl_switch_res_type_string(u8 type)
+{
+	static char * ixl_switch_res_type_strings[0x14] = {
+		"VEB",
+		"VSI",
+		"Perfect Match MAC address",
+		"S-tag",
+		"(Reserved)",
+		"Multicast hash entry",
+		"Unicast hash entry",
+		"VLAN",
+		"VSI List entry",
+		"(Reserved)",
+		"VLAN Statistic Pool",
+		"Mirror Rule",
+		"Queue Set",
+		"Inner VLAN Forward filter",
+		"(Reserved)",
+		"Inner MAC",
+		"IP",
+		"GRE/VN1 Key",
+		"VN2 Key",
+		"Tunneling Port"
+	};
+
+	if (type < 0x14)
+		return ixl_switch_res_type_strings[type];
+	else
+		return "(Reserved)";
+}
+
 static int
 ixl_sysctl_hw_res_alloc(SYSCTL_HANDLER_ARGS)
 {
@@ -4121,7 +4613,7 @@ ixl_sysctl_hw_res_alloc(SYSCTL_HANDLER_ARGS)
 	u8 num_entries;
 	struct i40e_aqc_switch_resource_alloc_element_resp resp[IXL_SW_RES_SIZE];
 
-	buf = sbuf_new(NULL, NULL, 1024, SBUF_AUTOEXTEND);
+	buf = sbuf_new_for_sysctl(NULL, NULL, 128, req);
 	if (!buf) {
 		device_printf(dev, "Could not allocate sbuf for output.\n");
 		return (ENOMEM);
@@ -4152,8 +4644,8 @@ ixl_sysctl_hw_res_alloc(SYSCTL_HANDLER_ARGS)
 	    "     | (this)     | (all) | (this) | (all)       \n");
 	for (int i = 0; i < num_entries; i++) {
 		sbuf_printf(buf,
-		    "%#4x | %10d   %5d   %6d   %12d",
-		    resp[i].resource_type,
+		    "%25s | %10d   %5d   %6d   %12d",
+		    ixl_switch_res_type_string(resp[i].resource_type),
 		    resp[i].guaranteed,
 		    resp[i].total,
 		    resp[i].used,
@@ -4165,43 +4657,56 @@ ixl_sysctl_hw_res_alloc(SYSCTL_HANDLER_ARGS)
 	sbuf_trim(buf);
 	error = sbuf_finish(buf);
 	sbuf_delete(buf);
-
+	if (error)
+		device_printf(dev, "Error finishing sbuf: %d\n", error);
 	return (error);
 }
 
 /*
 ** Caller must init and delete sbuf; this function will clear and
 ** finish it for caller.
+**
+** XXX: Cannot use the SEID for this, since there is no longer a
+** fixed mapping between SEID and element type.
 */
 static char *
-ixl_switch_element_string(struct sbuf *s, u16 seid, bool uplink)
+ixl_switch_element_string(struct sbuf *s,
+    struct i40e_aqc_switch_config_element_resp *element)
 {
 	sbuf_clear(s);
 
-	if (seid == 0 && uplink)
-		sbuf_cat(s, "Network");
-	else if (seid == 0)
-		sbuf_cat(s, "Host");
-	else if (seid == 1)
+	switch (element->element_type) {
+	case I40E_AQ_SW_ELEM_TYPE_MAC:
+		sbuf_printf(s, "MAC %3d", element->element_info);
+		break;
+	case I40E_AQ_SW_ELEM_TYPE_PF:
+		sbuf_printf(s, "PF  %3d", element->element_info);
+		break;
+	case I40E_AQ_SW_ELEM_TYPE_VF:
+		sbuf_printf(s, "VF  %3d", element->element_info);
+		break;
+	case I40E_AQ_SW_ELEM_TYPE_EMP:
 		sbuf_cat(s, "EMP");
-	else if (seid <= 5)
-		sbuf_printf(s, "MAC %d", seid - 2);
-	else if (seid <= 15)
-		sbuf_cat(s, "Reserved");
-	else if (seid <= 31)
-		sbuf_printf(s, "PF %d", seid - 16);
-	else if (seid <= 159)
-		sbuf_printf(s, "VF %d", seid - 32);
-	else if (seid <= 287)
-		sbuf_cat(s, "Reserved");
-	else if (seid <= 511)
-		sbuf_cat(s, "Other"); // for other structures
-	else if (seid <= 895)
-		sbuf_printf(s, "VSI %d", seid - 512);
-	else if (seid <= 1023)
-		sbuf_printf(s, "Reserved");
-	else
-		sbuf_cat(s, "Invalid");
+		break;
+	case I40E_AQ_SW_ELEM_TYPE_BMC:
+		sbuf_cat(s, "BMC");
+		break;
+	case I40E_AQ_SW_ELEM_TYPE_PV:
+		sbuf_cat(s, "PV");
+		break;
+	case I40E_AQ_SW_ELEM_TYPE_VEB:
+		sbuf_cat(s, "VEB");
+		break;
+	case I40E_AQ_SW_ELEM_TYPE_PA:
+		sbuf_cat(s, "PA");
+		break;
+	case I40E_AQ_SW_ELEM_TYPE_VSI:
+		sbuf_printf(s, "VSI %3d", element->element_info);
+		break;
+	default:
+		sbuf_cat(s, "?");
+		break;
+	}
 
 	sbuf_finish(s);
 	return sbuf_data(s);
@@ -4222,7 +4727,7 @@ ixl_sysctl_switch_config(SYSCTL_HANDLER_ARGS)
 	struct i40e_aqc_get_switch_config_resp *sw_config;
 	sw_config = (struct i40e_aqc_get_switch_config_resp *)aq_buf;
 
-	buf = sbuf_new(NULL, NULL, 1024, SBUF_AUTOEXTEND);
+	buf = sbuf_new_for_sysctl(NULL, NULL, 128, req);
 	if (!buf) {
 		device_printf(dev, "Could not allocate sbuf for sysctl output.\n");
 		return (ENOMEM);
@@ -4237,16 +4742,21 @@ ixl_sysctl_switch_config(SYSCTL_HANDLER_ARGS)
 		sbuf_delete(buf);
 		return error;
 	}
+	if (next)
+		device_printf(dev, "%s: TODO: get more config with SEID %d\n",
+			      __func__, next);
 
 	nmbuf = sbuf_new_auto();
 	if (!nmbuf) {
 		device_printf(dev, "Could not allocate sbuf for name output.\n");
+		sbuf_delete(buf);
 		return (ENOMEM);
 	}
 
 	sbuf_cat(buf, "\n");
 	// Assuming <= 255 elements in switch
-	sbuf_printf(buf, "# of elements: %d\n", sw_config->header.num_reported);
+	sbuf_printf(buf, "# of reported elements: %d\n", sw_config->header.num_reported);
+	sbuf_printf(buf, "total # of elements: %d\n", sw_config->header.num_total);
 	/* Exclude:
 	** Revision -- all elements are revision 1 for now
 	*/
@@ -4258,27 +4768,89 @@ ixl_sysctl_switch_config(SYSCTL_HANDLER_ARGS)
 		sbuf_printf(buf, "%4d", sw_config->element[i].seid);
 		sbuf_cat(buf, " ");
 		sbuf_printf(buf, "(%8s)", ixl_switch_element_string(nmbuf,
-		    sw_config->element[i].seid, false));
+		    &sw_config->element[i]));
 		sbuf_cat(buf, " | ");
-		sbuf_printf(buf, "%8s", ixl_switch_element_string(nmbuf,
-		    sw_config->element[i].uplink_seid, true));
+		sbuf_printf(buf, "%8d", sw_config->element[i].uplink_seid);
 		sbuf_cat(buf, "   ");
-		sbuf_printf(buf, "%8s", ixl_switch_element_string(nmbuf,
-		    sw_config->element[i].downlink_seid, false));
+		sbuf_printf(buf, "%8d", sw_config->element[i].downlink_seid);
 		sbuf_cat(buf, "   ");
 		sbuf_printf(buf, "%#8x", sw_config->element[i].connection_type);
 		if (i < sw_config->header.num_reported - 1)
 			sbuf_cat(buf, "\n");
+
 	}
 	sbuf_delete(nmbuf);
 
 	error = sbuf_finish(buf);
 	sbuf_delete(buf);
+	if (error)
+		device_printf(dev, "Error finishing sbuf: %d\n", error);
+	return (error);
+}
+
+static int
+ixl_debug_info(SYSCTL_HANDLER_ARGS)
+{
+	struct ixl_pf	*pf;
+	int		error, input = 0;
+
+
+	error = sysctl_handle_int(oidp, &input, 0, req);
+
+	if (error || !req->newptr)
+		return (error);
+
+	if (input == 1) {
+		pf = (struct ixl_pf *)arg1;
+		ixl_print_debug_info(pf);
+	}
 
 	return (error);
 }
-#endif /* IXL_DEBUG_SYSCTL */
 
+static void
+ixl_print_debug_info(struct ixl_pf *pf)
+{
+	struct i40e_hw		*hw = &pf->hw;
+	struct ixl_vsi		*vsi = &pf->vsi;
+	struct ixl_queue	*que = vsi->queues;
+	struct rx_ring		*rxr = &que->rxr;
+	u32			reg;
+
+
+	printf("Queue irqs = %jx\n", (uintmax_t)que->irqs);
+	printf("AdminQ irqs = %jx\n", (uintmax_t)pf->admin_irq);
+	printf("RX packets = %jx\n", (uintmax_t)rxr->rx_packets);
+
+	reg = rd32(hw, I40E_GLV_GORCL(0xc));
+	 printf("RX Bytes = %x\n", reg);
+	reg = rd32(hw, I40E_GLPRT_GORCL(hw->port));
+	 printf("Port RX Bytes = %x\n", reg);
+	reg = rd32(hw, I40E_GLV_RDPC(0xc));
+	 printf("RX discard = %x\n", reg);
+	reg = rd32(hw, I40E_GLPRT_RDPC(hw->port));
+	 printf("Port RX discard = %x\n", reg);
+
+	reg = rd32(hw, I40E_GLV_TEPC(0xc));
+	 printf("TX errors = %x\n", reg);
+	reg = rd32(hw, I40E_GLV_GOTCL(0xc));
+	 printf("TX Bytes = %x\n", reg);
+
+	reg = rd32(hw, I40E_GLPRT_RUC(hw->port));
+	 printf("RX undersize = %x\n", reg);
+	reg = rd32(hw, I40E_GLPRT_RFC(hw->port));
+	 printf("RX fragments = %x\n", reg);
+	reg = rd32(hw, I40E_GLPRT_ROC(hw->port));
+	 printf("RX oversize = %x\n", reg);
+	reg = rd32(hw, I40E_GLPRT_RLEC(hw->port));
+	 printf("RX length error = %x\n", reg);
+	reg = rd32(hw, I40E_GLPRT_MRFC(hw->port));
+	 printf("mac remote fault = %x\n", reg);
+	reg = rd32(hw, I40E_GLPRT_MLFC(hw->port));
+	 printf("mac local fault = %x\n", reg);
+}
+
+#endif /* IXL_DEBUG_SYSCTL */
 
 #ifdef PCI_IOV
 static int
@@ -4301,7 +4873,7 @@ ixl_vf_alloc_vsi(struct ixl_pf *pf, struct ixl_vf *vf)
 	vsi_ctx.flags = I40E_AQ_VSI_TYPE_VF;
 
 	bzero(&vsi_ctx.info, sizeof(vsi_ctx.info));
-
+/* TODO: If a port VLAN is set, then this needs to be changed */
 	vsi_ctx.info.valid_sections = htole16(I40E_AQ_VSI_PROP_SWITCH_VALID);
 	vsi_ctx.info.switch_id = htole16(0);
 
@@ -4385,10 +4957,10 @@ ixl_vf_map_vsi_queue(struct i40e_hw *hw, struct ixl_vf *vf, int qnum,
 	index = qnum / 2;
 	shift = (qnum % 2) * I40E_VSILAN_QTABLE_QINDEX_1_SHIFT;
 
-	qtable = rd32(hw, I40E_VSILAN_QTABLE(index, vf->vsi.vsi_num));
+	qtable = i40e_read_rx_ctl(hw, I40E_VSILAN_QTABLE(index, vf->vsi.vsi_num));
 	qtable &= ~(I40E_VSILAN_QTABLE_QINDEX_0_MASK << shift);
 	qtable |= val << shift;
-	wr32(hw, I40E_VSILAN_QTABLE(index, vf->vsi.vsi_num), qtable);
+	i40e_write_rx_ctl(hw, I40E_VSILAN_QTABLE(index, vf->vsi.vsi_num), qtable);
 }
 
 static void
@@ -4404,7 +4976,7 @@ ixl_vf_map_queues(struct ixl_pf *pf, struct ixl_vf *vf)
 	 * Contiguous mappings aren't actually supported by the hardware,
 	 * so we have to use non-contiguous mappings.
 	 */
-	wr32(hw, I40E_VSILAN_QBASE(vf->vsi.vsi_num),
+	i40e_write_rx_ctl(hw, I40E_VSILAN_QBASE(vf->vsi.vsi_num),
 	     I40E_VSILAN_QBASE_VSIQTABLE_ENA_MASK);
 
 	wr32(hw, I40E_VPLAN_MAPENA(vf->vf_num),
@@ -4674,6 +5246,8 @@ ixl_vf_version_msg(struct ixl_pf *pf, struct ixl_vf *vf, void *msg,
 		return;
 	}
 
+	vf->version = ((struct i40e_virtchnl_version_info *)msg)->minor;
+
 	reply.major = I40E_VIRTCHNL_VERSION_MAJOR;
 	reply.minor = I40E_VIRTCHNL_VERSION_MINOR;
 	ixl_send_vf_msg(pf, vf, I40E_VIRTCHNL_OP_VERSION, I40E_SUCCESS, &reply,
@@ -4695,14 +5269,17 @@ ixl_vf_reset_msg(struct ixl_pf *pf, struct ixl_vf *vf, void *msg,
 
 	/* No response to a reset message. */
 }
-
-static void
+tatic void
 ixl_vf_get_resources_msg(struct ixl_pf *pf, struct ixl_vf *vf, void *msg,
     uint16_t msg_size)
 {
 	struct i40e_virtchnl_vf_resource reply;
 
-	if (msg_size != 0) {
+	if ((vf->version == 0 && msg_size != 0) ||
+	    (vf->version == 1 && msg_size != 4)) {
+		device_printf(pf->dev, "Invalid GET_VF_RESOURCES message size,"
+		    " for VF version %d.%d\n", I40E_VIRTCHNL_VERSION_MAJOR,
+		    vf->version);
 		i40e_send_vf_nack(pf, vf, I40E_VIRTCHNL_OP_GET_VF_RESOURCES,
 		    I40E_ERR_PARAM);
 		return;
@@ -4710,7 +5287,12 @@ ixl_vf_get_resources_msg(struct ixl_pf *pf, struct ixl_vf *vf, void *msg,
 
 	bzero(&reply, sizeof(reply));
 
-	reply.vf_offload_flags = I40E_VIRTCHNL_VF_OFFLOAD_L2;
+	if (vf->version == I40E_VIRTCHNL_VERSION_MINOR_NO_VF_CAPS)
+		reply.vf_offload_flags = I40E_VIRTCHNL_VF_OFFLOAD_L2 |
+					 I40E_VIRTCHNL_VF_OFFLOAD_RSS_REG |
+					 I40E_VIRTCHNL_VF_OFFLOAD_VLAN;
+	else
+		reply.vf_offload_flags = *(u32 *)msg;
 
 	reply.num_vsis = 1;
 	reply.num_queue_pairs = vf->vsi.num_queues;
@@ -5601,14 +6183,14 @@ ixl_if_iov_init(if_ctx_t ctx, uint16_t num_vfs, const nvlist_t *params)
 		sysctl_ctx_init(&pf->vfs[i].ctx);
 
 	ret = i40e_aq_add_veb(hw, pf_vsi->uplink_seid, pf_vsi->seid,
-	    1, FALSE, FALSE, &pf->veb_seid, NULL);
+	    1, FALSE, &pf->veb_seid, FALSE, NULL);
 	if (ret != I40E_SUCCESS) {
 		error = ixl_adminq_err_to_errno(hw->aq.asq_last_status);
 		device_printf(dev, "add_veb failed; code=%d error=%d", ret,
 		    error);
 		goto fail;
 	}
-
+	// TODO: [Configure MSI-X here]
 	ixl_configure_msix(pf);
 	ixl_enable_adminq(hw);
 
@@ -5706,7 +6288,7 @@ ixl_if_vf_add(if_ctx_t ctx, uint16_t vfnum, const nvlist_t *params)
 
 	if (nvlist_get_bool(params, "allow-promisc"))
 		vf->vf_flags |= VF_FLAG_PROMISC_CAP;
-
+/* TODO: Get VLAN that PF has set for the VF */
 	vf->vf_flags |= VF_FLAG_VLAN_CAP;
 
 	ixl_reset_vf(pf, vf);

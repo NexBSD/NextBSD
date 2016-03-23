@@ -85,6 +85,7 @@
 #include <sys/sysctl.h>
 #include <sys/endian.h>
 #include <sys/pcpu.h>
+#include <sys/sbuf.h>
 #include <sys/smp.h>
 #include <machine/smp.h>
 
@@ -101,7 +102,6 @@
 MALLOC_DECLARE(M_IXL);
 
 #if defined(IXL_DEBUG) || defined(IXL_DEBUG_SYSCTL)
-#include <sys/sbuf.h>
 
 
 #define MAC_FORMAT "%02x:%02x:%02x:%02x:%02x:%02x"
@@ -165,8 +165,10 @@ MALLOC_DECLARE(M_IXL);
 /*
  * Ring Descriptors Valid Range: 32-4096 Default Value: 1024 This value is the
  * number of tx/rx descriptors allocated by the driver. Increasing this
- * value allows the driver to queue more operations. Each descriptor is 16
- * or 32 bytes (configurable in FVL)
+  * value allows the driver to queue more operations.
+ *
+ * Tx descriptors are always 16 bytes, but Rx descriptors can be 32 bytes.
+ * The driver currently always uses 32 byte Rx descriptors.
  */
 #define DEFAULT_RING	1024
 #define PERFORM_RING	2048
@@ -182,12 +184,6 @@ MALLOC_DECLARE(M_IXL);
 
 /* Alignment for rings */
 #define DBA_ALIGN	128
-
-/*
- * This parameter controls the maximum no of times the driver will loop in
- * the isr. Minimum Value = 1
- */
-#define MAX_LOOP	10
 
 /*
  * This is the max watchdog interval, ie. the time that can
@@ -213,7 +209,6 @@ MALLOC_DECLARE(M_IXL);
 #define IXL_BAR			3
 #define IXL_ADM_LIMIT		2
 #define IXL_TSO_SIZE		((255*1024)-1)
-#define IXL_TX_BUF_SZ		((u32) 1514)
 #define IXL_AQ_BUF_SZ		((u32) 4096)
 #define IXL_RX_HDR		128
 /* Controls the length of the Admin Queue */
@@ -225,7 +220,7 @@ MALLOC_DECLARE(M_IXL);
 #define IXL_TX_ITR		1
 #define IXL_ITR_NONE		3
 #define IXL_QUEUE_EOL		0x7FF
-#define IXL_MAX_FRAME		0x2600
+#define IXL_MAX_FRAME		9728
 #define IXL_MAX_TX_SEGS		8
 #define IXL_MAX_TSO_SEGS	66 
 #define IXL_QUEUE_HUNG		0x80000000
@@ -333,23 +328,10 @@ MALLOC_DECLARE(M_IXL);
 #define IXL_SET_NOPROTO(vsi, count)	(vsi)->noproto = (count)
 #endif
 
-/*
- *****************************************************************************
- * vendor_info_array
- * 
- * This array contains the list of Subvendor/Subdevice IDs on which the driver
- * should load.
- * 
- *****************************************************************************
- */
-typedef struct _ixl_vendor_info_t {
-	unsigned int    vendor_id;
-	unsigned int    device_id;
-	unsigned int    subvendor_id;
-	unsigned int    subdevice_id;
-	unsigned int    index;
-} ixl_vendor_info_t;
-
+/* Pre-10.2 media type compatibility */
+#if __FreeBSD_version < 1002000
+#define IFM_OTHER	IFM_UNKNOWN
+#endif
 
 /*
 ** This struct has multiple uses, multicast
@@ -373,8 +355,8 @@ struct tx_ring {
 	uint64_t tx_paddr;
 	u16			atr_rate;
 	u16			atr_count;
-	u16			itr;
-	u16			latency;
+	u32			itr;
+	u32			latency;
 
 	/* Used for Dynamic ITR calculation */
 	u32			packets;
@@ -394,8 +376,8 @@ struct rx_ring {
 	union i40e_rx_desc	*rx_base;
 	uint64_t rx_paddr;
 	bool			discard;
-	u16			itr;
-	u16			latency;
+	u32			itr;
+	u32			latency;
 	
 	u32			mbuf_sz;
 	u32			tail;
@@ -408,6 +390,7 @@ struct rx_ring {
 	u64			split;
 	u64			rx_packets;
 	u64 			rx_bytes;
+	u64 			desc_errs;
 	u64 			discarded;
 };
 
@@ -448,9 +431,9 @@ struct ixl_vsi {
 
 	struct ifnet *ifp;
 	struct ifmedia *media;
-
+	enum i40e_vsi_type	type;
 #define num_queues shared->isc_nqsets
-#define max_frame_size shared->isc_max_frame_size
+#define if_max_frame_size shared->isc_max_frame_size
 
 	void 			*back;
 	struct i40e_hw		*hw;
@@ -459,8 +442,8 @@ struct ixl_vsi {
 	u16			vsi_num;
 	u16			msix_base;	/* station base MSIX vector */
 	u16			first_queue;
-	u16			rx_itr_setting;
-	u16			tx_itr_setting;
+	u32			rx_itr_setting;
+	u32			tx_itr_setting;
 	struct ixl_queue	*queues;	/* head of queues */
 	bool			link_active;
 	u16			seid;
@@ -468,6 +451,8 @@ struct ixl_vsi {
 	struct if_irq	irq;	
 	u16			uplink_seid;
 	u16			downlink_seid;
+	u16			rss_table_size;
+	u16			rss_size;
 
 	/* MAC/VLAN Filter list */
 	struct ixl_ftl_head ftl;
@@ -541,26 +526,6 @@ struct ixl_sysctl_info {
 };
 
 extern int ixl_atr_rate;
-
-/*
-** ixl_fw_version_str - format the FW and NVM version strings
-*/
-static inline char *
-ixl_fw_version_str(struct i40e_hw *hw)
-{
-	static char buf[32];
-
-	snprintf(buf, sizeof(buf),
-	    "f%d.%d a%d.%d n%02x.%02x e%08x",
-	    hw->aq.fw_maj_ver, hw->aq.fw_min_ver,
-	    hw->aq.api_maj_ver, hw->aq.api_min_ver,
-	    (hw->nvm.version & IXL_NVM_VERSION_HI_MASK) >>
-	    IXL_NVM_VERSION_HI_SHIFT,
-	    (hw->nvm.version & IXL_NVM_VERSION_LO_MASK) >>
-	    IXL_NVM_VERSION_LO_SHIFT,
-	    hw->nvm.eetrack);
-	return buf;
-}
 
 /*********************************************************************
  *  TXRX Function prototypes

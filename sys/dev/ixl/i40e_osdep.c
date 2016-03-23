@@ -1,6 +1,6 @@
 /******************************************************************************
 
-  Copyright (c) 2013-2014, Intel Corporation 
+  Copyright (c) 2013-2015, Intel Corporation 
   All rights reserved.
   
   Redistribution and use in source and binary forms, with or without 
@@ -51,14 +51,14 @@ i40e_dmamap_cb(void *arg, bus_dma_segment_t * segs, int nseg, int error)
 i40e_status
 i40e_allocate_virt_mem(struct i40e_hw *hw, struct i40e_virt_mem *mem, u32 size)
 {
-	mem->va = malloc(size, M_IXL, M_NOWAIT | M_ZERO);
+	mem->va = malloc(size, M_DEVBUF, M_NOWAIT | M_ZERO);
 	return(mem->va == NULL);
 }
 
 i40e_status
 i40e_free_virt_mem(struct i40e_hw *hw, struct i40e_virt_mem *mem)
 {
-	free(mem->va, M_IXL);
+	free(mem->va, M_DEVBUF);
 	return(0);
 }
 
@@ -155,26 +155,24 @@ i40e_release_spinlock(struct i40e_spinlock *lock)
 void
 i40e_destroy_spinlock(struct i40e_spinlock *lock)
 {
-	mtx_destroy(&lock->mutex);
+	if (mtx_initialized(&lock->mutex))
+		mtx_destroy(&lock->mutex);
 }
 
 /*
-** i40e_debug_d - OS dependent version of shared code debug printing
-*/
-void i40e_debug_d(void *hw, u32 mask, char *fmt, ...)
+ * Helper function for debug statement printing
+ */
+void
+i40e_debug_d(struct i40e_hw *hw, enum i40e_debug_mask mask, char *fmt, ...)
 {
-        char buf[512];
-        va_list args;
+	va_list args;
 
-        if (!(mask & ((struct i40e_hw *)hw)->debug_mask))
-                return;
+	if (!(mask & ((struct i40e_hw *)hw)->debug_mask))
+		return;
 
 	va_start(args, fmt);
-        vsnprintf(buf, sizeof(buf), fmt, args);
+	device_printf(((struct i40e_osdep *)hw->back)->dev, fmt, args);
 	va_end(args);
-
-        /* the debug string is already formatted with a newline */
-        printf("%s", buf);
 }
 
 u16
