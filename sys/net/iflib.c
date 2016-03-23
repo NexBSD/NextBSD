@@ -283,7 +283,7 @@ typedef struct iflib_sw_tx_desc_array {
 #define IFLIB_QUEUE_WORKING		2
 
 /* this should really scale with ring size - 32 is a fairly arbitrary value for this */
-#define TX_BATCH_SIZE			32
+#define TX_BATCH_SIZE			16
 
 #define IFLIB_RESTART_BUDGET		8
 
