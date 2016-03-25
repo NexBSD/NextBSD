@@ -98,6 +98,8 @@ static int	ixl_initialize_vsi(struct ixl_vsi *);
 static void	ixl_configure_msix(struct ixl_pf *);
 static void	ixl_configure_itr(struct ixl_pf *);
 static void	ixl_configure_legacy(struct ixl_pf *);
+static void	ixl_init_taskqueues(struct ixl_pf *);
+static void	ixl_free_taskqueues(struct ixl_pf *);
 static void	ixl_free_pci_resources(struct ixl_pf *);
 static int	ixl_setup_interface(device_t, struct ixl_vsi *);
 static void	ixl_link_event(struct ixl_pf *, struct i40e_arq_event_info *);
@@ -650,6 +652,7 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	device_printf(dev, "%s success!\n", __FUNCTION__);
 	return (0);
 
+
 err_mac_hmc:
 	i40e_shutdown_lan_hmc(hw);
 err_get_cap:
@@ -711,7 +714,7 @@ ixl_if_attach_post(if_ctx_t ctx)
 	error = ixl_switch_config(pf);
 	if (error) {
 		device_printf(dev, "Initial switch config failed: %d\n", error);
-		goto err_mac_hmc;
+		goto err_late;
 	}
 
 	/* Limit phy interrupts to link and modules failure */
@@ -723,6 +726,9 @@ ixl_if_attach_post(if_ctx_t ctx)
 	/* Get the bus configuration and set the shared code */
 	bus = ixl_get_bus_info(hw, dev);
 	i40e_set_pci_config_data(hw, bus);
+
+	/* Initialize taskqueues */
+	ixl_init_taskqueues(pf);
 
 	/* Initialize statistics */
 	ixl_pf_reset_stats(pf);

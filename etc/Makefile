@@ -3,10 +3,14 @@
 
 .include <src.opts.mk>
 
+
 SUBDIR=	newsyslog.conf.d
 SUBDIR+= launchd.d
 SUBDIR+= bootstrap.d
 SUBDIR+= defaults.d
+# No need as it is empty and just causes rebuilds since this file does so much.
+UPDATE_DEPENDFILE=	no
+
 
 BIN1=	asl.conf \
 	crontab \
@@ -437,11 +441,14 @@ distrib-dirs: ${MTREES:N/*} distrib-cleanup .PHONY
 	done
 .endif
 
-etc-examples:
+etc-examples-install: ${META_DEPS}
 	cd ${.CURDIR}; ${INSTALL} -o ${BINOWN} -g ${BINGRP} -m 444 \
 	    ${BIN1} ${BIN2} nsmb.conf opieaccess \
 	    ${DESTDIR}${SHAREDIR}/examples/etc
-	${_+_}cd ${.CURDIR}/defaults; ${MAKE} install \
+
+etc-examples: etc-examples-install
+	${_+_}cd ${.CURDIR}/defaults; \
+	    ${MAKE} ${${MK_STAGING} == "yes":?all:install} \
 	    DESTDIR=${DESTDIR}${SHAREDIR}/examples
 
 .include <bsd.prog.mk>

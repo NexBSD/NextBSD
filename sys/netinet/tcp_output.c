@@ -1318,7 +1318,7 @@ send:
 		ipov->ih_len = save;
 	}
 #endif /* TCPDEBUG */
-	TCP_PROBE3(debug__input, tp, th, mtod(m, const char *));
+	TCP_PROBE3(debug__output, tp, th, mtod(m, const char *));
 
 	/*
 	 * Fill in IP length and desired time to live and
@@ -1394,9 +1394,6 @@ send:
 #endif
 #ifdef INET
     {
-	struct route ro;
-
-	bzero(&ro, sizeof(ro));
 	ip->ip_len = htons(m->m_pkthdr.len);
 #ifdef INET6
 	if (tp->t_inpcb->inp_vflag & INP_IPV6PROTO)
@@ -1427,28 +1424,12 @@ send:
 	tcp_pcap_add(th, m, &(tp->t_outpkts));
 #endif
 
-	if (in_rt_valid(inp)) {
-		struct sockaddr_in *sin = (struct sockaddr_in *)&ro.ro_dst;
-		sin->sin_family = AF_INET;
-		sin->sin_len = sizeof(struct sockaddr_in);
-		sin->sin_addr.s_addr = inp->inp_faddr.s_addr;
-		ro.ro_rt = inp->inp_rt;
-		ro.ro_prepend = inp->inp_prepend;
-		ro.ro_plen = inp->inp_plen;
-		if (ro.ro_rt != NULL)
-			ro.ro_flags |= RT_CACHING_CONTEXT;
-	}
-
-
-	error = ip_output(m, tp->t_inpcb->inp_options, &ro,
+	error = ip_output(m, tp->t_inpcb->inp_options, &tp->t_inpcb->inp_route,
 	    ((so->so_options & SO_DONTROUTE) ? IP_ROUTETOIF : 0), 0,
 	    tp->t_inpcb);
 
-	if (error == EMSGSIZE && ro.ro_rt != NULL)
-		mtu = ro.ro_rt->rt_mtu;
-	if (!(ro.ro_flags & RT_CACHING_CONTEXT)) {
-		RO_RTFREE(&ro);
-	}
+	if (error == EMSGSIZE && tp->t_inpcb->inp_route.ro_rt != NULL)
+		mtu = tp->t_inpcb->inp_route.ro_rt->rt_mtu;
     }
 #endif /* INET */
 
@@ -1682,7 +1663,7 @@ tcp_setpersist(struct tcpcb *tp)
 int
 tcp_addoptions(struct tcpopt *to, u_char *optp)
 {
-	u_int mask, optlen = 0;
+	u_int32_t mask, optlen = 0;
 
 	for (mask = 1; mask < TOF_MAXOPT; mask <<= 1) {
 		if ((to->to_flags & mask) != mask)
