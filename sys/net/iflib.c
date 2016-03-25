@@ -317,6 +317,7 @@ struct iflib_txq {
 	uint64_t	ift_mbuf_defrag;
 	uint64_t	ift_map_failed;
 	uint64_t	ift_txd_encap_efbig;
+	uint64_t	ift_pullups;
 
 	struct mtx	ift_mtx;
 	struct mtx	ift_db_mtx;
@@ -1933,6 +1934,7 @@ iflib_stop(if_ctx_t ctx)
 		txq->ift_in_use = txq->ift_cidx = txq->ift_pidx = txq->ift_no_desc_avail = 0;
 		txq->ift_closed = txq->ift_mbuf_defrag = txq->ift_mbuf_defrag_failed = 0;
 		txq->ift_no_tx_dma_setup = txq->ift_txd_encap_efbig = txq->ift_map_failed = 0;
+		txq->ift_pullups = 0;
 		ifmp_ring_reset_stats(txq->ift_br[0]);
 		qset = &ctx->ifc_qsets[txq->ift_id];
 		for (j = 0, di = qset->ifq_ifdi; j < qset->ifq_nhwqs; j++, di++)
@@ -2225,15 +2227,22 @@ print_pkt(if_pkt_info_t pi)
 #define IS_TSO6(pi) ((pi)->ipi_csum_flags & CSUM_IP6_TSO)
 
 static int
-iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
+iflib_parse_header(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp)
 {
 	struct ether_vlan_header *eh;
+	struct mbuf *m, *n;
 
+	m = *mp;
 	/*
 	 * Determine where frame payload starts.
 	 * Jump over vlan headers if already present,
 	 * helpful for QinQ too.
 	 */
+	if (__predict_false(m->m_len < sizeof(*eh))) {
+		txq->ift_pullups++;
+		if (__predict_false((m = m_pullup(m, sizeof(*eh))) == NULL))
+			return (ENOMEM);
+	}
 	eh = mtod(m, struct ether_vlan_header *);
 	if (eh->evl_encap_proto == htons(ETHERTYPE_VLAN)) {
 		pi->ipi_etype = ntohs(eh->evl_proto);
@@ -2247,18 +2256,56 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 #ifdef INET
 	case ETHERTYPE_IP:
 	{
-		struct ip *ip = (struct ip *)(m->m_data + pi->ipi_ehdrlen);
-		struct tcphdr *th;
+		struct ip *ip = NULL;
+		struct tcphdr *th = NULL;
+		int minthlen;
 
-		MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip));
+		minthlen = min(m->m_pkthdr.len, pi->ipi_ehdrlen + sizeof(*ip) + sizeof(*th));
+		if (__predict_false(m->m_len < minthlen)) {
+			/*
+			 * if this code bloat is causing too much of a hit
+			 * move it to a separate function and mark it noinline
+			 */
+			if (m->m_len == pi->ipi_ehdrlen) {
+				n = m->m_next;
+				MPASS(n);
+				if (n->m_len >= sizeof(*ip))  {
+					ip = (struct ip *)n->m_data;
+					if (n->m_len >= (ip->ip_hl << 2) + sizeof(*th))
+						th = (struct tcphdr *)((caddr_t)ip + (ip->ip_hl << 2));
+				} else {
+					txq->ift_pullups++;
+					if (__predict_false((m = m_pullup(m, minthlen)) == NULL))
+						return (ENOMEM);
+					ip = (struct ip *)(m->m_data + pi->ipi_ehdrlen);
+				}
+			} else {
+				txq->ift_pullups++;
+				if (__predict_false((m = m_pullup(m, minthlen)) == NULL))
+					return (ENOMEM);
+				ip = (struct ip *)(m->m_data + pi->ipi_ehdrlen);
+				if (m->m_len >= (ip->ip_hl << 2) + sizeof(*th))
+					th = (struct tcphdr *)((caddr_t)ip + (ip->ip_hl << 2));
+			}
+		} else {
+			ip = (struct ip *)(m->m_data + pi->ipi_ehdrlen);
+			if (m->m_len >= (ip->ip_hl << 2) + sizeof(*th))
+				th = (struct tcphdr *)((caddr_t)ip + (ip->ip_hl << 2));
+		}
 		pi->ipi_ip_hlen = ip->ip_hl << 2;
 		pi->ipi_ipproto = ip->ip_p;
 		pi->ipi_flags |= IPI_TX_IPV4;
 
 		if (pi->ipi_csum_flags & CSUM_IP)
                        ip->ip_sum = 0;
-		th = (struct tcphdr *)((caddr_t)ip + pi->ipi_ip_hlen);
+
 		if (pi->ipi_ipproto == IPPROTO_TCP) {
+			if (__predict_false(th == NULL)) {
+				txq->ift_pullups++;
+				if (__predict_false((m = m_pullup(m, (ip->ip_hl << 2) + sizeof(*th))) == NULL))
+					return (ENOMEM);
+				th = (struct tcphdr *)((caddr_t)ip + pi->ipi_ip_hlen);
+			}
 			pi->ipi_tcp_hflags = th->th_flags;
 			pi->ipi_tcp_hlen = th->th_off << 2;
 			pi->ipi_tcp_seq = th->th_seq;
@@ -2266,8 +2313,6 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		if (IS_TSO4(pi)) {
 			if (__predict_false(ip->ip_p != IPPROTO_TCP))
 				return (ENXIO);
-
-			MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip) + sizeof(struct tcphdr));
 			th->th_sum = in_pseudo(ip->ip_src.s_addr,
 					       ip->ip_dst.s_addr, htons(IPPROTO_TCP));
 			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
@@ -2282,7 +2327,10 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		struct tcphdr *th;
 		pi->ipi_ip_hlen = sizeof(struct ip6_hdr);
 
-		MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip6_hdr));
+		if (__predict_false(m->m_len < pi->ipi_ehdrlen + sizeof(struct ip6_hdr))) {
+			if (__predict_false((m = m_pullup(m, pi->ipi_ehdrlen + sizeof(struct ip6_hdr))) == NULL))
+				return (ENOMEM);
+		}
 		th = (struct tcphdr *)((caddr_t)ip6 + pi->ipi_ip_hlen);
 
 		/* XXX-BZ this will go badly in case of ext hdrs. */
@@ -2290,6 +2338,10 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		pi->ipi_flags |= IPI_TX_IPV6;
 
 		if (pi->ipi_ipproto == IPPROTO_TCP) {
+			if (__predict_false(m->m_len < pi->ipi_ehdrlen + sizeof(struct ip6_hdr) + sizeof(struct tcphdr))) {
+				if (__predict_false((m = m_pullup(m, pi->ipi_ehdrlen + sizeof(struct ip6_hdr) + sizeof(struct tcphdr))) == NULL))
+					return (ENOMEM);
+			}
 			pi->ipi_tcp_hflags = th->th_flags;
 			pi->ipi_tcp_hlen = th->th_off << 2;
 		}
@@ -2303,7 +2355,6 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 			 * So, set it here because the rest of the flow requires it.
 			 */
 			pi->ipi_csum_flags |= CSUM_TCP_IPV6;
-			MPASS(m->m_len >= pi->ipi_ehdrlen + sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
 			th->th_sum = in6_cksum_pseudo(ip6, 0, IPPROTO_TCP, 0);
 			pi->ipi_tso_segsz = m->m_pkthdr.tso_segsz;
 		}
@@ -2315,6 +2366,7 @@ iflib_parse_header(if_pkt_info_t pi, struct mbuf *m)
 		pi->ipi_ip_hlen = 0;
 		break;
 	}
+	*mp = m;
 	return (0);
 }
 
@@ -2530,6 +2582,22 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 		desc_tag = txq->ift_desc_tag;
 		max_segs = scctx->isc_tx_nsegments;
 	}
+	m_head = *m_headp;
+	bzero(&pi, sizeof(pi));
+	pi.ipi_len = m_head->m_pkthdr.len;
+	pi.ipi_mflags = (m_head->m_flags & (M_VLANTAG|M_BCAST|M_MCAST));
+	pi.ipi_csum_flags = m_head->m_pkthdr.csum_flags;
+	pi.ipi_vtag = (m_head->m_flags & M_VLANTAG) ? m_head->m_pkthdr.ether_vtag : 0;
+	pi.ipi_pidx = pidx;
+	pi.ipi_qsidx = txq->ift_id;
+
+	/* deliberate bitwise OR to make one condition */
+	if (__predict_true((pi.ipi_csum_flags | pi.ipi_vtag))) {
+		if (__predict_false((err = iflib_parse_header(txq, &pi, m_headp)) != 0))
+			return (err);
+		m_head = *m_headp;
+	}
+
 retry:
 	err = iflib_busdma_load_mbuf_sg(txq, desc_tag, map, m_headp, segs, &nsegs, max_segs, BUS_DMA_NOWAIT);
 defrag:
@@ -2577,23 +2645,8 @@ defrag:
 			GROUPTASK_ENQUEUE(&txq->ift_task);
 		return (ENOBUFS);
 	}
-	m_head = *m_headp;
-
-	bzero(&pi, sizeof(pi));
-	pi.ipi_len = m_head->m_pkthdr.len;
-	pi.ipi_mflags = (m_head->m_flags & (M_VLANTAG|M_BCAST|M_MCAST));
-	pi.ipi_csum_flags = m_head->m_pkthdr.csum_flags;
-	pi.ipi_vtag = (m_head->m_flags & M_VLANTAG) ? m_head->m_pkthdr.ether_vtag : 0;
-
-	/* deliberate bitwise OR to make one condition */
-	if ((pi.ipi_csum_flags | pi.ipi_vtag) &&
-	    (err = iflib_parse_header(&pi, m_head)) != 0)
-		return (err);
 	pi.ipi_segs = segs;
 	pi.ipi_nsegs = nsegs;
-	pi.ipi_pidx = pidx;
-
-	pi.ipi_qsidx = txq->ift_id;
 
 	MPASS(pidx >= 0 && pidx < sctx->isc_ntxd);
 #ifdef PKT_DEBUG
@@ -4562,6 +4615,9 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "mbuf_defrag",
 				   CTLFLAG_RD,
 				   &txq->ift_mbuf_defrag, "# of times m_defrag was called");
+		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "m_pullups",
+				   CTLFLAG_RD,
+				   &txq->ift_pullups, "# of times m_pullup was called");
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "mbuf_defrag_failed",
 				   CTLFLAG_RD,
 				   &txq->ift_mbuf_defrag_failed, "# of times m_defrag failed");
