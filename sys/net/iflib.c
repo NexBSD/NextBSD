@@ -1993,7 +1993,7 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri)
 
 	i = 0;
 	do {
-		sd = rxd_frag_to_sd(rxq, &ri->iri_frags[0], &cltype, TRUE);
+		sd = rxd_frag_to_sd(rxq, &ri->iri_frags[i], &cltype, TRUE);
 
 		MPASS(sd->ifsd_cl != NULL);
 		MPASS(sd->ifsd_m != NULL);
@@ -3149,7 +3149,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	struct ifaddr	*ifa = (struct ifaddr *)data;
 #endif
 	bool		avoid_reset = FALSE;
-	int		err = 0, reinit = 0;
+	int		err = 0, reinit = 0, bits;
 
 	switch (command) {
 	case SIOCSIFADDR:
@@ -3178,15 +3178,23 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 		break;
 	case SIOCSIFMTU:
 		CTX_LOCK(ctx);
-		/* detaching ?*/
+		if (ifr->ifr_mtu == if_getmtu(ifp)) {
+			CTX_UNLOCK(ctx);
+			break;
+		}
+		bits = if_getdrvflags(ifp);
+		/* stop the driver and free any clusters before proceeding */
+		iflib_stop(ctx);
+
 		if ((err = IFDI_MTU_SET(ctx, ifr->ifr_mtu)) == 0) {
-			reinit = 1;
 			if (ifr->ifr_mtu > ctx->ifc_max_fl_buf_size)
 				ctx->ifc_flags |= IFC_MULTISEG;
 			else
 				ctx->ifc_flags &= ~IFC_MULTISEG;
 			err = if_setmtu(ifp, ifr->ifr_mtu);
 		}
+		iflib_init_locked(ctx);
+		if_setdrvflags(ifp, bits);
 		CTX_UNLOCK(ctx);
 		break;
 	case SIOCSIFFLAGS:
@@ -3247,7 +3255,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	}
 	case SIOCSIFCAP:
 	{
-		int mask, setmask, bits;
+		int mask, setmask;
 
 		mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
 		setmask = 0;
