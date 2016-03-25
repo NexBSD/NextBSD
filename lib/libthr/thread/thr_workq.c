@@ -440,8 +440,6 @@ _pthread_newthread(void *arg)
 	newthread->cancel_enable = 1;
 	newthread->cancel_async = 0;
 	/* Initialize the mutex queue: */
-	TAILQ_INIT(&newthread->mutexq);
-	TAILQ_INIT(&newthread->pp_mutexq);
 	newthread->refcount = 1;
 
 	/*
