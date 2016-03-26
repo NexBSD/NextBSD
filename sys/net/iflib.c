@@ -3991,7 +3991,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 			paddrs[i*nqs + j] = di->idi_paddr;
 		}
 	}
-	if ((err = IFDI_QUEUES_ALLOC(ctx, vaddrs, paddrs, nqs)) != 0) {
+	if ((err = IFDI_QUEUES_ALLOC(ctx, vaddrs, paddrs, nqs, nqsets)) != 0) {
 		device_printf(ctx->ifc_dev, "device queue allocation failed\n");
 		iflib_tx_structures_free(ctx);
 		free(vaddrs, M_IFLIB);

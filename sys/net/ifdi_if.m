@@ -147,6 +147,7 @@ METHOD int queues_alloc {
 	caddr_t *_vaddrs;
 	uint64_t *_paddrs;
 	int nqs;
+	int nqsets;
 };
 
 METHOD void queues_free {

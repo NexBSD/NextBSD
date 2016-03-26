@@ -37,7 +37,7 @@ ixl_if_media_change(if_ctx_t ctx)
 }
 
 int
-ixl_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
+ixl_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets)
 {
 	struct ixl_vsi *vsi = iflib_get_softc(ctx);
 	struct ixl_queue *que;
@@ -46,6 +46,7 @@ ixl_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 
 	MPASS(vsi->num_queues > 0);
 	MPASS(nqs == 2);
+	MPASS(vsi->num_queues == nqsets);
 	/* Allocate queue structure memory */
 	sctx = iflib_get_sctx(ctx);
 	if (!(vsi->queues =
@@ -55,7 +56,7 @@ ixl_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 		return (ENOMEM);
 	}
 	
-	for (i = 0, que = vsi->queues; i < vsi->num_queues; i++, que++) {
+	for (i = 0, que = vsi->queues; i < nqsets; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
 		struct rx_ring 		*rxr = &que->rxr;
 
@@ -64,10 +65,10 @@ ixl_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 
 		/* get the virtual and physical address of the hardware queues */
 		txr->tail = I40E_QTX_TAIL(que->me);
-		txr->tx_base = (struct i40e_tx_desc *)vaddrs[i*2];
+		txr->tx_base = (struct i40e_tx_desc *)vaddrs[i*nqs];
 		txr->tx_paddr = paddrs[i*2];
 		rxr->tail = I40E_QRX_TAIL(que->me);
-		rxr->rx_base = (union i40e_rx_desc *)vaddrs[i*2 + 1];
+		rxr->rx_base = (union i40e_rx_desc *)vaddrs[i*nqs + 1];
 		rxr->rx_paddr = paddrs[i*2 + 1];
 		txr->que = rxr->que = que;
 	}
