@@ -124,7 +124,7 @@ static int ixgbe_if_mtu_set(if_ctx_t ctx, uint32_t mtu);
 static void ixgbe_if_crcstrip_set(if_ctx_t ctx, int onoff);
 static void ixgbe_if_multi_set(if_ctx_t ctx);
 static int ixgbe_if_promisc_set(if_ctx_t ctx, int flags);
-static int ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs);
+static int ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets);
 static void ixgbe_if_queues_free(if_ctx_t ctx);
 static void ixgbe_if_timer(if_ctx_t ctx, uint16_t);
 static void ixgbe_if_update_admin_status(if_ctx_t ctx);
@@ -448,7 +448,7 @@ static struct if_shared_ctx ixgbe_sctx_init = {
 if_shared_ctx_t ixgbe_sctx = &ixgbe_sctx_init;
 
 static int
-ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
+ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
 	struct ix_queue *que;
@@ -458,6 +458,7 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 #endif
 	
 	MPASS(adapter->num_queues > 0);
+	MPASS(adapter->num_queues == nqsets);
 	MPASS(nqs == 2);
 
 	/* Allocate queue structure memory */
@@ -475,7 +476,7 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 	adapter->pool = 0;
 #endif
 
-	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
+	for (i = 0, que = adapter->queues; i < nqsets; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
 		struct rx_ring 		*rxr = &que->rxr;
 
@@ -495,12 +496,12 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 
 		/* get the virtual and physical address of the hardware queues */
 		txr->tail = IXGBE_TDT(que->me);
-		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i*2];
-		txr->tx_paddr = paddrs[i*2];
+		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i*nqs];
+		txr->tx_paddr = paddrs[i*nqs];
 
 		rxr->tail = IXGBE_RDT(que->me);
-		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[i*2 + 1];
-		rxr->rx_paddr = paddrs[i*2 + 1];
+		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[i*nqs + 1];
+		rxr->rx_paddr = paddrs[i*nqs + 1];
 		rxr->bytes = 0;
 		txr->que = rxr->que = que;
 		for (j = 0; j < ixgbe_sctx->isc_ntxd; j++) {

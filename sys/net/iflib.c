@@ -1663,12 +1663,12 @@ __iflib_fl_refill_lt(if_ctx_t ctx, iflib_fl_t fl, int max)
 static void
 iflib_fl_bufs_free(iflib_fl_t fl)
 {
-	uint32_t cidx = fl->ifl_cidx;
 	iflib_dma_info_t idi = fl->ifl_ifdi;
+	uint32_t i;
 
 	MPASS(fl->ifl_credits >= 0);
-	while (fl->ifl_credits) {
-		iflib_rxsd_t d = &fl->ifl_sds[cidx];
+	for (i = 0; i < fl->ifl_size; i++) {
+		iflib_rxsd_t d = &fl->ifl_sds[i];
 
 		if (d->ifsd_flags & RX_SW_DESC_INUSE) {
 			bus_dmamap_unload(fl->ifl_desc_tag, d->ifsd_map);
@@ -1679,6 +1679,7 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 			}
 			if (d->ifsd_cl != NULL)
 				uma_zfree(fl->ifl_zone, d->ifsd_cl);
+			d->ifsd_flags = 0;
 		} else {
 			MPASS(d->ifsd_cl == NULL);
 			MPASS(d->ifsd_m == NULL);
@@ -1689,14 +1690,11 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 #endif
 		d->ifsd_cl = NULL;
 		d->ifsd_m = NULL;
-		if (++cidx == fl->ifl_size)
-			cidx = 0;
-		fl->ifl_credits--;
 	}
 	/*
 	 * Reset free list values
 	 */
-	fl->ifl_cidx = fl->ifl_pidx = fl->ifl_gen = 0;;
+	fl->ifl_credits = fl->ifl_cidx = fl->ifl_pidx = fl->ifl_gen = 0;;
 	bzero(idi->idi_vaddr, idi->idi_size);
 }
 
@@ -1712,6 +1710,12 @@ iflib_fl_setup(iflib_fl_t fl)
 	if_ctx_t ctx = rxq->ifr_ctx;
 	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
 
+	/*
+	** Free current RX buffer structs and their mbufs
+	*/
+	iflib_fl_bufs_free(fl);
+	/* Now replenish the mbufs */
+	MPASS(fl->ifl_credits == 0);
 	/*
 	 * XXX don't set the max_frame_size to larger
 	 * than the hardware can handle
@@ -1729,13 +1733,7 @@ iflib_fl_setup(iflib_fl_t fl)
 	fl->ifl_cltype = m_gettype(fl->ifl_buf_size);
 	fl->ifl_zone = m_getzone(fl->ifl_buf_size);
 
-	/*
-	** Free current RX buffer structs and their mbufs
-	*/
-	iflib_fl_bufs_free(fl);
 
-	/* Now replenish the mbufs */
-	MPASS(fl->ifl_credits == 0);
 	/* avoid pre-allocating zillions of clusters to an idle card
 	 * potentially speeding up attach
 	 */
@@ -3993,7 +3991,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 			paddrs[i*nqs + j] = di->idi_paddr;
 		}
 	}
-	if ((err = IFDI_QUEUES_ALLOC(ctx, vaddrs, paddrs, nqs)) != 0) {
+	if ((err = IFDI_QUEUES_ALLOC(ctx, vaddrs, paddrs, nqs, nqsets)) != 0) {
 		device_printf(ctx->ifc_dev, "device queue allocation failed\n");
 		iflib_tx_structures_free(ctx);
 		free(vaddrs, M_IFLIB);

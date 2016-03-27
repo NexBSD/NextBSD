@@ -576,7 +576,7 @@ void	ixl_atr(struct ixl_queue *, struct tcphdr *, int);
  *********************************************************************/
 
 int	ixl_if_media_change(if_ctx_t);
-int	ixl_if_queues_alloc(if_ctx_t, caddr_t *, uint64_t *, int);
+int	ixl_if_queues_alloc(if_ctx_t, caddr_t *, uint64_t *, int, int);
 void ixl_if_queues_free(if_ctx_t ctx);
 
 #endif /* _IXL_H_ */
