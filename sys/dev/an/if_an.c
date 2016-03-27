@@ -304,23 +304,6 @@ SYSCTL_PROC(_hw_an, OID_AUTO, an_cache_mode, CTLTYPE_STRING | CTLFLAG_RW,
 	    0, sizeof(an_conf_cache), sysctl_an_cache_mode, "A", "");
 
 /*
- * Setup the lock for PCI attachment since it skips the an_probe
- * function.  We need to setup the lock in an_probe since some
- * operations need the lock.  So we might as well create the
- * lock in the probe.
- */
-int
-an_pci_probe(device_t dev)
-{
-	struct an_softc *sc = device_get_softc(dev);
-
-	mtx_init(&sc->an_mtx, device_get_nameunit(dev), MTX_NETWORK_LOCK,
-	    MTX_DEF);
-
-	return(0);
-}
-
-/*
  * We probe for an Aironet 4500/4800 card by attempting to
  * read the default SSID list. On reset, the first entry in
  * the SSID list will contain the name "tsunami." If we don't
@@ -394,8 +377,8 @@ an_alloc_port(device_t dev, int rid, int size)
 	struct an_softc *sc = device_get_softc(dev);
 	struct resource *res;
 
-	res = bus_alloc_resource(dev, SYS_RES_IOPORT, &rid,
-				 0ul, ~0ul, size, RF_ACTIVE);
+	res = bus_alloc_resource_anywhere(dev, SYS_RES_IOPORT, &rid,
+					  size, RF_ACTIVE);
 	if (res) {
 		sc->port_rid = rid;
 		sc->port_res = res;
@@ -413,8 +396,8 @@ int an_alloc_memory(device_t dev, int rid, int size)
 	struct an_softc *sc = device_get_softc(dev);
 	struct resource *res;
 
-	res = bus_alloc_resource(dev, SYS_RES_MEMORY, &rid,
-				 0ul, ~0ul, size, RF_ACTIVE);
+	res = bus_alloc_resource_anywhere(dev, SYS_RES_MEMORY, &rid,
+					  size, RF_ACTIVE);
 	if (res) {
 		sc->mem_rid = rid;
 		sc->mem_res = res;
@@ -433,8 +416,8 @@ int an_alloc_aux_memory(device_t dev, int rid, int size)
 	struct an_softc *sc = device_get_softc(dev);
 	struct resource *res;
 
-	res = bus_alloc_resource(dev, SYS_RES_MEMORY, &rid,
-				 0ul, ~0ul, size, RF_ACTIVE);
+	res = bus_alloc_resource_anywhere(dev, SYS_RES_MEMORY, &rid,
+					  size, RF_ACTIVE);
 	if (res) {
 		sc->mem_aux_rid = rid;
 		sc->mem_aux_res = res;

@@ -293,7 +293,7 @@ typedef struct _ixgbe_vendor_info_t {
 
 
 struct ixgbe_tx_buf {
-	union ixgbe_adv_tx_desc	*eop;
+	int eop;
 };
 
 
@@ -335,9 +335,6 @@ struct tx_ring {
 	u32			packets;
 	/* Soft Stats */
 	unsigned long   	tso_tx;
-	unsigned long   	no_tx_map_avail;
-	unsigned long   	no_tx_dma_setup;
-	u64			no_desc_avail;
         u64			total_packets;
 };
 
@@ -416,14 +413,15 @@ struct ixgbe_vf {
 
 /* Our adapter structure */
 struct adapter {
+	/* much of the code assumes this is first :< */
+	struct ixgbe_hw		hw;
+	struct ixgbe_osdep	osdep;
 	if_ctx_t ctx;
 	if_softc_ctx_t shared;
 #define num_queues shared->isc_nqsets
 #define max_frame_size shared->isc_max_frame_size
 #define intr_type shared->isc_intr
 	struct ifnet		*ifp;
-	struct ixgbe_hw		hw;
-	struct ixgbe_osdep	osdep;
 
 	struct device		*dev;
 
@@ -512,8 +510,6 @@ struct adapter {
 
 	/* Misc stats maintained by the driver */
         unsigned long           rx_mbuf_sz;
-	unsigned long   	dropped_pkts;
-	unsigned long   	mbuf_defrag_failed;
 	unsigned long   	mbuf_header_failed;
 	unsigned long   	mbuf_packet_failed;
 	unsigned long   	watchdog_events;
@@ -666,6 +662,7 @@ int	ixgbe_dma_malloc(struct adapter *,
 	    bus_size_t, struct ixgbe_dma_alloc *, int);
 void	ixgbe_dma_free(struct adapter *, struct ixgbe_dma_alloc *);
 int	ixgbe_get_regs(SYSCTL_HANDLER_ARGS);
+void	ixgbe_init_tx_ring(struct ix_queue *que);
 
 #ifdef PCI_IOV
 

@@ -5,18 +5,24 @@
  *
  ********************************************************************/
 #define IXGBE_REGS_LEN  1139
+extern if_shared_ctx_t ixgbe_sctx;
 
 int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 {
         struct adapter *adapter = (struct adapter *) arg1;
 	struct ixgbe_hw *hw = &adapter->hw;
+#ifdef PRINT_QSET
 	struct ix_queue *que = &adapter->queues[0];
 	struct rx_ring *rxr = &que->rxr;
 	struct tx_ring *txr = &que->txr;
+	int ntxd = ixgbe_sctx->isc_ntxd;
+	int nrxd = ixgbe_sctx->isc_nrxd;
+	int j;
+#endif
 
 	struct sbuf *sb;
 	u32 *regs_buff = (u32 *)malloc(sizeof(u32) * IXGBE_REGS_LEN, M_DEVBUF, M_NOWAIT);
-	u8 i, j;
+	int i;
 	int rc;
 
 	memset(regs_buff, 0, IXGBE_REGS_LEN * sizeof(u32));
@@ -26,7 +32,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	if (rc != 0)
 	  return (rc);
 
-	sb = sbuf_new_for_sysctl(NULL, NULL, 32*400, req);
+	sb = sbuf_new_for_sysctl(NULL, NULL, 32*PAGE_SIZE, req);
 	MPASS(sb != NULL);
 	if (sb == NULL)
 	  return (ENOMEM);
@@ -492,22 +498,23 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	regs_buff[1136] = IXGBE_READ_REG(hw, IXGBE_RTTBCNRD);
 	/* same as RTTQCNRR */
 	sbuf_printf(sb, "\tIXGBE_RTTBCNRD\t %08x\n", regs_buff[1136]);
-
-	for (j = 0; j < 64; j++) {
+#ifdef PRINT_QSET
+	for (j = 0; j < nrxd; j++) {
 		u32 staterr = le32toh(rxr->rx_base[j].wb.upper.status_error);
 		u32 length =  le32toh(rxr->rx_base[j].wb.upper.length);
 		sbuf_printf(sb, "\tReceive Descriptor Address %d: %08lx  Error:%d  Length:%d\n", j, rxr->rx_base[j].read.pkt_addr, staterr, length);
 	}
 
-	for (j = 0; j < 64; j++) {
+	for (j = 0; j < min(ntxd, 256); j++) {
 		struct ixgbe_tx_buf *buf = &txr->tx_buffers[j];
-		u64 buffer_addr = txr->tx_base[j].read.buffer_addr;
-		u32 cmd_type_len = txr->tx_base[j].read.cmd_type_len;
-		u32 olinfo_status = txr->tx_base[j].read.olinfo_status;
-		sbuf_printf(sb, "\tTXD[%d] addr: %08lx Cmd Len:%d  olinfo_status:%d eop: %p DD=%d\n",
-			    j, buffer_addr, cmd_type_len, olinfo_status, buf->eop,
-			    buf->eop != NULL ? buf->eop->wb.status & IXGBE_TXD_STAT_DD : 0);
+		unsigned int *ptr = (unsigned int *)&txr->tx_base[j].read;
+
+		sbuf_printf(sb, "\tTXD[%03d] [0]: %08x [1]: %08x [2]: %08x [3]: %08x  eop: %d DD=%d\n",
+			    j, ptr[0], ptr[1], ptr[2], ptr[3], buf->eop,
+			    buf->eop != -1 ? txr->tx_base[buf->eop].wb.status & IXGBE_TXD_STAT_DD : 0);
+
 	}
+#endif
 	/* X540 specific DCB registers
 	regs_buff[1137] = IXGBE_READ_REG(hw, IXGBE_RTTQCNCR);
 	regs_buff[1138] = IXGBE_READ_REG(hw, IXGBE_RTTQCNTG); */

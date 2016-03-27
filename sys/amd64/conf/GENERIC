@@ -102,6 +102,7 @@ device		acpi
 options 	ACPI_DMAR
 device		pci
 options		PCI_IOV			# PCI SR-IOV support
+options		IFLIB
 
 # Floppy drives
 device		fdc

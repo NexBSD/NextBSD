@@ -35,18 +35,19 @@
 #error "no user-serviceable parts inside"
 #endif
 
-struct mp_ring;
-typedef u_int (*ring_drain_t)(struct mp_ring *, u_int, u_int);
-typedef u_int (*ring_can_drain_t)(struct mp_ring *);
+struct ifmp_ring;
+typedef u_int (*mp_ring_drain_t)(struct ifmp_ring *, u_int, u_int);
+typedef u_int (*mp_ring_can_drain_t)(struct ifmp_ring *);
+typedef void (*mp_ring_serial_t)(struct ifmp_ring *);
 
-struct mp_ring {
+struct ifmp_ring {
 	volatile uint64_t	state __aligned(CACHE_LINE_SIZE);
 
 	int			size __aligned(CACHE_LINE_SIZE);
 	void *			cookie;
 	struct malloc_type *	mt;
-	ring_drain_t		drain;
-	ring_can_drain_t	can_drain;	/* cheap, may be unreliable */
+	mp_ring_drain_t		drain;
+	mp_ring_can_drain_t	can_drain;	/* cheap, may be unreliable */
 	counter_u64_t		enqueues;
 	counter_u64_t		drops;
 	counter_u64_t		starts;
@@ -57,12 +58,12 @@ struct mp_ring {
 	void * volatile		items[] __aligned(CACHE_LINE_SIZE);
 };
 
-int mp_ring_alloc(struct mp_ring **, int, void *, ring_drain_t,
-    ring_can_drain_t, struct malloc_type *, int);
-void mp_ring_free(struct mp_ring *);
-int mp_ring_enqueue(struct mp_ring *, void **, int, int);
-void mp_ring_check_drainage(struct mp_ring *, int);
-void mp_ring_reset_stats(struct mp_ring *);
-int mp_ring_is_idle(struct mp_ring *);
-
+int ifmp_ring_alloc(struct ifmp_ring **, int, void *, mp_ring_drain_t,
+    mp_ring_can_drain_t, struct malloc_type *, int);
+void ifmp_ring_free(struct ifmp_ring *);
+int ifmp_ring_enqueue(struct ifmp_ring *, void **, int, int);
+void ifmp_ring_check_drainage(struct ifmp_ring *, int);
+void ifmp_ring_reset_stats(struct ifmp_ring *);
+int ifmp_ring_is_idle(struct ifmp_ring *);
+int ifmp_ring_is_stalled(struct ifmp_ring *r);
 #endif

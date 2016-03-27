@@ -34,6 +34,15 @@
 #include <sys/bus_dma.h>
 #include <sys/nv.h>
 
+
+/*
+ * Most cards can handle much larger TSO requests
+ * but the FreeBSD TCP stack will break on larger
+ * values
+ */
+#define FREEBSD_TSO_SIZE_MAX 65518
+
+
 struct iflib_ctx;
 typedef struct iflib_ctx *if_ctx_t;
 struct if_shared_ctx;
@@ -49,23 +58,28 @@ typedef struct if_int_delay_info  *if_int_delay_info_t;
  *  - iflib core functions
  */
 
+typedef struct if_rxd_frag {
+	uint8_t irf_flid;
+	uint16_t irf_idx;
+} *if_rxd_frag_t;
+
 typedef struct if_rxd_info {
+	/* set by iflib */
 	uint16_t iri_qsidx;		/* qset index */
 	uint16_t iri_vtag;		/* vlan tag - if flag set */
 	uint16_t iri_len;		/* packet length */
-	uint16_t iri_next_offset; /* 0 for eop */
-	uint32_t iri_cidx;		/* consumer index of cq */
-	uint32_t iri_flowid;	/* RSS hash for packet */
-	int      iri_flags;		/* mbuf flags for packet */
-	uint32_t iri_csum_flags; /* m_pkthdr csum flags */
-	uint32_t iri_csum_data;	/* m_pkthdr csum data */
-	struct mbuf *iri_m;		/* for driver paths that manage their own rx */
-	struct ifnet *iri_ifp;	/* some drivers >1 interface per softc */
-	uint8_t	 iri_rsstype; /* RSS hash type */
+	uint16_t iri_cidx;		/* consumer index of cq */
+	struct ifnet *iri_ifp;		/* some drivers >1 interface per softc */
+
+	/* updated by driver */
+	uint16_t iri_flags;		/* mbuf flags for packet */
+	uint32_t iri_flowid;		/* RSS hash for packet */
+	uint32_t iri_csum_flags;	/* m_pkthdr csum flags */
+	uint32_t iri_csum_data;		/* m_pkthdr csum data */
+	uint8_t	 iri_nfrags;		/* number of fragments in packet */
+	uint8_t	 iri_rsstype;		/* RSS hash type */
 	uint8_t	 iri_pad;		/* any padding in the received data */
-	int8_t	 iri_qidx;		/* == -1 -> completion queue event
-							 * >=  0 -> free list id
-							 */
+	if_rxd_frag_t iri_frags;
 } *if_rxd_info_t;
 
 #define IPI_TX_INTR	0x1		/* send an interrupt when this packet is sent */
@@ -90,8 +104,11 @@ typedef struct if_pkt_info {
 	uint8_t				ipi_ehdrlen;	/* ether header length */
 	uint8_t				ipi_ip_hlen;	/* ip header length */
 	uint8_t				ipi_tcp_hlen;	/* tcp header length */
+	uint8_t				ipi_tcp_hflags;	/* tcp header flags */
 	uint8_t				ipi_ipproto;	/* ip protocol */
 	/* implied padding */
+	uint32_t			ipi_tcp_seq;	/* tcp seqno */
+	uint32_t			ipi_tcp_sum;	/* tcp csum */
 } *if_pkt_info_t;
 
 typedef struct if_irq {
@@ -135,7 +152,7 @@ typedef struct pci_vendor_info {
 typedef struct if_txrx {
 	int (*ift_txd_encap) (void *, if_pkt_info_t);
 	void (*ift_txd_flush) (void *, uint16_t, uint32_t);
-	int (*ift_txd_credits_update) (void *, uint16_t, uint32_t);
+	int (*ift_txd_credits_update) (void *, uint16_t, uint32_t, bool);
 
 	int (*ift_rxd_available) (void *, uint16_t qsidx, uint32_t pidx);
 	int (*ift_rxd_pkt_get) (void *, if_rxd_info_t ri);
@@ -148,8 +165,14 @@ typedef struct if_txrx {
 typedef struct if_softc_ctx {
 	int isc_vectors;
 	int isc_nqsets;
-	int isc_msix_bar;			/* can be model specific - initialize in attach_pre */
+	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
+	int isc_tx_tso_segments_max;
+	int isc_tx_tso_size_max;
+	int isc_tx_tso_segsize_max;
+	int isc_rss_table_size;
+	int isc_rss_table_mask;
+
 	iflib_intr_mode_t isc_intr;
 	uint16_t isc_max_frame_size; /* set at init time by driver */
 	pci_vendor_info_t isc_vendor_info;	/* set by iflib prior to attach_pre */
@@ -184,7 +207,18 @@ struct if_shared_ctx {
 	/* fields necessary for probe */
 	pci_vendor_info_t *isc_vendor_info;
 	char *isc_driver_version;
+/* optional function to transform the read values to match the table*/
+	void (*isc_parse_devinfo) (uint16_t *device_id, uint16_t *subvendor_id,
+				   uint16_t *subdevice_id, uint16_t *rev_id);
 };
+
+typedef struct iflib_dma_info {
+	bus_addr_t		idi_paddr;
+	caddr_t			idi_vaddr;
+	bus_dma_tag_t		idi_tag;
+	bus_dmamap_t		idi_map;
+	uint32_t		idi_size;
+} *iflib_dma_info_t;
 
 #define IFLIB_MAGIC 0xCAFEF00D
 
@@ -281,7 +315,9 @@ void iflib_iov_intr_deferred(if_ctx_t ctx);
 void iflib_link_state_change(if_ctx_t ctx, int linkstate);
 
 
+int iflib_dma_alloc_multi(if_ctx_t ctx, int *sizes, iflib_dma_info_t *dmalist, int mapflags, int count);
 
+void iflib_dma_free_multi(iflib_dma_info_t *dmalist, int count);
 
 
 struct mtx *iflib_ctx_lock_get(if_ctx_t);

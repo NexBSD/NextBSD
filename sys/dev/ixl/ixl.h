@@ -39,7 +39,6 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/mbuf.h>
 #include <sys/protosw.h>
 #include <sys/socket.h>
 #include <sys/malloc.h>
@@ -213,7 +212,7 @@ MALLOC_DECLARE(M_IXL);
 
 #define IXL_BAR			3
 #define IXL_ADM_LIMIT		2
-#define IXL_TSO_SIZE		65535
+#define IXL_TSO_SIZE		((255*1024)-1)
 #define IXL_TX_BUF_SZ		((u32) 1514)
 #define IXL_AQ_BUF_SZ		((u32) 4096)
 #define IXL_RX_HDR		128
@@ -229,7 +228,6 @@ MALLOC_DECLARE(M_IXL);
 #define IXL_MAX_FRAME		0x2600
 #define IXL_MAX_TX_SEGS		8
 #define IXL_MAX_TSO_SEGS	66 
-#define IXL_SPARSE_CHAIN	6
 #define IXL_QUEUE_HUNG		0x80000000
 #define IXL_KEYSZ		10
 
@@ -353,10 +351,6 @@ typedef struct _ixl_vendor_info_t {
 } ixl_vendor_info_t;
 
 
-struct ixl_tx_buf {
-	u32		eop_index;
-};
-
 /*
 ** This struct has multiple uses, multicast
 ** addresses, vlans, and mac filters all use it.
@@ -377,17 +371,10 @@ struct tx_ring {
 	u32			tail;
 	struct i40e_tx_desc	*tx_base;
 	uint64_t tx_paddr;
-	u16			next_avail;
-	u16			next_to_clean;
 	u16			atr_rate;
 	u16			atr_count;
 	u16			itr;
 	u16			latency;
-	struct ixl_tx_buf	*tx_buffers;
-	volatile u16		avail;
-	u32			cmd;
-	bus_dma_tag_t		tx_tag;
-	bus_dma_tag_t		tso_tag;
 
 	/* Used for Dynamic ITR calculation */
 	u32			packets;
@@ -395,7 +382,6 @@ struct tx_ring {
 
 	/* Soft Stats */
 	u64			tx_bytes;
-	u64			no_desc;
 	u64			total_packets;
 };
 
@@ -413,8 +399,6 @@ struct rx_ring {
 	
 	u32			mbuf_sz;
 	u32			tail;
-	bus_dma_tag_t		htag;
-	bus_dma_tag_t		ptag;
 
 	/* Used for Dynamic ITR calculation */
 	u32			packets;
@@ -425,7 +409,6 @@ struct rx_ring {
 	u64			rx_packets;
 	u64 			rx_bytes;
 	u64 			discarded;
-	u64 			not_done;
 };
 
 /*
@@ -437,8 +420,6 @@ struct ixl_queue {
 	u32			me;
 	u32			msix;           /* This queue's MSIX vector */
 	u32			eims;           /* This queue's EIMS bit */
-	struct resource		*res;
-	void			*tag;
 	int			busy;
 	struct tx_ring		txr;
 	struct rx_ring		rxr;
@@ -448,11 +429,8 @@ struct ixl_queue {
 	/* Queue stats */
 	u64			irqs;
 	u64			tso;
-	u64			mbuf_defrag_failed;
 	u64			mbuf_hdr_failed;
 	u64			mbuf_pkt_failed;
-	u64			tx_map_avail;
-	u64			tx_dma_setup;
 	u64			dropped_pkts;
 };
 
@@ -587,13 +565,10 @@ ixl_fw_version_str(struct i40e_hw *hw)
 /*********************************************************************
  *  TXRX Function prototypes
  *********************************************************************/
-void	ixl_init_tx_ring(struct ixl_queue *);
+void	ixl_init_tx_ring(struct ixl_vsi *, struct ixl_queue *);
 
 #ifdef IXL_FDIR
 void	ixl_atr(struct ixl_queue *, struct tcphdr *, int);
-#endif
-#if __FreeBSD_version >= 1100000
-uint64_t ixl_get_counter(if_t ifp, ift_counter cnt);
 #endif
 
 /*********************************************************************

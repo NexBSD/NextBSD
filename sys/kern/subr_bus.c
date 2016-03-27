@@ -3237,9 +3237,9 @@ resource_list_delete(struct resource_list *rl, int type, int rid)
  * @param type		the type of resource to allocate
  * @param rid		a pointer to the resource identifier
  * @param start		hint at the start of the resource range - pass
- *			@c 0UL for any start address
+ *			@c 0 for any start address
  * @param end		hint at the end of the resource range - pass
- *			@c ~0UL for any end address
+ *			@c ~0 for any end address
  * @param count		hint at the size of range required - pass @c 1
  *			for any size
  * @param flags		any extra flags to control the resource
@@ -3294,9 +3294,9 @@ resource_list_reserve(struct resource_list *rl, device_t bus, device_t child,
  * @param type		the type of resource to allocate
  * @param rid		a pointer to the resource identifier
  * @param start		hint at the start of the resource range - pass
- *			@c 0UL for any start address
+ *			@c 0 for any start address
  * @param end		hint at the end of the resource range - pass
- *			@c ~0UL for any end address
+ *			@c ~0 for any end address
  * @param count		hint at the size of range required - pass @c 1
  *			for any size
  * @param flags		any extra flags to control the resource
@@ -3312,7 +3312,7 @@ resource_list_alloc(struct resource_list *rl, device_t bus, device_t child,
 {
 	struct resource_list_entry *rle = NULL;
 	int passthrough = (device_get_parent(child) != bus);
-	int isdefault = (start == 0UL && end == ~0UL);
+	int isdefault = RMAN_IS_DEFAULT_RANGE(start, end);
 
 	if (passthrough) {
 		return (BUS_ALLOC_RESOURCE(device_get_parent(bus), child,
@@ -4087,12 +4087,12 @@ bus_generic_describe_intr(device_t dev, device_t child, struct resource *irq,
  */
 int
 bus_generic_get_cpus(device_t dev, device_t child, enum cpu_sets op,
-    cpuset_t *cpuset)
+    cpuset_t *cpuset, int size)
 {
 
 	/* Propagate up the bus hierarchy until someone handles it. */
 	if (dev->parent != NULL)
-		return (BUS_GET_CPUS(dev->parent, child, op, cpuset));
+		return (BUS_GET_CPUS(dev->parent, child, op, cpuset, size));
 	return (EINVAL);
 }
 
@@ -4110,6 +4110,22 @@ bus_generic_get_dma_tag(device_t dev, device_t child)
 	if (dev->parent != NULL)
 		return (BUS_GET_DMA_TAG(dev->parent, child));
 	return (NULL);
+}
+
+/**
+ * @brief Helper function for implementing BUS_GET_BUS_TAG().
+ *
+ * This simple implementation of BUS_GET_BUS_TAG() simply calls the
+ * BUS_GET_BUS_TAG() method of the parent of @p dev.
+ */
+bus_space_tag_t
+bus_generic_get_bus_tag(device_t dev, device_t child)
+{
+
+	/* Propagate up the bus hierarchy until someone handles it. */
+	if (dev->parent != NULL)
+		return (BUS_GET_BUS_TAG(dev->parent, child));
+	return ((bus_space_tag_t)0);
 }
 
 /**
@@ -4583,14 +4599,19 @@ bus_child_location_str(device_t child, char *buf, size_t buflen)
  * parent of @p dev.
  */
 int
-bus_get_cpus(device_t dev, enum cpu_sets op, cpuset_t *cpuset)
+bus_get_cpus(device_t dev, enum cpu_sets op, cpuset_t *cpuset, int size)
 {
 	device_t parent;
 
+	/*
+	 * How should we handle size mismatch?
+	 */
+	if (size < sizeof(cpuset_t))
+	    return (ENXIO);
 	parent = device_get_parent(dev);
 	if (parent == NULL)
 		return (EINVAL);
-	return (BUS_GET_CPUS(parent, dev, op, cpuset));
+	return (BUS_GET_CPUS(parent, dev, op, cpuset, size));
 }
 
 /**
@@ -4608,6 +4629,23 @@ bus_get_dma_tag(device_t dev)
 	if (parent == NULL)
 		return (NULL);
 	return (BUS_GET_DMA_TAG(parent, dev));
+}
+
+/**
+ * @brief Wrapper function for BUS_GET_BUS_TAG().
+ *
+ * This function simply calls the BUS_GET_BUS_TAG() method of the
+ * parent of @p dev.
+ */
+bus_space_tag_t
+bus_get_bus_tag(device_t dev)
+{
+	device_t parent;
+
+	parent = device_get_parent(dev);
+	if (parent == NULL)
+		return ((bus_space_tag_t)0);
+	return (BUS_GET_BUS_TAG(parent, dev));
 }
 
 /**
@@ -4669,7 +4707,7 @@ root_child_present(device_t dev, device_t child)
 }
 
 static int
-root_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
+root_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset, int size)
 {
 
 	switch (op) {

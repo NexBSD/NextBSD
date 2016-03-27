@@ -76,10 +76,7 @@ struct ixl_pf {
 	 * either used for legacy, or for Link
 	 * when doing MSIX
 	 */
-	void			*tag;
-	struct resource 	*res;
 
-	struct callout		timer;
 	int			msix;
 	int			if_flags;
 

@@ -275,7 +275,6 @@ static struct if_shared_ctx ixlv_sctx_init = {
 };
 
 if_shared_ctx_t ixlv_sctx = &ixlv_sctx_init;
-MALLOC_DEFINE(M_IXL, "ixl", "ixl driver allocations");
 
 static void *
 ixlv_register(device_t dev)
@@ -419,7 +418,7 @@ ixlv_if_attach_pre(if_ctx_t ctx)
 	return (error);
 
 err_res_buf:
-	free(sc->vf_res, M_DEVBUF);
+	free(sc->vf_res, M_IXL);
 err_aq:
 	i40e_shutdown_adminq(hw);
 err_pci_res:
@@ -494,7 +493,7 @@ ixlv_if_detach(if_ctx_t ctx)
 	INIT_DBG_DEV(dev, "begin");
 
 	i40e_shutdown_adminq(&sc->hw);
-	free(sc->vf_res, M_DEVBUF);
+	free(sc->vf_res, M_IXL);
 	ixlv_free_pci_resources(sc);
 	ixlv_free_filters(sc);
 
@@ -754,7 +753,7 @@ ixlv_reinit_locked(struct ixlv_sc *sc)
 		if (mf->flags & IXL_FILTER_DEL) {
 			SLIST_REMOVE(sc->mac_filters, mf,
 			    ixlv_mac_filter, next);
-			free(mf, M_DEVBUF);
+			free(mf, M_IXL);
 		} else
 			mf->flags |= IXL_FILTER_ADD;
 	}
@@ -765,7 +764,7 @@ ixlv_reinit_locked(struct ixlv_sc *sc)
 		while (!SLIST_EMPTY(sc->vlan_filters)) {
 			vf = SLIST_FIRST(sc->vlan_filters);
 			SLIST_REMOVE_HEAD(sc->vlan_filters, next);
-			free(vf, M_DEVBUF);
+			free(vf, M_IXL);
 		}
 	}
 
@@ -853,7 +852,7 @@ ixlv_init_internal(if_ctx_t ctx)
 
 	/* Prepare the queues for operation */
 	for (int i = 0; i < vsi->num_queues; i++, que++) {
-		ixl_init_tx_ring(que);
+		ixl_init_tx_ring(vsi, que);
 	}
 
 	/* Configure queues */
@@ -897,7 +896,13 @@ ixlv_if_init(if_ctx_t ctx)
 		    "Init failed to complete in alloted time!\n");
 
 }
+void
+ixlv_init(void *arg)
+{
+	struct ixlv_sc *sc = arg;
 
+	ixlv_if_init(sc->vsi.ctx);
+}
 /*
  * ixlv_attach() helper function; gathers information about
  * the (virtual) hardware for use elsewhere in the driver.
@@ -1052,7 +1057,7 @@ retry_config:
 	if (!sc->vf_res) {
 		bufsz = sizeof(struct i40e_virtchnl_vf_resource) +
 		    (I40E_MAX_VF_VSI * sizeof(struct i40e_virtchnl_vsi_resource));
-		sc->vf_res = malloc(bufsz, M_DEVBUF, M_NOWAIT);
+		sc->vf_res = malloc(bufsz, M_IXL, M_NOWAIT);
 		if (!sc->vf_res) {
 			device_printf(dev,
 			    "%s: Unable to allocate memory for VF configuration"
@@ -1080,7 +1085,7 @@ retry_config:
 	goto done;
 
 fail:
-	free(sc->vf_res, M_DEVBUF);
+	free(sc->vf_res, M_IXL);
 done:
 	return (ret_error);
 }
@@ -1327,7 +1332,7 @@ ixlv_if_vlan_register(if_ctx_t ctx, u16 vtag)
 
 	++vsi->num_vlans;
 	/* should either fail or be M_WAITOK XXX */
-	v = malloc(sizeof(struct ixlv_vlan_filter), M_DEVBUF, M_NOWAIT | M_ZERO);
+	v = malloc(sizeof(struct ixlv_vlan_filter), M_IXL, M_NOWAIT | M_ZERO);
 
 	SLIST_INSERT_HEAD(sc->vlan_filters, v, next);
 	v->vlan = vtag;
@@ -1372,7 +1377,7 @@ ixlv_get_mac_filter(struct ixlv_sc *sc)
 	struct ixlv_mac_filter	*f;
 
 	f = malloc(sizeof(struct ixlv_mac_filter),
-	    M_DEVBUF, M_NOWAIT | M_ZERO);
+	    M_IXL, M_NOWAIT | M_ZERO);
 	if (f)
 		SLIST_INSERT_HEAD(sc->mac_filters, f, next);
 
@@ -1434,6 +1439,12 @@ ixlv_if_intr_enable(if_ctx_t ctx)
 }
 
 void
+ixlv_enable_intr(struct ixl_vsi *vsi)
+{
+	ixlv_if_intr_enable(vsi->ctx);
+}
+
+void
 ixlv_if_intr_disable(if_ctx_t ctx)
 {
 	struct ixlv_sc			*sc = iflib_get_softc(ctx);
@@ -1446,6 +1457,11 @@ ixlv_if_intr_disable(if_ctx_t ctx)
 		ixlv_if_queue_intr_disable(ctx, que->me);
 }
 
+void
+ixlv_disable_intr(struct ixl_vsi *vsi)
+{
+	ixlv_if_intr_disable(vsi->ctx);
+}
 
 static void
 ixlv_disable_adminq_irq(struct i40e_hw *hw)
@@ -1654,6 +1670,15 @@ ixlv_msix_que(void *arg)
 	ixlv_set_queue_rx_itr(que);
 	ixlv_set_queue_tx_itr(que);
 	return (FILTER_SCHEDULE_THREAD);
+}
+
+
+/* XXX */
+void
+ixlv_update_link_status(struct ixlv_sc *sc)
+{
+	/* satisfy linker for the moment */
+	;
 }
 
 
@@ -2261,9 +2286,6 @@ ixlv_add_sysctls(struct ixlv_sc *sc)
 		txr = &(queues[q].txr);
 		rxr = &(queues[q].rxr);
 
-		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "mbuf_defrag_failed",
-				CTLFLAG_RD, &(queues[q].mbuf_defrag_failed),
-				"m_defrag() failed");
 		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "dropped",
 				CTLFLAG_RD, &(queues[q].dropped_pkts),
 				"Driver dropped packets");
@@ -2273,12 +2295,6 @@ ixlv_add_sysctls(struct ixlv_sc *sc)
 		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "tso_tx",
 				CTLFLAG_RD, &(queues[q].tso),
 				"TSO");
-		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "tx_dma_setup",
-				CTLFLAG_RD, &(queues[q].tx_dma_setup),
-				"Driver tx dma failure in xmit");
-		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "no_desc_avail",
-				CTLFLAG_RD, &(txr->no_desc),
-				"Queue No Descriptor Available");
 		SYSCTL_ADD_QUAD(ctx, queue_list, OID_AUTO, "tx_packets",
 				CTLFLAG_RD, &(txr->total_packets),
 				"Queue Packets Transmitted");
@@ -2310,10 +2326,10 @@ static void
 ixlv_init_filters(struct ixlv_sc *sc)
 {
 	sc->mac_filters = malloc(sizeof(struct ixlv_mac_filter),
-	    M_DEVBUF, M_NOWAIT | M_ZERO);
+	    M_IXL, M_NOWAIT | M_ZERO);
 	SLIST_INIT(sc->mac_filters);
 	sc->vlan_filters = malloc(sizeof(struct ixlv_vlan_filter),
-	    M_DEVBUF, M_NOWAIT | M_ZERO);
+	    M_IXL, M_NOWAIT | M_ZERO);
 	SLIST_INIT(sc->vlan_filters);
 	return;
 }
@@ -2327,12 +2343,12 @@ ixlv_free_filters(struct ixlv_sc *sc)
 	while (!SLIST_EMPTY(sc->mac_filters)) {
 		f = SLIST_FIRST(sc->mac_filters);
 		SLIST_REMOVE_HEAD(sc->mac_filters, next);
-		free(f, M_DEVBUF);
+		free(f, M_IXL);
 	}
 	while (!SLIST_EMPTY(sc->vlan_filters)) {
 		v = SLIST_FIRST(sc->vlan_filters);
 		SLIST_REMOVE_HEAD(sc->vlan_filters, next);
-		free(v, M_DEVBUF);
+		free(v, M_IXL);
 	}
 	return;
 }

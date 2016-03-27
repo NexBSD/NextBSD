@@ -294,7 +294,7 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
 	struct ix_queue *que;
-	int i, error;
+	int i, j, error;
 
 #ifdef PCI_IOV
 	enum ixgbe_iov_mode iov_mode;
@@ -345,7 +345,8 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 		rxr->rx_paddr = paddrs[i*2 + 1];
 		rxr->bytes = 0;
 		txr->que = rxr->que = que;
-		txr->tx_buffers->eop = NULL;
+		for (j = 0; j < ixv_sctx->isc_ntxd; j++)
+			txr->tx_buffers->eop = -1;
 		txr->bytes = 0;
 		txr->total_packets = 0;
 
@@ -505,9 +506,6 @@ ixv_if_attach_pre(if_ctx_t ctx)
 		bcopy(addr, hw->mac.addr, sizeof(addr));
 	}
 
-#ifdef DEV_NETMAP
-	ixgbe_netmap_attach(adapter);
-#endif /* DEV_NETMAP */
 	INIT_DEBUGOUT("ixv_attach: end");
 	return (0);
 
@@ -536,9 +534,6 @@ ixv_if_attach_post(if_ctx_t ctx)
 	ixv_init_stats(adapter);
 	ixv_add_stats_sysctls(adapter);
 
-#ifdef DEV_NETMAP
-	ixgbe_netmap_attach(adapter);
-#endif /* DEV_NETMAP */
 	INIT_DEBUGOUT("ixv_attachpost: end");
 
 end:
@@ -1142,8 +1137,7 @@ ixv_allocate_pci_resources(if_ctx_t ctx)
 
 	/* Pick up the tuneable queues */
 	adapter->num_queues = ixv_num_queues;
-	adapter->hw.back = &adapter->osdep;
-
+	adapter->hw.back = adapter;
 	return (0);
 }
 
@@ -1668,12 +1662,6 @@ ixv_add_stats_sysctls(struct adapter *adapter)
 	struct sysctl_oid_list *stat_list, *queue_list;
 
 	/* Driver Statistics */
-	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "dropped",
-			CTLFLAG_RD, &adapter->dropped_pkts,
-			"Driver dropped packets");
-	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "mbuf_defrag_failed",
-			CTLFLAG_RD, &adapter->mbuf_defrag_failed,
-			"m_defrag() failed");
 	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "watchdog_events",
 			CTLFLAG_RD, &adapter->watchdog_events,
 			"Watchdog timeouts");
@@ -1723,10 +1711,6 @@ ixv_add_stats_sysctls(struct adapter *adapter)
 	SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "tx_packets",
 			CTLFLAG_RD, &(txr->total_packets),
 			"TX Packets");
-
-	SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "tx_no_desc",
-			CTLFLAG_RD, &(txr->no_desc_avail),
-			"# of times not enough descriptors were available during TX");
 }
 
 static void 
@@ -1769,8 +1753,6 @@ ixv_print_debug_info(struct adapter *adapter)
                     rxr->me, (long)rxr->rx_bytes);
                 device_printf(dev,"TX(%d) Packets Sent: %lu\n",
                     txr->me, (long)txr->total_packets);
-                device_printf(dev,"TX(%d) NO Desc Avail: %lu\n",
-                    txr->me, (long)txr->no_desc_avail);
         }
 
         device_printf(dev,"MBX IRQ Handled: %lu\n",

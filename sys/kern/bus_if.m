@@ -247,9 +247,9 @@ METHOD device_t add_child {
  * @param _type		the type of resource to allocate
  * @param _rid		a pointer to the resource identifier
  * @param _start	hint at the start of the resource range - pass
- *			@c 0UL for any start address
+ *			@c 0 for any start address
  * @param _end		hint at the end of the resource range - pass
- *			@c ~0UL for any end address
+ *			@c ~0 for any end address
  * @param _count	hint at the size of range required - pass @c 1
  *			for any size
  * @param _flags	any extra flags to control the resource
@@ -637,6 +637,17 @@ METHOD bus_dma_tag_t get_dma_tag {
 } DEFAULT bus_generic_get_dma_tag;
 
 /**
+ * @brief Returns bus_space_tag_t for use w/ devices on the bus.
+ *
+ * @param _dev		the parent device of @p _child
+ * @param _child	the device to which the tag will belong
+ */
+METHOD bus_space_tag_t get_bus_tag {
+	device_t	_dev;
+	device_t	_child;
+} DEFAULT bus_generic_get_bus_tag;
+
+/**
  * @brief Allow the bus to determine the unit number of a device.
  *
  * @param _dev		the parent device of @p _child
@@ -714,12 +725,14 @@ METHOD int get_domain {
  * @param _dev		the bus device
  * @param _child	the child device
  * @param _op		type of CPUs to request
- * @param _cpuset	a pointer to a cpuset to receive the requested
- *			set of CPUs
+ * @param _cpuset	a pointer to a cpuset to receive the requested set of CPUs
+ * @param _size		size of cpuset
+ *
  */
 METHOD int get_cpus {
 	device_t	_dev;
 	device_t	_child;
 	enum cpu_sets	_op;
 	cpuset_t	*_cpuset;
+	int		_size;
 } DEFAULT bus_generic_get_cpus;

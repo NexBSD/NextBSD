@@ -1212,7 +1212,7 @@ t4fw.fwo		optional cxgbe					\
 	no-implicit-rule						\
 	clean		"t4fw.fwo"
 t4fw.fw			optional cxgbe					\
-	dependency	"$S/dev/cxgbe/firmware/t4fw-1.14.4.0.bin.uu"	\
+	dependency	"$S/dev/cxgbe/firmware/t4fw-1.15.28.0.bin.uu"	\
 	compile-with	"${NORMAL_FW}"					\
 	no-obj no-implicit-rule						\
 	clean		"t4fw.fw"
@@ -1236,7 +1236,7 @@ t5fw.fwo		optional cxgbe					\
 	no-implicit-rule						\
 	clean		"t5fw.fwo"
 t5fw.fw			optional cxgbe					\
-	dependency	"$S/dev/cxgbe/firmware/t5fw-1.14.4.0.bin.uu"	\
+	dependency	"$S/dev/cxgbe/firmware/t5fw-1.15.28.0.bin.uu"	\
 	compile-with	"${NORMAL_FW}"					\
 	no-obj no-implicit-rule						\
 	clean		"t5fw.fw"
@@ -1415,12 +1415,20 @@ dev/exca/exca.c			optional cbb
 dev/extres/clk/clk.c		optional ext_resources clk
 dev/extres/clk/clkdev_if.m	optional ext_resources clk
 dev/extres/clk/clknode_if.m	optional ext_resources clk
+dev/extres/clk/clk_bus.c	optional ext_resources clk fdt
 dev/extres/clk/clk_div.c	optional ext_resources clk
 dev/extres/clk/clk_fixed.c	optional ext_resources clk
 dev/extres/clk/clk_gate.c	optional ext_resources clk
 dev/extres/clk/clk_mux.c	optional ext_resources clk
+dev/extres/phy/phy.c		optional ext_resources phy
+dev/extres/phy/phy_if.m		optional ext_resources phy
 dev/extres/hwreset/hwreset.c	optional ext_resources hwreset
 dev/extres/hwreset/hwreset_if.m	optional ext_resources hwreset
+dev/extres/regulator/regdev_if.m	optional ext_resources regulator
+dev/extres/regulator/regnode_if.m	optional ext_resources regulator
+dev/extres/regulator/regulator.c	optional ext_resources regulator
+dev/extres/regulator/regulator_bus.c	optional ext_resources regulator fdt
+dev/extres/regulator/regulator_fixed.c	optional ext_resources regulator
 dev/fatm/if_fatm.c		optional fatm pci
 dev/fb/fbd.c			optional fbd | vt
 dev/fb/fb_if.m			standard
@@ -1562,10 +1570,10 @@ ipw_monitor.fw			optional ipwmonitorfw | ipwfw		\
 	compile-with	"${NORMAL_FW}"					\
 	no-obj no-implicit-rule						\
 	clean		"ipw_monitor.fw"
-dev/iscsi/icl.c			optional iscsi | ctl 
-dev/iscsi/icl_conn_if.m		optional iscsi | ctl 
+dev/iscsi/icl.c			optional iscsi | ctl
+dev/iscsi/icl_conn_if.m		optional iscsi | ctl
 dev/iscsi/icl_proxy.c		optional iscsi | ctl
-dev/iscsi/icl_soft.c		optional iscsi | ctl 
+dev/iscsi/icl_soft.c		optional iscsi | ctl
 dev/iscsi/iscsi.c		optional iscsi scbus
 dev/iscsi_initiator/iscsi.c	optional iscsi_initiator scbus
 dev/iscsi_initiator/iscsi_subr.c	optional iscsi_initiator scbus
@@ -1863,37 +1871,39 @@ iwn6050.fw			optional iwn6050fw | iwnfw		\
 dev/ixgb/if_ixgb.c		optional ixgb
 dev/ixgb/ixgb_ee.c		optional ixgb
 dev/ixgb/ixgb_hw.c		optional ixgb
-dev/ixgbe/if_ix.c		optional ix inet \
+dev/ixgbe/if_ix.c		optional ix inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe -DSMP"
 dev/ixgbe/if_ixv.c		optional ixv inet \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe -DSMP"
-dev/ixgbe/ix_txrx.c		optional ix inet | ixv inet \
+dev/ixgbe/ix_txrx.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_osdep.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_osdep.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_phy.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_sysctl.c	optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_api.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_phy.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_common.c	optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_api.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_mbx.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_common.c	optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_vf.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_mbx.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_82598.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_vf.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_82599.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_82598.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_x540.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_82599.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_x550.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_x540.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_dcb.c		optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_x550.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_dcb_82598.c	optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_dcb.c		optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
-dev/ixgbe/ixgbe_dcb_82599.c	optional ix inet | ixv inet \
+dev/ixgbe/ixgbe_dcb_82598.c	optional ix inet iflib | ixv inet iflib \
+	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
+dev/ixgbe/ixgbe_dcb_82599.c	optional ix inet iflib | ixv inet iflib \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe"
 dev/jme/if_jme.c		optional jme pci
 dev/joy/joy.c			optional joy
@@ -3083,23 +3093,25 @@ geom/raid3/g_raid3.c		optional geom_raid3
 geom/raid3/g_raid3_ctl.c	optional geom_raid3
 geom/shsec/g_shsec.c		optional geom_shsec
 geom/stripe/g_stripe.c		optional geom_stripe
-geom/uncompress/g_uncompress.c	optional geom_uncompress
 contrib/xz-embedded/freebsd/xz_malloc.c	\
-	optional xz_embedded | geom_uncompress \
+	optional xz_embedded | geom_uzip \
 	compile-with "${NORMAL_C} -I$S/contrib/xz-embedded/freebsd/ -I$S/contrib/xz-embedded/linux/lib/xz/ -I$S/contrib/xz-embedded/linux/include/linux/"
 contrib/xz-embedded/linux/lib/xz/xz_crc32.c \
-	optional xz_embedded | geom_uncompress \
+	optional xz_embedded | geom_uzip \
 	compile-with "${NORMAL_C} -I$S/contrib/xz-embedded/freebsd/ -I$S/contrib/xz-embedded/linux/lib/xz/ -I$S/contrib/xz-embedded/linux/include/linux/"
 contrib/xz-embedded/linux/lib/xz/xz_dec_bcj.c \
-	optional xz_embedded | geom_uncompress \
+	optional xz_embedded | geom_uzip \
 	compile-with "${NORMAL_C} -I$S/contrib/xz-embedded/freebsd/ -I$S/contrib/xz-embedded/linux/lib/xz/ -I$S/contrib/xz-embedded/linux/include/linux/"
 contrib/xz-embedded/linux/lib/xz/xz_dec_lzma2.c \
-	optional xz_embedded | geom_uncompress \
+	optional xz_embedded | geom_uzip \
 	compile-with "${NORMAL_C} -I$S/contrib/xz-embedded/freebsd/ -I$S/contrib/xz-embedded/linux/lib/xz/ -I$S/contrib/xz-embedded/linux/include/linux/"
 contrib/xz-embedded/linux/lib/xz/xz_dec_stream.c \
-	optional xz_embedded | geom_uncompress \
+	optional xz_embedded | geom_uzip \
 	compile-with "${NORMAL_C} -I$S/contrib/xz-embedded/freebsd/ -I$S/contrib/xz-embedded/linux/lib/xz/ -I$S/contrib/xz-embedded/linux/include/linux/"
 geom/uzip/g_uzip.c		optional geom_uzip
+geom/uzip/g_uzip_lzma.c		optional geom_uzip
+geom/uzip/g_uzip_wrkthr.c	optional geom_uzip
+geom/uzip/g_uzip_zlib.c		optional geom_uzip
 geom/vinum/geom_vinum.c		optional geom_vinum
 geom/vinum/geom_vinum_create.c	optional geom_vinum
 geom/vinum/geom_vinum_drive.c	optional geom_vinum
@@ -3332,7 +3344,7 @@ kern/uipc_socket.c		standard
 kern/uipc_syscalls.c		standard
 kern/uipc_usrreq.c		standard
 kern/vfs_acl.c			standard
-kern/vfs_aio.c			optional vfs_aio
+kern/vfs_aio.c			standard
 kern/vfs_bio.c			standard
 kern/vfs_cache.c		standard
 kern/vfs_cluster.c		standard
@@ -3457,7 +3469,7 @@ libkern/strvalid.c		standard
 libkern/timingsafe_bcmp.c	standard
 libkern/zlib.c			optional crypto | geom_uzip | ipsec | \
 					 mxge | netgraph_deflate | \
-					 ddb_ctf | gzio | geom_uncompress
+					 ddb_ctf | gzio
 net/altq/altq_cbq.c		optional altq
 net/altq/altq_cdnr.c		optional altq
 net/altq/altq_codel.c		optional altq
@@ -3507,8 +3519,8 @@ net/if_tun.c			optional tun
 net/if_tap.c			optional tap
 net/if_vlan.c			optional vlan
 net/if_vxlan.c			optional vxlan inet | vxlan inet6
-net/ifdi_if.m			optional ether 
-net/iflib.c			optional ether 
+net/ifdi_if.m			optional ether pci
+net/iflib.c			optional ether pci
 net/mp_ring.c			optional ether
 net/mppcc.c			optional netgraph_mppc_compression
 net/mppcd.c			optional netgraph_mppc_compression

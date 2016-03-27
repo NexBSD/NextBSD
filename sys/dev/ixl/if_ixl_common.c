@@ -41,7 +41,6 @@ ixl_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 {
 	struct ixl_vsi *vsi = iflib_get_softc(ctx);
 	struct ixl_queue *que;
-	struct ixl_tx_buf *bufs;
 	if_shared_ctx_t sctx;
 	int i;
 
@@ -53,11 +52,6 @@ ixl_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 	    (struct ixl_queue *) malloc(sizeof(struct ixl_queue) *
 	    vsi->num_queues, M_IXL, M_NOWAIT | M_ZERO))) {
 		device_printf(iflib_get_dev(ctx), "Unable to allocate TX ring memory\n");
-		return (ENOMEM);
-	}
-	if ((bufs = malloc(sizeof(*bufs)*sctx->isc_ntxd*vsi->num_queues, M_IXL, M_WAITOK|M_ZERO)) == NULL) {
-		free(vsi->queues, M_IXL);
-		device_printf(iflib_get_dev(ctx), "failed to allocate sw bufs\n");
 		return (ENOMEM);
 	}
 	
@@ -72,7 +66,6 @@ ixl_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 		txr->tail = I40E_QTX_TAIL(que->me);
 		txr->tx_base = (struct i40e_tx_desc *)vaddrs[i*2];
 		txr->tx_paddr = paddrs[i*2];
-		txr->tx_buffers = bufs + i*sctx->isc_ntxd;
 		rxr->tail = I40E_QRX_TAIL(que->me);
 		rxr->rx_base = (union i40e_rx_desc *)vaddrs[i*2 + 1];
 		rxr->rx_paddr = paddrs[i*2 + 1];
@@ -91,6 +84,5 @@ ixl_if_queues_free(if_ctx_t ctx)
 
 	if ((que = vsi->queues) == NULL)
 		return;
-	free(que->txr.tx_buffers, M_IXL);
 	free(que, M_IXL);
 }
