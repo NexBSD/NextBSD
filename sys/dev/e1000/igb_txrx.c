@@ -10,7 +10,7 @@
  *********************************************************************/
 static int igb_isc_txd_encap(void *arg, if_pkt_info_t pi);
 static void igb_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx);
-static int igb_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx);
+static int igb_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx, bool clear);
 
 static void igb_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count);
@@ -254,7 +254,7 @@ igb_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx)
 
 
 static int
-igb_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
+igb_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool clear)
 {
 	struct adapter *adapter = arg;
 	struct igb_queue *que = &adapter->queues[txqid];
@@ -282,9 +282,9 @@ igb_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init)
 		
 			/* We clean the range if multi segment */
 		while (txd != eop) {
-			++txd;
-			++buf;
-            cidx++;
+			txd++;
+			buf++;
+                        cidx++;
 			processed++;
 			/* wrap the ring? */
            	/* wrap the ring? */
@@ -419,29 +419,27 @@ igb_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	
 	/* Prefetch the next buffer */
 	if (!eop) {
-		ri->iri_next_offset = 1; 
+		ri->iri_nfrags = 1;
 	} else {
-        rxr->packets++;
+		rxr->packets++;
 		rxr->rx_packets++;
-        rxr->bytes += ri->iri_len;
+		rxr->bytes += ri->iri_len;
 		rxr->rx_bytes += ri->iri_len; 
 		
 		if ((ifp->if_capenable & IFCAP_RXCSUM) != 0)
 			igb_rx_checksum(staterr, ri, ptype);
 
 		if ((ifp->if_capenable & IFCAP_VLAN_HWTAGGING) != 0 &&
-			(staterr & E1000_RXD_STAT_VP) != 0) {
+		    (staterr & E1000_RXD_STAT_VP) != 0) {
 			ri->iri_vtag = vtag;
 			ri->iri_flags |= M_VLANTAG;
 		}
-
 		ri->iri_flowid =
 			le32toh(rxd->wb.lower.hi_dword.rss);
-
 		ri->iri_rsstype = igb_determine_rsstype(pkt_info);
-
-		ri->iri_next_offset = 0;
+		ri->iri_nfrags = 0;
 	}
+
 	return (0); 
 }
 

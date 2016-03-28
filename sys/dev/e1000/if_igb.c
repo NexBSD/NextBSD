@@ -131,7 +131,7 @@ static void	igb_if_media_status(if_ctx_t ctx, struct ifmediareq *ifmr);
 static void igb_if_multi_set(if_ctx_t ctx);
 static int igb_if_mtu_set(if_ctx_t ctx, uint32_t mtu);
 
-static int igb_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs);
+static int igb_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets);
 static void igb_if_queues_free(if_ctx_t ctx);
 static uint64_t	igb_if_get_counter(if_ctx_t, ift_counter);
 static void	igb_identify_hardware(if_ctx_t ctx);
@@ -205,8 +205,10 @@ static driver_t igb_driver = {
 
 static devclass_t igb_devclass;
 DRIVER_MODULE(igb, pci, igb_driver, igb_devclass, 0, 0);
+
 MODULE_DEPEND(igb, pci, 1, 1, 1);
 MODULE_DEPEND(igb, ether, 1, 1, 1);
+MODULE_DEPEND(igb, iflib, 1, 1, 1);
 #ifdef DEV_NETMAP
 MODULE_DEPEND(igb, netmap, 1, 1, 1);
 #endif /* DEV_NETMAP */
@@ -386,7 +388,7 @@ igb_register(device_t dev)
 }
 
 static int
-igb_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
+igb_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets)
 {
 	struct adapter *adapter = iflib_get_softc(ctx); 
 	device_t dev = iflib_get_dev(ctx);
@@ -396,6 +398,7 @@ igb_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
         int i;
 	
 	MPASS(adapter->num_queues > 0);
+	MPASS(adapter->num_queues == nqsets);
 	MPASS(nqs == 2); 
 
 	/* First allocate the top level queue structs */
@@ -542,7 +545,10 @@ igb_if_attach_pre(if_ctx_t ctx)
 	/* Determine hardware and mac info & set isc_msix_bar */
 	igb_identify_hardware(ctx);
 	adapter->shared->isc_msix_bar = PCIR_BAR(IGB_MSIX_BAR);
-	adapter->shared->isc_tx_nsegments = IGB_MAX_SCATTER; 
+	adapter->shared->isc_tx_nsegments = IGB_MAX_SCATTER;
+	adapter->shared->isc_tx_tso_segments_max = adapter->shared->isc_tx_nsegments;
+	adapter->shared->isc_tx_tso_size_max = IGB_TSO_SIZE;
+	adapter->shared->isc_tx_tso_segsize_max = IGB_TSO_SEG_SIZE;
 	
 	/* Setup PCI resources */
 	if (igb_allocate_pci_resources(ctx)) {
@@ -826,7 +832,6 @@ static int
 igb_if_resume(if_ctx_t ctx)
 {
         struct adapter *adapter = iflib_get_softc(ctx);
-	struct ifnet *ifp = iflib_get_ifp(ctx); 
 	
         igb_if_init(ctx);
 	igb_init_manageability(adapter);
