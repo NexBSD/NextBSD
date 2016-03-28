@@ -75,7 +75,7 @@ static int      ixv_if_attach_pre(if_ctx_t ctx);
 static int      ixv_if_attach_post(if_ctx_t ctx);
 static int      ixv_if_detach(if_ctx_t ctx);
 
-static int      ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs);
+static int      ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets);
 static void     ixv_if_queues_free(if_ctx_t ctx);
 static void     ixv_identify_hardware(if_ctx_t ctx);
 static int      ixv_allocate_pci_resources(if_ctx_t ctx);
@@ -290,7 +290,7 @@ ixv_register(device_t dev)
 }
 
 static int
-ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
+ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
 	struct ix_queue *que;
@@ -299,7 +299,7 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 #ifdef PCI_IOV
 	enum ixgbe_iov_mode iov_mode;
 #endif
-	MPASS(adapter->num_queues > 0);
+	MPASS(adapter->num_queues == nqsets);
 	MPASS(nqs == 2);
 
 	/* Allocate queue structure memory */
@@ -317,7 +317,7 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 	adapter->pool = 0;
 #endif
 
-	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
+	for (i = 0, que = adapter->queues; i < nqsets; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
 		struct rx_ring 		*rxr = &que->rxr;
 
@@ -337,12 +337,12 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs)
 
 		/* get the virtual and physical address of the hardware queues */
 		txr->tail = IXGBE_TDT(que->me);
-		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i*2];
-		txr->tx_paddr = paddrs[i*2];
+		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i*nqs];
+		txr->tx_paddr = paddrs[i*nqs];
 
 		rxr->tail = IXGBE_RDT(que->me);
-		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[i*2 + 1];
-		rxr->rx_paddr = paddrs[i*2 + 1];
+		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[i*nqs + 1];
+		rxr->rx_paddr = paddrs[i*nqs + 1];
 		rxr->bytes = 0;
 		txr->que = rxr->que = que;
 		for (j = 0; j < ixv_sctx->isc_ntxd; j++)
