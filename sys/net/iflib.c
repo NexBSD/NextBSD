@@ -2124,8 +2124,9 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		}
 		MPASS(ri.iri_nfrags != 0);
 		MPASS(ri.iri_len != 0);
-		m = iflib_rxd_pkt_get(rxq, &ri);
 
+		/* will advance the cidx on the corresponding free lists */
+		m = iflib_rxd_pkt_get(rxq, &ri);
 		if (avail == 0 && budget_left)
 			avail = iflib_rxd_avail(ctx, rxq, *cidxp);
 
