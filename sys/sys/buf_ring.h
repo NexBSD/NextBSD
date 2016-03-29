@@ -443,8 +443,8 @@ buf_ring_peek_clear_sc(struct buf_ring *br)
 	 * Single consumer, i.e. cons_head will not move while we are
 	 * running, so atomic_swap_ptr() is not necessary here.
 	 */
-	ret = br->br_ring[br->br_cons_head];
-	br->br_ring[br->br_cons_head] = NULL;
+	ret = __DEVOLATILE(void *, br->br_ring[br->br_cons_head].bre_ptr);
+	br->br_ring[br->br_cons_head].bre_ptr = NULL;
 	return (ret);
 #else
 	return (br->br_ring[br->br_cons_head]);
