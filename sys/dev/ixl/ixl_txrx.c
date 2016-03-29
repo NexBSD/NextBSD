@@ -305,7 +305,6 @@ ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_queue *que)
 	wr32(vsi->hw, I40E_QTX_HEAD(que->me), 0);
 }
 
-
 /*             
 ** ixl_get_tx_head - Retrieve the value from the 
 **    location the HW records its HEAD index
@@ -396,7 +395,8 @@ ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 			>> I40E_RXD_QW1_STATUS_SHIFT;
 		if ((status & (1 << I40E_RX_DESC_STATUS_DD_SHIFT)) == 0)
 			break;
-		cnt++;
+		if (status & (1 << I40E_RX_DESC_STATUS_EOF_SHIFT))
+			cnt++;
 		i = (i + 1) & mask;
 	}
 	return (cnt);

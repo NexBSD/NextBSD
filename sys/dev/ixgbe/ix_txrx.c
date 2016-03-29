@@ -349,22 +349,19 @@ ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 	struct ix_queue *que     = &sc->queues[rxqid];
 	struct rx_ring *rxr      = &que->rxr;
 	union ixgbe_adv_rx_desc *rxd;
-	u16                      pkt_info;
-	u32                      staterr = 0;
+	u32                      staterr;
 	int                      cnt, i;
   
 	for (cnt = 0, i = idx; cnt < ixgbe_sctx->isc_nrxd;) {
 		rxd = &rxr->rx_base[i];
 		staterr = le32toh(rxd->wb.upper.status_error);
-		pkt_info = le16toh(rxd->wb.lower.lo_dword.hs_rss.pkt_info);
 
-		if ((staterr & IXGBE_RXD_STAT_DD) == 0) {
+		if ((staterr & IXGBE_RXD_STAT_DD) == 0)
 			break;
-		}
-		cnt++;
-		if (++i == ixgbe_sctx->isc_nrxd) {
+		if (++i == ixgbe_sctx->isc_nrxd)
 			i = 0;
-		}
+		if (staterr & IXGBE_RXD_STAT_EOP)
+			cnt++;
 	}
 
 	return (cnt);
@@ -430,7 +427,7 @@ ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		}
 		ri->iri_frags[i].irf_flid = 0;
 		ri->iri_frags[i].irf_idx = cidx;
-		if (++cidx == ixgbe_sctx->isc_ntxd)
+		if (++cidx == ixgbe_sctx->isc_nrxd)
 			cidx = 0;
 		i++;
 		/* even a 16K packet shouldn't consume more than 8 clusters */
