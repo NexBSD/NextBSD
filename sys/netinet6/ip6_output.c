@@ -951,7 +951,7 @@ passout:
 			ifa_free(&ia6->ia_ifa);
 		}
 		error = nd6_output_ifp(ifp, origifp, m, dst,
-		    (struct route *)ro);
+		    ro);
 		goto done;
 	}
 
@@ -1050,8 +1050,7 @@ sendorfree:
 				counter_u64_add(ia->ia_ifa.ifa_obytes,
 				    m->m_pkthdr.len);
 			}
-			error = nd6_output_ifp(ifp, origifp, m, dst,
-			    (struct route *)ro);
+			error = nd6_output_ifp(ifp, origifp, m, dst, ro);
 		} else
 			m_freem(m);
 	}

@@ -714,7 +714,7 @@ ixl_if_attach_post(if_ctx_t ctx)
 	error = ixl_switch_config(pf);
 	if (error) {
 		device_printf(dev, "Initial switch config failed: %d\n", error);
-		goto err_late;
+		goto err_mac_hmc;
 	}
 
 	/* Limit phy interrupts to link and modules failure */
@@ -727,8 +727,6 @@ ixl_if_attach_post(if_ctx_t ctx)
 	bus = ixl_get_bus_info(hw, dev);
 	i40e_set_pci_config_data(hw, bus);
 
-	/* Initialize taskqueues */
-	ixl_init_taskqueues(pf);
 
 	/* Initialize statistics */
 	ixl_pf_reset_stats(pf);

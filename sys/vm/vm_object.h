@@ -280,13 +280,6 @@ void vm_object_pip_wakeup(vm_object_t object);
 void vm_object_pip_wakeupn(vm_object_t object, short i);
 void vm_object_pip_wait(vm_object_t object, char *waitid);
 
-static __inline boolean_t
-vm_object_cache_is_empty(vm_object_t object)
-{
-
-	return (vm_radix_is_empty(&object->cache));
-}
-
 void umtx_shm_object_init(vm_object_t object);
 void umtx_shm_object_terminated(vm_object_t object);
 

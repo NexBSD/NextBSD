@@ -174,8 +174,7 @@ cc_after_idle(struct tcpcb *tp)
 int
 tcp_output(struct tcpcb *tp)
 {
-	struct inpcb *inp = tp->t_inpcb;
-	struct socket *so = inp->inp_socket;
+	struct socket *so = tp->t_inpcb->inp_socket;
 	long len, recwin, sendwin;
 	int off, flags, error = 0;	/* Keep compiler happy */
 	struct mbuf *m;
@@ -1343,18 +1342,6 @@ send:
 		 */
 		ip6->ip6_hlim = in6_selecthlim(tp->t_inpcb, NULL);
 
-		if (in_rt_valid(inp)) {
-			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ro.ro_dst;
-			sin6->sin6_family = AF_INET6;
-			sin6->sin6_len = sizeof(struct sockaddr_in6);
-			memcpy(&sin6->sin6_addr.s6_addr, &inp->in6p_faddr.s6_addr, 16);
-			ro.ro_rt = inp->inp_rt;
-			ro.ro_plen = inp->inp_plen;
-			ro.ro_prepend = inp->inp_prepend;
-			if (ro.ro_rt != NULL)
-				ro.ro_flags |= RT_CACHING_CONTEXT;
-		}
-
 		/*
 		 * Set the packet size here for the benefit of DTrace probes.
 		 * ip6_output() will set it properly; it's supposed to include
@@ -1384,9 +1371,7 @@ send:
 
 		if (error == EMSGSIZE && ro.ro_rt != NULL)
 			mtu = ro.ro_rt->rt_mtu;
-		if (!(ro.ro_flags & RT_CACHING_CONTEXT)) {
-			RO_RTFREE(&ro);
-		}
+		RO_RTFREE(&ro);
 	}
 #endif /* INET6 */
 #if defined(INET) && defined(INET6)

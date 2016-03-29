@@ -156,7 +156,6 @@ struct	icmp6_filter;
  * from the global list.
  *
  * Key:
- * (a) - Atomically incremented
  * (c) - Constant after initialization
  * (g) - Protected by the pcbgroup lock
  * (i) - Protected by the inpcb lock
@@ -203,8 +202,6 @@ struct inpcb {
 	u_char	inp_ip_minttl;		/* (i) minimum TTL or drop */
 	uint32_t inp_flowid;		/* (x) flow id / queue id */
 	u_int	inp_refcount;		/* (i) refcount */
-	struct in_ifaddr *inp_ifaddr;	/* (i) reference to the local ifaddr */
-	u_int	inp_rt_gen;		/* (a) generation count of routing entry */
 	void	*inp_pspare[5];		/* (x) route caching / general use */
 	uint32_t inp_flowtype;		/* (x) M_HASHTYPE value */
 	uint32_t inp_rss_listen_bucket;	/* (x) overridden RSS listen bucket */
@@ -437,7 +434,7 @@ struct inpcbgroup {
 	 * wildcard list in inpcbinfo.
 	 */
 	struct mtx		 ipg_lock;
-};
+} __aligned(CACHE_LINE_SIZE);
 
 #define INP_LOCK_INIT(inp, d, t) \
 	rw_init_flags(&(inp)->inp_lock, (t), RW_RECURSE |  RW_DUPOK)
@@ -609,6 +606,8 @@ short	inp_so_options(const struct inpcb *inp);
 /*
  * Flags for inp_flags2.
  */
+#define	INP_LLE_VALID		0x00000001 /* cached lle is valid */	
+#define	INP_RT_VALID		0x00000002 /* cached rtentry is valid */
 #define	INP_PCBGROUPWILD	0x00000004 /* in pcbgroup wildcard list */
 #define	INP_REUSEPORT		0x00000008 /* SO_REUSEPORT option is set */
 #define	INP_FREED		0x00000010 /* inp itself is not valid */
