@@ -317,6 +317,27 @@ struct ieee80211_wme_param {
 } __packed;
 
 /*
+ * WME U-APSD qos info field defines
+ */
+#define	WME_CAPINFO_UAPSD_EN                    0x00000080
+#define	WME_CAPINFO_UAPSD_VO                    0x00000001
+#define	WME_CAPINFO_UAPSD_VI                    0x00000002
+#define	WME_CAPINFO_UAPSD_BK                    0x00000004
+#define	WME_CAPINFO_UAPSD_BE                    0x00000008
+#define	WME_CAPINFO_UAPSD_ACFLAGS_SHIFT         0
+#define	WME_CAPINFO_UAPSD_ACFLAGS_MASK          0xF
+#define	WME_CAPINFO_UAPSD_MAXSP_SHIFT           5
+#define	WME_CAPINFO_UAPSD_MAXSP_MASK            0x3
+#define	WME_CAPINFO_IE_OFFSET                   8
+#define	WME_UAPSD_MAXSP(_qosinfo)				\
+	    (((_qosinfo) >> WME_CAPINFO_UAPSD_MAXSP_SHIFT) &	\
+	    WME_CAPINFO_UAPSD_MAXSP_MASK)
+#define	WME_UAPSD_AC_ENABLED(_ac, _qosinfo)			\
+	    ((1 << (3 - (_ac))) & (				\
+	    ((_qosinfo) >> WME_CAPINFO_UAPSD_ACFLAGS_SHIFT) &	\
+	    WME_CAPINFO_UAPSD_ACFLAGS_MASK))
+
+/*
  * Management Notification Frame
  */
 struct ieee80211_mnf {
@@ -802,6 +823,39 @@ struct ieee80211_ie_vht_operation {
 #define	IEEE80211_VHTCAP_VHT_LINK_ADAPTATION_VHT_MRQ_MFB	0x0c000000
 #define	IEEE80211_VHTCAP_RX_ANTENNA_PATTERN	0x10000000
 #define	IEEE80211_VHTCAP_TX_ANTENNA_PATTERN	0x20000000
+
+/*
+ * VHT Transmit Power Envelope element - 802.11ac-2013 8.4.2.164
+ *
+ * This defines the maximum transmit power for various bandwidths.
+ */
+/*
+ * Count is how many elements follow and what they're for:
+ *
+ * 0 - 20 MHz
+ * 1 - 20+40 MHz
+ * 2 - 20+40+80 MHz
+ * 3 - 20+40+80+(160, 80+80) MHz
+ */
+#define	IEEE80211_VHT_TXPWRENV_INFO_COUNT_SHIFT	0
+#define	IEEE80211_VHT_TXPWRENV_INFO_COUNT_MASK	0x07
+
+/*
+ * Unit is the tx power representation.  It should be EIRP for now;
+ * other values are reserved.
+ */
+#define	IEEE80211_VHT_TXPWRENV_UNIT_MASK	0x38
+#define	IEEE80211_VHT_TXPWRENV_UNIT_SHIFT	3
+
+/* This value is within the unit mask/shift above */
+#define	IEEE80211_VHT_TXPWRENV_UNIT_EIRP	0
+
+struct ieee80211_ie_vht_txpwrenv {
+	uint8_t ie;
+	uint8_t len;
+	uint8_t tx_info;
+	int8_t tx_elem[0];	/* TX power elements, 1/2 dB, signed */
+};
 
 /* VHT action codes */
 #define	WLAN_ACTION_VHT_COMPRESSED_BF		0
