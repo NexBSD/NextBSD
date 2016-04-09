@@ -2166,8 +2166,8 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	/*
 	 * Flush any outstanding LRO work
 	 */
-	while ((queued = SLIST_FIRST(&rxq->ifr_lc.lro_active)) != NULL) {
-		SLIST_REMOVE_HEAD(&rxq->ifr_lc.lro_active, next);
+	while ((queued = LIST_FIRST(&rxq->ifr_lc.lro_active)) != NULL) {
+		LIST_REMOVE(queued, next);
 		tcp_lro_flush(&rxq->ifr_lc, queued);
 	}
 	return (iflib_rxd_avail(ctx, rxq, *cidxp));
