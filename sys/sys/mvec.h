@@ -159,6 +159,15 @@ typedef struct mvec_toc {
  */
 
 
+#define MVEC_TYPE_CLUSTER	0x1
+#define MVEC_TYPE_MBUF		0x2
+#define MVEC_TYPE_DATA		0x3
+
+#define MVEC_CLUSTER_EMBREF	0x1
+#define MVEC_CLUSTER_EXT_FREE	0x2
+#define MVEC_CLUSTER_M_NOFREE	0x4
+
+
 struct mbuf *mvec_serialize(struct mbuf *);
 struct mbuf *_mvec_deserialize(struct mbuf *);
 struct mbuf *mvec_defrag(struct mbuf *);
