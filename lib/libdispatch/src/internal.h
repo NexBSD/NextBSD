@@ -382,7 +382,7 @@ static inline void _dispatch_assert(long e, long line) {
 		if (__builtin_constant_p(e)) { \
 			char __compile_time_assert__[(bool)(e) ? -1 : 1] DISPATCH_UNUSED; \
 		} else { \
-			typeof(e) _e = slowpath(e); /* always eval 'e' */ \
+			long _e = slowpath(e); /* always eval 'e' */ \
 			if (DISPATCH_DEBUG && _e) { \
 				_dispatch_abort(__LINE__, (long)_e); \
 			} \
@@ -403,7 +403,7 @@ static inline void _dispatch_assert_zero(long e, long line) {
  */
 #if __GNUC__
 #define dispatch_assume(e) ({ \
-		typeof(e) _e = fastpath(e); /* always eval 'e' */ \
+		long _e = fastpath(e); /* always eval 'e' */ \
 		if (!_e) { \
 			if (__builtin_constant_p(e)) { \
 				char __compile_time_assert__[(bool)(e) ? 1 : -1]; \
@@ -427,7 +427,7 @@ static inline long _dispatch_assume(long e, long line) {
  */
 #if __GNUC__
 #define dispatch_assume_zero(e) ({ \
-		typeof(e) _e = slowpath(e); /* always eval 'e' */ \
+		long _e = slowpath(e); /* always eval 'e' */ \
 		if (_e) { \
 			if (__builtin_constant_p(e)) { \
 				char __compile_time_assert__[(bool)(e) ? -1 : 1]; \
@@ -453,7 +453,7 @@ static inline long _dispatch_assume_zero(long e, long line) {
 		if (__builtin_constant_p(e)) { \
 			char __compile_time_assert__[(bool)(e) ? 1 : -1] DISPATCH_UNUSED; \
 		} else { \
-			typeof(e) _e = fastpath(e); /* always eval 'e' */ \
+			long _e = fastpath(e); /* always eval 'e' */ \
 			if (DISPATCH_DEBUG && !_e) { \
 				_dispatch_log("%s() 0x%lx: " msg, __func__, (long)_e, ##args); \
 				abort(); \

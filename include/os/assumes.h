@@ -82,7 +82,7 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 #define os_set_crash_message(arg) CRSetCrashLogMessage(arg)
 
 #define os_assumes(e) __extension__({ \
-	__typeof__(e) _e = os_fastpath(e); \
+	long _e = os_fastpath(e); \
 	if (!_e) { \
 		if (os_constant(e)) { \
 			__OS_COMPILETIME_ASSERT__(e); \
@@ -94,7 +94,7 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 })
 
 #define os_assumes_zero(e) __extension__({ \
-	__typeof__(e) _e = os_slowpath(e); \
+	long _e = os_slowpath(e); \
 	if (_e) { \
 		if (os_constant(e)) { \
 			__OS_COMPILETIME_ASSERT__(!e); \
@@ -115,8 +115,8 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
  * }
  */
 #define posix_assumes_zero(e) __extension__({ \
-	__typeof__(e) _e = os_slowpath(e); \
-	if (_e == (typeof(e))-1) { \
+	long _e = os_slowpath(e); \
+	if (_e == -1) { \
 		_os_assumes_log((uint64_t)(uintptr_t)errno); \
 		_os_avoid_tail_call(); \
 	} \
@@ -124,7 +124,7 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 })
 
 #define os_assert(e) __extension__({ \
-	__typeof__(e) _e = os_fastpath(e); \
+	long _e = os_fastpath(e); \
 	if (!_e) { \
 		if (os_constant(e)) { \
 			__OS_COMPILETIME_ASSERT__(e); \
@@ -138,7 +138,7 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 })
 
 #define os_assert_zero(e) __extension__({ \
-	__typeof__(e) _e = os_slowpath(e); \
+	long _e = os_slowpath(e); \
 	if (_e) { \
 		if (os_constant(e)) { \
 			__OS_COMPILETIME_ASSERT__(!e); \
@@ -152,8 +152,8 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 })
 
 #define posix_assert_zero(e) __extension__({ \
-	__typeof__(e) _e = os_slowpath(e); \
-	if (_e == (__typeof__(e))-1) { \
+	long _e = os_slowpath(e); \
+	if (_e == (long)-1) { \
 		char *_fail_message = _os_assert_log((uint64_t)(uintptr_t)errno); \
 		os_set_crash_message(_fail_message); \
 		os_hardware_trap(); \
@@ -166,7 +166,7 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
  * generally not useful for direct inclusion in your code.
  */
 #define os_assumes_ctx(f, ctx, e) __extension__({ \
-	__typeof__(e) _e = os_fastpath(e); \
+	long _e = os_fastpath(e); \
 	if (!_e) { \
 		if (os_constant(e)) { \
 			__OS_COMPILETIME_ASSERT__(e); \
@@ -178,7 +178,7 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 })
 
 #define os_assumes_zero_ctx(f, ctx, e) __extension__({ \
-	__typeof__(e) _e = os_slowpath(e); \
+	long _e = os_slowpath(e); \
 	if (_e) { \
 		if (os_constant(e)) { \
 			__OS_COMPILETIME_ASSERT__(!e); \
@@ -190,8 +190,8 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 })
 
 #define posix_assumes_zero_ctx(f, ctx, e) __extension__({ \
-	__typeof__(e) _e = os_slowpath(e); \
-	if (_e == (__typeof__(e))-1) { \
+	long _e = os_slowpath(e); \
+	if (_e == (long)-1) { \
 		_os_assumes_log_ctx((f), (ctx), (uintptr_t)errno); \
 		_os_avoid_tail_call(); \
 	} \
@@ -199,7 +199,7 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 })
 
 #define os_assert_ctx(f, ctx, e) __extension__({ \
-	__typeof__(e) _e = os_fastpath(e); \
+	long _e = os_fastpath(e); \
 	if (!_e) { \
 		if (os_constant(e)) { \
 			__OS_COMPILETIME_ASSERT__(e); \
@@ -213,7 +213,7 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 })
 
 #define os_assert_zero_ctx(f, ctx, e) __extension__({ \
-	__typeof__(e) _e = os_slowpath(e); \
+	long _e = os_slowpath(e); \
 	if (_e) { \
 		if (os_constant(e)) { \
 			__OS_COMPILETIME_ASSERT__(!e); \
@@ -227,8 +227,8 @@ typedef bool (*os_log_callout_t)(_SIMPLE_STRING asl_message, void *ctx, const ch
 })
 
 #define posix_assert_zero_ctx(f, ctx, e) __extension__({ \
-	__typeof__(e) _e = os_slowpath(e); \
-	if (_e == (__typeof__(e))-1) { \
+	long _e = os_slowpath(e); \
+	if (_e == (long)-1) { \
 		char *_fail_message = _os_assert_log_ctx((f), (ctx), (uint64_t)(uintptr_t)errno); \
 		os_set_crash_message(_fail_message); \
 		os_hardware_trap(); \

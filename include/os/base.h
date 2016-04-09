@@ -24,8 +24,8 @@
 #include <sys/cdefs.h>
 
 #if __GNUC__
-#define os_fastpath(x) ((__typeof__(x))(uintptr_t)__builtin_expect((uintptr_t)(x), ~0l))
-#define os_slowpath(x) ((__typeof__(x))(uintptr_t)__builtin_expect((uintptr_t)(x), 0l))
+#define os_fastpath(x) ((long)(uintptr_t)__builtin_expect((uintptr_t)(x), ~0l))
+#define os_slowpath(x) ((long)(uintptr_t)__builtin_expect((uintptr_t)(x), 0l))
 #define os_constant(x) __builtin_constant_p((x))
 #define os_hardware_trap() __asm__ __volatile__ (""); __builtin_trap()
 
