@@ -33,8 +33,8 @@
 /*$FreeBSD$*/
 
 
-#ifndef _IXGBE_H_
-#define _IXGBE_H_
+#ifndef _IFLIB_IXGBE_H_
+#define _IFLIB_IXGBE_H_
 
 
 #include <sys/param.h>
