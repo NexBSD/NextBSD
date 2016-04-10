@@ -1,3 +1,6 @@
+#include "opt_iflib.h"
+
+#ifdef IFLIB
 #ifndef IXL_STANDALONE_BUILD
 #include "opt_inet.h"
 #include "opt_inet6.h"
@@ -123,3 +126,4 @@ ixl_if_queues_free(if_ctx_t ctx)
 		vsi->rx_queues = NULL;
 	}
 }
+#endif /* IFLIB */

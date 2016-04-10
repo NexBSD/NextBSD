@@ -33,8 +33,8 @@
 /*$FreeBSD$*/
 
 
-#ifndef _IXL_H_
-#define _IXL_H_
+#ifndef _LEGACY_IXL_H_
+#define _LEGACY_IXL_H_
 
 
 #include <sys/param.h>

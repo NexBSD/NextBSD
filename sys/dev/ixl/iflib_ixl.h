@@ -33,8 +33,8 @@
 /*$FreeBSD$*/
 
 
-#ifndef _IXL_H_
-#define _IXL_H_
+#ifndef _IFLIB_IXL_H_
+#define _IFLIB_IXL_H_
 
 
 #include <sys/param.h>
@@ -98,7 +98,6 @@
 #include "i40e_type.h"
 #include "i40e_prototype.h"
 
-MALLOC_DECLARE(M_IXL);
 
 #if defined(IXL_DEBUG) || defined(IXL_DEBUG_SYSCTL)
 #include <sys/sbuf.h>

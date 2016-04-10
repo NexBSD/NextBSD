@@ -337,7 +337,7 @@ static char *ixl_fc_string[6] = {
 	"Default"
 };
 
-static MALLOC_DEFINE(M_IXL, "ixl", "ixl driver allocations");
+MALLOC_DEFINE(M_IXL, "ixl", "ixl driver allocations");
 
 static uint8_t ixl_bcast_addr[ETHER_ADDR_LEN] =
     {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};

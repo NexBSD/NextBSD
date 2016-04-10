@@ -33,8 +33,8 @@
 /*$FreeBSD$*/
 
 
-#ifndef _IXL_PF_H_
-#define _IXL_PF_H_
+#ifndef _IFLIB_IXL_PF_H_
+#define _IFLIB_IXL_PF_H_
 
 #define	VF_FLAG_ENABLED			0x01
 #define	VF_FLAG_SET_MAC_CAP		0x02
