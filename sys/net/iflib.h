@@ -164,7 +164,8 @@ typedef struct if_txrx {
 
 typedef struct if_softc_ctx {
 	int isc_vectors;
-	int isc_nqsets;
+	int isc_nrxqsets;
+	int isc_ntxqsets;
 	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_tso_segments_max;
@@ -198,8 +199,10 @@ struct if_shared_ctx {
 	int isc_rx_process_limit;
 
 
-	uint32_t isc_qsizes[8];
-	int isc_nqs;			/* # of queues per qset - usually 2 */
+	uint32_t isc_txqsizes[8];
+	int isc_ntxqs;			/* # of tx queues per tx qset - usually 1 */
+	uint32_t isc_rxqsizes[8];
+	int isc_nrxqs;			/* # of rx queues per rx qset - intel 1, chelsio 2, broadcom 3 */
 	int isc_admin_intrcnt;		/* # of admin/link interrupts */
 
 	int isc_tx_reclaim_thresh;

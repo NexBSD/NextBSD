@@ -367,7 +367,7 @@ struct ixl_mac_filter {
  * The Transmit ring control struct
  */
 struct tx_ring {
-	struct ixl_queue	*que;
+	struct ixl_tx_queue	*que;
 	u32			tail;
 	struct i40e_tx_desc	*tx_base;
 	uint64_t tx_paddr;
@@ -375,6 +375,7 @@ struct tx_ring {
 	u16			atr_count;
 	u16			itr;
 	u16			latency;
+	u32			me;
 
 	/* Used for Dynamic ITR calculation */
 	u32			packets;
@@ -390,7 +391,7 @@ struct tx_ring {
  * The Receive ring control struct
  */
 struct rx_ring {
-	struct ixl_queue	*que;
+	struct ixl_rx_queue	*que;
 	union i40e_rx_desc	*rx_base;
 	uint64_t rx_paddr;
 	bool			discard;
@@ -399,6 +400,7 @@ struct rx_ring {
 	
 	u32			mbuf_sz;
 	u32			tail;
+	u32			me;
 
 	/* Used for Dynamic ITR calculation */
 	u32			packets;
@@ -415,23 +417,26 @@ struct rx_ring {
 ** Driver queue struct: this is the interrupt container
 **  for the associated tx and rx ring pair.
 */
-struct ixl_queue {
+struct ixl_tx_queue {
 	struct ixl_vsi		*vsi;
-	u32			me;
-	u32			msix;           /* This queue's MSIX vector */
-	u32			eims;           /* This queue's EIMS bit */
 	int			busy;
 	struct tx_ring		txr;
+	/* Queue stats */
+	u64			irqs;
+	u64			tso;
+};
+
+
+struct ixl_rx_queue {
+	struct ixl_vsi		*vsi;
+	u32			msix;           /* This queue's MSIX vector */
+	u32			eims;           /* This queue's EIMS bit */
 	struct rx_ring		rxr;
 
 	struct if_irq	que_irq;
 
 	/* Queue stats */
 	u64			irqs;
-	u64			tso;
-	u64			mbuf_hdr_failed;
-	u64			mbuf_pkt_failed;
-	u64			dropped_pkts;
 };
 
 #define DOWNCAST(sctx) ((struct ixl_vsi *)(sctx))
@@ -449,7 +454,8 @@ struct ixl_vsi {
 	struct ifnet *ifp;
 	struct ifmedia *media;
 
-#define num_queues shared->isc_nqsets
+#define num_rx_queues shared->isc_nrxqsets
+#define num_tx_queues shared->isc_ntxqsets
 #define max_frame_size shared->isc_max_frame_size
 
 	void 			*back;
@@ -461,7 +467,8 @@ struct ixl_vsi {
 	u16			first_queue;
 	u16			rx_itr_setting;
 	u16			tx_itr_setting;
-	struct ixl_queue	*queues;	/* head of queues */
+	struct ixl_tx_queue	*tx_queues;	/* head of queues */
+	struct ixl_rx_queue	*rx_queues;	/* head of queues */
 	bool			link_active;
 	u16			seid;
 	u32			link_speed;
@@ -565,10 +572,10 @@ ixl_fw_version_str(struct i40e_hw *hw)
 /*********************************************************************
  *  TXRX Function prototypes
  *********************************************************************/
-void	ixl_init_tx_ring(struct ixl_vsi *, struct ixl_queue *);
+void	ixl_init_tx_ring(struct ixl_vsi *, struct ixl_tx_queue *);
 
 #ifdef IXL_FDIR
-void	ixl_atr(struct ixl_queue *, struct tcphdr *, int);
+void	ixl_atr(struct ixl_rx_queue *, struct tcphdr *, int);
 #endif
 
 /*********************************************************************
@@ -576,7 +583,8 @@ void	ixl_atr(struct ixl_queue *, struct tcphdr *, int);
  *********************************************************************/
 
 int	ixl_if_media_change(if_ctx_t);
-int	ixl_if_queues_alloc(if_ctx_t, caddr_t *, uint64_t *, int, int);
+int	ixl_if_tx_queues_alloc(if_ctx_t, caddr_t *, uint64_t *, int, int);
+int	ixl_if_rx_queues_alloc(if_ctx_t, caddr_t *, uint64_t *, int, int);
 void ixl_if_queues_free(if_ctx_t ctx);
 
 #endif /* _IXL_H_ */

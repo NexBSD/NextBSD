@@ -142,12 +142,20 @@ METHOD int resume {
 # own queue state and tie it to the parent
 #
 
-METHOD int queues_alloc {
+METHOD int tx_queues_alloc {
 	if_ctx_t _ctx;
 	caddr_t *_vaddrs;
 	uint64_t *_paddrs;
-	int nqs;
-	int nqsets;
+	int ntxqs;
+	int ntxqsets;
+};
+
+METHOD int rx_queues_alloc {
+	if_ctx_t _ctx;
+	caddr_t *_vaddrs;
+	uint64_t *_paddrs;
+	int nrxqs;
+	int nrxqsets;
 };
 
 METHOD void queues_free {

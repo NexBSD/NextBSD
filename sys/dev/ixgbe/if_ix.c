@@ -124,7 +124,8 @@ static int ixgbe_if_mtu_set(if_ctx_t ctx, uint32_t mtu);
 static void ixgbe_if_crcstrip_set(if_ctx_t ctx, int onoff);
 static void ixgbe_if_multi_set(if_ctx_t ctx);
 static int ixgbe_if_promisc_set(if_ctx_t ctx, int flags);
-static int ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets);
+static int ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nrxqs, int nrxqsets);
+static int ixgbe_if_rx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nrxqs, int nrxqsets);
 static void ixgbe_if_queues_free(if_ctx_t ctx);
 static void ixgbe_if_timer(if_ctx_t ctx, uint16_t);
 static void ixgbe_if_update_admin_status(if_ctx_t ctx);
@@ -270,7 +271,8 @@ static device_method_t ixgbe_if_methods[] = {
 	DEVMETHOD(ifdi_intr_enable, ixgbe_if_enable_intr),
 	DEVMETHOD(ifdi_intr_disable, ixgbe_if_disable_intr),
 	DEVMETHOD(ifdi_queue_intr_enable, ixgbe_if_queue_intr_enable),
-	DEVMETHOD(ifdi_queues_alloc, ixgbe_if_queues_alloc),
+	DEVMETHOD(ifdi_tx_queues_alloc, ixgbe_if_tx_queues_alloc),
+	DEVMETHOD(ifdi_rx_queues_alloc, ixgbe_if_rx_queues_alloc),
 	DEVMETHOD(ifdi_queues_free, ixgbe_if_queues_free),
 	DEVMETHOD(ifdi_update_admin_status, ixgbe_if_update_admin_status),
 	DEVMETHOD(ifdi_multi_set, ixgbe_if_multi_set),
@@ -432,11 +434,12 @@ static struct if_shared_ctx ixgbe_sctx_init = {
 	.isc_ntxd = DEFAULT_TXD,
 	.isc_nrxd = DEFAULT_RXD,
 	.isc_nfl = 1,
-	.isc_qsizes[0] = roundup2((DEFAULT_TXD * sizeof(union ixgbe_adv_tx_desc)) +
+	.isc_txqsizes[0] = roundup2((DEFAULT_TXD * sizeof(union ixgbe_adv_tx_desc)) +
 							  sizeof(u32), DBA_ALIGN),
-	.isc_qsizes[1] = roundup2(DEFAULT_RXD *
+	.isc_rxqsizes[0] = roundup2(DEFAULT_RXD *
 							  sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN),
-	.isc_nqs = 2,
+	.isc_ntxqs = 1,
+	.isc_nrxqs = 1,
 
 	.isc_admin_intrcnt = 1,
 	.isc_vendor_info = ixgbe_vendor_info_array,
@@ -448,25 +451,25 @@ static struct if_shared_ctx ixgbe_sctx_init = {
 if_shared_ctx_t ixgbe_sctx = &ixgbe_sctx_init;
 
 static int
-ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets)
+ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxqs, int ntxqsets)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
-	struct ix_queue *que;
+	struct ix_tx_queue *que;
 	int i, j, error;
 #ifdef PCI_IOV
 	enum ixgbe_iov_mode mode;
 #endif
 	
-	MPASS(adapter->num_queues > 0);
-	MPASS(adapter->num_queues == nqsets);
-	MPASS(nqs == 2);
+	MPASS(adapter->num_tx_queues > 0);
+	MPASS(adapter->num_tx_queues == ntxqsets);
+	MPASS(ntxqs == 1);
 
 	/* Allocate queue structure memory */
-	if (!(adapter->queues =
-	      (struct ix_queue *) malloc(sizeof(struct ix_queue) *
-					  adapter->num_queues, M_DEVBUF, M_NOWAIT | M_ZERO))) {
-	  device_printf(iflib_get_dev(ctx), "Unable to allocate TX ring memory\n");
-	  return (ENOMEM);
+	if (!(adapter->tx_queues =
+	      (struct ix_tx_queue *) malloc(sizeof(struct ix_tx_queue) *
+					    ntxqsets, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+		device_printf(iflib_get_dev(ctx), "Unable to allocate TX ring memory\n");
+		return (ENOMEM);
 	}
 
 #ifdef PCI_IOV
@@ -476,34 +479,29 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, 
 	adapter->pool = 0;
 #endif
 
-	for (i = 0, que = adapter->queues; i < nqsets; i++, que++) {
+	for (i = 0, que = adapter->tx_queues; i < ntxqsets; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
-		struct rx_ring 		*rxr = &que->rxr;
 
-	    if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * ixgbe_sctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
-	        device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
-		error = ENOMEM;
-		goto fail;
-	    }	
+		if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * ixgbe_sctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+			device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
+			error = ENOMEM;
+			goto fail;
+		}
 #ifdef PCI_IOV
-	        que->me = txr->me = rxr->me = ixgbe_pf_que_index(mode, i);
+		txr->me = ixgbe_pf_que_index(mode, i);
 #else
-		que->me = txr->me = rxr->me = i;
+		txr->me = i;
 #endif
 
-		txr->adapter = rxr->adapter = que->adapter = adapter;
-		adapter->active_queues |= (u64)1 << que->me;
+		txr->adapter = que->adapter = adapter;
+		adapter->active_queues |= (u64)1 << txr->me;
 
 		/* get the virtual and physical address of the hardware queues */
-		txr->tail = IXGBE_TDT(que->me);
-		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i*nqs];
-		txr->tx_paddr = paddrs[i*nqs];
+		txr->tail = IXGBE_TDT(txr->me);
+		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i];
+		txr->tx_paddr = paddrs[i];
 
-		rxr->tail = IXGBE_RDT(que->me);
-		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[i*nqs + 1];
-		rxr->rx_paddr = paddrs[i*nqs + 1];
-		rxr->bytes = 0;
-		txr->que = rxr->que = que;
+		txr->que = que;
 		for (j = 0; j < ixgbe_sctx->isc_ntxd; j++) {
 			txr->tx_buffers[j].eop = -1;
 		}
@@ -525,7 +523,7 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, 
 	iflib_config_gtask_init(ctx, &adapter->mbx_task, ixgbe_handle_mbx, "mbx_task");
 #endif
 
-	device_printf(iflib_get_dev(ctx), "allocated for %d queues\n", adapter->num_queues);
+	device_printf(iflib_get_dev(ctx), "allocated for %d queues\n", adapter->num_tx_queues);
 	return (0);
 
  fail:
@@ -533,18 +531,71 @@ ixgbe_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, 
 	return (error);
 }
 
+static int
+ixgbe_if_rx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nrxqs, int nrxqsets)
+{
+	struct adapter *adapter = iflib_get_softc(ctx);
+	struct ix_rx_queue *que;
+	int i;
+#ifdef PCI_IOV
+	enum ixgbe_iov_mode mode;
+#endif
+
+	MPASS(adapter->num_rx_queues > 0);
+	MPASS(adapter->num_rx_queues == nrxqsets);
+	MPASS(nrxqs == 1);
+
+	/* Allocate queue structure memory */
+	if (!(adapter->rx_queues =
+	      (struct ix_rx_queue *) malloc(sizeof(struct ix_rx_queue)*nrxqsets , M_DEVBUF, M_NOWAIT | M_ZERO))) {
+	  device_printf(iflib_get_dev(ctx), "Unable to allocate TX ring memory\n");
+	  return (ENOMEM);
+	}
+
+#ifdef PCI_IOV
+	mode = ixgbe_get_iov_mode(adapter);
+	adapter->pool = ixgbe_max_vfs(mode);
+#else
+	adapter->pool = 0;
+#endif
+
+	for (i = 0, que = adapter->rx_queues; i < nrxqsets; i++, que++) {
+		struct rx_ring 		*rxr = &que->rxr;
+
+#ifdef PCI_IOV
+	        rxr->me = ixgbe_pf_que_index(mode, i);
+#else
+		rxr->me = i;
+#endif
+
+		rxr->adapter = que->adapter = adapter;
+
+		/* get the virtual and physical address of the hardware queues */
+
+		rxr->tail = IXGBE_RDT(rxr->me);
+		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[i];
+		rxr->rx_paddr = paddrs[i];
+		rxr->bytes = 0;
+		rxr->que = que;
+	}
+
+	device_printf(iflib_get_dev(ctx), "allocated for %d rx queues\n", adapter->num_rx_queues);
+	return (0);
+}
+
 static void
 ixgbe_if_queues_free(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
-	struct ix_queue *que = adapter->queues;
+	struct ix_tx_queue *tx_que = adapter->tx_queues;
+	struct ix_rx_queue *rx_que = adapter->rx_queues;
         int i;
 
-	if (que == NULL)
-	  return;
+	if (tx_que == NULL && rx_que == NULL)
+		return;
 
-        for (i = 0; i < adapter->num_queues; i++, que++) {
-		struct tx_ring		*txr = &que->txr;
+        for (i = 0; i < adapter->num_tx_queues; i++, tx_que++) {
+		struct tx_ring		*txr = &tx_que->txr;
 		if (txr->tx_buffers == NULL)
 		  break;
 
@@ -552,8 +603,10 @@ ixgbe_if_queues_free(if_ctx_t ctx)
 		txr->tx_buffers = NULL;
 	}
 	
-	free(adapter->queues, M_DEVBUF);
-	adapter->queues = NULL;
+	free(adapter->tx_queues, M_DEVBUF);
+	free(adapter->rx_queues, M_DEVBUF);
+	adapter->rx_queues = NULL;
+	adapter->tx_queues = NULL;
 }
 
 static void
@@ -594,7 +647,7 @@ ixgbe_initialize_rss_mapping(struct adapter *adapter)
 
 	/* Set up the redirection table */
 	for (int i = 0, j = 0; i < table_size; i++, j++) {
-		if (j == adapter->num_queues) j = 0;
+		if (j == adapter->num_rx_queues) j = 0;
 #ifdef	RSS
 		/*
 		 * Fetch the RSS bucket id for the given indirection entry.
@@ -602,7 +655,7 @@ ixgbe_initialize_rss_mapping(struct adapter *adapter)
 		 * num_queues.)
 		 */
 		queue_id = rss_get_indirection_to_bucket(i);
-		queue_id = queue_id % adapter->num_queues;
+		queue_id = queue_id % adapter->num_rx_queues;
 #else
 		queue_id = (j * index_mult);
 #endif
@@ -690,7 +743,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 	struct ixgbe_hw	*hw = &adapter->hw;
 	struct ifnet   *ifp = iflib_get_ifp(ctx);
 
-	struct ix_queue *que;
+	struct ix_rx_queue *que;
 	u32		bufsz, fctrl, srrctl, rxcsum;
 	u32		hlreg;
 	int             i;
@@ -729,7 +782,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 	    BSIZEPKT_ROUNDUP) >> IXGBE_SRRCTL_BSIZEPKT_SHIFT;
 
 	/* Setup the Base and Length of the Rx Descriptor Ring */
-        for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
+        for (i = 0, que = adapter->rx_queues; i < adapter->num_rx_queues; i++, que++) {
                 struct rx_ring	   *rxr = &que->rxr;
 		u64	           rdba = rxr->rx_paddr;
                 int                   j = rxr->me;
@@ -754,7 +807,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 		 * so we do not need to clear the bit, but do it just in case
 		 * this code is moved elsewhere.
 		 */
-		if (adapter->num_queues > 1 &&
+		if (adapter->num_rx_queues > 1 &&
 		    adapter->hw.fc.requested_mode == ixgbe_fc_none) {
 			srrctl |= IXGBE_SRRCTL_DROP_EN;
 		} else {
@@ -783,7 +836,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 
 	ixgbe_initialize_rss_mapping(adapter);
 
-	if (adapter->num_queues > 1) {
+	if (adapter->num_rx_queues > 1) {
 		/* RSS and RX IPP Checksum are mutually exclusive */
 		rxcsum |= IXGBE_RXCSUM_PCSD;
 	}
@@ -809,11 +862,11 @@ ixgbe_initialize_transmit_units(if_ctx_t ctx)
 {
   struct adapter *adapter = iflib_get_softc(ctx);
   struct ixgbe_hw	*hw = &adapter->hw;
-  struct ix_queue *que;
+  struct ix_tx_queue *que;
   int i;
 
   /* Setup the Base and Length of the Tx Descriptor Ring */
-  for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
+  for (i = 0, que = adapter->tx_queues; i < adapter->num_tx_queues; i++, que++) {
                 struct tx_ring	   *txr = &que->txr;
 		u64	tdba = 	txr->tx_paddr;
 		u32	txctrl = 0;
@@ -891,9 +944,9 @@ ixgbe_register(device_t dev)
 		ixgbe_sctx->isc_ntxd = ixgbe_txd;
 	}
 	ixgbe_tx_process_limit = min(ixgbe_sctx->isc_ntxd, ixgbe_txd);
-	ixgbe_sctx->isc_qsizes[0] = roundup2((ixgbe_sctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc)) +
+	ixgbe_sctx->isc_txqsizes[0] = roundup2((ixgbe_sctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc)) +
 										 sizeof(u32), DBA_ALIGN);
-	ixgbe_sctx->isc_qsizes[1] = roundup2(ixgbe_rxd *
+	ixgbe_sctx->isc_rxqsizes[1] = roundup2(ixgbe_rxd *
 										 sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
 
 	return (ixgbe_sctx);
@@ -1463,7 +1516,8 @@ static void
 ixgbe_add_hw_stats(struct adapter *adapter)
 {
         device_t dev = iflib_get_dev(adapter->ctx);
-        struct ix_queue *que;
+        struct ix_rx_queue *rx_que;
+        struct ix_tx_queue *tx_que;
 	int i;
 
 	struct sysctl_ctx_list *ctx = device_get_sysctl_ctx(dev);
@@ -1485,20 +1539,20 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 			CTLFLAG_RD, &adapter->link_irq,
 			"Link MSIX IRQ Handled");
 
-	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
-	        struct tx_ring *txr = &que->txr;
+	for (i = 0, tx_que = adapter->tx_queues; i < adapter->num_tx_queues; i++, tx_que++) {
+	        struct tx_ring *txr = &tx_que->txr;
 		snprintf(namebuf, QUEUE_NAME_LEN, "queue%d", i);
 		queue_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf,
 					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "interrupt_rate",
-				CTLTYPE_UINT | CTLFLAG_RW, &adapter->queues[i],
-				sizeof(&adapter->queues[i]),
+				CTLTYPE_UINT | CTLFLAG_RW, &adapter->rx_queues[i],
+				sizeof(&adapter->rx_queues[i]),
 				ixgbe_sysctl_interrupt_rate_handler, "IU",
 				"Interrupt Rate");
 		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "irqs",
-				CTLFLAG_RD, &(adapter->queues[i].irqs),
+				CTLFLAG_RD, &(adapter->rx_queues[i].irqs),
 				"irqs on this queue");
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "txd_head", 
 				CTLTYPE_UINT | CTLFLAG_RD, txr, sizeof(txr),
@@ -1516,8 +1570,8 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 				"Queue Packets Transmitted");
 	}
 
-	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
-	        struct rx_ring *rxr = &que->rxr;
+	for (i = 0, rx_que = adapter->rx_queues; i < adapter->num_rx_queues; i++, rx_que++) {
+	        struct rx_ring *rxr = &rx_que->rxr;
 		snprintf(namebuf, QUEUE_NAME_LEN, "queue%d", i);
 		queue_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf, 
 					    CTLFLAG_RD, NULL, "Queue Name");
@@ -1816,8 +1870,8 @@ ixgbe_setup_vlan_hw_support(if_ctx_t ctx)
 		return;
 
 	/* Setup the queues for vlans */
-	for (int i = 0; i < adapter->num_queues; i++) {
-		rxr = &adapter->queues[i].rxr;
+	for (int i = 0; i < adapter->num_rx_queues; i++) {
+		rxr = &adapter->rx_queues[i].rxr;
 		/* On 82599 the VLAN enable is per/queue in RXDCTL */
 		if (hw->mac.type != ixgbe_mac_82598EB) {
 			ctrl = IXGBE_READ_REG(hw, IXGBE_RXDCTL(rxr->me));
@@ -1968,36 +2022,29 @@ static int
 ixgbe_if_msix_intr_assign(if_ctx_t ctx, int msix)
 {
 	struct          adapter *adapter = iflib_get_softc(ctx);
-	struct 		ix_queue *que = adapter->queues;
+	struct 		ix_rx_queue *rx_que = adapter->rx_queues;
+	struct		ix_tx_queue *tx_que;
 	int 		error, rid, vector = 0;
 	int		cpu_id = 0;
+	char buf[16];
 
 	/* Admin Que is vector 0*/
 	rid = vector + 1;
-	for (int i = 0; i < adapter->num_queues; i++, vector++, que++) {
-		char buf[16];
+	for (int i = 0; i < adapter->num_rx_queues; i++, vector++, rx_que++) {
 		rid = vector + 1;
 
 		snprintf(buf, sizeof(buf), "rxq%d", i);
-		error = iflib_irq_alloc_generic(ctx, &que->que_irq, rid, IFLIB_INTR_RX,
-										ixgbe_msix_que, que, que->me, buf);
+		error = iflib_irq_alloc_generic(ctx, &rx_que->que_irq, rid, IFLIB_INTR_RX,
+										ixgbe_msix_que, rx_que, rx_que->rxr.me, buf);
 
 		if (error) {
 			device_printf(iflib_get_dev(ctx), "Failed to allocate que int %d err: %d", i, error);
-			adapter->num_queues = i + 1;
+			adapter->num_rx_queues = i + 1;
 			goto fail;
 		}
-	  
-		snprintf(buf, sizeof(buf), "txq%d", i);
-		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, que, que->me, buf);
 
-		/*		
-#if __FreeBSD_version >= 800504
-		bus_describe_intr(dev, que->res, que->tag, "que %d", i);
-#endif
-		*/
-		que->msix = vector;
-		adapter->active_queues |= (u64)(1 << que->msix);
+		rx_que->msix = vector;
+		adapter->active_queues |= (u64)(1 << rx_que->msix);
 #ifdef	RSS
 		/*
 		 * The queue ID is used as the RSS layer bucket ID.
@@ -2013,10 +2060,15 @@ ixgbe_if_msix_intr_assign(if_ctx_t ctx, int msix)
 		 * This just happens to match the default RSS round-robin
 		 * bucket -> queue -> CPU allocation.
 		 */
-		if (adapter->num_queues > 1)
+		if (adapter->num_rx_queues > 1)
 			cpu_id = i;
 #endif
 
+	}
+	for (int i = 0; i < adapter->num_tx_queues; i++) {
+		snprintf(buf, sizeof(buf), "txq%d", i);
+		tx_que = &adapter->tx_queues[i];
+		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, tx_que, tx_que->txr.me, buf);
 	}
 	rid = vector + 1;
 	error = iflib_irq_alloc_generic(ctx, &adapter->irq, rid, IFLIB_INTR_ADMIN,
@@ -2031,9 +2083,9 @@ ixgbe_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	return (0);
 fail:
 	iflib_irq_free(ctx, &adapter->irq);
-	que = adapter->queues;
-	for (int i = 0; i < adapter->num_queues; i++, que++)
-		iflib_irq_free(ctx, &que->que_irq);
+	rx_que = adapter->rx_queues;
+	for (int i = 0; i < adapter->num_rx_queues; i++, rx_que++)
+		iflib_irq_free(ctx, &rx_que->que_irq);
 	return (error);
 }
 
@@ -2045,9 +2097,11 @@ fail:
 static int
 ixgbe_msix_que(void *arg)
 {
-	struct ix_queue	*que = arg;
+	struct ix_rx_queue	*que = arg;
 	struct adapter  *adapter = que->adapter;
+#ifdef notyet
 	struct tx_ring	*txr = &que->txr;
+#endif	
 	struct rx_ring	*rxr = &que->rxr;
 	struct ifnet   *ifp = iflib_get_ifp(que->adapter->ctx);
 	u32             newitr = 0;
@@ -2074,11 +2128,10 @@ ixgbe_msix_que(void *arg)
 	que->eitr_setting = 0;
 
 	/* Idle, do nothing */
-	if ((txr->bytes == 0) && (rxr->bytes == 0))
-		goto no_calc;
-                                
+#ifdef notyet
 	if ((txr->bytes) && (txr->packets))
 		newitr = txr->bytes/txr->packets;
+#endif	
 	if ((rxr->bytes) && (rxr->packets))
 		newitr = max(newitr,
 					 (rxr->bytes / rxr->packets));
@@ -2102,8 +2155,10 @@ ixgbe_msix_que(void *arg)
 	que->eitr_setting = newitr;
 
 	/* Reset state */
+#ifdef notyet	
 	txr->bytes = 0;
 	txr->packets = 0;
+#endif	
 	rxr->bytes = 0;
 	rxr->packets = 0;
 
@@ -2483,7 +2538,7 @@ static int
 ixgbe_sysctl_interrupt_rate_handler(SYSCTL_HANDLER_ARGS)
 {
 	int error;
-	struct ix_queue *que = ((struct ix_queue *)oidp->oid_arg1);
+	struct ix_rx_queue *que = ((struct ix_rx_queue *)oidp->oid_arg1);
 	unsigned int reg, usec, rate;
 
 	reg = IXGBE_READ_REG(&que->adapter->hw, IXGBE_EITR(que->msix));
@@ -2959,7 +3014,8 @@ ixgbe_if_init(if_ctx_t ctx)
 	struct ifnet   *ifp = iflib_get_ifp(ctx);
 	device_t 	dev = iflib_get_dev(ctx);
 	struct ixgbe_hw *hw = &adapter->hw;
-	struct ix_queue *que;
+	struct ix_rx_queue *rx_que;
+	struct ix_tx_queue *tx_que;
 
 	u32		txdctl, mhadd;
 	u32		rxdctl, rxctrl;
@@ -2975,9 +3031,9 @@ ixgbe_if_init(if_ctx_t ctx)
 	mode = ixgbe_get_iov_mode(adapter);
 	adapter->pool = ixgbe_max_vfs(mode);
 	/* Queue indices may change with IOV mode */
-	for (int i = 0; i < adapter->num_queues; i++) {
-		adapter->queues[i].rxr.me = ixgbe_pf_que_index(mode, i);
-		adapter->queues[i].txr.me = ixgbe_pf_que_index(mode, i);
+	for (int i = 0; i < adapter->num_rx_queues; i++) {
+		adapter->rx_queues[i].rxr.me = ixgbe_pf_que_index(mode, i);
+		adapter->tx_queues[i].txr.me = ixgbe_pf_que_index(mode, i);
 	}
 #endif
 	/* reprogram the RAR[0] in case user changed it. */
@@ -3028,10 +3084,10 @@ ixgbe_if_init(if_ctx_t ctx)
 	}
 
 	/* Now enable all the queues */
-	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
-		struct tx_ring		*txr = &que->txr;
+	for (i = 0, tx_que = adapter->tx_queues; i < adapter->num_tx_queues; i++, tx_que++) {
+		struct tx_ring		*txr = &tx_que->txr;
 
-		ixgbe_init_tx_ring(que);
+		ixgbe_init_tx_ring(tx_que);
 		txdctl = IXGBE_READ_REG(hw, IXGBE_TXDCTL(txr->me));
 		txdctl |= IXGBE_TXDCTL_ENABLE;
 		/* Set WTHRESH to 8, burst writeback */
@@ -3047,8 +3103,8 @@ ixgbe_if_init(if_ctx_t ctx)
 		IXGBE_WRITE_REG(hw, IXGBE_TXDCTL(txr->me), txdctl);
 	}
 
-	for (i = 0, que = adapter->queues; i < adapter->num_queues; i++, que++) {
-		struct rx_ring 		*rxr = &que->rxr;
+	for (i = 0, rx_que = adapter->rx_queues; i < adapter->num_rx_queues; i++, rx_que++) {
+		struct rx_ring 		*rxr = &rx_que->rxr;
 		rxdctl = IXGBE_READ_REG(hw, IXGBE_RXDCTL(rxr->me));
 		if (hw->mac.type == ixgbe_mac_82598EB) {
 			/*
@@ -3216,7 +3272,7 @@ ixgbe_set_ivar(struct adapter *adapter, u8 entry, u8 vector, s8 type)
 static void
 ixgbe_configure_ivars(struct adapter *adapter)
 {
-	struct  ix_queue	*que = adapter->queues;
+	struct  ix_rx_queue	*que = adapter->rx_queues;
 	u32			newitr;
 
 	if (ixgbe_max_interrupt_rate > 0)
@@ -3230,13 +3286,17 @@ ixgbe_configure_ivars(struct adapter *adapter)
 		newitr = 0;
 	}
 
-	for (int i = 0; i < adapter->num_queues; i++, que++) {
-		struct rx_ring *rxr = &adapter->queues[i].rxr;
-		struct tx_ring *txr = &adapter->queues[i].txr;
+	for (int i = 0; i < adapter->num_rx_queues; i++, que++) {
+		struct rx_ring *rxr = &adapter->rx_queues[i].rxr;
+		struct tx_ring *txr;
 		/* First the RX queue entry */
 		ixgbe_set_ivar(adapter, rxr->me, que->msix, 0);
 		/* ... and the TX */
-		ixgbe_set_ivar(adapter, txr->me, que->msix, 1);
+
+		if (adapter->num_tx_queues == adapter->num_rx_queues) {
+			txr = &adapter->tx_queues[i].txr;
+			ixgbe_set_ivar(adapter, txr->me, que->msix, 1);
+		}
 		/* Set an Initial EITR value */
 		IXGBE_WRITE_REG(&adapter->hw,
 						IXGBE_EITR(que->msix), newitr);
@@ -3422,12 +3482,12 @@ static void
 ixgbe_if_timer(if_ctx_t ctx, uint16_t qid)
 {
 	struct adapter		*adapter = iflib_get_softc(ctx);
-	struct ix_queue	        *que = &adapter->queues[qid];
+	struct ix_tx_queue	        *que = &adapter->tx_queues[qid];
 	u64		        queues = 0;
 
 	/* Keep track of queues with work for soft irq */
 	if (que->txr.busy)
-		queues |= ((u64)1 << que->me);
+		queues |= ((u64)1 << que->txr.me);
 
 	if (qid != 0)
 		return;
@@ -3739,7 +3799,7 @@ ixgbe_if_enable_intr(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
   	struct ixgbe_hw	*hw = &adapter->hw;
-	struct ix_queue	*que = adapter->queues;
+	struct ix_rx_queue	*que = adapter->rx_queues;
 	u32		mask, fwsm;
 
 	mask = (IXGBE_EIMS_ENABLE_MASK & ~IXGBE_EIMS_RTX_QUEUE);
@@ -3811,7 +3871,7 @@ ixgbe_if_enable_intr(if_ctx_t ctx)
 	** allow for handling the extended (beyond 32) MSIX
 	** vectors that can be used by 82599
 	*/
-	for (int i = 0; i < adapter->num_queues; i++, que++)
+	for (int i = 0; i < adapter->num_rx_queues; i++, que++)
 		ixgbe_enable_queue(adapter, que->msix);
 
 	IXGBE_WRITE_FLUSH(hw);
@@ -3838,9 +3898,9 @@ static void
 ixgbe_if_queue_intr_enable(if_ctx_t ctx, uint16_t rxqid)
 {
 	struct adapter	*adapter = iflib_get_softc(ctx);
-	struct ix_queue *que = &adapter->queues[rxqid];
+	struct ix_rx_queue *que = &adapter->rx_queues[rxqid];
 
-	ixgbe_enable_queue(adapter, que->me);
+	ixgbe_enable_queue(adapter, que->rxr.me);
 }
  
 /*
@@ -3898,7 +3958,7 @@ ixgbe_disable_queue(struct adapter *adapter, u32 vector)
 int
 ixgbe_intr(void *arg)
 {
-	struct ix_queue *que = arg;
+	struct ix_rx_queue *que = arg;
 	struct adapter *adapter = que->adapter;
 	struct ixgbe_hw *hw = &adapter->hw;
 	if_ctx_t ctx = adapter->ctx;
@@ -3938,14 +3998,14 @@ static void
 ixgbe_free_pci_resources(if_ctx_t ctx)
 {
         struct adapter *adapter = iflib_get_softc(ctx);
-	struct 		ix_queue *que = adapter->queues;
+	struct 		ix_rx_queue *que = adapter->rx_queues;
 	device_t	dev = iflib_get_dev(ctx);
 
 	/* Release all msix queue resources */
 	if (adapter->intr_type == IFLIB_INTR_MSIX)
 		iflib_irq_free(ctx, &adapter->irq);
 
-	for (int i = 0; i < adapter->num_queues; i++, que++) {
+	for (int i = 0; i < adapter->num_rx_queues; i++, que++) {
 		iflib_irq_free(ctx, &que->que_irq);
 	}
 
@@ -4004,12 +4064,12 @@ ixgbe_set_flowcntl(struct adapter *adapter, int fc)
 	case ixgbe_fc_tx_pause:
 	case ixgbe_fc_full:
 		adapter->hw.fc.requested_mode = adapter->fc;
-		if (adapter->num_queues > 1)
+		if (adapter->num_rx_queues > 1)
 			ixgbe_disable_rx_drop(adapter);
 		break;
 	case ixgbe_fc_none:
 		adapter->hw.fc.requested_mode = ixgbe_fc_none;
-		if (adapter->num_queues > 1)
+		if (adapter->num_rx_queues > 1)
 			ixgbe_enable_rx_drop(adapter);
 		break;
 	default:
@@ -4035,8 +4095,8 @@ ixgbe_enable_rx_drop(struct adapter *adapter)
 {
 	struct ixgbe_hw *hw = &adapter->hw;
 
-	for (int i = 0; i < adapter->num_queues; i++) {
-		struct rx_ring *rxr = &adapter->queues[i].rxr;
+	for (int i = 0; i < adapter->num_rx_queues; i++) {
+		struct rx_ring *rxr = &adapter->rx_queues[i].rxr;
 		u32 srrctl = IXGBE_READ_REG(hw, IXGBE_SRRCTL(rxr->me));
 		srrctl |= IXGBE_SRRCTL_DROP_EN;
 		IXGBE_WRITE_REG(hw, IXGBE_SRRCTL(rxr->me), srrctl);
@@ -4056,8 +4116,8 @@ ixgbe_disable_rx_drop(struct adapter *adapter)
 {
 	struct ixgbe_hw *hw = &adapter->hw;
 
-	for (int i = 0; i < adapter->num_queues; i++) {
-		struct rx_ring *rxr = &adapter->queues[i].rxr;
+	for (int i = 0; i < adapter->num_rx_queues; i++) {
+		struct rx_ring *rxr = &adapter->rx_queues[i].rxr;
 		u32 srrctl = IXGBE_READ_REG(hw, IXGBE_SRRCTL(rxr->me));
 		srrctl &= ~IXGBE_SRRCTL_DROP_EN;
 		IXGBE_WRITE_REG(hw, IXGBE_SRRCTL(rxr->me), srrctl);

@@ -319,7 +319,7 @@ struct ixgbe_mc_addr {
  * The transmit ring, one per queue
  */
 struct tx_ring {
-	struct ix_queue	*que;
+	struct ix_tx_queue	*que;
 	struct adapter		*adapter;
 	u32			me;
 	u32			tail;
@@ -343,7 +343,7 @@ struct tx_ring {
  * The Receive ring, one per rx queue
  */
 struct rx_ring {
-	struct ix_queue	*que;
+	struct ix_rx_queue	*que;
 	struct adapter		*adapter;
 	u32			me;
 	u32			tail;
@@ -372,21 +372,22 @@ struct rx_ring {
 ** Driver queue struct: this is the interrupt container
 **  for the associated tx and rx ring.
 */
-struct ix_queue {
+struct ix_rx_queue {
 	struct adapter		*adapter;
 	u32			msix;           /* This queue's MSIX vector */
 	u32			eims;           /* This queue's EIMS bit */
 	u32			eitr_setting;
-	u32			me;
 	struct resource		*res;
 	void			*tag;
 	int			busy;
-	struct tx_ring		txr;
 	struct rx_ring		rxr;
-
-        struct if_irq           que_irq; 
-  
+        struct if_irq           que_irq;
 	u64			irqs;
+};
+
+struct ix_tx_queue {
+	struct adapter		*adapter;
+	struct tx_ring		txr;
 };
 
 #ifdef PCI_IOV
@@ -418,7 +419,8 @@ struct adapter {
 	struct ixgbe_osdep	osdep;
 	if_ctx_t ctx;
 	if_softc_ctx_t shared;
-#define num_queues shared->isc_nqsets
+#define num_tx_queues shared->isc_ntxqsets
+#define num_rx_queues shared->isc_nrxqsets
 #define max_frame_size shared->isc_max_frame_size
 #define intr_type shared->isc_intr
 	struct ifnet		*ifp;
@@ -490,7 +492,8 @@ struct adapter {
 	**   and RX/TX pair or rings associated
 	**   with it.
 	*/
-	struct ix_queue		*queues;
+	struct ix_tx_queue	*tx_queues;
+	struct ix_rx_queue	*rx_queues;
 	u64			active_queues;
 
         u32                     tx_process_limit;
@@ -638,16 +641,6 @@ ixv_check_ether_addr(u8 *addr)
 
 /* Shared Prototypes */
 
-#ifdef IXGBE_LEGACY_TX
-void     ixgbe_start(struct ifnet *);
-void     ixgbe_start_locked(struct tx_ring *, struct ifnet *);
-#else /* ! IXGBE_LEGACY_TX */
-int	ixgbe_mq_start(struct ifnet *, struct mbuf *);
-int	ixgbe_mq_start_locked(struct ifnet *, struct tx_ring *);
-void	ixgbe_qflush(struct ifnet *);
-void	ixgbe_deferred_mq_start(void *, int);
-#endif /* IXGBE_LEGACY_TX */
-
 int	ixgbe_allocate_queues(struct adapter *);
 int	ixgbe_allocate_transmit_buffers(struct tx_ring *);
 int	ixgbe_setup_transmit_structures(struct adapter *);
@@ -655,14 +648,12 @@ void	ixgbe_free_transmit_structures(struct adapter *);
 int	ixgbe_allocate_receive_buffers(struct rx_ring *);
 int	ixgbe_setup_receive_structures(struct adapter *);
 void	ixgbe_free_receive_structures(struct adapter *);
-void	ixgbe_txeof(struct tx_ring *);
-bool	ixgbe_rxeof(struct ix_queue *);
 
 int	ixgbe_dma_malloc(struct adapter *,
 	    bus_size_t, struct ixgbe_dma_alloc *, int);
 void	ixgbe_dma_free(struct adapter *, struct ixgbe_dma_alloc *);
 int	ixgbe_get_regs(SYSCTL_HANDLER_ARGS);
-void	ixgbe_init_tx_ring(struct ix_queue *que);
+void	ixgbe_init_tx_ring(struct ix_tx_queue *que);
 
 #ifdef PCI_IOV
 

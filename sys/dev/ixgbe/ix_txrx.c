@@ -79,7 +79,7 @@ struct if_txrx ixgbe_txrx  = {
 extern if_shared_ctx_t ixgbe_sctx;
 
 void
-ixgbe_init_tx_ring(struct ix_queue *que)
+ixgbe_init_tx_ring(struct ix_tx_queue *que)
 {
 	struct tx_ring *txr = &que->txr;
 	struct ixgbe_tx_buf *buf;
@@ -166,7 +166,7 @@ static int
 ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 {
 	struct adapter *sc       = arg;
-	struct ix_queue *que     = &sc->queues[pi->ipi_qsidx];
+	struct ix_tx_queue *que     = &sc->tx_queues[pi->ipi_qsidx];
 	struct tx_ring *txr      = &que->txr;
 	struct ixgbe_tx_buf *buf;
 	int         nsegs        = pi->ipi_nsegs;
@@ -243,7 +243,7 @@ static void
 ixgbe_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx)
 {
 	struct adapter *sc       = arg;
-	struct ix_queue *que     = &sc->queues[txqid];
+	struct ix_tx_queue *que     = &sc->tx_queues[txqid];
 	struct tx_ring *txr      = &que->txr;
   
 	IXGBE_WRITE_REG(&sc->hw, txr->tail, pidx);
@@ -253,7 +253,7 @@ static int
 ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool clear)
 {
 	struct adapter   *sc = arg;
-	struct ix_queue  *que = &sc->queues[txqid];
+	struct ix_tx_queue  *que = &sc->tx_queues[txqid];
 	struct tx_ring   *txr = &que->txr;
 	
 	u32		    cidx, ntxd, processed = 0;
@@ -320,7 +320,7 @@ ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 				 uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count)
 {
 	struct adapter *sc       = arg;
-	struct ix_queue *que     = &sc->queues[rxqid];
+	struct ix_rx_queue *que     = &sc->rx_queues[rxqid];
 	struct rx_ring *rxr      = &que->rxr;
 	int			i;
 	uint32_t next_pidx;
@@ -336,7 +336,7 @@ static void
 ixgbe_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx)
 {
 	struct adapter *sc       = arg;
-	struct ix_queue *que     = &sc->queues[rxqid];
+	struct ix_rx_queue *que     = &sc->rx_queues[rxqid];
 	struct rx_ring *rxr      = &que->rxr;
 
 	IXGBE_WRITE_REG(&sc->hw, rxr->tail, pidx);
@@ -346,7 +346,7 @@ static int
 ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 {
 	struct adapter *sc       = arg;
-	struct ix_queue *que     = &sc->queues[rxqid];
+	struct ix_rx_queue *que     = &sc->rx_queues[rxqid];
 	struct rx_ring *rxr      = &que->rxr;
 	union ixgbe_adv_rx_desc *rxd;
 	u32                      staterr;
@@ -378,7 +378,7 @@ static int
 ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 {
 	struct adapter           *adapter = arg;
-	struct ix_queue          *que = &adapter->queues[ri->iri_qsidx];
+	struct ix_rx_queue          *que = &adapter->rx_queues[ri->iri_qsidx];
 	struct rx_ring           *rxr = &que->rxr;
 	struct ifnet             *ifp = iflib_get_ifp(adapter->ctx);
 	union ixgbe_adv_rx_desc  *rxd;

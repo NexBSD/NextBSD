@@ -12,9 +12,10 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
         struct adapter *adapter = (struct adapter *) arg1;
 	struct ixgbe_hw *hw = &adapter->hw;
 #ifdef PRINT_QSET
-	struct ix_queue *que = &adapter->queues[0];
-	struct rx_ring *rxr = &que->rxr;
-	struct tx_ring *txr = &que->txr;
+	struct ix_tx_queue *tx_que = &adapter->tx_queues[0];
+	struct ix_rx_queue *rx_que = &adapter->rx_queues[0];
+	struct rx_ring *rxr = &rx_que->rxr;
+	struct tx_ring *txr = &tx_que->txr;
 	int ntxd = ixgbe_sctx->isc_ntxd;
 	int nrxd = ixgbe_sctx->isc_nrxd;
 	int j;
@@ -98,7 +99,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	regs_buff[34] = IXGBE_READ_REG(hw, IXGBE_FCTTV(3));
 	sbuf_printf(sb, "\tIXGBE_FCTTV(3)\t %08x\n", regs_buff[34]);
 
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		switch (hw->mac.type) {
 		case ixgbe_mac_82598EB:
 			regs_buff[35 + i] = IXGBE_READ_REG(hw, IXGBE_FCRTL(i));
@@ -124,42 +125,42 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 
 	/* Receive DMA */
 	sbuf_printf(sb, "\nReceive DMA\n");
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[53 + i] = IXGBE_READ_REG(hw, IXGBE_RDBAL(i));
 		sbuf_printf(sb, "\tIXGBE_RDBAL(%2d)\t %08x\n", i, regs_buff[53+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[117 + i] = IXGBE_READ_REG(hw, IXGBE_RDBAH(i));
 		sbuf_printf(sb, "\tIXGBE_RDBAH(%2d)\t %08x\n", i, regs_buff[117+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[181 + i] = IXGBE_READ_REG(hw, IXGBE_RDLEN(i));
 		sbuf_printf(sb, "\tIXGBE_RDLEN(%2d)\t %08x\n", i, regs_buff[181+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[245 + i] = IXGBE_READ_REG(hw, IXGBE_RDH(i));
 		sbuf_printf(sb, "\tIXGBE_RDH(%2d)\t %08x\n", i, regs_buff[245+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[309 + i] = IXGBE_READ_REG(hw, IXGBE_RDT(i));
 		sbuf_printf(sb, "\tIXGBE_RDT(%2d)\t %08x\n", i, regs_buff[309+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[373 + i] = IXGBE_READ_REG(hw, IXGBE_RXDCTL(i));
 		sbuf_printf(sb, "\tIXGBE_RXDCTL(%2d)\t %08x\n", i, regs_buff[373+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[437 + i] = IXGBE_READ_REG(hw, IXGBE_SRRCTL(i));
 		sbuf_printf(sb, "\tIXGBE_SRRCTL(%2d)\t %08x\n", i, regs_buff[437+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[453 + i] = IXGBE_READ_REG(hw, IXGBE_DCA_RXCTRL(i));
 		sbuf_printf(sb, "\tIXGBE_DCA_RXCTRL(%2d)\t %08x\n", i, regs_buff[453+i]);
 	}
 	regs_buff[469] = IXGBE_READ_REG(hw, IXGBE_RDRXCTL);
         sbuf_printf(sb, "\tIXGBE_RDRXCTL\t %08x\n", regs_buff[469]);
 
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[470 + i] = IXGBE_READ_REG(hw, IXGBE_RXPBSIZE(i));
 		sbuf_printf(sb, "\tIXGBE_RXPBSIZE(%2d)\t %08x\n", i, regs_buff[470+i]);
 	}
@@ -175,11 +176,11 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	regs_buff[481] = IXGBE_READ_REG(hw, IXGBE_RFCTL);
 	sbuf_printf(sb, "\tIXGBE_RFCTL\t %08x\n", regs_buff[481]);
 
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[482 + i] = IXGBE_READ_REG(hw, IXGBE_RAL(i));
 		sbuf_printf(sb, "\tIXGBE_RAL(%2d)\t %08x\n", i, regs_buff[482+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[498 + i] = IXGBE_READ_REG(hw, IXGBE_RAH(i));
 		sbuf_printf(sb, "\tIXGBE_RAH(%2d)\t %08x\n", i, regs_buff[498+i]);
 	}
@@ -196,11 +197,11 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	regs_buff[519] = IXGBE_READ_REG(hw, IXGBE_VMD_CTL);
 	sbuf_printf(sb, "\tIXGBE_VMD_CTL\t %08x\n", regs_buff[519]);
 
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[520 + i] = IXGBE_READ_REG(hw, IXGBE_IMIR(i));
 		sbuf_printf(sb, "\tIXGBE_IMIR(%2d)\t %08x\n", i, regs_buff[520+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[528 + i] = IXGBE_READ_REG(hw, IXGBE_IMIREXT(i));
 		sbuf_printf(sb, "\tIXGBE_IMIREXT(%2d)\t %08x\n", i, regs_buff[528+i]);
 	}
@@ -209,49 +210,49 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 
 	/* Transmit */
 	sbuf_printf(sb, "\nTransmit\n");
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[537 + i] = IXGBE_READ_REG(hw, IXGBE_TDBAL(i));
 		sbuf_printf(sb, "\tIXGBE_TDBAL(%2d)\t %08x\n", i, regs_buff[537+i]);
 	}
 
-        for (i = 0; i < adapter->num_queues; i++) {
+        for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[569 + i] = IXGBE_READ_REG(hw, IXGBE_TDBAH(i));
 		sbuf_printf(sb, "\tIXGBE_TDBAH(%2d)\t %08x\n", i, regs_buff[569+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[601 + i] = IXGBE_READ_REG(hw, IXGBE_TDLEN(i));
 		sbuf_printf(sb, "\tIXGBE_TDLEN(%2d)\t %08x\n", i, regs_buff[601+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[633 + i] = IXGBE_READ_REG(hw, IXGBE_TDH(i));
 		sbuf_printf(sb, "\tIXGBE_TDH(%2d)\t %08x\n", i, regs_buff[633+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++){
+	for (i = 0; i < adapter->num_tx_queues; i++){
 		regs_buff[665 + i] = IXGBE_READ_REG(hw, IXGBE_TDT(i));
 		sbuf_printf(sb, "\tIXGBE_TDT(%2d)\t %08x\n", i, regs_buff[665+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[697 + i] = IXGBE_READ_REG(hw, IXGBE_TXDCTL(i));
 		sbuf_printf(sb, "\tIXGBE_TXDCTL(%2d)\t %08x\n", i, regs_buff[697+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[729 + i] = IXGBE_READ_REG(hw, IXGBE_TDWBAL(i));
 		sbuf_printf(sb, "\tIXGBE_TDWBAL(%2d)\t %08x\n", i, regs_buff[729+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[761 + i] = IXGBE_READ_REG(hw, IXGBE_TDWBAH(i));
 		sbuf_printf(sb, "\tIXGBE_TDWBAH(%2d)\t %08x\n", i, regs_buff[761+i]);
 	}
 	regs_buff[793] = IXGBE_READ_REG(hw, IXGBE_DTXCTL);
 	sbuf_printf(sb, "\tIXGBE_DTXCTL\t %08x\n", regs_buff[793]);
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[794 + i] = IXGBE_READ_REG(hw, IXGBE_DCA_TXCTRL(i));
 		sbuf_printf(sb, "\tIXGBE_DCA_TXCTRL(%2d)\t %08x\n", i, regs_buff[794+i]);
 	}
 	regs_buff[810] = IXGBE_READ_REG(hw, IXGBE_TIPG);
 	sbuf_printf(sb, "\tIXGBE_TIPG\t %08x\n", regs_buff[810]);
 
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 	  regs_buff[811 + i] = IXGBE_READ_REG(hw, IXGBE_TXPBSIZE(i));
 	  sbuf_printf(sb, "\tIXGBE_TXPBSIZE(%2d)\t %08x\n", i, regs_buff[811+i]);
 	}
@@ -292,19 +293,19 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 		  sbuf_printf(sb, "\tIXGBE_DPMCS\t %08x\n", regs_buff[830]);
 		regs_buff[832] = IXGBE_READ_REG(hw, IXGBE_RUPPBMR);
 		  sbuf_printf(sb, "\tIXGBE_RUPPBMR\t %08x\n", regs_buff[832]);
-		  for (i = 0; i < adapter->num_queues; i++) {
+		  for (i = 0; i < adapter->num_tx_queues; i++) {
 			regs_buff[833 + i] = IXGBE_READ_REG(hw, IXGBE_RT2CR(i));
 			sbuf_printf(sb, "\tIXGBE_RT2CR(%2d)\t %08x\n", i, regs_buff[833+i]);
 		  }
-		  for (i = 0; i < adapter->num_queues; i++) {
+		  for (i = 0; i < adapter->num_tx_queues; i++) {
 			regs_buff[841 + i] = IXGBE_READ_REG(hw, IXGBE_RT2SR(i));
 			sbuf_printf(sb, "\tIXGBE_RT2SR(%2d)\t %08x\n", i, regs_buff[841+i]);
 		  }
-		  for (i = 0; i < adapter->num_queues; i++) {
+		  for (i = 0; i < adapter->num_tx_queues; i++) {
 		    regs_buff[849 + i] = IXGBE_READ_REG(hw, IXGBE_TDTQ2TCCR(i));
 		    sbuf_printf(sb, "\tIXGBE_TDTQ2TCCR(%2d)\t %08x\n", i, regs_buff[849+i]);
 		  }
-		  for (i = 0; i < adapter->num_queues; i++) {
+		  for (i = 0; i < adapter->num_tx_queues; i++) {
 			regs_buff[857 + i] = IXGBE_READ_REG(hw, IXGBE_TDTQ2TCSR(i));
 			sbuf_printf(sb, "\tIXGBE_TDTQ2TCSR(%2d)\t %08x\n", i, regs_buff[857+i]);
 		  }
@@ -315,27 +316,27 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	case ixgbe_mac_X550EM_x:
 		regs_buff[830] = IXGBE_READ_REG(hw, IXGBE_RTTDCS);
 		regs_buff[832] = IXGBE_READ_REG(hw, IXGBE_RTRPCS);
-		for (i = 0; i < adapter->num_queues; i++)
+		for (i = 0; i < adapter->num_tx_queues; i++)
 			regs_buff[833 + i] =
 				IXGBE_READ_REG(hw, IXGBE_RTRPT4C(i));
-		for (i = 0; i < adapter->num_queues; i++)
+		for (i = 0; i < adapter->num_tx_queues; i++)
 			regs_buff[841 + i] =
 				IXGBE_READ_REG(hw, IXGBE_RTRPT4S(i));
-		for (i = 0; i < adapter->num_queues; i++)
+		for (i = 0; i < adapter->num_tx_queues; i++)
 			regs_buff[849 + i] =
 				IXGBE_READ_REG(hw, IXGBE_RTTDT2C(i));
-		for (i = 0; i < adapter->num_queues; i++)
+		for (i = 0; i < adapter->num_tx_queues; i++)
 			regs_buff[857 + i] =
 				IXGBE_READ_REG(hw, IXGBE_RTTDT2S(i));
 		break;
 	default:
 		break;
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[865 + i] = IXGBE_READ_REG(hw, IXGBE_TDPT2TCCR(i)); /* same as RTTPT2C */
 		sbuf_printf(sb, "\tIXGBE_TDPT2TCCR(%2d)\t %08x\n", i, regs_buff[865+i]);
 	}
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
 		regs_buff[873 + i] = IXGBE_READ_REG(hw, IXGBE_TDPT2TCSR(i)); /* same as RTTPT2S */
 		sbuf_printf(sb, "\tIXGBE_TDPT2TCSR(%2d)\t %08x\n", i, regs_buff[873+i]);
 	}
@@ -412,7 +413,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
         sbuf_printf(sb, "\nDiagnostic\n");
 	regs_buff[1071] = IXGBE_READ_REG(hw, IXGBE_RDSTATCTL);
 	sbuf_printf(sb, "\tIXGBE_RDSTATCTL\t %08x\n", regs_buff[1071]);
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		regs_buff[1072 + i] = IXGBE_READ_REG(hw, IXGBE_RDSTAT(i));
 		sbuf_printf(sb, "\tIXGBE_RDSTAT(%2d)\t %08x\n", i, regs_buff[1072+i]);
 	}
@@ -459,7 +460,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 	sbuf_printf(sb, "\tIXGBE_RXBUFDATA2\t %08x\n", regs_buff[1109]);
 	regs_buff[1110] = IXGBE_READ_REG(hw, IXGBE_RXBUFDATA3);
 	sbuf_printf(sb, "\tIXGBE_RXBUFDATA3\t %08x\n", regs_buff[1110]);
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 	  regs_buff[1111 + i] = IXGBE_READ_REG(hw, IXGBE_PCIE_DIAG(i));
 	  sbuf_printf(sb, "\tIXGBE_PCIE_DIAG(%2d)\t %08x\n", i, regs_buff[1111+i]);
 	}

@@ -112,7 +112,7 @@ ixl_tso_detect_sparse(bus_dma_segment_t *segs, int nsegs, int segsz)
  **********************************************************************/
 
 static void
-ixl_tx_setup_offload(struct ixl_queue *que,
+ixl_tx_setup_offload(struct ixl_tx_queue *que,
     if_pkt_info_t pi, u32 *cmd, u32 *off)
 {
 
@@ -212,7 +212,7 @@ static int
 ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 {
 	struct ixl_vsi		*vsi = arg;
-	struct ixl_queue	*que = &vsi->queues[pi->ipi_qsidx];
+	struct ixl_tx_queue	*que = &vsi->tx_queues[pi->ipi_qsidx];
 	struct tx_ring		*txr = &que->txr;
 	int			nsegs = pi->ipi_nsegs;
 	bus_dma_segment_t *segs = pi->ipi_segs;
@@ -272,7 +272,7 @@ static void
 ixl_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx)
 {
 	struct ixl_vsi *vsi = arg;
-	struct tx_ring *txr = &vsi->queues[txqid].txr;
+	struct tx_ring *txr = &vsi->tx_queues[txqid].txr;
 	/*
 	 * Advance the Transmit Descriptor Tail (Tdt), this tells the
 	 * hardware that this frame is available to transmit.
@@ -288,7 +288,7 @@ ixl_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx)
  *
  **********************************************************************/
 void
-ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_queue *que)
+ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_tx_queue *que)
 {
 	struct tx_ring *txr = &que->txr;
 
@@ -301,8 +301,8 @@ ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_queue *que)
 	txr->atr_rate = ixl_atr_rate;
 	txr->atr_count = 0;
 #endif
-	wr32(vsi->hw, I40E_QTX_TAIL(que->me), 0);
-	wr32(vsi->hw, I40E_QTX_HEAD(que->me), 0);
+	wr32(vsi->hw, I40E_QTX_TAIL(que->txr.me), 0);
+	wr32(vsi->hw, I40E_QTX_HEAD(que->txr.me), 0);
 }
 
 /*             
@@ -310,7 +310,7 @@ ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_queue *que)
 **    location the HW records its HEAD index
 */
 static inline u32
-ixl_get_tx_head(struct ixl_queue *que)
+ixl_get_tx_head(struct ixl_tx_queue *que)
 {
 	struct tx_ring  *txr = &que->txr;
 	void *head = &txr->tx_base[ixl_sctx->isc_ntxd];
@@ -329,7 +329,7 @@ static int
 ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx, bool clear)
 {
 	struct ixl_vsi		*vsi = arg;
-	struct ixl_queue	*que = &vsi->queues[qid];
+	struct ixl_tx_queue	*que = &vsi->tx_queues[qid];
 
 	int head, credits;
 
@@ -357,7 +357,7 @@ ixl_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 
 {
 	struct ixl_vsi		*vsi = arg;
-	struct rx_ring		*rxr = &vsi->queues[rxqid].rxr;
+	struct rx_ring		*rxr = &vsi->rx_queues[rxqid].rxr;
 	int			i, mask;
 	uint32_t next_pidx;
 
@@ -372,7 +372,7 @@ static void
 ixl_isc_rxd_flush(void * arg, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx)
 {
 	struct ixl_vsi		*vsi = arg;
-	struct rx_ring		*rxr = &vsi->queues[rxqid].rxr;
+	struct rx_ring		*rxr = &vsi->rx_queues[rxqid].rxr;
 
 	wr32(vsi->hw, rxr->tail, pidx);
 }
@@ -381,7 +381,7 @@ static int
 ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 {
 	struct ixl_vsi *vsi = arg;
-	struct rx_ring *rxr = &vsi->queues[rxqid].rxr;
+	struct rx_ring *rxr = &vsi->rx_queues[rxqid].rxr;
 	union i40e_rx_desc	*cur;
 	u64 qword;
 	uint32_t status;
@@ -470,7 +470,7 @@ static int
 ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 {
 	struct ixl_vsi		*vsi = arg;
-	struct ixl_queue	*que = &vsi->queues[ri->iri_qsidx];
+	struct ixl_rx_queue	*que = &vsi->rx_queues[ri->iri_qsidx];
 	struct rx_ring		*rxr = &que->rxr;
 	union i40e_rx_desc	*cur;
 	u32		status, error;

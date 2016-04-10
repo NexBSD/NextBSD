@@ -75,7 +75,8 @@ static int      ixv_if_attach_pre(if_ctx_t ctx);
 static int      ixv_if_attach_post(if_ctx_t ctx);
 static int      ixv_if_detach(if_ctx_t ctx);
 
-static int      ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets);
+static int      ixv_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets);
+static int      ixv_if_rx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets);
 static void     ixv_if_queues_free(if_ctx_t ctx);
 static void     ixv_identify_hardware(if_ctx_t ctx);
 static int      ixv_allocate_pci_resources(if_ctx_t ctx);
@@ -160,7 +161,8 @@ MODULE_DEPEND(ix, netmap, 1, 1, 1);
 static device_method_t ixv_if_methods[] = {
 	DEVMETHOD(ifdi_attach_pre, ixv_if_attach_pre),
 	DEVMETHOD(ifdi_attach_post, ixv_if_attach_post),
-	DEVMETHOD(ifdi_queues_alloc, ixv_if_queues_alloc),
+	DEVMETHOD(ifdi_tx_queues_alloc, ixv_if_tx_queues_alloc),
+	DEVMETHOD(ifdi_rx_queues_alloc, ixv_if_rx_queues_alloc),
 	DEVMETHOD(ifdi_queues_free, ixv_if_queues_free),
 	DEVMETHOD(ifdi_detach, ixv_if_detach),
 	DEVMETHOD(ifdi_media_status, ixv_if_media_status),
@@ -290,22 +292,22 @@ ixv_register(device_t dev)
 }
 
 static int
-ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, int nqsets)
+ixv_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxqs, int ntxqsets)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
-	struct ix_queue *que;
+	struct ix_tx_queue *que;
 	int i, j, error;
 
 #ifdef PCI_IOV
 	enum ixgbe_iov_mode iov_mode;
 #endif
-	MPASS(adapter->num_queues == nqsets);
-	MPASS(nqs == 2);
+	MPASS(adapter->num_tx_queues == ntxqsets);
+	MPASS(ntxqs == 1);
 
 	/* Allocate queue structure memory */
 	if (!(adapter->queues =
-	      (struct ix_queue *) malloc(sizeof(struct ix_queue) *
-					  adapter->num_queues, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+	      (struct ix_tx_queue *) malloc(sizeof(struct ix_tx_queue) * ntxqsets,
+					    M_DEVBUF, M_NOWAIT | M_ZERO))) {
 	  device_printf(iflib_get_dev(ctx), "Unable to allocate TX ring memory\n");
 	  return (ENOMEM);
 	}
@@ -317,9 +319,8 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, in
 	adapter->pool = 0;
 #endif
 
-	for (i = 0, que = adapter->queues; i < nqsets; i++, que++) {
+	for (i = 0, que = adapter->tx_queues; i < ntxqsets; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
-		struct rx_ring 		*rxr = &que->rxr;
 
 	    if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * ixv_sctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 	        device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
@@ -327,24 +328,19 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, in
 		goto fail;
 	    }	
 #ifdef PCI_IOV
-	        que->me = txr->me = rxr->me = ixgbe_pf_que_index(iov_mode, i);
+	        que->me = txr->me = ixgbe_pf_que_index(iov_mode, i);
 #else
-		que->me = txr->me = rxr->me = i;
+		que->me = txr->me = i;
 #endif
 
-		txr->adapter = rxr->adapter = que->adapter = adapter;
+		txr->adapter =  que->adapter = adapter;
 		adapter->active_queues |= (u64)1 << que->me;
 
 		/* get the virtual and physical address of the hardware queues */
 		txr->tail = IXGBE_TDT(que->me);
-		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i*nqs];
-		txr->tx_paddr = paddrs[i*nqs];
-
-		rxr->tail = IXGBE_RDT(que->me);
-		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[i*nqs + 1];
-		rxr->rx_paddr = paddrs[i*nqs + 1];
-		rxr->bytes = 0;
-		txr->que = rxr->que = que;
+		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i];
+		txr->tx_paddr = paddrs[i];
+		txr->que = que;
 		for (j = 0; j < ixv_sctx->isc_ntxd; j++)
 			txr->tx_buffers->eop = -1;
 		txr->bytes = 0;
@@ -366,17 +362,72 @@ ixv_if_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nqs, in
 	return (error);
 }
 
+static int
+ixv_if_rx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nrxqs, int nrxqsets)
+{
+	struct adapter *adapter = iflib_get_softc(ctx);
+	struct ix_rx_queue *que;
+	int i, j, error;
+
+#ifdef PCI_IOV
+	enum ixgbe_iov_mode iov_mode;
+#endif
+	MPASS(adapter->num_rx_queues == nrxqsets);
+	MPASS(nrxqs == 1);
+
+	/* Allocate queue structure memory */
+	if (!(adapter->queues =
+	      (struct ix_rx_queue *) malloc(sizeof(struct ix_rx_queue) *nrxqsets,
+					  M_DEVBUF, M_NOWAIT | M_ZERO))) {
+	  device_printf(iflib_get_dev(ctx), "Unable to allocate TX ring memory\n");
+	  return (ENOMEM);
+	}
+
+#ifdef PCI_IOV
+	iov_mode = ixgbe_get_iov_mode(adapter);
+	adapter->pool = ixgbe_max_vfs(iov_mode);
+#else
+	adapter->pool = 0;
+#endif
+
+	for (i = 0, que = adapter->rx_queues; i < nrxqsets; i++, que++) {
+		struct rx_ring 		*rxr = &que->rxr;
+#ifdef PCI_IOV
+	        que->me = rxr->me = ixgbe_pf_que_index(iov_mode, i);
+#else
+		que->me = rxr->me = i;
+#endif
+		rxr->adapter = que->adapter = adapter;
+
+
+		/* get the virtual and physical address of the hardware queues */
+
+		rxr->tail = IXGBE_RDT(que->me);
+		rxr->rx_base = (union ixgbe_adv_rx_desc *)vaddrs[i];
+		rxr->rx_paddr = paddrs[i];
+		rxr->bytes = 0;
+		rxr->que = que;
+	}
+
+	device_printf(iflib_get_dev(ctx), "allocated for %d rx queues\n", adapter->num_rx_queues);
+	return (0);
+
+ fail:
+	ixv_if_queues_free(ctx);
+	return (error);
+}
+
 static void
 ixv_if_queues_free(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
-	struct ix_queue *que = adapter->queues;
+	struct ix_queue *que = adapter->tx_queues;
         int i;
 
 	if (que == NULL)
-	  return;
+		goto free;
 
-        for (i = 0; i < adapter->num_queues; i++, que++) {
+        for (i = 0; i < adapter->num_tx_queues; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
 		if (txr->tx_buffers == NULL)
 		  break;
@@ -384,9 +435,13 @@ ixv_if_queues_free(if_ctx_t ctx)
 		free(txr->tx_buffers, M_DEVBUF);
 		txr->tx_buffers = NULL;
 	}
-	
-	free(adapter->queues, M_DEVBUF);
-	adapter->queues = NULL;
+	if (adapter->tx_queues != NULL)
+		free(adapter->tx_queues, M_DEVBUF);
+free:
+	if (adapter->rx_queues != NULL)
+		free(adapter->rx_queues, M_DEVBUF);
+	adapter->tx_queues = NULL;
+	adapter->rx_queues = NULL;
 }
 
 /*********************************************************************
