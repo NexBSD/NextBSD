@@ -172,6 +172,11 @@ struct iflib_ctx {
 	struct iflib_filter_info ifc_filter_info;
 	struct ifmedia	ifc_media;
 
+	struct sysctl_oid *ifc_sysctl_node;
+	uint16_t ifc_sysctl_ntxqs;
+	uint16_t ifc_sysctl_nrxqs;
+	uint16_t ifc_sysctl_ntxds;
+	uint16_t ifc_sysctl_nrxds;
 	struct if_txrx ifc_txrx;
 #define isc_txd_encap  ifc_txrx.ift_txd_encap
 #define isc_txd_flush  ifc_txrx.ift_txd_flush
@@ -492,14 +497,6 @@ static int iflib_min_tx_latency = 0;
 
 SYSCTL_INT(_net_iflib, OID_AUTO, min_tx_latency, CTLFLAG_RW,
 		   &iflib_min_tx_latency, 0, "minimize transmit latency at the possibel expense of throughput");
-/* determined by iflib */
-static int iflib_num_tx_queues = 0;
-SYSCTL_INT(_net_iflib, OID_AUTO, num_tx_queues, CTLFLAG_RWTUN, &iflib_num_tx_queues, 0,
-	   "Number of tx queues to configure, 0 indicates autoconfigure");
-static int iflib_num_rx_queues = 0;
-SYSCTL_INT(_net_iflib, OID_AUTO, num_rx_queues, CTLFLAG_RWTUN, &iflib_num_rx_queues, 0,
-    "Number of rx queues to configure, 0 indicates autoconfigure");
-
 
 
 #if IFLIB_DEBUG_COUNTERS
@@ -616,7 +613,8 @@ static void iflib_txq_check_drain(iflib_txq_t txq, int budget);
 static uint32_t iflib_txq_can_drain(struct ifmp_ring *);
 static int iflib_register(if_ctx_t);
 static void iflib_init_locked(if_ctx_t ctx);
-static void iflib_add_device_sysctl(if_ctx_t ctx);
+static void iflib_add_device_sysctl_pre(if_ctx_t ctx);
+static void iflib_add_device_sysctl_post(if_ctx_t ctx);
 
 
 #ifdef DEV_NETMAP
@@ -3446,6 +3444,7 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		device_printf(dev, "iflib_register failed %d\n", err);
 		return (err);
 	}
+	iflib_add_device_sysctl_pre(ctx);
 	if ((err = IFDI_ATTACH_PRE(ctx)) != 0) {
 		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
 		return (err);
@@ -3535,7 +3534,7 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	}
 	*ctxp = ctx;
 
-	iflib_add_device_sysctl(ctx);
+	iflib_add_device_sysctl_post(ctx);
 	return (0);
 fail_detach:
 	ether_ifdetach(ctx->ifc_ifp);
@@ -4443,8 +4442,11 @@ iflib_msix_init(if_ctx_t ctx)
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 	int vectors, queues, rx_queues, tx_queues, queuemsgs, msgs;
+	int iflib_num_tx_queues, iflib_num_rx_queues;
 	int err, admincnt, bar;
 
+	iflib_num_tx_queues = ctx->ifc_sysctl_ntxqs;
+	iflib_num_rx_queues = ctx->ifc_sysctl_nrxqs;
 	bar = ctx->ifc_softc_ctx.isc_msix_bar;
 	admincnt = sctx->isc_admin_intrcnt;
 	/* Override by tuneable */
@@ -4583,9 +4585,40 @@ mp_ring_state_handler(SYSCTL_HANDLER_ARGS)
         return(rc);
 }
 
+
+
 #define NAME_BUFLEN 32
 static void
-iflib_add_device_sysctl(if_ctx_t ctx)
+iflib_add_device_sysctl_pre(if_ctx_t ctx)
+{
+        device_t dev = iflib_get_dev(ctx);
+	struct sysctl_oid_list *child, *oid_list;
+	struct sysctl_ctx_list *ctx_list;
+	struct sysctl_oid *node;
+
+	ctx_list = device_get_sysctl_ctx(dev);
+	child = SYSCTL_CHILDREN(device_get_sysctl_tree(dev));
+	ctx->ifc_sysctl_node = node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, "iflib",
+						      CTLFLAG_RD, NULL, "IFLIB fields");
+	oid_list = SYSCTL_CHILDREN(node);
+
+	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_ntxqs",
+		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_ntxqs, 0,
+			"# of txqs to use, 0 => use default #");
+	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_nrxqs",
+		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_ntxqs, 0,
+			"# of txqs to use, 0 => use default #");
+	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_ntxds",
+		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_ntxds, 0,
+			"# of tx descriptors to use, 0 => use default #");
+	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_nrxds",
+		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_nrxds, 0,
+			"# of rx descriptors to use, 0 => use default #");
+
+}
+
+static void
+iflib_add_device_sysctl_post(if_ctx_t ctx)
 {
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
@@ -4601,11 +4634,10 @@ iflib_add_device_sysctl(if_ctx_t ctx)
 	struct sysctl_oid *queue_node, *fl_node, *node;
 	struct sysctl_oid_list *queue_list, *fl_list;
 	ctx_list = device_get_sysctl_ctx(dev);
-	child = SYSCTL_CHILDREN(device_get_sysctl_tree(dev));
 
-	node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, "iflib",
-					     CTLFLAG_RD, NULL, "IFLIB fields");
+	node = ctx->ifc_sysctl_node;
 	child = SYSCTL_CHILDREN(node);
+
 	if (scctx->isc_ntxqsets > 100)
 		qfmt = "txq%03d";
 	else if (scctx->isc_ntxqsets > 10)
