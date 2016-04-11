@@ -2536,7 +2536,7 @@ static void ixl_config_rss(struct ixl_vsi *vsi)
 		/*
 		 * Fetch the RSS bucket id for the given indirection entry.
 		 * Cap it at the number of configured buckets (which is
-		 * num_queues.)
+		 * num_rx_queues.)
 		 */
 		que_id = rss_get_indirection_to_bucket(i);
 		que_id = que_id % vsi->num_rx_queues;
@@ -4303,7 +4303,8 @@ ixl_vf_alloc_vsi(struct ixl_pf *pf, struct ixl_vf *vf)
 	vf->vsi.seid = vsi_ctx.seid;
 	vf->vsi.vsi_num = vsi_ctx.vsi_number;
 	vf->vsi.first_queue = first_queue;
-	vf->vsi.num_queues = IXLV_MAX_QUEUES;
+	vf->vsi.num_tx_queues = IXLV_MAX_QUEUES;
+	vf->vsi.num_rx_queues = IXLV_MAX_QUEUES;
 
 	code = i40e_aq_get_vsi_params(hw, &vsi_ctx, NULL);
 	if (code != I40E_SUCCESS)
@@ -4380,7 +4381,7 @@ ixl_vf_map_queues(struct ixl_pf *pf, struct ixl_vf *vf)
 	wr32(hw, I40E_VPLAN_MAPENA(vf->vf_num),
 	    I40E_VPLAN_MAPENA_TXRX_ENA_MASK);
 
-	for (i = 0; i < vf->vsi.num_queues; i++) {
+	for (i = 0; i < vf->vsi.num_tx_queues; i++) {
 		qtable = (vf->vsi.first_queue + i) <<
 		    I40E_VPLAN_QTABLE_QINDEX_SHIFT;
 
@@ -4388,7 +4389,7 @@ ixl_vf_map_queues(struct ixl_pf *pf, struct ixl_vf *vf)
 	}
 
 	/* Map queues allocated to VF to its VSI. */
-	for (i = 0; i < vf->vsi.num_queues; i++)
+	for (i = 0; i < vf->vsi.num_tx_queues; i++)
 		ixl_vf_map_vsi_queue(hw, vf, i, vf->vsi.first_queue + i);
 
 	/* Set rest of VSI queues as unused. */
@@ -4456,7 +4457,8 @@ ixl_vf_release_resources(struct ixl_pf *pf, struct ixl_vf *vf)
 		ixl_vf_unregister_intr(hw, vpint_reg);
 	}
 
-	vf->vsi.num_queues = 0;
+	vf->vsi.num_tx_queues = 0;
+	vf->vsi.num_rx_queues = 0;
 }
 
 static int
@@ -4683,11 +4685,11 @@ ixl_vf_get_resources_msg(struct ixl_pf *pf, struct ixl_vf *vf, void *msg,
 	reply.vf_offload_flags = I40E_VIRTCHNL_VF_OFFLOAD_L2;
 
 	reply.num_vsis = 1;
-	reply.num_queue_pairs = vf->vsi.num_queues;
+	reply.num_queue_pairs = vf->vsi.num_tx_queues;
 	reply.max_vectors = pf->hw.func_caps.num_msix_vectors_vf;
 	reply.vsi_res[0].vsi_id = vf->vsi.vsi_num;
 	reply.vsi_res[0].vsi_type = I40E_VSI_SRIOV;
-	reply.vsi_res[0].num_queue_pairs = vf->vsi.num_queues;
+	reply.vsi_res[0].num_queue_pairs = vf->vsi.num_tx_queues;
 	memcpy(reply.vsi_res[0].default_mac_addr, vf->mac, ETHER_ADDR_LEN);
 
 	ixl_send_vf_msg(pf, vf, I40E_VIRTCHNL_OP_GET_VF_RESOURCES,
@@ -4835,7 +4837,7 @@ ixl_vf_config_vsi_msg(struct ixl_pf *pf, struct ixl_vf *vf, void *msg,
 		if (pair->txq.vsi_id != vf->vsi.vsi_num ||
 		    pair->rxq.vsi_id != vf->vsi.vsi_num ||
 		    pair->txq.queue_id != pair->rxq.queue_id ||
-		    pair->txq.queue_id >= vf->vsi.num_queues) {
+		    pair->txq.queue_id >= vf->vsi.num_tx_queues) {
 
 			i40e_send_vf_nack(pf, vf,
 			    I40E_VIRTCHNL_OP_CONFIG_VSI_QUEUES, I40E_ERR_PARAM);
@@ -4984,7 +4986,7 @@ ixl_vf_config_irq_msg(struct ixl_pf *pf, struct ixl_vf *vf, void *msg,
 
 		if (vector->rxq_map != 0) {
 			largest_rxq = fls(vector->rxq_map) - 1;
-			if (largest_rxq >= vf->vsi.num_queues) {
+			if (largest_rxq >= vf->vsi.num_rx_queues) {
 				i40e_send_vf_nack(pf, vf,
 				    I40E_VIRTCHNL_OP_CONFIG_IRQ_MAP,
 				    I40E_ERR_PARAM);
@@ -4994,7 +4996,7 @@ ixl_vf_config_irq_msg(struct ixl_pf *pf, struct ixl_vf *vf, void *msg,
 
 		if (vector->txq_map != 0) {
 			largest_txq = fls(vector->txq_map) - 1;
-			if (largest_txq >= vf->vsi.num_queues) {
+			if (largest_txq >= vf->vsi.num_tx_queues) {
 				i40e_send_vf_nack(pf, vf,
 				    I40E_VIRTCHNL_OP_CONFIG_IRQ_MAP,
 				    I40E_ERR_PARAM);
