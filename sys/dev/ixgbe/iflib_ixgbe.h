@@ -699,9 +699,9 @@ ixgbe_get_iov_mode(struct adapter *adapter)
 {
 	if (adapter->num_vfs == 0)
 		return (IXGBE_NO_VM);
-	if (adapter->num_queues <= 2)
+	if (adapter->num_tx_queues <= 2)
 		return (IXGBE_64_VM);
-	else if (adapter->num_queues <= 4)
+	else if (adapter->num_tx_queues <= 4)
 		return (IXGBE_32_VM);
 	else
 		return (IXGBE_NO_VM);

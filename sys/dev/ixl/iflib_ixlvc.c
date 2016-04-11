@@ -369,7 +369,8 @@ ixlv_configure_queues(struct ixlv_sc *sc)
 {
 	device_t		dev = sc->dev;
 	struct ixl_vsi		*vsi = &sc->vsi;
-	struct ixl_queue	*que = vsi->queues;
+	struct ixl_tx_queue	*tx_que = vsi->tx_queues;
+	struct ixl_rx_queue	*rx_que = vsi->rx_queues;
 	struct tx_ring		*txr;
 	struct rx_ring		*rxr;
 	if_shared_ctx_t		sctx;
@@ -378,7 +379,8 @@ ixlv_configure_queues(struct ixlv_sc *sc)
 	struct i40e_virtchnl_vsi_queue_config_info *vqci;
 	struct i40e_virtchnl_queue_pair_info *vqpi;
 
-	pairs = vsi->num_queues;
+	MPASS(vsi->num_tx_queues == vsi->num_rx_queues);
+	pairs = vsi->num_tx_queues;
 	len = sizeof(struct i40e_virtchnl_vsi_queue_config_info) +
 		       (sizeof(struct i40e_virtchnl_queue_pair_info) * pairs);
 	vqci = malloc(len, M_IXL, M_NOWAIT | M_ZERO);
@@ -394,9 +396,9 @@ ixlv_configure_queues(struct ixlv_sc *sc)
 	/* Size check is not needed here - HW max is 16 queue pairs, and we
 	 * can fit info for 31 of them into the AQ buffer before it overflows.
 	 */
-	for (int i = 0; i < pairs; i++, que++, vqpi++) {
-		txr = &que->txr;
-		rxr = &que->rxr;
+	for (int i = 0; i < pairs; i++, tx_que++, rx_que++, vqpi++) {
+		txr = &tx_que->txr;
+		rxr = &rx_que->rxr;
 		vqpi->txq.vsi_id = vqci->vsi_id;
 		vqpi->txq.queue_id = i;
 		vqpi->txq.ring_len = sctx->isc_ntxd;
@@ -466,7 +468,8 @@ ixlv_map_queues(struct ixlv_sc *sc)
 	struct i40e_virtchnl_irq_map_info *vm;
 	int 			i, q, len;
 	struct ixl_vsi		*vsi = &sc->vsi;
-	struct ixl_queue	*que = vsi->queues;
+	struct ixl_tx_queue	*tx_que = vsi->tx_queues;
+	struct ixl_rx_queue	*rx_que = vsi->rx_queues;
 
 	/* How many queue vectors, adminq uses one */
 	q = sc->msix - 1;
@@ -482,11 +485,11 @@ ixlv_map_queues(struct ixlv_sc *sc)
 
 	vm->num_vectors = sc->msix;
 	/* Queue vectors first */
-	for (i = 0; i < q; i++, que++) {
+	for (i = 0; i < q; i++, tx_que++, rx_que++) {
 		vm->vecmap[i].vsi_id = sc->vsi_res->vsi_id;
 		vm->vecmap[i].vector_id = i + 1; /* first is adminq */
-		vm->vecmap[i].txq_map = (1 << que->me);
-		vm->vecmap[i].rxq_map = (1 << que->me);
+		vm->vecmap[i].txq_map = (1 << tx_que->txr.me);
+		vm->vecmap[i].rxq_map = (1 << rx_que->rxr.me);
 		vm->vecmap[i].rxitr_idx = 0;
 		vm->vecmap[i].txitr_idx = 0;
 	}
@@ -808,10 +811,7 @@ ixlv_update_stats_counters(struct ixlv_sc *sc, struct i40e_eth_stats *es)
 	uint64_t tx_discards;
 
 	tx_discards = es->tx_discards;
-#ifdef notyet	
-	for (int i = 0; i < vsi->num_queues; i++)
-		tx_discards += sc->vsi.queues[i].txr.br->br_drops;
-#endif
+
 	/* Update ifnet stats */
 	IXL_SET_IPACKETS(vsi, es->rx_unicast +
 	                   es->rx_multicast +
