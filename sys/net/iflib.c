@@ -4442,7 +4442,7 @@ iflib_msix_init(if_ctx_t ctx)
 	device_t dev = ctx->ifc_dev;
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
-	int vectors, queues, queuemsgs, msgs;
+	int vectors, queues, rx_queues, tx_queues, queuemsgs, msgs;
 	int err, admincnt, bar;
 
 	bar = ctx->ifc_softc_ctx.isc_msix_bar;
@@ -4516,15 +4516,23 @@ iflib_msix_init(if_ctx_t ctx)
 		queues = rss_getnumbuckets();
 #endif
 	if (iflib_num_rx_queues > 0 && iflib_num_rx_queues < queues)
-		queues = iflib_num_rx_queues;
-	device_printf(dev, "using %d queues\n", queues);
+		queues = rx_queues = iflib_num_rx_queues;
+	else
+		rx_queues = queues;
+	if (iflib_num_tx_queues > 0 && iflib_num_tx_queues < queues)
+		tx_queues = iflib_num_tx_queues;
+	else
+		tx_queues = queues;
+
+	device_printf(dev, "using %d rx queues %d tx queues \n", rx_queues, tx_queues);
 
 	vectors = queues + admincnt;
 	if ((err = pci_alloc_msix(dev, &vectors)) == 0) {
 		device_printf(dev,
 					  "Using MSIX interrupts with %d vectors\n", vectors);
 		scctx->isc_vectors = vectors;
-		scctx->isc_nrxqsets = queues;
+		scctx->isc_nrxqsets = rx_queues;
+		scctx->isc_ntxqsets = tx_queues;
 		scctx->isc_intr = IFLIB_INTR_MSIX;
 		return (vectors);
 	} else {
