@@ -1,0 +1,17 @@
+@@COPYRIGHT@@
+pkg update
+pkg install git python27 cython pkg py27-enum34
+
+git clone "https://github.com/@@TYPE@@/py-launch"
+cd py-launch; make install clean; cd ..; rm -rf py-launch
+
+git clone "https://github.com/@@TYPE@@/py-mach"
+cd py-mach; make install clean;
+
+read -p "Do you wish to run mach-tests?" yn
+case $yn in
+[Yy]* ) cd tests; sh run.sh; cd ..;;
+[Nn]* ) ;;
+esac
+
+cd ..; rm -rf py-mach

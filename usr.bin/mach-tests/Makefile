@@ -4,6 +4,7 @@ SUBDIR= ipc-hello \
 	kqueue-tests \
 	set-bport \
 	bootstrap \
-	bootstrap-kqueue
+	bootstrap-kqueue \
+	mach-tests-setup
 
 .include <bsd.subdir.mk>
