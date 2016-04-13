@@ -3,7 +3,7 @@
 
 SCRIPTS = mach-tests-setup
 CLEANFILES = mach-tests-setup mach-tests-setup.sh
-NEWVERS = ${.CURDIR}/../../sys/conf/newvers.sh
+NEWVERS = ${.CURDIR}/../../../sys/conf/newvers.sh
 BINDIR?= /usr/bin
 
 mach-tests-setup.sh: ${.CURDIR}/mach-tests-setup.sh.in ${NEWVERS}
