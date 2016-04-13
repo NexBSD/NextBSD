@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2014-2015, Matthew Macy (mmacy@nextbsd.org)
+ * Copyright (c) 2016, Matthew Macy (mmacy@nextbsd.org)
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -35,6 +35,7 @@ typedef struct m_clref {
 	uint8_t mc_pad;
 	uint32_t mc_size;
 	caddr_t mc_buf;
+	void *mc_ext_arg;
 	volatile u_int	*mc_cnt;	/* pointer to ref count info */
 } *m_clref_t;
 
@@ -95,7 +96,8 @@ struct mbuf_lite {
  * mbuf cache line offset      - 32 bytes
  * mbuf_lite cache line offest - 16 bytes
  * Offsets are in multiples of 8 bytes
- * LP64: 8 bytes
+ * LP32: 12 bytes
+ * LP64: 16 bytes
  */
 typedef struct mvec_hdr {
 	/* offset value should be ignored if count is zero */
@@ -111,40 +113,24 @@ typedef struct mvec_hdr {
 
 	uint8_t	mh_nsegs;		/* number of total segments */
 	uint8_t mh_segoff;		/* offset of m_seg array - followed by type/index array */	
+	void	(*mh_ext_free)	/* free routine if not the usual */
+			(struct mbuf *, void *, void *);
+
 } *mvec_hdr_t;
 
-
-
-typedef struct mvec_ext {
-	/*
-	 * the flags array will indicate whether or not a cluster
-	 * uses this ext_free, the default free - if two clusters
-	 * in a chain have different non-default free routines
-	 * they will be stored in separate vectors - I believe that
-	 * this is rare enough to not warrant further optimization
-	 */
-	void	(*me_free)	/* free routine if not the usual */
-			(struct mbuf *, void *, void *);
-	void	*me_arg1;	/* optional argument pointer */
-	void	*me_arg2;	/* optional argument pointer */
-
-} *mvec_ext_t;	
 
 
 typedef struct mvec_toc {
 	mvec_hdr_t mt_mh;
 	uint32_t *mt_iref;
-	mvec_ext_t mt_mext;
 	m_clref_t mt_cl;
-	struct mbuf *mt_mdata;
+	caddr_t *mt_mdata;
 	m_meta_t mt_mflags;
-	caddr_t mt_dataptr;
+	caddr_t *mt_dataptr;
 	m_seg_t mt_segs;
 	m_segmap_ent_t mt_segmap;
 	int mt_nsegs;
 } *mvec_toc_t;
-
-
 
 /*
  * layout:
@@ -167,14 +153,17 @@ typedef struct mvec_toc {
 #define MVEC_CLUSTER_EXT_FREE	0x2
 #define MVEC_CLUSTER_M_NOFREE	0x4
 
+#define MVEC_MBUF_M_NOFREE	0x1
 
-struct mbuf *mvec_serialize(struct mbuf *);
-struct mbuf *_mvec_deserialize(struct mbuf *);
+
+struct mbuf *mvec_deserialize_(struct mbuf *, caddr_t, int);
 struct mbuf *mvec_defrag(struct mbuf *);
-void mvec_free(struct mbuf *);
+void mvec_free_one(struct mbuf *);
+void mvec_unpack(struct mbuf *m, mvec_toc_t toc);
+struct mbuf *mvec_serialize(struct mbuf *);
 
 static inline struct mbuf *
-mvec_deserialize(struct mbuf *m)
+mvec_deserialize(struct mbuf *m, caddr_t scratch, int scratch_size)
 {
 	/* no point in converting if there is only one */
 	if (m->m_next == NULL)
@@ -183,7 +172,20 @@ mvec_deserialize(struct mbuf *m)
 	if ((((m->m_flags & M_EXT) | (m->m_next->m_flags & M_EXT)) == 0) &&
 	    m->m_next->m_next == NULL)
 		return (m);
-	return (_mvec_deserialize(m));
+	return (mvec_deserialize_(m, scratch, scratch_size));
+}
+
+static inline void
+mvec_free(struct mbuf *m)
+{
+	struct mbuf *mp, *next;
+
+	mp = m;
+	while (mp != NULL) {
+		next = mp->m_next;
+		mvec_free_one(mp);
+		mp = next;
+	}
 }
 
 

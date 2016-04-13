@@ -640,7 +640,12 @@ mb_free_ext(struct mbuf *m)
 	 * after we have freed the external storage, since mbuf
 	 * could have been embedded in it.
 	 */
-	freembuf = (m->m_flags & M_NOFREE) ? 0 : 1;
+	if (m->m_flags & M_NOFREE) {
+		freembuf = 0;
+		/* assert that we won't be double freeing */
+		MPASS(m->m_ext.ext_type == EXT_EXTREF);
+	} else
+		freembuf = 1;
 
 	/* Free attached storage if this mbuf is the only reference to it. */
 	if (*refcnt == 1 || atomic_fetchadd_int(refcnt, -1) == 1) {

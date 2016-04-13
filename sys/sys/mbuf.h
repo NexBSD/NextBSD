@@ -404,6 +404,8 @@ struct mbuf {
  */
 #define	EXT_FLAG_EMBREF		0x000001	/* embedded ext_count */
 #define	EXT_FLAG_EXTREF		0x000002	/* external ext_cnt, notyet */
+#define	EXT_FLAG_MVEC_EMBREF	0x000008	/* mvec embedded ext_count */
+
 #define	EXT_FLAG_NOFREE		0x000010	/* don't free mbuf to pool, notyet */
 
 #define	EXT_FLAG_VENDOR1	0x010000	/* for vendor-internal use */
