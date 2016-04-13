@@ -3302,6 +3302,7 @@ kern/uipc_sockbuf.c		standard
 kern/uipc_socket.c		standard
 kern/uipc_syscalls.c		standard
 kern/uipc_usrreq.c		standard
+kern/uipc_mvec.c		standard
 kern/vfs_acl.c			standard
 kern/vfs_aio.c			standard
 kern/vfs_bio.c			standard
