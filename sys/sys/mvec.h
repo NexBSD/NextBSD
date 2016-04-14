@@ -118,8 +118,6 @@ typedef struct mvec_hdr {
 
 } *mvec_hdr_t;
 
-
-
 typedef struct mvec_toc {
 	mvec_hdr_t mt_mh;
 	uint32_t *mt_iref;
@@ -157,10 +155,12 @@ typedef struct mvec_toc {
 
 
 struct mbuf *mvec_deserialize_(struct mbuf *, caddr_t, int);
-struct mbuf *mvec_defrag(struct mbuf *);
+struct mbuf *mvec_defrag(struct mbuf *, int how);
 void mvec_free_one(struct mbuf *);
 void mvec_unpack(struct mbuf *m, mvec_toc_t toc);
 struct mbuf *mvec_serialize(struct mbuf *);
+caddr_t mvec_datap(struct mvec_toc *toc, int off, int *avail);
+struct mbuf *mvec_alloc(int how, int flags, int size);
 
 static inline struct mbuf *
 mvec_deserialize(struct mbuf *m, caddr_t scratch, int scratch_size)

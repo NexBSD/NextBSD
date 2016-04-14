@@ -262,6 +262,37 @@ mvec_unpack(struct mbuf *m, mvec_toc_t toc)
 	toc->mt_segmap = (m_segmap_ent_t)(cursor + (mh->mh_segoff << 3) + (cnt * sizeof(struct m_seg)));
 }
 
+static void
+mvec_unpack_cl(struct mbuf *m, mvec_toc_t toc, int clcount)
+{
+	caddr_t cursor;
+	int cnt;
+	mvec_hdr_t mh;
+
+	if (m->m_flags & M_PKTHDR)
+		cursor = (caddr_t)&m->m_pktdat;
+	else
+		cursor = (((caddr_t)m) + sizeof(struct mbuf_lite));
+	toc->mt_mh = mh = (mvec_hdr_t)cursor;
+	mh->mh_ext_free = NULL;
+
+	MPASS(clcount > 0);
+	mh->mh_ncl = clcount;
+	mh->mh_nsegs = clcount;
+	mh->mh_cl_off = sizeof(struct mvec_hdr) >> 3;
+	toc->mt_cl = (m_clref_t)(cursor + (mh->mh_cl_off << 3));
+	mh->mh_nmdata = 0;
+	toc->mt_mdata = NULL;
+	toc->mt_mflags = NULL;
+	mh->mh_ndataptr = 0;
+	toc->mt_dataptr = NULL;
+	MPASS(mh->mh_nsegs > 0);
+	cnt = mh->mh_nsegs;
+	mh->mh_segoff = mh->mh_cl_off + (clcount*sizeof(struct m_clref) >> 3);
+	toc->mt_segs = (m_seg_t)(cursor + (mh->mh_segoff << 3));
+	toc->mt_segmap = (m_segmap_ent_t)(cursor + (mh->mh_segoff << 3) + (cnt * sizeof(struct m_seg)));
+}
+
 static inline struct mbuf *
 mbuf_alloc(struct mbuf **bufs, int *bufcnt, int *idx)
 {
@@ -733,6 +764,255 @@ mvec_serialize(struct mbuf *m)
 	return (mh);
 err:
 	m_freem(mh);
+	return (NULL);
+}
+
+
+struct mbuf *
+mvec_alloc(int how, int flags, int size)
+{
+	int avail, remaining;
+	struct mbuf *m;
+	struct mvec_toc toc;
+	m_clref_t mcl;
+	m_seg_t msp;
+	m_segmap_ent_t msep;
+	int i, npages, pad, cl_segsize, count, total, j;
+	int *iref;
+	caddr_t cl;
+
+	pad = 8;
+	if (flags & M_PKTHDR) {
+		avail = MHLEN + sizeof(struct m_ext) - sizeof(struct mvec_hdr) - pad;
+		m = m_gethdr(how, MT_DATA);
+	} else {
+		avail = MSIZE - sizeof(struct mbuf_lite) - sizeof(struct mvec_hdr) - pad;
+		m = m_get(how, MT_DATA);
+	}
+	if (m == NULL)
+		return (NULL);
+
+	npages = 0;
+	cl_segsize = sizeof(struct m_clref) + sizeof(struct m_seg) + sizeof(struct m_segmap_ent) + sizeof(int);
+	count = avail/cl_segsize;
+
+	if ((count-1)*PAGE_SIZE + MCLBYTES  >= size) {
+		npages = count-1;
+		total = min(size, (count-1)*PAGE_SIZE + MCLBYTES);
+	} else {
+		npages = count;
+		total = min(size, count*PAGE_SIZE);
+	}
+	mvec_unpack_cl(m, &toc, count);
+	mcl = toc.mt_cl;
+	msp = toc.mt_segs;
+	msep = toc.mt_segmap;
+	iref = toc.mt_iref;
+	iref[0] = count;
+	remaining = size;
+	for (i = 0; i < count; i++) {
+		MPASS(remaining);
+		if (npages) {
+			cl = uma_zalloc(zone_jumbop, how);
+			mcl[i].mc_type = EXT_JUMBOP;
+			mcl[i].mc_size = PAGE_SIZE;
+			npages--;
+		} else {
+			cl = uma_zalloc(zone_clust, how);
+			mcl[i].mc_type = EXT_CLUSTER;
+			mcl[i].mc_size = MCLBYTES;
+		}
+		if (cl == NULL)
+			goto err;
+		mcl[i].mc_buf = cl;
+		mcl[i].mc_flags = MVEC_CLUSTER_EMBREF;
+		mcl[i].mc_ext_arg = NULL;
+		iref[i + 1] = 1;
+		mcl[i].mc_cnt = &iref[i + 1];
+		msp[i].ms_off = 0;
+		msp[i].ms_len = min(remaining, mcl[i].mc_size);
+		remaining -= msp[i].ms_len;
+		msep[i].mse_type = MVEC_TYPE_CLUSTER;
+		msep[i].mse_index = i;
+		msep[i].mse_eop = 0;
+	}
+	m->m_len = total;
+	return (m);
+err:
+	for (j = 0; j < i; j++)
+		uma_zfree(zone_jumbop, mcl[j].mc_buf);
+	m_free(m);
+	return (NULL);
+}
+
+/*
+ * given an idx and offset returns a pointer to the data and the amount
+ * remaining
+ */
+static caddr_t
+mvec_datap_idx(struct mvec_toc *toc, int idx, int off, int *avail)
+{
+	int segidx, segoff;
+	caddr_t datap;
+
+	MPASS(idx < toc->mt_mh->mh_nsegs);
+	segidx = toc->mt_segmap[idx].mse_index;
+	segoff = toc->mt_segs[idx].ms_off;
+	*avail = toc->mt_segs[idx].ms_len - off;
+	MPASS(*avail > 0);
+	switch (toc->mt_segmap[idx].mse_type) {
+	case MVEC_TYPE_CLUSTER:
+		datap = toc->mt_cl[segidx].mc_buf + segoff + off;
+		break;
+	case MVEC_TYPE_MBUF:
+		datap = toc->mt_mdata[segidx] + segoff + off;
+		break;
+	case MVEC_TYPE_DATA:
+	default:
+		panic("unsupported type");
+
+	}
+	return (datap);
+}
+
+caddr_t
+mvec_datap(struct mvec_toc *toc, int off, int *avail)
+{
+	int i, segidx, segoff, curoff, curlen, ptroff;
+	caddr_t datap;
+
+	for (curoff = i = 0; i < toc->mt_mh->mh_nsegs; i++) {
+		curlen = toc->mt_segs[i].ms_len;
+		if (off >  curoff + curlen) {
+			curoff += curlen;
+			continue;
+		}		
+	}
+	if (i == toc->mt_mh->mh_nsegs)
+		return (NULL);
+	segidx = toc->mt_segmap[i].mse_index;
+	ptroff = off - curoff;
+	segoff = toc->mt_segs[i].ms_off + ptroff;
+	*avail = toc->mt_segs[i].ms_len - ptroff;
+	MPASS(*avail > 0);
+	switch (toc->mt_segmap[i].mse_type) {
+	case MVEC_TYPE_CLUSTER:
+		datap = toc->mt_cl[segidx].mc_buf + segoff + ptroff;
+		break;
+	case MVEC_TYPE_MBUF:
+		datap = toc->mt_mdata[segidx] + segoff + ptroff;
+		break;
+	case MVEC_TYPE_DATA:
+	default:
+		panic("unsupported type");
+
+	}
+	return (datap);
+}
+
+/*
+ * Assumes that mdst is a freshly initialized mvec, msrc can be anywhere in an mvec chain
+ */
+static void
+mvec_copy(struct mbuf *mdst, struct mbuf **msrc, int *segidx, int *segoff)
+{
+	struct mvec_toc toc_src, toc_dst;
+	struct mbuf *mp;
+	int dstidx, dstoff, srcidx, srcoff;
+	int dst_avail, src_avail, len, copied;
+	caddr_t dstp, srcp;
+	mvec_hdr_t dst_mh, src_mh;
+
+	mvec_unpack(*msrc, &toc_src);
+	mvec_unpack(mdst, &toc_dst);
+
+	mp = *msrc;
+	dst_mh = toc_dst.mt_mh;
+	src_mh = toc_src.mt_mh;
+	dstp = mvec_datap_idx(&toc_dst, 0, 0, &dst_avail);
+
+	copied = dstidx = dstoff = 0;
+	srcidx = *segidx;
+	srcoff = *segoff;
+	while (dstidx < dst_mh->mh_nsegs) {
+		while (srcidx < src_mh->mh_nsegs) {
+			srcp = mvec_datap_idx(&toc_src, srcidx, srcoff, &src_avail);
+			len = min(src_avail, dst_avail);
+			copied += len;
+			memcpy(dstp, srcp, len);
+			if (src_avail < dst_avail) {
+				srcidx++;
+				srcoff = 0;
+				dstoff += len;
+				dstp += len;
+				dst_avail -= len;
+			} else if (dst_avail < src_avail) {
+				srcoff += len;
+				if (++dstidx == dst_mh->mh_nsegs)
+					goto done;
+				dstoff = 0;
+				srcp += len;
+				dstp = mvec_datap_idx(&toc_dst, dstidx, dstoff, &dst_avail);
+			} else {
+				srcidx++;
+				srcoff = dstoff = 0;
+				if (++dstidx == dst_mh->mh_nsegs)
+					goto done;
+				dstp = mvec_datap_idx(&toc_dst, dstidx, dstoff, &dst_avail);
+			}
+		}
+		mp = mp->m_next;
+		if (mp == NULL)
+			break;
+		mvec_unpack(mp, &toc_src);
+		srcoff = srcidx = 0;
+		src_mh = toc_src.mt_mh;
+	}
+done:
+	*segidx = srcidx;
+	*segoff = srcoff;
+	*msrc = mp;
+	mdst->m_len = copied;
+}
+
+/*
+ * Incrementally allocates an mvec chain and copies the contents of m0 over
+ */
+struct mbuf *
+mvec_defrag(struct mbuf *m0, int how)
+{
+	struct mbuf *mp, *mh, *mt, *m_iter;
+	int remaining, length, segidx, segoff;
+
+	if (!(m0->m_flags & M_PKTHDR))
+		return (m0);
+
+	length = m0->m_pkthdr.len;
+	remaining = length;
+	mt = mh = mp = mvec_alloc(M_NOWAIT, length, M_PKTHDR);
+	if (mp == NULL)
+		goto err;
+	remaining -= mp->m_len;
+	m_iter = m0;
+	segoff = segidx = 0;
+	/* copy header over */
+	memcpy(mp, m0, MPKTHSIZE);
+	mvec_copy(mp, &m_iter, &segidx, &segoff);
+	while (remaining) {
+		if ((mp = mvec_alloc(M_NOWAIT, remaining, 0)) == NULL)
+			goto err;
+		remaining -= mp->m_len;
+		mvec_copy(mp, &m_iter, &segidx, &segoff);
+		mt->m_next = mp;
+		mt = mp;
+	}
+
+	return (mh);
+err:
+	mvec_free(m0);
+	if (mh)
+		mvec_free(mh);
+
 	return (NULL);
 }
 
