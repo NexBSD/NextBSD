@@ -156,10 +156,10 @@ typedef struct mvec_toc {
 
 struct mbuf *mvec_deserialize_(struct mbuf *, caddr_t, int);
 struct mbuf *mvec_defrag(struct mbuf *, int how);
-void mvec_free_one(struct mbuf *);
 void mvec_unpack(struct mbuf *m, mvec_toc_t toc);
 struct mbuf *mvec_serialize(struct mbuf *);
 caddr_t mvec_datap(struct mvec_toc *toc, int off, int *avail);
+caddr_t mvec_datap_idx(struct mvec_toc *toc, int idx, int off, int *avail);
 struct mbuf *mvec_alloc(int how, int flags, int size);
 
 static inline struct mbuf *
