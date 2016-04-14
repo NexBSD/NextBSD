@@ -94,7 +94,12 @@
 /*
  * enable accounting of every mbuf as it comes in to and goes out of iflib's software descriptor references
  */
-#define MEMORY_LOGGING
+#define MEMORY_LOGGING 0
+/*
+ * Enable mbuf vectors for compressing long mbuf chains
+ */
+#define ENABLE_MVEC 1
+
 
 /*
  * NB:
@@ -308,7 +313,7 @@ struct iflib_txq {
 	/* implicit pad */
 	uint64_t	ift_processed;
 	uint64_t	ift_cleaned;
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 	uint64_t	ift_enqueued;
 	uint64_t	ift_dequeued;
 #endif
@@ -353,7 +358,7 @@ struct iflib_fl {
 	uint16_t	ifl_pidx;
 	uint16_t	ifl_credits;
 	uint8_t		ifl_gen;
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 	uint64_t	ifl_m_enqueued;
 	uint64_t	ifl_m_dequeued;
 	uint64_t	ifl_cl_enqueued;
@@ -1559,14 +1564,14 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 		if ((cl = rxsd->ifsd_cl) == NULL) {
 			if ((cl = rxsd->ifsd_cl = m_cljget(NULL, M_NOWAIT, fl->ifl_buf_size)) == NULL)
 				break;
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 			fl->ifl_cl_enqueued++;
 #endif
 		}
 		if ((m = m_gethdr(M_NOWAIT, MT_NOINIT)) == NULL) {
 			break;
 		}
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 		fl->ifl_m_enqueued++;
 #endif
 
@@ -1682,7 +1687,7 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 			MPASS(d->ifsd_cl == NULL);
 			MPASS(d->ifsd_m == NULL);
 		}
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 		fl->ifl_m_dequeued++;
 		fl->ifl_cl_dequeued++;
 #endif
@@ -1959,7 +1964,7 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int *cltype, int unload)
 	cidx = irf->irf_idx;
 	fl = &rxq->ifr_fl[flid];
 	fl->ifl_credits--;
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 	fl->ifl_m_dequeued++;
 	if (cltype)
 		fl->ifl_cl_dequeued++;
@@ -2417,7 +2422,7 @@ iflib_rebuild_mbuf(iflib_txq_t txq)
 	ntxd = sctx->isc_ntxd;
 	mh = m = ifsd_m[pidx];
 	ifsd_m[pidx] = NULL;
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 	txq->ift_dequeued++;
 #endif
 	len = m->m_len;
@@ -2427,7 +2432,7 @@ iflib_rebuild_mbuf(iflib_txq_t txq)
 	while (len < mhlen && (m->m_next == NULL)) {
 		m->m_next = ifsd_m[(pidx + i) & (ntxd-1)];
 		ifsd_m[(pidx + i) & (ntxd -1)] = NULL;
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 		txq->ift_dequeued++;
 #endif
 		m = m->m_next;
@@ -2507,7 +2512,7 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			 */
 			next = (pidx + count) & (ntxd-1);
 			MPASS(ifsd_m[next] == NULL);
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 			txq->ift_enqueued++;
 #endif
 			ifsd_m[next] = m;
@@ -2760,7 +2765,7 @@ iflib_tx_desc_free(iflib_txq_t txq, int n)
 
 				m_freem(m);
 				ifsd_m[cidx] = NULL;
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 				txq->ift_dequeued++;
 #endif
 				DBG_COUNTER_INC(tx_frees);
@@ -4649,7 +4654,7 @@ iflib_add_device_sysctl_post(if_ctx_t ctx)
 		queue_node = SYSCTL_ADD_NODE(ctx_list, child, OID_AUTO, namebuf,
 					     CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "txq_dequeued",
 				CTLFLAG_RD,
 				&txq->ift_dequeued, "total mbufs freed");
@@ -4753,7 +4758,7 @@ iflib_add_device_sysctl_post(if_ctx_t ctx)
 			SYSCTL_ADD_U16(ctx_list, fl_list, OID_AUTO, "credits",
 				       CTLFLAG_RD,
 				       &fl->ifl_credits, 1, "credits available");
-#ifdef MEMORY_LOGGING
+#if MEMORY_LOGGING
 			SYSCTL_ADD_QUAD(ctx_list, fl_list, OID_AUTO, "fl_m_enqueued",
 					CTLFLAG_RD,
 					&fl->ifl_m_enqueued, "mbufs allocated");
