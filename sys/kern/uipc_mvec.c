@@ -849,7 +849,7 @@ err:
  * given an idx and offset returns a pointer to the data and the amount
  * remaining
  */
-static caddr_t
+caddr_t
 mvec_datap_idx(struct mvec_toc *toc, int idx, int off, int *avail)
 {
 	int segidx, segoff;
