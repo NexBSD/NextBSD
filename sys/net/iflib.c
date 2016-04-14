@@ -34,6 +34,7 @@
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/module.h>
+#include <sys/mvec.h>
 #include <sys/kobj.h>
 #include <sys/rman.h>
 #include <sys/sbuf.h>
@@ -2377,88 +2378,18 @@ iflib_parse_header(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp)
 	return (0);
 }
 
-
-static  __noinline  struct mbuf *
-collapse_pkthdr(struct mbuf *m0)
-{
-	struct mbuf *m, *m_next, *tmp;
-
-	m = m0;
-	m_next = m->m_next;
-	while (m_next != NULL && m_next->m_len == 0) {
-		m = m_next;
-		m->m_next = NULL;
-		m_free(m);
-		m_next = m_next->m_next;
-	}
-	m = m0;
-	m->m_next = m_next;
-	if ((m_next->m_flags & M_EXT) == 0) {
-		m = m_defrag(m, M_NOWAIT);
-	} else {
-		tmp = m_next->m_next;
-		memcpy(m_next, m, MPKTHSIZE);
-		m = m_next;
-		m->m_next = tmp;
-	}
-	return (m);
-}
-
-/*
- * If dodgy hardware rejects the scatter gather chain we've handed it
- * we'll need to rebuild the mbuf chain before we can call m_defrag
- */
-static __noinline struct mbuf *
-iflib_rebuild_mbuf(iflib_txq_t txq)
-{
-
-	int ntxd, mhlen, len, i, pidx;
-	struct mbuf *m, *mh, **ifsd_m;
-	if_shared_ctx_t		sctx;
-
-	pidx = txq->ift_pidx;
-	ifsd_m = txq->ift_sds.ifsd_m;
-	sctx = txq->ift_ctx->ifc_sctx;
-	ntxd = sctx->isc_ntxd;
-	mh = m = ifsd_m[pidx];
-	ifsd_m[pidx] = NULL;
-#if MEMORY_LOGGING
-	txq->ift_dequeued++;
-#endif
-	len = m->m_len;
-	mhlen = m->m_pkthdr.len;
-	i = 1;
-
-	while (len < mhlen && (m->m_next == NULL)) {
-		m->m_next = ifsd_m[(pidx + i) & (ntxd-1)];
-		ifsd_m[(pidx + i) & (ntxd -1)] = NULL;
-#if MEMORY_LOGGING
-		txq->ift_dequeued++;
-#endif
-		m = m->m_next;
-		len += m->m_len;
-		i++;
-	}
-	return (mh);
-}
-
 static int
-iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
+iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			  struct mbuf **m0, bus_dma_segment_t *segs, int *nsegs,
 			  int max_segs, int flags)
 {
 	if_ctx_t ctx;
 	if_shared_ctx_t		sctx;
-	int i, next, pidx, mask, err, maxsegsz, ntxd, count;
-	struct mbuf *m, *tmp, **ifsd_m, **mp;
+	int i, j, next, pidx, mask, err, maxsegsz, ntxd, count;
+	struct mbuf *m, **ifsd_m, **mp;
+	struct mvec_toc toc;
 
 	m = *m0;
-
-	/*
-	 * Please don't ever do this
-	 */
-	if (__predict_false(m->m_len == 0))
-		*m0 = m = collapse_pkthdr(m);
 
 	ctx = txq->ift_ctx;
 	sctx = ctx->ifc_sctx;
@@ -2468,7 +2399,7 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 	if (map != NULL) {
 		uint8_t *ifsd_flags = txq->ift_sds.ifsd_flags;
 
-		err = bus_dmamap_load_mbuf_sg(tag, map,
+		err = bus_dmamap_load_mvec_sg(tag, map,
 					      *m0, segs, nsegs, BUS_DMA_NOWAIT);
 		if (err)
 			return (err);
@@ -2480,65 +2411,56 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 		do {
 			mp = &ifsd_m[next];
 			*mp = m;
+#if MEMORY_LOGGING
+			txq->ift_enqueued++;
+#endif
 			m = m->m_next;
-			(*mp)->m_next = NULL;
-			if (__predict_false((*mp)->m_len == 0)) {
-				m_free(*mp);
-				*mp = NULL;
-			} else
-				next = (pidx + i) & (ntxd-1);
+			next = (pidx + i) & (ntxd-1);
 		} while (m != NULL);
 	} else {
 		int buflen, sgsize, max_sgsize;
 		vm_offset_t vaddr;
 		vm_paddr_t curaddr;
 
-		count = i = 0;
+		count = i = j = 0;
 		maxsegsz = sctx->isc_tx_maxsize;
 		m = *m0;
 		do {
-			if (__predict_false(m->m_len <= 0)) {
-				tmp = m;
-				m = m->m_next;
-				tmp->m_next = NULL;
-				m_free(tmp);
-				continue;
-			}
 			buflen = m->m_len;
-			vaddr = (vm_offset_t)m->m_data;
-			/*
-			 * see if we can't be smarter about physically
-			 * contiguous mappings
-			 */
 			next = (pidx + count) & (ntxd-1);
 			MPASS(ifsd_m[next] == NULL);
 #if MEMORY_LOGGING
 			txq->ift_enqueued++;
 #endif
 			ifsd_m[next] = m;
-			while (buflen > 0) {
-				max_sgsize = MIN(buflen, maxsegsz);
-				curaddr = pmap_kextract(vaddr);
-				sgsize = PAGE_SIZE - (curaddr & PAGE_MASK);
-				sgsize = MIN(sgsize, max_sgsize);
-				segs[i].ds_addr = curaddr;
-				segs[i].ds_len = sgsize;
-				vaddr += sgsize;
-				buflen -= sgsize;
-				i++;
-				if (i >= max_segs)
-					goto err;
+
+			mvec_unpack(m, &toc);
+			for (i = 0; i < toc.mt_mh->mh_nsegs; i++) {
+				vaddr = (vm_offset_t)mvec_datap_idx(&toc, i, 0, &buflen);
+				while (buflen > 0) {
+					max_sgsize = MIN(buflen, maxsegsz);
+					curaddr = pmap_kextract(vaddr);
+					sgsize = PAGE_SIZE - (curaddr & PAGE_MASK);
+					sgsize = MIN(sgsize, max_sgsize);
+					segs[j].ds_addr = curaddr;
+					segs[j].ds_len = sgsize;
+					vaddr += sgsize;
+					buflen -= sgsize;
+					j++;
+					if (j >= max_segs)
+						goto err;
+				}
 			}
 			count++;
-			tmp = m;
 			m = m->m_next;
-			tmp->m_next = NULL;
 		} while (m != NULL);
-		*nsegs = i;
+		*nsegs = j;
 	}
 	return (0);
 err:
-	*m0 = iflib_rebuild_mbuf(txq);
+	for (i = 0; i < count; i++)
+		ifsd_m[(pidx + i) & (ntxd-1)] = NULL;
+
 	return (EFBIG);
 }
 
@@ -2606,16 +2528,12 @@ iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
 	}
 
 retry:
-	err = iflib_busdma_load_mbuf_sg(txq, desc_tag, map, m_headp, segs, &nsegs, max_segs, BUS_DMA_NOWAIT);
+	err = iflib_busdma_load_mvec_sg(txq, desc_tag, map, m_headp, segs, &nsegs, max_segs, BUS_DMA_NOWAIT);
 defrag:
 	if (__predict_false(err)) {
 		switch (err) {
 		case EFBIG:
-			/* try collapse once and defrag once */
-			if (remap == 0)
-				m_head = m_collapse(*m_headp, M_NOWAIT, max_segs);
-			if (remap == 1)
-				m_head = m_defrag(*m_headp, M_NOWAIT);
+			m_head = mvec_defrag(*m_headp, M_NOWAIT);
 			remap++;
 			if (__predict_false(m_head == NULL))
 				goto defrag_failed;
@@ -2680,9 +2598,9 @@ defrag:
 		 */
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
-	} else if (__predict_false(err == EFBIG && remap < 2)) {
-		*m_headp = m_head = iflib_rebuild_mbuf(txq);
-		remap = 1;
+	} else if (__predict_false(err == EFBIG && !remap)) {
+		*m_headp = m_head;
+		remap++;
 		txq->ift_txd_encap_efbig++;
 		goto defrag;
 	} else
