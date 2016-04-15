@@ -53,6 +53,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/uma.h>
 #include <vm/uma_dbg.h>
 
+MALLOC_DEFINE(M_MEM_MVEC, "mvec", "mbuf vector");
 
 
 /*
@@ -293,62 +294,62 @@ mvec_unpack_cl(struct mbuf *m, mvec_toc_t toc, int clcount)
 	toc->mt_segmap = (m_segmap_ent_t)(cursor + (mh->mh_segoff << 3) + (cnt * sizeof(struct m_seg)));
 }
 
-static inline struct mbuf *
-mbuf_alloc(struct mbuf **bufs, int *bufcnt, int *idx)
+static inline void
+wzero(void *p, int size)
 {
-	struct mbuf *mp;
+	unsigned long *ptmp;
+	int i;
 
-	if (*bufcnt > 0) {
-		mp = bufs[*idx];
-		(*bufcnt)--;
-		(*idx)++;
-	} else
-		mp = m_gethdr(M_NOWAIT, MT_NOINIT);
-	return (mp);
+	MPASS(size % sizeof(unsigned long) == 0);
+	ptmp = (unsigned long*)p;
+	for (i = 0; i < size/sizeof(long); i++)
+		ptmp[i] = 0;
 }
 
-static int
-mvec_deserialize_one(struct mbuf *m, struct mchain_hdr *mch, int remaining,
-		     caddr_t *curptr)
+static inline void
+wcopy(void *restrict dst, void *restrict src, int size)
 {
+	unsigned long *wdst, *wsrc;;
+	int i;
+
+	MPASS(size % sizeof(unsigned long) == 0);
+	wdst = (unsigned long *)dst;
+	wsrc = (unsigned long *)src;
+	for (i = 0; i < size/sizeof(long); i++)
+		wdst[i] = wsrc[i];
+}
+
+static struct mbuf *
+mvec_deserialize_one(struct mchain_hdr *mch, int remaining, caddr_t *curptr)
+{
+	struct mbuf *m;
 	struct mvec_toc enc_toc;
 	caddr_t chain, ext_buf_last;
 	mvec_hdr_t mh;
-	int iref, newcl, i, avail, used;
-	int segcount, mcount, clcount, irefcount, mbuf_segsize;
+	struct mvec_hdr mh_tmp;
+	int iref, newcl, i, used;
+	int segcount, mcount, clcount, irefcount;
 	volatile u_int *last_ref;
 	mdata_t mdp;
 	clrefdata_t crdp;
 
-	if (m->m_flags & M_PKTHDR)
-		mh = (mvec_hdr_t)&m->m_pktdat;
-	else
-		mh = (mvec_hdr_t)(((caddr_t)m) + sizeof(struct mbuf_lite));
-	*((uint64_t*)mh) = 0;
-
-	if (m->m_flags & M_PKTHDR)
-		avail = MHLEN - sizeof(*mh);
-	else
-		avail = MSIZE - sizeof(*mh) - sizeof(struct mbuf_lite);
-
 	chain = *curptr;
 
-	/* Determine if we need additional mbufs */
-	used = 0;
+	/* set initial used to size of packet header */
+	used = MPKTHSIZE - sizeof(struct m_ext);
 	ext_buf_last = NULL;
-	mbuf_segsize = sizeof(struct mbuf *) + sizeof(struct m_mbuf_meta) + sizeof(struct m_seg) + sizeof(struct m_segmap_ent);
 	segcount = mcount = clcount = irefcount = 0;
 	newcl = iref = 0;
+	wzero(&mh_tmp, sizeof(mh_tmp));
+
+	/* calculate how much space we'll need */
 	for (i = 0; i < remaining; i++) {
 		crdp = (clrefdata_t)chain;
 		mdp = (mdata_t)mdp;
 		if (crdp->cd_flags & MCHAIN_MBUF) {
-			if (avail < mbuf_segsize)
-				break;
-			avail -= mbuf_segsize;
 			chain = (caddr_t)(mdp + 1);
-			mh->mh_nmdata++;
-			mh->mh_nsegs++;
+			mh_tmp.mh_nmdata++;
+			mh_tmp.mh_nsegs++;
 			continue;
 		}
 
@@ -360,7 +361,7 @@ mvec_deserialize_one(struct mbuf *m, struct mchain_hdr *mch, int remaining,
 			if ((crdp->cd_flags & MCHAIN_HAS_REF) == 0 ||
 			    (crdp->cd_flags & (MCHAIN_HAS_REF|MCHAIN_MBUF_EXTREF)) == (MCHAIN_HAS_REF|MCHAIN_MBUF_EXTREF)) {
 				iref = 1;
-				if (mh->mh_ncliref  == 0 || ((mh->mh_ncliref & 0x1) == 1))
+				if (mh_tmp.mh_ncliref == 0 || ((mh_tmp.mh_ncliref & 0x1) == 1))
 					used += 8;
 				/* internal references and pointers to them get set in pack */		    
 			}
@@ -368,25 +369,31 @@ mvec_deserialize_one(struct mbuf *m, struct mchain_hdr *mch, int remaining,
 		/* every segment has at least on off/len pair and a segmap entry */
 		used += sizeof(struct m_seg) + sizeof(struct m_segmap_ent); 
 		/* set their values */
-		if (avail < used)
-			break;
 		if (crdp->cd_flags & MCHAIN_HAS_REF)
 			chain = (caddr_t)(crdp + 1);
 		else
 			chain += sizeof(struct cl_data);
 
 		if (iref) {
-			mh->mh_ncliref++;
+			mh_tmp.mh_ncliref++;
 			iref = 0;
 		}
 		if (newcl) {
-			mh->mh_ncl++;
+			mh_tmp.mh_ncl++;
 			newcl = 0;
 		}
-		mh->mh_nsegs++;
+		mh_tmp.mh_nsegs++;
 	}
 
-	/* calculate the offsets */
+	mh_tmp.mh_mvec_size = used;
+	m = malloc(used, M_MEM_MVEC, M_NOWAIT);
+	wzero(&m->m_pkthdr, sizeof(struct pkthdr));
+
+	mh = (mvec_hdr_t)&m->m_pktdat;
+	wcopy(mh, &mh_tmp, sizeof(mh_tmp));
+
+
+	/* calculate the offsets in the newly allocated block of memory*/
 	mvec_unpack(m, &enc_toc);
 	chain = *curptr;
 	segcount = irefcount = clcount = mcount = 0;
@@ -401,14 +408,10 @@ mvec_deserialize_one(struct mbuf *m, struct mchain_hdr *mch, int remaining,
 		crdp = (clrefdata_t)chain;
 		mdp = (mdata_t)chain;
 		if (crdp->cd_flags & MCHAIN_MBUF) {
-			if (avail < mbuf_segsize)
-				break;
-			avail -= mbuf_segsize;
 			chain = (caddr_t)(mdp + 1);
 			/* update mbuf values, segs, and segment map */
 			enc_toc.mt_mdata[mcount] = (caddr_t)mdp->md_data;
-			enc_toc.mt_mflags[mcount].mds_type = mdp->md_type;
-			enc_toc.mt_mflags[mcount].mds_flags = (mdp->md_flags & 0xff);
+			enc_toc.mt_mflags[mcount].mds_flags = (mdp->md_flags & 0xffff);
 			enc_toc.mt_segs[segcount].ms_off = mdp->md_off;
 			enc_toc.mt_segs[segcount].ms_len = mdp->md_len;
 			enc_toc.mt_segmap[segcount].mse_type = MVEC_TYPE_MBUF;
@@ -455,19 +458,17 @@ mvec_deserialize_one(struct mbuf *m, struct mchain_hdr *mch, int remaining,
 	}
 	
 	*curptr = chain;
-	return (remaining - mh->mh_nsegs);
+	return (m);
 }
 
 struct mbuf *
 mvec_deserialize_(struct mbuf *m, caddr_t scratch, int scratch_size)
 {
-	int midx, err, avail, mbuf_avail;
+	int midx, err, avail, mbuf_avail, i;
 	int remaining;
 	struct mchain_hdr *mch;
-	struct mbuf *mp, *mhp, *mt;
+	struct mbuf *mp;
 	caddr_t new_scratch, chain;
-	mdata_t mdp;
-	clrefdata_t crdp;
 	struct mbuf **bufs;
 
 	if ((err = mbuf_chain_encode(m, scratch, scratch_size) != 0))
@@ -482,39 +483,15 @@ mvec_deserialize_(struct mbuf *m, caddr_t scratch, int scratch_size)
 	midx = 0;
 	bufs = mch->mch_recyclebufs;
 
-	if ((mp = mbuf_alloc(bufs, &mbuf_avail, &midx)) == NULL)
-		return (m);
-	
-	if (mp != m)
-		memcpy(mp, m, MPKTHSIZE);
-	mt = mhp = mp;
 	remaining = mch->mch_total;
-	do {
-		remaining = mvec_deserialize_one(mp, mch, remaining, &chain);
-		if (mt != mp) {
-			mt->m_next = mp;
-			mt = mp;
-		}
-		if (remaining && (mp = mbuf_alloc(bufs, &mbuf_avail, &midx)) == NULL)
-			goto err;
-	} while (remaining);
-	while (mbuf_avail) {
-		uma_zfree_arg(zone_mbuf, bufs[midx], (void *)MB_DTOR_SKIP);
-		mbuf_avail--;
-	}
-	
-	return (mhp);
-err:
-	mvec_free(mhp);
-	crdp = (clrefdata_t)chain;
-	mdp = (mdata_t)chain;
-	if (mdp->md_flags & MCHAIN_MBUF) {
-		m_freem(mdp->md_data);
-	} else {
-		m_freem(crdp->cd_mbuf);
-	}
 
-	return (NULL);
+	if ((mp = mvec_deserialize_one(mch, remaining, &chain)) == NULL)
+		return (m);
+	memcpy(mp, m, MPKTHSIZE);
+	for (i = 0; i < mch->mch_recyclecnt; i++)
+		uma_zfree_arg(zone_mbuf, bufs[i], (void *)MB_DTOR_SKIP);
+
+	return (mp);
 }
 
 static void
@@ -567,7 +544,7 @@ mvec_free_one(struct mbuf *m)
 
 	freed = false;
 	mvec_unpack(m, &toc);
-	for (i = 0; i < toc.mt_nsegs; i++) {
+	for (i = 0; i < toc.mt_mh->mh_nsegs; i++) {
 		switch (toc.mt_segmap[i].mse_type) {
 		case MVEC_TYPE_CLUSTER:
 			idx = toc.mt_segmap[i].mse_index;
@@ -591,18 +568,19 @@ mvec_free_one(struct mbuf *m)
 			if ((flags & MVEC_MBUF_M_NOFREE) == 0)
 				uma_zfree_arg(zone_mbuf, toc.mt_mdata[idx], (void *)MB_DTOR_SKIP);
 			break;
+		case MVEC_TYPE_EMPTY:
+			/* empty segment */
 		case MVEC_TYPE_DATA:
-			if (freed == false) {
-				free(toc.mt_dataptr[0], M_DEVBUF);
-				freed = true;
-			}
+			/* freed separately */
 			break;
 		default:
-			panic("unknown type in mvec_free_one");
+			panic("unknown MVEC_TYPE %d", toc.mt_segmap[i].mse_type);
 		}
 	}
+	for (i = 0; i < toc.mt_mh->mh_ndataptr; i++)
+		free(toc.mt_dataptr[i], M_DEVBUF);
 	if (toc.mt_iref[0] == 0)
-		uma_zfree(zone_mbuf, m);
+		free(m, M_MEM_MVEC);
 }
 
 static void
@@ -682,6 +660,8 @@ mvec_serialize_one(struct mbuf *m) {
 
 	i = 0;
 	mh = mt = NULL;
+	if ((m->m_flags & M_MVEC) == 0)
+		return (m);
 	mvec_unpack(m, &enc_toc);
 
 	/*
@@ -716,7 +696,7 @@ mvec_serialize_one(struct mbuf *m) {
 		mvec_serialize_ext_init(mp, &enc_toc, 0);
 	} 
 	
-	for (i = 1; i < enc_toc.mt_nsegs; i++) {
+	for (i = 1; i < enc_toc.mt_mh->mh_nsegs; i++) {
 		if (enc_toc.mt_segmap[i].mse_type == MVEC_TYPE_MBUF) {
 			mp = mvec_serialize_mbuf_init(&enc_toc, i); 
 		} else if (enc_toc.mt_segmap[0].mse_type == MVEC_TYPE_CLUSTER) {
@@ -728,14 +708,15 @@ mvec_serialize_one(struct mbuf *m) {
 		mt->m_next = mp;
 		mt = mp;
 	}
-
+	if (enc_toc.mt_iref[0] == 0)
+		free(m, M_MEM_MVEC);
 	return (mh);
 cleanup:
 	if (mh)
 		m_freem(mh);
 	if (mp)
 		m_free(mp);
-	for (; i < enc_toc.mt_nsegs; i++) {
+	for (; i < enc_toc.mt_mh->mh_nsegs; i++) {
 		mvec_free_idx(&enc_toc, i);
 	}
 
@@ -771,38 +752,35 @@ err:
 struct mbuf *
 mvec_alloc(int how, int flags, int size)
 {
-	int avail, remaining;
+	int used, remaining;
 	struct mbuf *m;
 	struct mvec_toc toc;
 	m_clref_t mcl;
 	m_seg_t msp;
 	m_segmap_ent_t msep;
-	int i, npages, pad, cl_segsize, count, total, j;
+	int i, npages, pad, cl_segsize, count, j;
 	int *iref;
 	caddr_t cl;
 
 	pad = 8;
-	if (flags & M_PKTHDR) {
-		avail = MHLEN + sizeof(struct m_ext) - sizeof(struct mvec_hdr) - pad;
-		m = m_gethdr(how, MT_DATA);
-	} else {
-		avail = MSIZE - sizeof(struct mbuf_lite) - sizeof(struct mvec_hdr) - pad;
-		m = m_get(how, MT_DATA);
-	}
-	if (m == NULL)
-		return (NULL);
+	if (flags & M_PKTHDR)
+		used = MPKTHSIZE - sizeof(struct m_ext) + sizeof(struct mvec_hdr) + pad;
+	else
+		used = sizeof(struct mbuf_lite) + sizeof(struct mvec_hdr) + pad;
 
 	npages = 0;
 	cl_segsize = sizeof(struct m_clref) + sizeof(struct m_seg) + sizeof(struct m_segmap_ent) + sizeof(int);
-	count = avail/cl_segsize;
+	count = (size + (PAGE_SIZE-1))/ PAGE_SIZE;
 
+	used += count*cl_segsize;
 	if ((count-1)*PAGE_SIZE + MCLBYTES  >= size) {
 		npages = count-1;
-		total = min(size, (count-1)*PAGE_SIZE + MCLBYTES);
 	} else {
 		npages = count;
-		total = min(size, count*PAGE_SIZE);
 	}
+	if ((m = malloc(used, M_MEM_MVEC, M_NOWAIT)) == NULL)
+		return (NULL);
+
 	mvec_unpack_cl(m, &toc, count);
 	mcl = toc.mt_cl;
 	msp = toc.mt_segs;
@@ -836,7 +814,7 @@ mvec_alloc(int how, int flags, int size)
 		msep[i].mse_index = i;
 		msep[i].mse_eop = 0;
 	}
-	m->m_len = total;
+	m->m_len = size;
 	return (m);
 err:
 	for (j = 0; j < i; j++)
@@ -869,7 +847,7 @@ mvec_datap_idx(struct mvec_toc *toc, int idx, int off, int *avail)
 		break;
 	case MVEC_TYPE_DATA:
 	default:
-		panic("unsupported type");
+		panic("unsupported type %d", toc->mt_segmap[idx].mse_type);
 
 	}
 	return (datap);
@@ -904,7 +882,7 @@ mvec_datap(struct mvec_toc *toc, int off, int *avail)
 		break;
 	case MVEC_TYPE_DATA:
 	default:
-		panic("unsupported type");
+		panic("unsupported type %d", toc->mt_segmap[i].mse_type);
 
 	}
 	return (datap);

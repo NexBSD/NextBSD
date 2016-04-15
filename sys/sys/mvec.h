@@ -61,14 +61,13 @@ typedef struct m_wide_seg {
  * where the data may not be at the beginning (mbufs)
  */
 typedef struct m_mbuf_meta {
-	uint8_t	mds_type;
-	uint8_t mds_flags;
+	uint16_t mds_flags;
 } *m_meta_t;
 
 typedef struct m_segmap_ent {
-	uint8_t mse_type  : 2,
-		mse_index : 5,
-		mse_eop : 1;
+	uint16_t mse_type  : 3,
+		mse_eop : 1,
+		mse_index : 12;
 } *m_segmap_ent_t;
 
 
@@ -90,32 +89,37 @@ struct mbuf_lite {
 			 m_flags:24;	/* flags; see below */
 };
 
-
+#ifdef __LP64__
+#define MV_PAD 1
+#else
+#define MV_PAD 0
+#endif
 /*
  * pkthdr cache line offsets   - 24 bytes ((56 + 32)%64)
  * mbuf cache line offset      - 32 bytes
  * mbuf_lite cache line offest - 16 bytes
  * Offsets are in multiples of 8 bytes
- * LP32: 12 bytes
- * LP64: 16 bytes
+ * LP32: 16 bytes
+ * LP64: 24 bytes
  */
 typedef struct mvec_hdr {
 	/* offset value should be ignored if count is zero */
-	uint8_t	mh_ncl:4, 		/* number of distinct clusters */
-		mh_ncliref:4;		/* number of clusters with internal references*/
-	uint8_t	mh_cl_off;		/* offset of m_cl array */
-	uint8_t mh_cl_size;		/* size of cluster array in (/8) */
-
+	uint8_t	mh_ncl; 		/* number of distinct clusters */
+	uint8_t mh_ncliref;		/* number of clusters with internal references*/
 	uint8_t	mh_nmdata;		/* number of data segments (mbufs) */
 	uint8_t	mh_mdata_off;		/* offset of mbuf pointer array - followed by flags/type array */
-
-	uint8_t	mh_ndataptr;		/* number of data pointers (malloc) */
-
+	uint8_t mh_ndataptr;		/* number of data pointers (malloc) */
 	uint8_t	mh_nsegs;		/* number of total segments */
-	uint8_t mh_segoff;		/* offset of m_seg array - followed by type/index array */	
+
+	uint16_t mh_cl_off;		/* offset of m_cl array */
+
+	uint16_t mh_segoff;		/* offset of m_seg array - followed by type/index array */
+	uint16_t mh_mvec_size;		/* size of the mvec cluster */
+
+	uint32_t mh_pad[MV_PAD];
+
 	void	(*mh_ext_free)	/* free routine if not the usual */
 			(struct mbuf *, void *, void *);
-
 } *mvec_hdr_t;
 
 typedef struct mvec_toc {
@@ -127,7 +131,6 @@ typedef struct mvec_toc {
 	caddr_t *mt_dataptr;
 	m_seg_t mt_segs;
 	m_segmap_ent_t mt_segmap;
-	int mt_nsegs;
 } *mvec_toc_t;
 
 /*
@@ -142,7 +145,7 @@ typedef struct mvec_toc {
  * Best case (1 cluster, many segments, !M_PKTHDR): 50 segments can be managed within an mbuf's data area
  */
 
-
+#define MVEC_TYPE_EMPTY		0x0
 #define MVEC_TYPE_CLUSTER	0x1
 #define MVEC_TYPE_MBUF		0x2
 #define MVEC_TYPE_DATA		0x3
