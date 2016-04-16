@@ -172,7 +172,7 @@ mvec_deserialize(struct mbuf *m, caddr_t scratch, int scratch_size)
 	if (m->m_next == NULL || m->m_next->m_next == NULL)
 		return (m);
 	/* no point in converting anything that can fit in the mbuf data area */
-	if (m->m_pkthdr.len < MPKTHSIZE)
+	if (m->m_pkthdr.len <= MHLEN)
 		return (m);
 	return (mvec_deserialize_(m, scratch, scratch_size));
 }
