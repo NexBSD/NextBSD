@@ -168,12 +168,8 @@ struct mbuf *mvec_alloc(int how, int flags, int size);
 static inline struct mbuf *
 mvec_deserialize(struct mbuf *m, caddr_t scratch, int scratch_size)
 {
-	/* no point in converting if there is only one */
-	if (m->m_next == NULL)
-		return (m);
-	/* no point in converting if there are only two and neither has free data space */ 
-	if ((((m->m_flags & M_EXT) | (m->m_next->m_flags & M_EXT)) == 0) &&
-	    m->m_next->m_next == NULL)
+	/* no point in converting if there are fewer than 3 in the chain */
+	if (m->m_next == NULL || m->m_next->m_next == NULL)
 		return (m);
 	return (mvec_deserialize_(m, scratch, scratch_size));
 }
