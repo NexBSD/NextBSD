@@ -347,6 +347,7 @@ struct iflib_txq {
 	struct iflib_filter_info ift_filter_info;
 	bus_dma_tag_t		ift_desc_tag;
 	bus_dma_tag_t		ift_tso_desc_tag;
+	caddr_t			ift_scratch_page;
 	iflib_dma_info_t	ift_ifdi;
 #define MTX_NAME_LEN 16
 	char                    ift_mtx_name[MTX_NAME_LEN];
@@ -2378,6 +2379,29 @@ iflib_parse_header(iflib_txq_t txq, if_pkt_info_t pi, struct mbuf **mp)
 	return (0);
 }
 
+static inline int
+add_buf(bus_dma_segment_t *segs, vm_offset_t vaddr, int *j, int len, int max_segs, int maxsegsz)
+{
+	int sgsize, buflen, max_sgsize;
+	vm_paddr_t curaddr;
+
+	buflen = 0;
+	while (buflen > 0) {
+		max_sgsize = MIN(buflen, maxsegsz);
+		curaddr = pmap_kextract(vaddr);
+		sgsize = PAGE_SIZE - (curaddr & PAGE_MASK);
+		sgsize = MIN(sgsize, max_sgsize);
+		segs[*j].ds_addr = curaddr;
+		segs[*j].ds_len = sgsize;
+		vaddr += sgsize;
+		buflen -= sgsize;
+		(*j)++;
+		if (*j >= max_segs)
+			return (ENOSPC);
+	}
+	return (0);
+}
+
 static int
 iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			  struct mbuf **m0, bus_dma_segment_t *segs, int *nsegs,
@@ -2418,9 +2442,8 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			next = (pidx + i) & (ntxd-1);
 		} while (m != NULL);
 	} else {
-		int buflen, sgsize, max_sgsize;
+		int buflen;
 		vm_offset_t vaddr;
-		vm_paddr_t curaddr;
 
 		count = i = j = 0;
 		maxsegsz = sctx->isc_tx_maxsize;
@@ -2433,23 +2456,17 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			txq->ift_enqueued++;
 #endif
 			ifsd_m[next] = m;
-
-			mvec_unpack(m, &toc);
-			for (i = 0; i < toc.mt_mh->mh_nsegs; i++) {
-				vaddr = (vm_offset_t)mvec_datap_idx(&toc, i, 0, &buflen);
-				while (buflen > 0) {
-					max_sgsize = MIN(buflen, maxsegsz);
-					curaddr = pmap_kextract(vaddr);
-					sgsize = PAGE_SIZE - (curaddr & PAGE_MASK);
-					sgsize = MIN(sgsize, max_sgsize);
-					segs[j].ds_addr = curaddr;
-					segs[j].ds_len = sgsize;
-					vaddr += sgsize;
-					buflen -= sgsize;
-					j++;
-					if (j >= max_segs)
+			if (m->m_flags & M_MVEC) {
+				mvec_unpack(m, &toc);
+				for (i = 0; i < toc.mt_mh->mh_nsegs; i++) {
+					vaddr = (vm_offset_t)mvec_datap_idx(&toc, i, 0, &buflen);
+					if (add_buf(segs, vaddr, &j, buflen, max_segs, maxsegsz))
 						goto err;
 				}
+			} else {
+				vaddr = (vm_offset_t)m->m_data;
+				if (add_buf(segs, vaddr, &j, buflen, max_segs, maxsegsz))
+					goto err;
 			}
 			count++;
 			m = m->m_next;
@@ -2968,10 +2985,9 @@ static int
 iflib_if_transmit(if_t ifp, struct mbuf *m)
 {
 	if_ctx_t	ctx = if_getsoftc(ifp);
-
 	iflib_txq_t txq;
-	struct mbuf *marr[8], **mp, *next;
-	int err, i, count, qidx;
+	struct mbuf *mp;
+	int err, count, qidx;
 
 	if (__predict_false((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx))) {
 		DBG_COUNTER_INC(tx_frees);
@@ -2980,11 +2996,9 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	}
 
 	qidx = 0;
+	count = 1;
 	if ((NTXQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
 		qidx = QIDX(ctx, m);
-	/*
-	 * XXX calculate buf_ring based on flowid (divvy up bits?)
-	 */
 	txq = &ctx->ifc_txqs[qidx];
 
 #ifdef DRIVER_BACKPRESSURE
@@ -2998,29 +3012,29 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		return (ENOBUFS);
 	}
 #endif
-	qidx = count = 0;
-	mp = marr;
-	next = m;
-	do {
-		count++;
-		next = next->m_nextpkt;
-	} while (next != NULL);
-
-	if (count > 8)
-		if ((mp = malloc(count*sizeof(struct mbuf *), M_IFLIB, M_NOWAIT)) == NULL) {
-			/* XXX check nextpkt */
-			m_freem(m);
-			/* XXX simplify for now */
-			DBG_COUNTER_INC(tx_frees);
-			return (ENOBUFS);
+#ifdef MULTIPACKET_CHAIN
+	{
+		int i;
+		struct mbuf *marr[8], **mp, *next;
+		count = 0;
+		mp = marr;
+		next = m;
+		do {
+			count++;
+			next = next->m_nextpkt;
+		} while (next != NULL);
+		for (next = m, i = 0; next != NULL; i++) {
+			mp[i] = next;
+			next = next->m_nextpkt;
+			mp[i]->m_nextpkt = NULL;
 		}
-	for (next = m, i = 0; next != NULL; i++) {
-		mp[i] = next;
-		next = next->m_nextpkt;
-		mp[i]->m_nextpkt = NULL;
 	}
+#endif
+	MPASS(m->m_nextpkt == NULL);
+	if ((mp = mvec_deserialize(m, txq->ift_scratch_page, PAGE_SIZE)) == NULL)
+		return (ENOBUFS);
 	DBG_COUNTER_INC(tx_seen);
-	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)mp, count, TX_BATCH_SIZE);
+	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)&mp, count, TX_BATCH_SIZE);
 
 	if (iflib_txq_can_drain(txq->ift_br[0]))
 		GROUPTASK_ENQUEUE(&txq->ift_task);
@@ -3029,12 +3043,9 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 #ifdef DRIVER_BACKPRESSURE
 		txq->ift_closed = TRUE;
 #endif
-		for (i = 0; i < count; i++)
-			m_freem(mp[i]);
+		m_freem(m);
 		ifmp_ring_check_drainage(txq->ift_br[0], TX_BATCH_SIZE);
 	}
-	if (count > 16)
-		free(mp, M_IFLIB);
 
 	return (err);
 }
@@ -3523,6 +3534,8 @@ iflib_device_deregister(if_ctx_t ctx)
 	for (txq = ctx->ifc_txqs, i = 0, rxq = ctx->ifc_rxqs; i < NTXQSETS(ctx); i++, txq++) {
 		callout_drain(&txq->ift_timer);
 		callout_drain(&txq->ift_db_check);
+		TXDB_LOCK_DESTROY(txq);
+		free(txq->ift_scratch_page, M_IFLIB);
 		if (txq->ift_task.gt_uniq != NULL)
 			taskqgroup_detach(tqg, &txq->ift_task);
 	}
@@ -3858,7 +3871,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 		snprintf(txq->ift_db_mtx_name, MTX_NAME_LEN, "%s:tx(%d):db",
 			 device_get_nameunit(dev), txq->ift_id);
 		TXDB_LOCK_INIT(txq);
-
+		txq->ift_scratch_page = malloc(PAGE_SIZE, M_IFLIB, M_WAITOK);
 		txq->ift_br = brscp + i*nbuf_rings;
 		for (j = 0; j < nbuf_rings; j++) {
 			err = ifmp_ring_alloc(&txq->ift_br[j], 2048, txq, iflib_txq_drain,
