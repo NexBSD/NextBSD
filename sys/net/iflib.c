@@ -2385,7 +2385,7 @@ add_buf(bus_dma_segment_t *segs, vm_offset_t vaddr, int *j, int len, int max_seg
 	int sgsize, buflen, max_sgsize;
 	vm_paddr_t curaddr;
 
-	buflen = 0;
+	buflen = len;
 	while (buflen > 0) {
 		max_sgsize = MIN(buflen, maxsegsz);
 		curaddr = pmap_kextract(vaddr);
@@ -2471,6 +2471,7 @@ iflib_busdma_load_mvec_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			count++;
 			m = m->m_next;
 		} while (m != NULL);
+		MPASS(j > 0);
 		*nsegs = j;
 	}
 	return (0);
@@ -2578,6 +2579,7 @@ defrag:
 	 *        descriptors - this does not hold true on all drivers, e.g.
 	 *        cxgb
 	 */
+	MPASS(nsegs > 0);
 	if (__predict_false(nsegs + 2 > TXQ_AVAIL(txq))) {
 		txq->ift_no_desc_avail++;
 		if (map != NULL)
