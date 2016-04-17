@@ -459,7 +459,7 @@ m_copym(struct mbuf *m, int off0, int len, int wait)
 		m = m->m_next;
 	}
 	np = &top;
-	top = 0;
+	top = NULL;
 	while (len > 0) {
 		if (m == NULL) {
 			KASSERT(len == M_COPYALL,
@@ -1670,7 +1670,7 @@ m_unshare(struct mbuf *m0, int how)
 		 * don't know how to break up the non-contiguous memory when
 		 * doing DMA.
 		 */
-		n = m_getcl(how, m->m_type, m->m_flags);
+		n = m_getcl(how, m->m_type, m->m_flags & M_COPYFLAGS);
 		if (n == NULL) {
 			m_freem(m0);
 			return (NULL);
@@ -1700,7 +1700,7 @@ m_unshare(struct mbuf *m0, int how)
 				break;
 			off += cc;
 
-			n = m_getcl(how, m->m_type, m->m_flags);
+			n = m_getcl(how, m->m_type, m->m_flags & M_COPYFLAGS);
 			if (n == NULL) {
 				m_freem(mfirst);
 				m_freem(m0);

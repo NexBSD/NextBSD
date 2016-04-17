@@ -3,6 +3,8 @@
 
 .include <src.opts.mk>
 
+FILESGROUPS=	FILES
+
 
 SUBDIR=	newsyslog.conf.d
 SUBDIR+= launchd.d
@@ -82,7 +84,7 @@ BIN1+= apmd.conf
 .endif
 
 .if ${MK_AUTOFS} != "no"
-BIN1+= auto_master
+BIN1+=	auto_master
 .endif
 
 .if ${MK_FREEBSD_UPDATE} != "no"

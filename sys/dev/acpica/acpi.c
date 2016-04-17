@@ -31,6 +31,8 @@
 __FBSDID("$FreeBSD$");
 
 #include "opt_acpi.h"
+#include "opt_device_numa.h"
+
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/proc.h>
@@ -1109,7 +1111,7 @@ acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
 int
 acpi_parse_pxm(device_t dev, int *domain)
 {
-#if MAXMEMDOM > 1
+#ifdef DEVICE_NUMA
 	ACPI_HANDLE h;
 	int d, pxm;
 
