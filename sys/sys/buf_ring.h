@@ -447,7 +447,7 @@ buf_ring_peek_clear_sc(struct buf_ring *br)
 	br->br_ring[br->br_cons_head].bre_ptr = NULL;
 	return (ret);
 #else
-	return (br->br_ring[br->br_cons_head]);
+	return (__DEVOLATILE(void *, br->br_ring[br->br_cons_head].bre_ptr));
 #endif
 }
 
