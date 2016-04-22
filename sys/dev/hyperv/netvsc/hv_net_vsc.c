@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2009-2012 Microsoft Corp.
+ * Copyright (c) 2009-2012,2016 Microsoft Corp.
  * Copyright (c) 2010-2012 Citrix Inc.
  * Copyright (c) 2012 NetApp Inc.
  * All rights reserved.
@@ -742,10 +742,8 @@ cleanup:
 	 * Free the packet buffers on the netvsc device packet queue.
 	 * Release other resources.
 	 */
-	if (net_dev) {
-		sema_destroy(&net_dev->channel_init_sema);
-		free(net_dev, M_NETVSC);
-	}
+	sema_destroy(&net_dev->channel_init_sema);
+	free(net_dev, M_NETVSC);
 
 	return (NULL);
 }

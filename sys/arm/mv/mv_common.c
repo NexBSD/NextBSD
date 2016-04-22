@@ -823,7 +823,7 @@ decode_win_cpu_valid(void)
 			continue;
 		}
 
-		if (b != (b & ~(s - 1))) {
+		if (b != rounddown2(b, s)) {
 			printf("CPU window#%d: address 0x%08x is not aligned "
 			    "to 0x%08x\n", i, b, s);
 			rv = 0;
@@ -2282,7 +2282,7 @@ struct fdt_fixup_entry fdt_fixup_table[] = {
 	{ NULL, NULL }
 };
 
-#ifndef ARM_INTRNG
+#ifndef INTRNG
 static int
 fdt_pic_decode_ic(phandle_t node, pcell_t *intr, int *interrupt, int *trig,
     int *pol)
