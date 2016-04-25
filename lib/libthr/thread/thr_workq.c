@@ -415,6 +415,7 @@ _pthread_newthread(void *arg)
 	pthread_workitem_t item = (pthread_workitem_t)arg;
 	pthread_workqueue_t workq;
 	struct pthread *newthread, *mthread;
+	int i;
 
 	/*
 	 * This thread has been initiated by the kernel but we need to allocate
@@ -440,6 +441,9 @@ _pthread_newthread(void *arg)
 	newthread->cancel_enable = 1;
 	newthread->cancel_async = 0;
 	/* Initialize the mutex queue: */
+	for (i = 0; i < TMQ_NITEMS; ++i) {
+		TAILQ_INIT(&newthread->mq[i]);
+	}
 	newthread->refcount = 1;
 
 	/*
