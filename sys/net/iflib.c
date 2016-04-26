@@ -4481,15 +4481,24 @@ iflib_msix_init(if_ctx_t ctx)
 		pci_write_config(dev, rid, msix_ctrl, 2);
 	}
 
-	/* First try MSI/X */
-	ctx->ifc_msix_mem = bus_alloc_resource_any(dev,
-	    SYS_RES_MEMORY, &bar, RF_ACTIVE);
-	if (ctx->ifc_msix_mem == NULL) {
-		/* May not be enabled */
-		device_printf(dev, "Unable to map MSIX table \n");
-		goto msi;
+	/*
+	 * bar == -1 => "trust me I know what I'm doing"
+	 * https://www.youtube.com/watch?v=nnwWKkNau4I
+	 * Some drivers are for hardware that is so shoddily
+	 * documented that no one knows which bars are which
+	 * so the developer has to map all bars. This hack
+	 * allows shoddy garbage to use msix in this framework.
+	 */
+	if (bar != -1) {
+		ctx->ifc_msix_mem = bus_alloc_resource_any(dev,
+	            SYS_RES_MEMORY, &bar, RF_ACTIVE);
+		if (ctx->ifc_msix_mem == NULL) {
+			/* May not be enabled */
+			device_printf(dev, "Unable to map MSIX table \n");
+			goto msi;
+		}
 	}
-
+	/* First try MSI/X */
 	if ((msgs = pci_msix_count(dev)) == 0) { /* system has msix disabled */
 		device_printf(dev, "System has MSIX disabled \n");
 		bus_release_resource(dev, SYS_RES_MEMORY,
