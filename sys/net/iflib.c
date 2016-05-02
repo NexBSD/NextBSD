@@ -3296,7 +3296,7 @@ iflib_if_ioctl(if_t ifp, u_long command, caddr_t data)
 	case SIOCSDRVSPEC:
 	case SIOCGDRVSPEC:
 		CTX_LOCK(ctx);
-		err = IFDI_PRIV_IOCTL(ctx, data);
+		err = IFDI_PRIV_IOCTL(ctx, command, data);
 		CTX_UNLOCK(ctx);
 		break;
 	default:
