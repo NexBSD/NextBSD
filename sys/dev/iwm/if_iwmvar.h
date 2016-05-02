@@ -196,6 +196,9 @@ struct iwm_nvm_data {
 	uint8_t radio_cfg_dash;
 	uint8_t radio_cfg_pnum;
 	uint8_t valid_tx_ant, valid_rx_ant;
+#define IWM_NUM_CHANNELS	39
+
+	uint16_t nvm_ch_flags[IWM_NUM_CHANNELS];
 
 	uint16_t nvm_version;
 	uint8_t max_tx_pwr_half_dbm;
@@ -405,6 +408,7 @@ struct iwm_softc {
 #define IWM_FLAG_STOPPED	(1 << 2)
 #define IWM_FLAG_RFKILL		(1 << 3)
 #define IWM_FLAG_BUSY		(1 << 4)
+#define	IWM_FLAG_DORESUME	(1 << 5)
 
 	struct intr_config_hook sc_preinit_hook;
 	struct callout		sc_watchdog_to;

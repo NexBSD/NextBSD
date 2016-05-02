@@ -608,6 +608,8 @@
         ..
         printf
         ..
+        sdiff
+        ..
         sed
             regress.multitest.out
             ..
@@ -639,6 +641,8 @@
     ..
     usr.sbin
         etcupdate
+        ..
+        extattr
         ..
         fstyp
         ..
