@@ -1068,7 +1068,7 @@ _iflib_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 	*(bus_addr_t *) arg = segs[0].ds_addr;
 }
 
-static int
+int
 iflib_dma_alloc(if_ctx_t ctx, int size, iflib_dma_info_t dma, int mapflags)
 {
 	int err;
@@ -1144,7 +1144,7 @@ iflib_dma_alloc_multi(if_ctx_t ctx, int *sizes, iflib_dma_info_t *dmalist, int m
 	return (err);
 }
 
-static void
+void
 iflib_dma_free(iflib_dma_info_t dma)
 {
 	if (dma->idi_tag == NULL)

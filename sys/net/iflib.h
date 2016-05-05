@@ -317,6 +317,8 @@ void iflib_iov_intr_deferred(if_ctx_t ctx);
 
 void iflib_link_state_change(if_ctx_t ctx, int linkstate);
 
+int iflib_dma_alloc(if_ctx_t ctx, int size, iflib_dma_info_t dma, int mapflags);
+void iflib_dma_free(iflib_dma_info_t dma);
 
 int iflib_dma_alloc_multi(if_ctx_t ctx, int *sizes, iflib_dma_info_t *dmalist, int mapflags, int count);
 
