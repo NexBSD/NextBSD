@@ -33,8 +33,11 @@ __FBSDID("$FreeBSD$");
 #include <sys/systm.h>
 #include <sys/counter.h>
 #include <sys/lock.h>
+#include <sys/mutex.h>
 #include <sys/malloc.h>
 #include <machine/cpu.h>
+
+
 
 #include <net/mp_ring.h>
 
@@ -96,12 +99,84 @@ state_to_flags(union ring_state s, int abdicate)
 	return (BUSY);
 }
 
+#ifdef NO_64BIT_ATOMICS
+static void
+drain_ring_locked(struct ifmp_ring *r, union ring_state os, uint16_t prev, int budget)
+{
+	union ring_state ns;
+	int n, pending, total;
+	uint16_t cidx = os.cidx;
+	uint16_t pidx = os.pidx_tail;
+
+	MPASS(os.flags == BUSY);
+	MPASS(cidx != pidx);
+
+	if (prev == IDLE)
+		counter_u64_add(r->starts, 1);
+	pending = 0;
+	total = 0;
+
+	while (cidx != pidx) {
+
+		/* Items from cidx to pidx are available for consumption. */
+		n = r->drain(r, cidx, pidx);
+		if (n == 0) {
+			os.state = ns.state = r->state;
+			ns.cidx = cidx;
+			ns.flags = STALLED;
+			r->state = ns.state;
+			if (prev != STALLED)
+				counter_u64_add(r->stalls, 1);
+			else if (total > 0) {
+				counter_u64_add(r->restarts, 1);
+				counter_u64_add(r->stalls, 1);
+			}
+			break;
+		}
+		cidx = increment_idx(r, cidx, n);
+		pending += n;
+		total += n;
+
+		/*
+		 * We update the cidx only if we've caught up with the pidx, the
+		 * real cidx is getting too far ahead of the one visible to
+		 * everyone else, or we have exceeded our budget.
+		 */
+		if (cidx != pidx && pending < 64 && total < budget)
+			continue;
+
+		os.state = ns.state = r->state;
+		ns.cidx = cidx;
+		ns.flags = state_to_flags(ns, total >= budget);
+		r->state = ns.state;
+
+		if (ns.flags == ABDICATED)
+			counter_u64_add(r->abdications, 1);
+		if (ns.flags != BUSY) {
+			/* Wrong loop exit if we're going to stall. */
+			MPASS(ns.flags != STALLED);
+			if (prev == STALLED) {
+				MPASS(total > 0);
+				counter_u64_add(r->restarts, 1);
+			}
+			break;
+		}
+
+		/*
+		 * The acquire style atomic above guarantees visibility of items
+		 * associated with any pidx change that we notice here.
+		 */
+		pidx = ns.pidx_tail;
+		pending = 0;
+	}
+}
+#else
 /*
  * Caller passes in a state, with a guarantee that there is work to do and that
  * all items up to the pidx_tail in the state are visible.
  */
 static void
-drain_ring(struct ifmp_ring *r, union ring_state os, uint16_t prev, int budget)
+drain_ring_lockless(struct ifmp_ring *r, union ring_state os, uint16_t prev, int budget)
 {
 	union ring_state ns;
 	int n, pending, total;
@@ -176,6 +251,7 @@ drain_ring(struct ifmp_ring *r, union ring_state os, uint16_t prev, int budget)
 		pending = 0;
 	}
 }
+#endif
 
 int
 ifmp_ring_alloc(struct ifmp_ring **pr, int size, void *cookie, mp_ring_drain_t drain,
@@ -213,6 +289,9 @@ ifmp_ring_alloc(struct ifmp_ring **pr, int size, void *cookie, mp_ring_drain_t d
 	}
 
 	*pr = r;
+#ifdef NO_64BIT_ATOMICS
+	mtx_init(&r->lock, "mp_ring lock", NULL, MTX_DEF);
+#endif
 	return (0);
 }
 
@@ -244,6 +323,76 @@ ifmp_ring_free(struct ifmp_ring *r)
  *
  * Returns an errno.
  */
+#ifdef NO_64BIT_ATOMICS
+int
+ifmp_ring_enqueue(struct ifmp_ring *r, void **items, int n, int budget)
+{
+	union ring_state os, ns;
+	uint16_t pidx_start, pidx_stop;
+	int i;
+
+	MPASS(items != NULL);
+	MPASS(n > 0);
+
+	mtx_lock(&r->lock);
+	/*
+	 * Reserve room for the new items.  Our reservation, if successful, is
+	 * from 'pidx_start' to 'pidx_stop'.
+	 */
+	os.state = r->state;
+	if (n >= space_available(r, os)) {
+		counter_u64_add(r->drops, n);
+		MPASS(os.flags != IDLE);
+		if (os.flags == STALLED)
+			ifmp_ring_check_drainage(r, 0);
+		return (ENOBUFS);
+	}
+	ns.state = os.state;
+	ns.pidx_head = increment_idx(r, os.pidx_head, n);
+	r->state = ns.state;
+	pidx_start = os.pidx_head;
+	pidx_stop = ns.pidx_head;
+
+	/*
+	 * Wait for other producers who got in ahead of us to enqueue their
+	 * items, one producer at a time.  It is our turn when the ring's
+	 * pidx_tail reaches the begining of our reservation (pidx_start).
+	 */
+	while (ns.pidx_tail != pidx_start) {
+		cpu_spinwait();
+		ns.state = r->state;
+	}
+
+	/* Now it is our turn to fill up the area we reserved earlier. */
+	i = pidx_start;
+	do {
+		r->items[i] = *items++;
+		if (__predict_false(++i == r->size))
+			i = 0;
+	} while (i != pidx_stop);
+
+	/*
+	 * Update the ring's pidx_tail.  The release style atomic guarantees
+	 * that the items are visible to any thread that sees the updated pidx.
+	 */
+	os.state = ns.state = r->state;
+	ns.pidx_tail = pidx_stop;
+	ns.flags = BUSY;
+	r->state = ns.state;
+	counter_u64_add(r->enqueues, n);
+
+	/*
+	 * Turn into a consumer if some other thread isn't active as a consumer
+	 * already.
+	 */
+	if (os.flags != BUSY)
+		drain_ring_locked(r, ns, os.flags, budget);
+
+	mtx_unlock(&r->lock);
+	return (0);
+}
+
+#else
 int
 ifmp_ring_enqueue(struct ifmp_ring *r, void **items, int n, int budget)
 {
@@ -313,10 +462,11 @@ ifmp_ring_enqueue(struct ifmp_ring *r, void **items, int n, int budget)
 	 * already.
 	 */
 	if (os.flags != BUSY)
-		drain_ring(r, ns, os.flags, budget);
+		drain_ring_lockless(r, ns, os.flags, budget);
 
 	return (0);
 }
+#endif
 
 void
 ifmp_ring_check_drainage(struct ifmp_ring *r, int budget)
@@ -331,6 +481,17 @@ ifmp_ring_check_drainage(struct ifmp_ring *r, int budget)
 	ns.state = os.state;
 	ns.flags = BUSY;
 
+
+#ifdef NO_64BIT_ATOMICS
+	mtx_lock(&r->lock);
+	if (r->state != os.state) {
+		mtx_unlock(&r->lock);
+		return;
+	}
+	r->state = ns.state;
+	drain_ring_locked(r, ns, os.flags, budget);
+	mtx_unlock(&r->lock);
+#else
 	/*
 	 * The acquire style atomic guarantees visibility of items associated
 	 * with the pidx that we read here.
@@ -338,7 +499,9 @@ ifmp_ring_check_drainage(struct ifmp_ring *r, int budget)
 	if (!atomic_cmpset_acq_64(&r->state, os.state, ns.state))
 		return;
 
-	drain_ring(r, ns, os.flags, budget);
+
+	drain_ring_lockless(r, ns, os.flags, budget);
+#endif
 }
 
 void
