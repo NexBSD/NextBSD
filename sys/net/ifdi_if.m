@@ -103,7 +103,7 @@ CODE {
 	}
 
 	static int
-	null_priv_ioctl(if_ctx_t _ctx __unused, int command, caddr_t *data __unused)
+	null_priv_ioctl(if_ctx_t _ctx __unused, u_long command, caddr_t *data __unused)
 	{
 		return (ENOTSUP);
 	}
@@ -276,7 +276,7 @@ METHOD uint64_t get_counter {
 
 METHOD int priv_ioctl {
 	if_ctx_t _ctx;
-	int     _cmd;
+	u_long   _cmd;
 	caddr_t _data;
 } DEFAULT null_priv_ioctl;
 
