@@ -439,7 +439,7 @@ struct iflib_rxq {
  * Only allow a single packet to take up most 1/nth of the tx ring
  */
 #define MAX_SINGLE_PACKET_FRACTION 12
-#define IF_BAD_DMA (uint64_t)-1
+#define IF_BAD_DMA (bus_addr_t)-1
 
 static int enable_msix = 1;
 
@@ -1238,7 +1238,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
 	if_shared_ctx_t sctx = ctx->ifc_sctx;
 	if_softc_ctx_t scctx = &ctx->ifc_softc_ctx;
 	device_t dev = ctx->ifc_dev;
-	int err, i, nsegments, ntsosegments;
+	int err, nsegments, ntsosegments;
 
 	nsegments = scctx->isc_tx_nsegments;
 	ntsosegments = scctx->isc_tx_tso_segments_max;
@@ -1261,12 +1261,12 @@ iflib_txsd_alloc(iflib_txq_t txq)
 			       NULL,			/* lockfuncarg */
 			       &txq->ift_desc_tag))) {
 		device_printf(dev,"Unable to allocate TX DMA tag: %d\n", err);
-		device_printf(dev,"maxsize: %ld nsegments: %d maxsegsize: %ld\n",
+		device_printf(dev,"maxsize: %zd nsegments: %d maxsegsize: %zd\n",
 					  sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
 		goto fail;
 	}
 #ifdef INVARIANTS
-	device_printf(dev,"maxsize: %ld nsegments: %d maxsegsize: %ld\n",
+	device_printf(dev,"maxsize: %zd nsegments: %d maxsegsize: %zd\n",
 		      sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
 #endif
 	device_printf(dev,"TSO maxsize: %d ntsosegments: %d maxsegsize: %d\n",
@@ -1320,7 +1320,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
 		goto fail;
 	}
 
-	for (i = 0; i < sctx->isc_ntxd; i++) {
+	for (int i = 0; i < sctx->isc_ntxd; i++) {
 		err = bus_dmamap_create(txq->ift_desc_tag, 0, &txq->ift_sds.ifsd_map[i]);
 		if (err != 0) {
 			device_printf(dev, "Unable to create TX DMA map\n");
@@ -2798,7 +2798,7 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, int thresh)
 	if (reclaim <= thresh /* + MAX_TX_DESC(txq->ift_ctx) */) {
 #ifdef INVARIANTS
 		if (iflib_verbose_debug) {
-			printf("%s processed=%zu cleaned=%zu tx_nsegments=%d reclaim=%d thresh=%d\n", __FUNCTION__,
+			printf("%s processed=%ju cleaned=%ju tx_nsegments=%d reclaim=%d thresh=%d\n", __FUNCTION__,
 			       txq->ift_processed, txq->ift_cleaned, txq->ift_ctx->ifc_softc_ctx.isc_tx_nsegments,
 			       reclaim, thresh);
 
