@@ -505,9 +505,6 @@ SYSCTL_DECL(_debug_acpi);
  *
  * Returns the VM domain ID if found, or -1 if not found / invalid.
  */
-extern int	acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op,
-      cpuset_t *cpuset, int size);
-
 int		acpi_map_pxm_to_vm_domainid(int pxm);
 int		acpi_get_domain(device_t dev, device_t child, int *domain);
 int		acpi_parse_pxm(device_t dev, int *domain);

@@ -211,7 +211,6 @@ static device_method_t acpi_methods[] = {
     DEVMETHOD(bus_setup_intr,		bus_generic_setup_intr),
     DEVMETHOD(bus_teardown_intr,	bus_generic_teardown_intr),
     DEVMETHOD(bus_hint_device_unit,	acpi_hint_device_unit),
-    DEVMETHOD(bus_get_cpus,		acpi_get_cpus),
     DEVMETHOD(bus_get_domain,		acpi_get_domain),
 
     /* ACPI bus */
@@ -1077,28 +1076,6 @@ acpi_hint_device_unit(device_t acdev, device_t child, const char *name,
     }
 }
 
-int
-acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset, int size)
-{
-	int rc, d, error;
-
-	if ((rc = acpi_get_domain(dev, child, &d)) != 0)
-		return (rc);
-
-	switch (op) {
-	case LOCAL_CPUS:
-		*cpuset = cpuset_domain[d];
-		return (0);
-	case INTR_CPUS:
-		if ((error = bus_generic_get_cpus(dev, child, op, cpuset, size)))
-			return (error);
-		CPU_AND(cpuset, &cpuset_domain[d]);
-		return (0);
-	default:
-		return (bus_generic_get_cpus(dev, child, op, cpuset, size));
-	}
-}
-
 /*
  * Fetch the VM domain for the given device 'dev'.
  *
@@ -1112,10 +1089,9 @@ acpi_parse_pxm(device_t dev, int *domain)
 	ACPI_HANDLE h;
 	int d, pxm;
 
-	if ((h = acpi_get_handle(dev)) == NULL)
-		return (ENOENT);
-
-	if (ACPI_SUCCESS(acpi_GetInteger(h, "_PXM", &pxm))) {
+	h = acpi_get_handle(dev);
+	if ((h != NULL) &&
+	    ACPI_SUCCESS(acpi_GetInteger(h, "_PXM", &pxm))) {
 		d = acpi_map_pxm_to_vm_domainid(pxm);
 		if (d < 0)
 			return (-1);
@@ -1123,6 +1099,7 @@ acpi_parse_pxm(device_t dev, int *domain)
 		return (1);
 	}
 #endif
+
 	return (0);
 }
 
