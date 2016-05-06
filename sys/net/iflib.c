@@ -404,13 +404,6 @@ get_inuse(int size, int cidx, int pidx, int gen)
 #define IDXDIFF(head, tail, wrap) \
 	((head) >= (tail) ? (head) - (tail) : (wrap) - (tail) + (head))
 
-typedef struct iflib_global_context {
-	struct taskqgroup	*igc_io_tqg;		/* per-cpu taskqueues for io */
-	struct taskqgroup	*igc_config_tqg;	/* taskqueue for config operations */
-} iflib_global_context_t;
-
-struct iflib_global_context global_ctx, *gctx;
-
 struct iflib_rxq {
 	/* If there is a separate completion queue -
 	 * these are the cq cidx and pidx. Otherwise
@@ -3601,7 +3594,7 @@ iflib_device_deregister(if_ctx_t ctx)
 	if (ctx->ifc_led_dev != NULL)
 		led_destroy(ctx->ifc_led_dev);
 	/* XXX drain any dependent tasks */
-	tqg = gctx->igc_io_tqg;
+	tqg = qgroup_if_io_tqg;
 	for (txq = ctx->ifc_txqs, i = 0, rxq = ctx->ifc_rxqs; i < NTXQSETS(ctx); i++, txq++) {
 		callout_drain(&txq->ift_timer);
 		callout_drain(&txq->ift_db_check);
@@ -3612,7 +3605,7 @@ iflib_device_deregister(if_ctx_t ctx)
 		if (rxq->ifr_task.gt_uniq != NULL)
 			taskqgroup_detach(tqg, &rxq->ifr_task);
 	}
-	tqg = gctx->igc_config_tqg;
+	tqg = qgroup_if_config_tqg;
 	if (ctx->ifc_admin_task.gt_uniq != NULL)
 		taskqgroup_detach(tqg, &ctx->ifc_admin_task);
 	if (ctx->ifc_vflr_task.gt_uniq != NULL)
@@ -3737,11 +3730,6 @@ iflib_device_iov_add_vf(device_t dev, uint16_t vfnum, const nvlist_t *params)
 static int
 iflib_module_init(void)
 {
-
-	gctx = &global_ctx;
-	gctx->igc_io_tqg = qgroup_if_io_tqg;
-	gctx->igc_config_tqg = qgroup_if_config_tqg;
-
 	return (0);
 }
 
@@ -4183,7 +4171,7 @@ iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 		q = &ctx->ifc_txqs[qid];
 		info = &ctx->ifc_txqs[qid].ift_filter_info;
 		gtask = &ctx->ifc_txqs[qid].ift_task;
-		tqg = gctx->igc_io_tqg;
+		tqg = qgroup_if_io_tqg;
 		tqrid = irq->ii_rid;
 		fn = _task_fn_tx;
 		break;
@@ -4191,7 +4179,7 @@ iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 		q = &ctx->ifc_rxqs[qid];
 		info = &ctx->ifc_rxqs[qid].ifr_filter_info;
 		gtask = &ctx->ifc_rxqs[qid].ifr_task;
-		tqg = gctx->igc_io_tqg;
+		tqg = qgroup_if_io_tqg;
 		tqrid = irq->ii_rid;
 		fn = _task_fn_rx;
 		break;
@@ -4199,7 +4187,7 @@ iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 		q = ctx;
 		info = &ctx->ifc_filter_info;
 		gtask = &ctx->ifc_admin_task;
-		tqg = gctx->igc_config_tqg;
+		tqg = qgroup_if_config_tqg;
 		tqrid = -1;
 		fn = _task_fn_admin;
 		break;
@@ -4243,26 +4231,26 @@ iflib_softirq_alloc_generic(if_ctx_t ctx, int rid, iflib_intr_type_t type,  void
 	case IFLIB_INTR_TX:
 		q = &ctx->ifc_txqs[qid];
 		gtask = &ctx->ifc_txqs[qid].ift_task;
-		tqg = gctx->igc_io_tqg;
+		tqg = qgroup_if_io_tqg;
 		fn = _task_fn_tx;
 		break;
 	case IFLIB_INTR_RX:
 		q = &ctx->ifc_rxqs[qid];
 		gtask = &ctx->ifc_rxqs[qid].ifr_task;
-		tqg = gctx->igc_io_tqg;
+		tqg = qgroup_if_io_tqg;
 		fn = _task_fn_rx;
 		break;
 	case IFLIB_INTR_ADMIN:
 		q = ctx;
 		gtask = &ctx->ifc_admin_task;
-		tqg = gctx->igc_config_tqg;
+		tqg = qgroup_if_config_tqg;
 		rid = -1;
 		fn = _task_fn_admin;
 		break;
 	case IFLIB_INTR_IOV:
 		q = ctx;
 		gtask = &ctx->ifc_vflr_task;
-		tqg = gctx->igc_config_tqg;
+		tqg = qgroup_if_config_tqg;
 		rid = -1;
 		fn = _task_fn_iov;
 		break;
@@ -4300,7 +4288,7 @@ iflib_legacy_setup(if_ctx_t ctx, driver_filter_t filter, void *filter_arg, int *
 	q = &ctx->ifc_rxqs[0];
 	info = &rxq[0].ifr_filter_info;
 	gtask = &rxq[0].ifr_task;
-	tqg = gctx->igc_io_tqg;
+	tqg = qgroup_if_io_tqg;
 	tqrid = irq->ii_rid = *rid;
 	fn = _task_fn_rx;
 
@@ -4316,9 +4304,9 @@ iflib_legacy_setup(if_ctx_t ctx, driver_filter_t filter, void *filter_arg, int *
 	taskqgroup_attach(tqg, gtask, q, tqrid, name);
 
 	GROUPTASK_INIT(&txq->ift_task, 0, _task_fn_tx, txq);
-	taskqgroup_attach(gctx->igc_io_tqg, &txq->ift_task, txq, tqrid, "tx");
+	taskqgroup_attach(qgroup_if_io_tqg, &txq->ift_task, txq, tqrid, "tx");
 	GROUPTASK_INIT(&ctx->ifc_admin_task, 0, _task_fn_admin, ctx);
-	taskqgroup_attach(gctx->igc_config_tqg, &ctx->ifc_admin_task, ctx, -1, "admin/link");
+	taskqgroup_attach(qgroup_if_config_tqg, &ctx->ifc_admin_task, ctx, -1, "admin/link");
 
 	return (0);
 }
@@ -4363,7 +4351,7 @@ void
 iflib_io_tqg_attach(struct grouptask *gt, void *uniq, int cpu, char *name)
 {
 
-	taskqgroup_attach_cpu(gctx->igc_io_tqg, gt, uniq, cpu, -1, name);
+	taskqgroup_attach_cpu(qgroup_if_io_tqg, gt, uniq, cpu, -1, name);
 }
 
 void
@@ -4372,7 +4360,7 @@ iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask, task_fn_t *fn,
 {
 
 	GROUPTASK_INIT(gtask, 0, fn, ctx);
-	taskqgroup_attach(gctx->igc_config_tqg, gtask, gtask, -1, name);
+	taskqgroup_attach(qgroup_if_config_tqg, gtask, gtask, -1, name);
 }
 
 void
