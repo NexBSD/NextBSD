@@ -121,8 +121,8 @@ static int mtk_gpio_intr(void *arg);
 #define GPIO_PIORESET(_sc)		GPIO_REG((_sc), 0x0040)
 
 static struct ofw_compat_data compat_data[] = {
-	{ "mtk,mt7621-gpio",	1 },
-	{ "mtk,mt7628-gpio",	1 },
+	{ "mtk,mt7621-gpio-bank",	1 },
+	{ "mtk,mt7628-gpio-bank",	1 },
 	{ NULL,			0 }
 };
 
@@ -281,7 +281,7 @@ mtk_gpio_attach(device_t dev)
 	else
 		sc->num_pins = MTK_GPIO_PINS;
 
-	for (i = 0; i < num_pins; i++) {
+	for (i = 0; i < sc->num_pins; i++) {
 		sc->pins[i].pin_caps |= GPIO_PIN_INPUT | GPIO_PIN_OUTPUT |
 		    GPIO_PIN_INVIN | GPIO_PIN_INVOUT;
 		sc->pins[i].intr_polarity = INTR_POLARITY_HIGH;
@@ -511,15 +511,19 @@ static int
 mtk_gpio_pic_map_intr(device_t dev, struct intr_map_data *data,
     struct intr_irqsrc **isrcp)
 {
+	struct intr_map_data_fdt *daf;
 	struct mtk_gpio_softc *sc;
 
-	sc = device_get_softc(dev);
+	if (data->type != INTR_MAP_DATA_FDT)
+		return (ENOTSUP);
 
-	if (data == NULL || data->type != INTR_MAP_DATA_FDT ||
-	    data->fdt.ncells != 1 || data->fdt.cells[0] >= sc->num_pins)
+	sc = device_get_softc(dev);
+	daf = (struct intr_map_data_fdt *)data;
+
+	if (daf->ncells != 1 || daf->cells[0] >= sc->num_pins)
 		return (EINVAL);
 
-	*isrcp = PIC_INTR_ISRC(sc, data->fdt.cells[0]);
+	*isrcp = PIC_INTR_ISRC(sc, daf->cells[0]);
 	return (0);
 }
 

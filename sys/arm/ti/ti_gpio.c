@@ -66,7 +66,7 @@ __FBSDID("$FreeBSD$");
 
 #include "gpio_if.h"
 #include "ti_gpio_if.h"
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 #include "pic_if.h"
 #endif
 
@@ -121,7 +121,7 @@ __FBSDID("$FreeBSD$");
 static int ti_gpio_intr(void *arg);
 static int ti_gpio_detach(device_t);
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 static int ti_gpio_pic_attach(struct ti_gpio_softc *sc);
 static int ti_gpio_pic_detach(struct ti_gpio_softc *sc);
 #endif
@@ -546,7 +546,7 @@ ti_gpio_pin_toggle(device_t dev, uint32_t pin)
 	return (0);
 }
 
-#ifndef ARM_INTRNG
+#ifndef INTRNG
 /**
  *	ti_gpio_intr - ISR for all GPIO modules
  *	@arg: the soft context pointer
@@ -655,7 +655,7 @@ static int
 ti_gpio_attach(device_t dev)
 {
 	struct ti_gpio_softc *sc;
-#ifndef ARM_INTRNG
+#ifndef INTRNG
 	unsigned int i;
 #endif
 	int err;
@@ -696,7 +696,7 @@ ti_gpio_attach(device_t dev)
 		return (ENXIO);
 	}
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 	if (ti_gpio_pic_attach(sc) != 0) {
 		device_printf(dev, "WARNING: unable to attach PIC\n");
 		ti_gpio_detach(dev);
@@ -771,7 +771,7 @@ ti_gpio_detach(device_t dev)
 	if (sc->sc_mem_res != NULL)
 		ti_gpio_intr_clr(sc, 0xffffffff);
 	gpiobus_detach_bus(dev);
-#ifdef	ARM_INTRNG
+#ifdef	INTRNG
 	if (sc->sc_isrcs != NULL)
 		ti_gpio_pic_detach(sc);
 #else
@@ -798,7 +798,7 @@ ti_gpio_detach(device_t dev)
 	return (0);
 }
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 static inline void
 ti_gpio_rwreg_set(struct ti_gpio_softc *sc, uint32_t reg, uint32_t mask)
 {
@@ -979,13 +979,15 @@ ti_gpio_pic_map_intr(device_t dev, struct intr_map_data *data,
 	int error;
 	u_int irq;
 	struct ti_gpio_softc *sc;
+	struct intr_map_data_fdt *daf;
 
 	if (data->type != INTR_MAP_DATA_FDT)
 		return (ENOTSUP);
 
 	sc = device_get_softc(dev);
-	error = ti_gpio_pic_map_fdt(sc, data->fdt.ncells, data->fdt.cells, &irq,
-	    NULL);
+	daf = (struct intr_map_data_fdt *)data;
+
+	error = ti_gpio_pic_map_fdt(sc, daf->ncells, daf->cells, &irq, NULL);
 	if (error == 0)
 		*isrcp = &sc->sc_isrcs[irq].tgi_isrc;
 	return (error);
@@ -1027,15 +1029,17 @@ ti_gpio_pic_setup_intr(device_t dev, struct intr_irqsrc *isrc,
 	uint32_t cfgreg;
 	struct ti_gpio_softc *sc;
 	struct ti_gpio_irqsrc *tgi;
+	struct intr_map_data_fdt *daf;
 
 	if (data == NULL || data->type != INTR_MAP_DATA_FDT)
 		return (ENOTSUP);
 
 	sc = device_get_softc(dev);
 	tgi = (struct ti_gpio_irqsrc *)isrc;
+	daf = (struct intr_map_data_fdt *)data;
 
 	/* Get and check config for an interrupt. */
-	if (ti_gpio_pic_map_fdt(sc, data->fdt.ncells, data->fdt.cells, &irq,
+	if (ti_gpio_pic_map_fdt(sc, daf->ncells, daf->cells, &irq,
 	    &cfgreg) != 0 || tgi->tgi_irq != irq)
 		return (EINVAL);
 
@@ -1300,7 +1304,7 @@ static device_method_t ti_gpio_methods[] = {
 	DEVMETHOD(gpio_pin_set, ti_gpio_pin_set),
 	DEVMETHOD(gpio_pin_toggle, ti_gpio_pin_toggle),
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 	/* Interrupt controller interface */
 	DEVMETHOD(pic_disable_intr,	ti_gpio_pic_disable_intr),
 	DEVMETHOD(pic_enable_intr,	ti_gpio_pic_enable_intr),
