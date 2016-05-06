@@ -72,7 +72,6 @@ FILES=	DAEMON \
 	mdconfig \
 	mdconfig2 \
 	mountd \
-	mroute6d \
 	msgs \
 	natd \
 	netif \
@@ -296,7 +295,7 @@ FILESGROUPS+=	SMRCD
 SMRCD=		sendmail
 .endif
 SMRCDDIR=	/etc/rc.d
-SMRCDDIRMODE=	${BINMODE}
+SMRCDMODE=	${BINMODE}
 SMRCDPACKAGE=	sendmail
 
 .if ${MK_TIMED} != "no"
