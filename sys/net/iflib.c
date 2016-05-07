@@ -4205,7 +4205,7 @@ iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 	err = _iflib_irq_alloc(ctx, irq, rid, iflib_fast_intr, NULL, info,  name);
 	if (err != 0)
 		return (err);
-	if (tqrid != -1 && CPU_COUNT(&ctx->ifc_cpus) > qid) {
+	if (tqrid != -1 && CPU_COUNT(&ctx->ifc_cpus) > qid && smp_started) {
 		CPU_COPY(&ctx->ifc_cpus, &cpus);
 		for (i = 0; i < qid; i++) {
 			cpuid = CPU_FFS(&cpus);
