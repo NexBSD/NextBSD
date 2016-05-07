@@ -246,7 +246,7 @@ taskqgroup_define_##name(void *arg)					\
 	qgroup_##name = taskqgroup_create(#name);			\
 }									\
 									\
-SYSINIT(taskqgroup_##name, SI_SUB_INIT_IF, SI_ORDER_SECOND,		\
+SYSINIT(taskqgroup_##name, SI_SUB_INIT_IF, SI_ORDER_FIRST,		\
 	taskqgroup_define_##name, NULL);				\
 									\
 static void								\
