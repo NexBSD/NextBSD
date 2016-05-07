@@ -4149,6 +4149,19 @@ iflib_irq_alloc(if_ctx_t ctx, if_irq_t irq, int rid,
 	return (_iflib_irq_alloc(ctx, irq, rid, filter, handler, arg, name));
 }
 
+static void
+find_nth(if_ctx_t ctx, cpuset_t *cpus, int qid)
+{
+	int i, cpuid;
+
+	CPU_COPY(&ctx->ifc_cpus, cpus);
+	/* clear up to the qid'th bit */
+	for (i = 0; i < qid; i++) {
+		cpuid = CPU_FFS(cpus);
+		CPU_CLR(cpuid, cpus);
+	}
+}
+
 int
 iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 						iflib_intr_type_t type, driver_filter_t *filter,
@@ -4159,9 +4172,8 @@ iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 	iflib_filter_info_t info;
 	cpuset_t cpus;
 	task_fn_t *fn;
-	int tqrid;
+	int tqrid, err;
 	void *q;
-	int err, i, cpuid;
 
 	info = &ctx->ifc_filter_info;
 
@@ -4205,12 +4217,8 @@ iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 	err = _iflib_irq_alloc(ctx, irq, rid, iflib_fast_intr, NULL, info,  name);
 	if (err != 0)
 		return (err);
-	if (tqrid != -1 && CPU_COUNT(&ctx->ifc_cpus) > qid && smp_started) {
-		CPU_COPY(&ctx->ifc_cpus, &cpus);
-		for (i = 0; i < qid; i++) {
-			cpuid = CPU_FFS(&cpus);
-			CPU_CLR(cpuid, &cpus);
-		}
+	if (tqrid != -1) {
+		find_nth(ctx, &cpus, qid);
 		taskqgroup_attach_cpu(tqg, gtask, q, CPU_FFS(&cpus), irq->ii_rid, name);
 	} else
 		taskqgroup_attach(tqg, gtask, q, tqrid, name);
