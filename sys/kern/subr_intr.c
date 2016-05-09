@@ -511,7 +511,7 @@ intr_ddata_alloc(u_int extsize)
 	mtx_unlock(&isrc_table_lock);
 
 	ddata->idd_data = (struct intr_map_data *)((uintptr_t)ddata + size);
-	ddata->idd_data->size = size;
+	ddata->idd_data->size = extsize;
 	return (ddata);
 }
 
@@ -871,6 +871,10 @@ pic_create(device_t dev, intptr_t xref)
 		return (pic);
 	}
 	pic = malloc(sizeof(*pic), M_INTRNG, M_NOWAIT | M_ZERO);
+	if (pic == NULL) {
+		mtx_unlock(&pic_list_lock);
+		return (NULL);
+	}
 	pic->pic_xref = xref;
 	pic->pic_dev = dev;
 	SLIST_INSERT_HEAD(&pic_list, pic, pic_next);
