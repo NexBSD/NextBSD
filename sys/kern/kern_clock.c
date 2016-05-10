@@ -449,7 +449,6 @@ hardclock_cpu(int usermode)
 		PROC_ITIMUNLOCK(p);
 	}
 	thread_lock(td);
-	sched_tick(1);
 	td->td_flags |= flags;
 	thread_unlock(td);
 
@@ -541,7 +540,6 @@ hardclock_cnt(int cnt, int usermode)
 		PROC_ITIMUNLOCK(p);
 	}
 	thread_lock(td);
-	sched_tick(cnt);
 	td->td_flags |= flags;
 	thread_unlock(td);
 
@@ -629,11 +627,10 @@ tvtohz(tv)
 #endif
 		ticks = 1;
 	} else if (sec <= LONG_MAX / 1000000)
-		ticks = (sec * 1000000 + (unsigned long)usec + (tick - 1))
-			/ tick + 1;
+		ticks = howmany(sec * 1000000 + (unsigned long)usec, tick) + 1;
 	else if (sec <= LONG_MAX / hz)
 		ticks = sec * hz
-			+ ((unsigned long)usec + (tick - 1)) / tick + 1;
+			+ howmany((unsigned long)usec, tick) + 1;
 	else
 		ticks = LONG_MAX;
 	if (ticks > INT_MAX)

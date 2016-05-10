@@ -121,7 +121,7 @@ METHOD void probe_nomatch {
  * @param _child	the child device whose instance variable is
  *			being read
  * @param _index	the instance variable to read
- * @param _result	a loction to recieve the instance variable
+ * @param _result	a location to receive the instance variable
  *			value
  * 
  * @retval 0		success
@@ -232,6 +232,19 @@ METHOD device_t add_child {
 } DEFAULT null_add_child;
 
 /**
+ * @brief Rescan the bus
+ *
+ * This method is called by a parent bridge or devctl to trigger a bus
+ * rescan.  The rescan should delete devices no longer present and
+ * enumerate devices that have newly arrived.
+ *
+ * @param _dev		the bus device
+ */
+METHOD int rescan {
+	device_t _dev;
+}
+
+/**
  * @brief Allocate a system resource
  *
  * This method is called by child devices of a bus to allocate resources.
@@ -247,9 +260,9 @@ METHOD device_t add_child {
  * @param _type		the type of resource to allocate
  * @param _rid		a pointer to the resource identifier
  * @param _start	hint at the start of the resource range - pass
- *			@c 0UL for any start address
+ *			@c 0 for any start address
  * @param _end		hint at the end of the resource range - pass
- *			@c ~0UL for any end address
+ *			@c ~0 for any end address
  * @param _count	hint at the size of range required - pass @c 1
  *			for any size
  * @param _flags	any extra flags to control the resource
@@ -376,7 +389,7 @@ METHOD int release_resource {
  *			triggers
  * @param _arg		a value to use as the single argument in calls
  *			to @p _intr
- * @param _cookiep	a pointer to a location to recieve a cookie
+ * @param _cookiep	a pointer to a location to receive a cookie
  *			value that may be used to remove the interrupt
  *			handler
  */
@@ -447,9 +460,9 @@ METHOD int set_resource {
  * @param _child	the device which owns the resource
  * @param _type		the type of resource
  * @param _rid		the resource identifier
- * @param _start	the address of a location to recieve the start
+ * @param _start	the address of a location to receive the start
  *			index of the resource range
- * @param _count	the address of a location to recieve the size
+ * @param _count	the address of a location to receive the size
  *			of the resource range
  */
 METHOD int get_resource {
@@ -637,6 +650,17 @@ METHOD bus_dma_tag_t get_dma_tag {
 } DEFAULT bus_generic_get_dma_tag;
 
 /**
+ * @brief Returns bus_space_tag_t for use w/ devices on the bus.
+ *
+ * @param _dev		the parent device of @p _child
+ * @param _child	the device to which the tag will belong
+ */
+METHOD bus_space_tag_t get_bus_tag {
+	device_t	_dev;
+	device_t	_child;
+} DEFAULT bus_generic_get_bus_tag;
+
+/**
  * @brief Allow the bus to determine the unit number of a device.
  *
  * @param _dev		the parent device of @p _child
@@ -714,6 +738,7 @@ METHOD int get_domain {
  * @param _dev		the bus device
  * @param _child	the child device
  * @param _op		type of CPUs to request
+ * @param _setsize	the size of the set passed in _cpuset
  * @param _cpuset	a pointer to a cpuset to receive the requested
  *			set of CPUs
  */
@@ -721,5 +746,6 @@ METHOD int get_cpus {
 	device_t	_dev;
 	device_t	_child;
 	enum cpu_sets	_op;
+	size_t		_setsize;
 	cpuset_t	*_cpuset;
 } DEFAULT bus_generic_get_cpus;

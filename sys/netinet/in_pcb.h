@@ -42,6 +42,7 @@
 #include <sys/_lock.h>
 #include <sys/_mutex.h>
 #include <sys/_rwlock.h>
+#include <net/route.h>
 
 #ifdef _KERNEL
 #include <sys/lock.h>
@@ -120,7 +121,7 @@ struct in_conninfo {
  */
 #define	INC_ISIPV6	0x01
 
-#define inc_isipv6	inc_flags	/* temp compatability */
+#define	inc_isipv6	inc_flags	/* temp compatibility */
 #define	inc_fport	inc_ie.ie_fport
 #define	inc_lport	inc_ie.ie_lport
 #define	inc_faddr	inc_ie.ie_faddr
@@ -727,8 +728,7 @@ void	in_pcbrehash_mbuf(struct inpcb *, struct mbuf *);
 int	in_pcbrele(struct inpcb *);
 int	in_pcbrele_rlocked(struct inpcb *);
 int	in_pcbrele_wlocked(struct inpcb *);
-void	in_pcbrtalloc(struct inpcb *inp);
-int	in_rt_valid(struct inpcb *inp);
+void	in_losing(struct inpcb *);
 void	in_pcbsetsolabel(struct socket *so);
 int	in_getpeeraddr(struct socket *so, struct sockaddr **nam);
 int	in_getsockaddr(struct socket *so, struct sockaddr **nam);

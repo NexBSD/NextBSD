@@ -72,7 +72,6 @@ SUBDIR=adjkerntz \
 	umount
 
 SUBDIR.${MK_ATM}+=	atm
-SUBDIR.${MK_CASPER}+=	casperd
 SUBDIR.${MK_CCD}+=	ccdconfig
 SUBDIR.${MK_CXX}+=	devd
 SUBDIR.${MK_HAST}+=	hastctl

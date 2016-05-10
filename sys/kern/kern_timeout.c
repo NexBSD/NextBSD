@@ -1157,14 +1157,14 @@ callout_schedule(struct callout *c, int64_t to_ticks)
 }
 
 int
-_callout_stop_safe(struct callout *c, int safe, void (*drain)(void *))
+_callout_stop_safe(struct callout *c, int flags, void (*drain)(void *))
 {
 	struct callout_cpu *cc, *old_cc;
 	struct lock_class *class;
 	int direct, sq_locked, use_lock;
 	int not_on_a_list;
 
-	if (safe)
+	if ((flags & CS_DRAIN) != 0)
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, c->c_lock,
 		    "calling %s", __func__);
 
@@ -1172,7 +1172,7 @@ _callout_stop_safe(struct callout *c, int safe, void (*drain)(void *))
 	 * Some old subsystems don't hold Giant while running a callout_stop(),
 	 * so just discard this check for the moment.
 	 */
-	if (!safe && c->c_lock != NULL) {
+	if ((flags & CS_DRAIN) == 0 && c->c_lock != NULL) {
 		if (c->c_lock == &Giant.lock_object)
 			use_lock = mtx_owned(&Giant);
 		else {
@@ -1255,7 +1255,7 @@ again:
 			return (-1);
 		}
 
-		if (safe) {
+		if ((flags & CS_DRAIN) != 0) {
 			/*
 			 * The current callout is running (or just
 			 * about to run) and blocking is allowed, so
@@ -1372,7 +1372,7 @@ again:
 				cc_exec_drain(cc, direct) = drain;
 			}
 			CC_UNLOCK(cc);
-			return (0);
+			return ((flags & CS_MIGRBLOCK) != 0);
 		}
 		CTR3(KTR_CALLOUT, "failed to stop %p func %p arg %p",
 		    c, c->c_func, c->c_arg);
@@ -1448,7 +1448,7 @@ _callout_init_lock(struct callout *c, struct lock_object *lock, int flags)
  * which set the timer can do the maintanence the timer was for as close
  * as possible to the originally intended time.  Testing this code for a 
  * week showed that resuming from a suspend resulted in 22 to 25 timers 
- * firing, which seemed independant on whether the suspend was 2 hours or
+ * firing, which seemed independent on whether the suspend was 2 hours or
  * 2 days.  Your milage may vary.   - Ken Key <key@cs.utk.edu>
  */
 void
@@ -1466,11 +1466,11 @@ adjust_timeout_calltodo(struct timeval *time_change)
 	if (time_change->tv_sec < 0)
 		return;
 	else if (time_change->tv_sec <= LONG_MAX / 1000000)
-		delta_ticks = (time_change->tv_sec * 1000000 +
-			       time_change->tv_usec + (tick - 1)) / tick + 1;
+		delta_ticks = howmany(time_change->tv_sec * 1000000 +
+		    time_change->tv_usec, tick) + 1;
 	else if (time_change->tv_sec <= LONG_MAX / hz)
 		delta_ticks = time_change->tv_sec * hz +
-			      (time_change->tv_usec + (tick - 1)) / tick + 1;
+		    howmany(time_change->tv_usec, tick) + 1;
 	else
 		delta_ticks = LONG_MAX;
 

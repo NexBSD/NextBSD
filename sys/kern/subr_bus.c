@@ -840,6 +840,38 @@ sysctl_devctl_queue(SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 
+/**
+ * @brief safely quotes strings that might have double quotes in them.
+ *
+ * The devctl protocol relies on quoted strings having matching quotes.
+ * This routine quotes any internal quotes so the resulting string
+ * is safe to pass to snprintf to construct, for example pnp info strings.
+ * Strings are always terminated with a NUL, but may be truncated if longer
+ * than @p len bytes after quotes.
+ *
+ * @param dst	Buffer to hold the string. Must be at least @p len bytes long
+ * @param src	Original buffer.
+ * @param len	Length of buffer pointed to by @dst, including trailing NUL
+ */
+void
+devctl_safe_quote(char *dst, const char *src, size_t len)
+{
+	char *walker = dst, *ep = dst + len - 1;
+
+	if (len == 0)
+		return;
+	while (src != NULL && walker < ep)
+	{
+		if (*src == '"') {
+			if (ep - walker < 2)
+				break;
+			*walker++ = '\\';
+		}
+		*walker++ = *src++;
+	}
+	*walker = '\0';
+}
+
 /* End of /dev/devctl code */
 
 static TAILQ_HEAD(,device)	bus_data_devices;
@@ -3237,9 +3269,9 @@ resource_list_delete(struct resource_list *rl, int type, int rid)
  * @param type		the type of resource to allocate
  * @param rid		a pointer to the resource identifier
  * @param start		hint at the start of the resource range - pass
- *			@c 0UL for any start address
+ *			@c 0 for any start address
  * @param end		hint at the end of the resource range - pass
- *			@c ~0UL for any end address
+ *			@c ~0 for any end address
  * @param count		hint at the size of range required - pass @c 1
  *			for any size
  * @param flags		any extra flags to control the resource
@@ -3294,9 +3326,9 @@ resource_list_reserve(struct resource_list *rl, device_t bus, device_t child,
  * @param type		the type of resource to allocate
  * @param rid		a pointer to the resource identifier
  * @param start		hint at the start of the resource range - pass
- *			@c 0UL for any start address
+ *			@c 0 for any start address
  * @param end		hint at the end of the resource range - pass
- *			@c ~0UL for any end address
+ *			@c ~0 for any end address
  * @param count		hint at the size of range required - pass @c 1
  *			for any size
  * @param flags		any extra flags to control the resource
@@ -3312,7 +3344,7 @@ resource_list_alloc(struct resource_list *rl, device_t bus, device_t child,
 {
 	struct resource_list_entry *rle = NULL;
 	int passthrough = (device_get_parent(child) != bus);
-	int isdefault = (start == 0UL && end == ~0UL);
+	int isdefault = RMAN_IS_DEFAULT_RANGE(start, end);
 
 	if (passthrough) {
 		return (BUS_ALLOC_RESOURCE(device_get_parent(bus), child,
@@ -4087,12 +4119,12 @@ bus_generic_describe_intr(device_t dev, device_t child, struct resource *irq,
  */
 int
 bus_generic_get_cpus(device_t dev, device_t child, enum cpu_sets op,
-    cpuset_t *cpuset)
+    size_t setsize, cpuset_t *cpuset)
 {
 
 	/* Propagate up the bus hierarchy until someone handles it. */
 	if (dev->parent != NULL)
-		return (BUS_GET_CPUS(dev->parent, child, op, cpuset));
+		return (BUS_GET_CPUS(dev->parent, child, op, setsize, cpuset));
 	return (EINVAL);
 }
 
@@ -4110,6 +4142,22 @@ bus_generic_get_dma_tag(device_t dev, device_t child)
 	if (dev->parent != NULL)
 		return (BUS_GET_DMA_TAG(dev->parent, child));
 	return (NULL);
+}
+
+/**
+ * @brief Helper function for implementing BUS_GET_BUS_TAG().
+ *
+ * This simple implementation of BUS_GET_BUS_TAG() simply calls the
+ * BUS_GET_BUS_TAG() method of the parent of @p dev.
+ */
+bus_space_tag_t
+bus_generic_get_bus_tag(device_t dev, device_t child)
+{
+
+	/* Propagate up the bus hierarchy until someone handles it. */
+	if (dev->parent != NULL)
+		return (BUS_GET_BUS_TAG(dev->parent, child));
+	return ((bus_space_tag_t)0);
 }
 
 /**
@@ -4257,6 +4305,19 @@ bus_generic_get_domain(device_t dev, device_t child, int *domain)
 		return (BUS_GET_DOMAIN(dev->parent, dev, domain));
 
 	return (ENOENT);
+}
+
+/**
+ * @brief Helper function for implementing BUS_RESCAN().
+ *
+ * This null implementation of BUS_RESCAN() always fails to indicate
+ * the bus does not support rescanning.
+ */
+int
+bus_null_rescan(device_t dev)
+{
+
+	return (ENXIO);
 }
 
 /*
@@ -4583,14 +4644,14 @@ bus_child_location_str(device_t child, char *buf, size_t buflen)
  * parent of @p dev.
  */
 int
-bus_get_cpus(device_t dev, enum cpu_sets op, cpuset_t *cpuset)
+bus_get_cpus(device_t dev, enum cpu_sets op, size_t setsize, cpuset_t *cpuset)
 {
 	device_t parent;
 
 	parent = device_get_parent(dev);
 	if (parent == NULL)
 		return (EINVAL);
-	return (BUS_GET_CPUS(parent, dev, op, cpuset));
+	return (BUS_GET_CPUS(parent, dev, op, setsize, cpuset));
 }
 
 /**
@@ -4608,6 +4669,23 @@ bus_get_dma_tag(device_t dev)
 	if (parent == NULL)
 		return (NULL);
 	return (BUS_GET_DMA_TAG(parent, dev));
+}
+
+/**
+ * @brief Wrapper function for BUS_GET_BUS_TAG().
+ *
+ * This function simply calls the BUS_GET_BUS_TAG() method of the
+ * parent of @p dev.
+ */
+bus_space_tag_t
+bus_get_bus_tag(device_t dev)
+{
+	device_t parent;
+
+	parent = device_get_parent(dev);
+	if (parent == NULL)
+		return ((bus_space_tag_t)0);
+	return (BUS_GET_BUS_TAG(parent, dev));
 }
 
 /**
@@ -4656,7 +4734,7 @@ root_setup_intr(device_t dev, device_t child, struct resource *irq, int flags,
 }
 
 /*
- * If we get here, assume that the device is permanant and really is
+ * If we get here, assume that the device is permanent and really is
  * present in the system.  Removable bus drivers are expected to intercept
  * this call long before it gets here.  We return -1 so that drivers that
  * really care can check vs -1 or some ERRNO returned higher in the food
@@ -4669,12 +4747,15 @@ root_child_present(device_t dev, device_t child)
 }
 
 static int
-root_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
+root_get_cpus(device_t dev, device_t child, enum cpu_sets op, size_t setsize,
+    cpuset_t *cpuset)
 {
 
 	switch (op) {
 	case INTR_CPUS:
 		/* Default to returning the set of all CPUs. */
+		if (setsize != sizeof(cpuset_t))
+			return (EINVAL);
 		*cpuset = all_cpus;
 		return (0);
 	default:
@@ -5110,6 +5191,18 @@ bus_free_resource(device_t dev, int type, struct resource *r)
 	return (bus_release_resource(dev, type, rman_get_rid(r), r));
 }
 
+device_t
+device_lookup_by_name(const char *name)
+{
+	device_t dev;
+
+	TAILQ_FOREACH(dev, &bus_data_devices, devlink) {
+		if (dev->nameunit != NULL && strcmp(dev->nameunit, name) == 0)
+			return (dev);
+	}
+	return (NULL);
+}
+
 /*
  * /dev/devctl2 implementation.  The existing /dev/devctl device has
  * implicit semantics on open, so it could not be reused for this.
@@ -5130,12 +5223,10 @@ find_device(struct devreq *req, device_t *devp)
 	 * Second, try to find an attached device whose name matches
 	 * 'name'.
 	 */
-	TAILQ_FOREACH(dev, &bus_data_devices, devlink) {
-		if (dev->nameunit != NULL &&
-		    strcmp(dev->nameunit, req->dr_name) == 0) {
-			*devp = dev;
-			return (0);
-		}
+	dev = device_lookup_by_name(req->dr_name);
+	if (dev != NULL) {
+		*devp = dev;
+		return (0);
 	}
 
 	/* Finally, give device enumerators a chance. */
@@ -5148,7 +5239,7 @@ find_device(struct devreq *req, device_t *devp)
 }
 
 static bool
-driver_exists(struct device *bus, const char *driver)
+driver_exists(device_t bus, const char *driver)
 {
 	devclass_t dc;
 
@@ -5178,6 +5269,8 @@ devctl2_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	case DEV_SUSPEND:
 	case DEV_RESUME:
 	case DEV_SET_DRIVER:
+	case DEV_RESCAN:
+	case DEV_DELETE:
 		error = priv_check(td, PRIV_DRIVER);
 		if (error == 0)
 			error = find_device(req, &dev);
@@ -5339,6 +5432,31 @@ devctl2_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 			break;
 		dev->flags |= DF_FIXEDCLASS;
 		error = device_probe_and_attach(dev);
+		break;
+	}
+	case DEV_RESCAN:
+		if (!device_is_attached(dev)) {
+			error = ENXIO;
+			break;
+		}
+		error = BUS_RESCAN(dev);
+		break;
+	case DEV_DELETE: {
+		device_t parent;
+
+		parent = device_get_parent(dev);
+		if (parent == NULL) {
+			error = EINVAL;
+			break;
+		}
+		if (!(req->dr_flags & DEVF_FORCE_DELETE)) {
+			if (bus_child_present(dev) != 0) {
+				error = EBUSY;
+				break;
+			}
+		}
+		
+		error = device_delete_child(parent, dev);
 		break;
 	}
 	}

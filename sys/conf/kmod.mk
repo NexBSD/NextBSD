@@ -127,7 +127,11 @@ CFLAGS+=	-fPIC
 # Temporary workaround for PR 196407, which contains the fascinating details.
 # Don't allow clang to use fpu instructions or registers in kernel modules.
 .if ${MACHINE_CPUARCH} == arm
+.if ${COMPILER_VERSION} < 30800
 CFLAGS.clang+=	-mllvm -arm-use-movt=0
+.else
+CFLAGS.clang+=	-mno-movt
+.endif
 CFLAGS.clang+=	-mfpu=none
 CFLAGS+=	-funwind-tables
 .endif
@@ -249,8 +253,7 @@ _ILINKS+=x86
 .endif
 CLEANFILES+=${_ILINKS}
 
-all: beforebuild .WAIT ${PROG}
-beforebuild: objwarn
+all: ${PROG}
 
 beforedepend: ${_ILINKS}
 beforebuild: ${_ILINKS}
@@ -304,10 +307,10 @@ KERN_DEBUGDIR?=	${DEBUGDIR}
 realinstall: _kmodinstall
 .ORDER: beforeinstall _kmodinstall
 _kmodinstall:
-	${INSTALL} -o ${KMODOWN} -g ${KMODGRP} -m ${KMODMODE} \
+	${INSTALL} -T release -o ${KMODOWN} -g ${KMODGRP} -m ${KMODMODE} \
 	    ${_INSTALLFLAGS} ${PROG} ${DESTDIR}${KMODDIR}/
 .if defined(DEBUG_FLAGS) && !defined(INSTALL_NODEBUG) && ${MK_KERNEL_SYMBOLS} != "no"
-	${INSTALL} -o ${KMODOWN} -g ${KMODGRP} -m ${KMODMODE} \
+	${INSTALL} -T debug -o ${KMODOWN} -g ${KMODGRP} -m ${KMODMODE} \
 	    ${_INSTALLFLAGS} ${PROG}.debug ${DESTDIR}${KERN_DEBUGDIR}${KMODDIR}/
 .endif
 
@@ -383,11 +386,7 @@ vnode_if_typedef.h:
 .endif
 
 # Build _if.[ch] from _if.m, and clean them when we're done.
-# This is duplicated in sys/modules/Makefile.
-.if !defined(__MPATH)
-__MPATH!=find ${SYSDIR:tA}/ -name \*_if.m
-.export __MPATH
-.endif
+# __MPATH defined in config.mk
 _MFILES=${__MPATH:T:O}
 _MPATH=${__MPATH:H:O:u}
 .PATH.m: ${_MPATH}
@@ -411,6 +410,26 @@ ${_i}devs.h: ${SYSDIR}/tools/${_i}devs2h.awk ${SYSDIR}/dev/${_i}/${_i}devs
 	${AWK} -f ${SYSDIR}/tools/${_i}devs2h.awk ${SYSDIR}/dev/${_i}/${_i}devs
 .endif
 .endfor # _i
+
+.if !empty(SRCS:Mbhnd_nvram_map.h)
+CLEANFILES+=	bhnd_nvram_map.h
+bhnd_nvram_map.h: ${SYSDIR}/dev/bhnd/tools/nvram_map_gen.awk \
+    ${SYSDIR}/dev/bhnd/tools/nvram_map_gen.sh \
+    ${SYSDIR}/dev/bhnd/nvram/nvram_map
+bhnd_nvram_map.h:
+	${SYSDIR}/dev/bhnd/tools/nvram_map_gen.sh \
+	    ${SYSDIR}/dev/bhnd/nvram/nvram_map -h
+.endif
+
+.if !empty(SRCS:Mbhnd_nvram_map_data.h)
+CLEANFILES+=	bhnd_nvram_map_data.h
+bhnd_nvram_map_data.h: ${SYSDIR}/dev/bhnd/tools/nvram_map_gen.awk \
+    ${SYSDIR}/dev/bhnd/tools/nvram_map_gen.sh \
+    ${SYSDIR}/dev/bhnd/nvram/nvram_map
+bhnd_nvram_map_data.h:
+	${SYSDIR}/dev/bhnd/tools/nvram_map_gen.sh \
+	    ${SYSDIR}/dev/bhnd/nvram/nvram_map -d
+.endif
 
 .if !empty(SRCS:Musbdevs.h)
 CLEANFILES+=	usbdevs.h
@@ -451,16 +470,14 @@ lint: ${SRCS}
 ${OBJS}: opt_global.h
 .endif
 
-.include <bsd.dep.mk>
-
-cleandepend: cleanilinks
+CLEANDEPENDFILES+=	${_ILINKS}
 # .depend needs include links so we remove them only together.
 cleanilinks:
 	rm -f ${_ILINKS}
 
-.if !exists(${.OBJDIR}/${DEPENDFILE})
-${OBJS}: ${SRCS:M*.h}
-.endif
+OBJS_DEPEND_GUESS+= ${SRCS:M*.h}
 
+.include <bsd.dep.mk>
+.include <bsd.clang-analyze.mk>
 .include <bsd.obj.mk>
 .include "kern.mk"

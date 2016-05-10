@@ -72,7 +72,7 @@
 #endif
 
 #ifndef MAXMEMDOM
-#define	MAXMEMDOM	2
+#define	MAXMEMDOM	8
 #endif
 
 #define	ALIGNBYTES		_ALIGNBYTES
