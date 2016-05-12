@@ -4508,7 +4508,7 @@ iflib_msix_init(if_ctx_t ctx)
 #else
 	queuemsgs = msgs - admincnt;
 #endif
-	if (bus_get_cpus(dev, INTR_CPUS, &ctx->ifc_cpus, sizeof(ctx->ifc_cpus)) == 0) {
+	if (bus_get_cpus(dev, INTR_CPUS, sizeof(ctx->ifc_cpus), &ctx->ifc_cpus) == 0) {
 #ifdef RSS
 		queues = imin(queuemsgs, rss_getnumbuckets());
 #else
