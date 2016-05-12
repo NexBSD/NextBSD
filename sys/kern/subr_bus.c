@@ -4119,12 +4119,12 @@ bus_generic_describe_intr(device_t dev, device_t child, struct resource *irq,
  */
 int
 bus_generic_get_cpus(device_t dev, device_t child, enum cpu_sets op,
-    cpuset_t *cpuset, int size)
+    size_t setsize, cpuset_t *cpuset)
 {
 
 	/* Propagate up the bus hierarchy until someone handles it. */
 	if (dev->parent != NULL)
-		return (BUS_GET_CPUS(dev->parent, child, op, cpuset, size));
+		return (BUS_GET_CPUS(dev->parent, child, op, setsize, cpuset));
 	return (EINVAL);
 }
 
@@ -4644,19 +4644,14 @@ bus_child_location_str(device_t child, char *buf, size_t buflen)
  * parent of @p dev.
  */
 int
-bus_get_cpus(device_t dev, enum cpu_sets op, cpuset_t *cpuset, int size)
+bus_get_cpus(device_t dev, enum cpu_sets op, size_t setsize, cpuset_t *cpuset)
 {
 	device_t parent;
 
-	/*
-	 * How should we handle size mismatch?
-	 */
-	if (size < sizeof(cpuset_t))
-	    return (ENXIO);
 	parent = device_get_parent(dev);
 	if (parent == NULL)
 		return (EINVAL);
-	return (BUS_GET_CPUS(parent, dev, op, cpuset, size));
+	return (BUS_GET_CPUS(parent, dev, op, setsize, cpuset));
 }
 
 /**
@@ -4752,12 +4747,15 @@ root_child_present(device_t dev, device_t child)
 }
 
 static int
-root_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset, int size)
+root_get_cpus(device_t dev, device_t child, enum cpu_sets op, size_t setsize,
+    cpuset_t *cpuset)
 {
 
 	switch (op) {
 	case INTR_CPUS:
 		/* Default to returning the set of all CPUs. */
+		if (setsize != sizeof(cpuset_t))
+			return (EINVAL);
 		*cpuset = all_cpus;
 		return (0);
 	default:

@@ -738,14 +738,14 @@ METHOD int get_domain {
  * @param _dev		the bus device
  * @param _child	the child device
  * @param _op		type of CPUs to request
- * @param _cpuset	a pointer to a cpuset to receive the requested set of CPUs
- * @param _size		size of cpuset
- *
+ * @param _setsize	the size of the set passed in _cpuset
+ * @param _cpuset	a pointer to a cpuset to receive the requested
+ *			set of CPUs
  */
 METHOD int get_cpus {
 	device_t	_dev;
 	device_t	_child;
 	enum cpu_sets	_op;
+	size_t		_setsize;
 	cpuset_t	*_cpuset;
-	int		_size;
 } DEFAULT bus_generic_get_cpus;
