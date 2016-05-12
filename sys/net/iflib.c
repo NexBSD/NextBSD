@@ -98,7 +98,6 @@
 /*
  * Enable mbuf vectors for compressing long mbuf chains
  */
-#define ENABLE_MVEC 1
 
 
 /*
