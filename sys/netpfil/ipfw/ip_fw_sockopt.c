@@ -2751,7 +2751,7 @@ add_rules(struct ip_fw_chain *chain, ip_fw3_opheader *op3,
 	if ((error = commit_rules(chain, cbuf, rtlv->count)) != 0) {
 		/* Free allocate krules */
 		for (i = 0, ci = cbuf; i < rtlv->count; i++, ci++)
-			free(ci->krule, M_IPFW);
+			free_rule(ci->krule);
 	}
 
 	if (cbuf != NULL && cbuf != &rci)
@@ -3009,7 +3009,7 @@ ipfw_del_obj_rewriter(struct opcode_obj_rewrite *rw, size_t count)
 	return (0);
 }
 
-static void
+static int
 export_objhash_ntlv_internal(struct namedobj_instance *ni,
     struct named_object *no, void *arg)
 {
@@ -3019,8 +3019,9 @@ export_objhash_ntlv_internal(struct namedobj_instance *ni,
 	sd = (struct sockopt_data *)arg;
 	ntlv = (ipfw_obj_ntlv *)ipfw_get_sopt_space(sd, sizeof(*ntlv));
 	if (ntlv == NULL)
-		return;
+		return (ENOMEM);
 	ipfw_export_obj_ntlv(no, ntlv);
+	return (0);
 }
 
 /*
@@ -3573,7 +3574,9 @@ ipfw_ctl(struct sockopt *sopt)
 			ci.krule = krule;
 			import_rule0(&ci);
 			error = commit_rules(chain, &ci, 1);
-			if (!error && sopt->sopt_dir == SOPT_GET) {
+			if (error != 0)
+				free_rule(ci.krule);
+			else if (sopt->sopt_dir == SOPT_GET) {
 				if (is7) {
 					error = convert_rule_to_7(rule);
 					size = RULESIZE7(rule);
@@ -4249,16 +4252,20 @@ ipfw_objhash_count(struct namedobj_instance *ni)
  * Runs @func for each found named object.
  * It is safe to delete objects from callback
  */
-void
+int
 ipfw_objhash_foreach(struct namedobj_instance *ni, objhash_cb_t *f, void *arg)
 {
 	struct named_object *no, *no_tmp;
-	int i;
+	int i, ret;
 
 	for (i = 0; i < ni->nn_size; i++) {
-		TAILQ_FOREACH_SAFE(no, &ni->names[i], nn_next, no_tmp)
-			f(ni, no, arg);
+		TAILQ_FOREACH_SAFE(no, &ni->names[i], nn_next, no_tmp) {
+			ret = f(ni, no, arg);
+			if (ret != 0)
+				return (ret);
+		}
 	}
+	return (0);
 }
 
 /*
