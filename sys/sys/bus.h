@@ -32,7 +32,6 @@
 #include <machine/_limits.h>
 #include <machine/_bus.h>
 #include <sys/_bus_dma.h>
-#include <sys/_cpuset.h>
 #include <sys/ioccom.h>
 
 /**
