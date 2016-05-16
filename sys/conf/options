@@ -620,6 +620,7 @@ DEBUG_MEMGUARD		opt_vm.h
 DEBUG_REDZONE		opt_vm.h
 
 # Standard SMP options
+EARLY_AP_STARTUP	opt_global.h
 SMP			opt_global.h
 
 # Size of the kernel message buffer
@@ -855,6 +856,9 @@ BWI_DEBUG_VERBOSE	opt_bwi.h
 
 # options for the Brodacom BCM43xx driver (bwn)
 BWN_DEBUG		opt_bwn.h
+
+# Options for the SIBA driver
+SIBA_DEBUG		opt_siba.h
 
 # options for the Marvell 8335 wireless driver
 MALO_DEBUG		opt_malo.h

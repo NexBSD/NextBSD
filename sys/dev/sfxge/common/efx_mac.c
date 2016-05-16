@@ -37,20 +37,19 @@ __FBSDID("$FreeBSD$");
 #if EFSYS_OPT_SIENA
 
 static	__checkReturn	efx_rc_t
-falconsiena_mac_multicast_list_set(
+siena_mac_multicast_list_set(
 	__in		efx_nic_t *enp);
 
 #endif /* EFSYS_OPT_SIENA */
 
 #if EFSYS_OPT_SIENA
 static const efx_mac_ops_t	__efx_siena_mac_ops = {
-	NULL,					/* emo_reset */
 	siena_mac_poll,				/* emo_poll */
 	siena_mac_up,				/* emo_up */
 	siena_mac_reconfigure,			/* emo_addr_set */
 	siena_mac_reconfigure,			/* emo_pdu_set */
 	siena_mac_reconfigure,			/* emo_reconfigure */
-	falconsiena_mac_multicast_list_set,	/* emo_multicast_list_set */
+	siena_mac_multicast_list_set,		/* emo_multicast_list_set */
 	NULL,					/* emo_filter_set_default_rxq */
 	NULL,				/* emo_filter_default_rxq_clear */
 #if EFSYS_OPT_LOOPBACK
@@ -66,7 +65,6 @@ static const efx_mac_ops_t	__efx_siena_mac_ops = {
 
 #if EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD
 static const efx_mac_ops_t	__efx_ef10_mac_ops = {
-	NULL,					/* emo_reset */
 	ef10_mac_poll,				/* emo_poll */
 	ef10_mac_up,				/* emo_up */
 	ef10_mac_addr_set,			/* emo_addr_set */
@@ -240,21 +238,11 @@ efx_mac_drain(
 
 	epp->ep_mac_drain = enabled;
 
-	if (enabled && emop->emo_reset != NULL) {
-		if ((rc = emop->emo_reset(enp)) != 0)
-			goto fail1;
-
-		EFSYS_ASSERT(enp->en_reset_flags & EFX_RESET_MAC);
-		enp->en_reset_flags &= ~EFX_RESET_PHY;
-	}
-
 	if ((rc = emop->emo_reconfigure(enp)) != 0)
-		goto fail2;
+		goto fail1;
 
 	return (0);
 
-fail2:
-	EFSYS_PROBE(fail2);
 fail1:
 	EFSYS_PROBE1(fail1, efx_rc_t, rc);
 
@@ -739,18 +727,8 @@ efx_mac_select(
 	epp->ep_emop = emop;
 	epp->ep_mac_type = type;
 
-	if (emop->emo_reset != NULL) {
-		if ((rc = emop->emo_reset(enp)) != 0)
-			goto fail2;
-
-		EFSYS_ASSERT(enp->en_reset_flags & EFX_RESET_MAC);
-		enp->en_reset_flags &= ~EFX_RESET_MAC;
-	}
-
 	return (0);
 
-fail2:
-	EFSYS_PROBE(fail2);
 fail1:
 	EFSYS_PROBE1(fail1, efx_rc_t, rc);
 
@@ -764,7 +742,7 @@ fail1:
 
 /* Compute the multicast hash as used on Falcon and Siena. */
 static	void
-falconsiena_mac_multicast_hash_compute(
+siena_mac_multicast_hash_compute(
 	__in_ecount(6*count)		uint8_t const *addrs,
 	__in				int count,
 	__out				efx_oword_t *hash_low,
@@ -794,7 +772,7 @@ falconsiena_mac_multicast_hash_compute(
 }
 
 static	__checkReturn	efx_rc_t
-falconsiena_mac_multicast_list_set(
+siena_mac_multicast_list_set(
 	__in		efx_nic_t *enp)
 {
 	efx_port_t *epp = &(enp->en_port);
@@ -807,10 +785,11 @@ falconsiena_mac_multicast_list_set(
 
 	memcpy(old_hash, epp->ep_multicst_hash, sizeof (old_hash));
 
-	falconsiena_mac_multicast_hash_compute(epp->ep_mulcst_addr_list,
-				epp->ep_mulcst_addr_count,
-				&epp->ep_multicst_hash[0],
-				&epp->ep_multicst_hash[1]);
+	siena_mac_multicast_hash_compute(
+	    epp->ep_mulcst_addr_list,
+	    epp->ep_mulcst_addr_count,
+	    &epp->ep_multicst_hash[0],
+	    &epp->ep_multicst_hash[1]);
 
 	if ((rc = emop->emo_reconfigure(enp)) != 0)
 		goto fail1;
