@@ -8,7 +8,6 @@
 #include <sys/protosw.h>
 #include <sys/socket.h>
 #include <sys/malloc.h>
-MALLOC_DECLARE(M_IXL);
 
 #ifdef IFLIB
 #include "iflib_ixl.h"
