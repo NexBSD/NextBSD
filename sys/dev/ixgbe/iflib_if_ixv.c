@@ -63,6 +63,7 @@ static pci_vendor_info_t ixv_vendor_info_array[] =
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X540_VF, "Intel(R) PRO/10GbE Virtual Function Network Driver"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550_VF, "Intel(R) PRO/10GbE Virtual Function Network Driver"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_VF, "Intel(R) PRO/10GbE Virtual Function Network Driver"),
+	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_VF, "Intel(R) PRO/10GbE Virtual Function Network Driver"),
 	/* required last entry */
 PVID_END
 };
@@ -1488,7 +1489,7 @@ ixv_setup_vlan_support(if_ctx_t ctx)
 				continue;
 			vid = (i * 32) + j;
 			/* Call the shared code mailbox routine */
-			while (ixgbe_set_vfta(hw, vid, 0, TRUE)) {
+			while (ixgbe_set_vfta(hw, vid, 0, TRUE, TRUE)) {
 				if (++retry > 5)
 					break;
 			}

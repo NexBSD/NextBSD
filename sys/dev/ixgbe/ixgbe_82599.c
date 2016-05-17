@@ -1177,11 +1177,15 @@ mac_reset_top:
 
 	/* Add the SAN MAC address to the RAR only if it's a valid address */
 	if (ixgbe_validate_mac_addr(hw->mac.san_addr) == 0) {
-		hw->mac.ops.set_rar(hw, hw->mac.num_rar_entries - 1,
-				    hw->mac.san_addr, 0, IXGBE_RAH_AV);
-
 		/* Save the SAN MAC RAR index */
 		hw->mac.san_mac_rar_index = hw->mac.num_rar_entries - 1;
+
+		hw->mac.ops.set_rar(hw, hw->mac.san_mac_rar_index,
+				    hw->mac.san_addr, 0, IXGBE_RAH_AV);
+
+		/* clear VMDq pool/queue selection for this RAR */
+		hw->mac.ops.clear_vmdq(hw, hw->mac.san_mac_rar_index,
+				       IXGBE_CLEAR_VMDQ_ALL);
 
 		/* Reserve the last RAR for the SAN MAC address */
 		hw->mac.num_rar_entries--;
@@ -1381,9 +1385,6 @@ s32 ixgbe_init_fdir_perfect_82599(struct ixgbe_hw *hw, u32 fdirctrl,
 		    (0x6 << IXGBE_FDIRCTRL_FLEX_SHIFT) |
 		    (0xA << IXGBE_FDIRCTRL_MAX_LENGTH_SHIFT) |
 		    (4 << IXGBE_FDIRCTRL_FULL_THRESH_SHIFT);
-	if ((hw->mac.type == ixgbe_mac_X550) ||
-	    (hw->mac.type == ixgbe_mac_X550EM_x))
-		fdirctrl |= IXGBE_FDIRCTRL_DROP_NO_MATCH;
 
 	if (cloud_mode)
 		fdirctrl |=(IXGBE_FDIRCTRL_FILTERMODE_CLOUD <<
@@ -1412,7 +1413,8 @@ void ixgbe_set_fdir_drop_queue_82599(struct ixgbe_hw *hw, u8 dropqueue)
 	/* Set drop queue */
 	fdirctrl |= (dropqueue << IXGBE_FDIRCTRL_DROP_Q_SHIFT);
 	if ((hw->mac.type == ixgbe_mac_X550) ||
-	    (hw->mac.type == ixgbe_mac_X550EM_x))
+	    (hw->mac.type == ixgbe_mac_X550EM_x) ||
+	    (hw->mac.type == ixgbe_mac_X550EM_a))
 		fdirctrl |= IXGBE_FDIRCTRL_DROP_NO_MATCH;
 
 	IXGBE_WRITE_REG(hw, IXGBE_FDIRCMD,
@@ -1834,6 +1836,7 @@ s32 ixgbe_fdir_set_input_mask_82599(struct ixgbe_hw *hw,
 		switch (hw->mac.type) {
 		case ixgbe_mac_X550:
 		case ixgbe_mac_X550EM_x:
+		case ixgbe_mac_X550EM_a:
 			IXGBE_WRITE_REG(hw, IXGBE_FDIRSCTPM, ~fdirtcpm);
 			break;
 		default:

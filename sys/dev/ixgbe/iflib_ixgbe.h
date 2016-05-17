@@ -243,6 +243,7 @@
 /* MAC type macros */
 #define IXGBE_IS_X550VF(_adapter) \
 	((_adapter->hw.mac.type == ixgbe_mac_X550_vf) || \
+	 (_adapter->hw.mac.type == ixgbe_mac_X550EM_a_vf) || \
 	 (_adapter->hw.mac.type == ixgbe_mac_X550EM_x_vf))
 
 #define IXGBE_IS_VF(_adapter) \
