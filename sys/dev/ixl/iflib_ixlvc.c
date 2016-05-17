@@ -412,7 +412,7 @@ ixlv_configure_queues(struct ixlv_sc *sc)
 		vqpi->rxq.queue_id = i;
 		vqpi->rxq.ring_len = sctx->isc_ntxd;
 		vqpi->rxq.dma_ring_addr = rxr->rx_paddr;
-		vqpi->rxq.max_pkt_size = vsi->max_frame_size;
+		vqpi->rxq.max_pkt_size = vsi->if_max_frame_size;
 		vqpi->rxq.databuffer_size = rxr->mbuf_sz;
 		vqpi->rxq.splithdr_enabled = 0;
 	}

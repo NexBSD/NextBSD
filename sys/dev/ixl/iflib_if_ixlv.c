@@ -1273,7 +1273,7 @@ ixlv_setup_interface(if_ctx_t ctx)
 
     if_setbaudrate(ifp, 4000000000);
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
-	vsi->max_frame_size =
+	vsi->if_max_frame_size =
 	    ifp->if_mtu + ETHER_HDR_LEN + ETHER_CRC_LEN
 	    + ETHER_VLAN_ENCAP_LEN;
 
@@ -1816,7 +1816,7 @@ ixlv_if_mtu_set(if_ctx_t ctx, uint32_t mtu)
 	if (mtu > IXL_MAX_FRAME - ETHER_HDR_LEN - ETHER_CRC_LEN - ETHER_VLAN_ENCAP_LEN)
 		return (EINVAL);
 	else
-		sc->vsi.max_frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN
+		sc->vsi.if_max_frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN
 			    + ETHER_VLAN_ENCAP_LEN;
 	return (0);
 }

@@ -85,6 +85,7 @@
 #include <sys/sysctl.h>
 #include <sys/endian.h>
 #include <sys/pcpu.h>
+#include <sys/sbuf.h>
 #include <sys/smp.h>
 #include <machine/smp.h>
 
@@ -98,9 +99,9 @@
 #include "i40e_type.h"
 #include "i40e_prototype.h"
 
+MALLOC_DECLARE(M_IXL);
 
 #if defined(IXL_DEBUG) || defined(IXL_DEBUG_SYSCTL)
-#include <sys/sbuf.h>
 
 
 #define MAC_FORMAT "%02x:%02x:%02x:%02x:%02x:%02x"
@@ -164,8 +165,10 @@
 /*
  * Ring Descriptors Valid Range: 32-4096 Default Value: 1024 This value is the
  * number of tx/rx descriptors allocated by the driver. Increasing this
- * value allows the driver to queue more operations. Each descriptor is 16
- * or 32 bytes (configurable in FVL)
+ * value allows the driver to queue more operations.
+ *
+ * Tx descriptors are always 16 bytes, but Rx descriptors can be 32 bytes.
+ * The driver currently always uses 32 byte Rx descriptors.
  */
 #define DEFAULT_RING	1024
 #define PERFORM_RING	2048
@@ -181,12 +184,6 @@
 
 /* Alignment for rings */
 #define DBA_ALIGN	128
-
-/*
- * This parameter controls the maximum no of times the driver will loop in
- * the isr. Minimum Value = 1
- */
-#define MAX_LOOP	10
 
 /*
  * This is the max watchdog interval, ie. the time that can
@@ -224,7 +221,7 @@
 #define IXL_TX_ITR		1
 #define IXL_ITR_NONE		3
 #define IXL_QUEUE_EOL		0x7FF
-#define IXL_MAX_FRAME		0x2600
+#define IXL_MAX_FRAME		9728 
 #define IXL_MAX_TX_SEGS		8
 #define IXL_MAX_TSO_SEGS	66 
 #define IXL_QUEUE_HUNG		0x80000000
@@ -333,24 +330,6 @@
 #endif
 
 /*
- *****************************************************************************
- * vendor_info_array
- * 
- * This array contains the list of Subvendor/Subdevice IDs on which the driver
- * should load.
- * 
- *****************************************************************************
- */
-typedef struct _ixl_vendor_info_t {
-	unsigned int    vendor_id;
-	unsigned int    device_id;
-	unsigned int    subvendor_id;
-	unsigned int    subdevice_id;
-	unsigned int    index;
-} ixl_vendor_info_t;
-
-
-/*
 ** This struct has multiple uses, multicast
 ** addresses, vlans, and mac filters all use it.
 */
@@ -372,8 +351,8 @@ struct tx_ring {
 	uint64_t tx_paddr;
 	u16			atr_rate;
 	u16			atr_count;
-	u16			itr;
-	u16			latency;
+	u32			itr;
+	u32			latency;
 	u32			me;
 
 	/* Used for Dynamic ITR calculation */
@@ -394,8 +373,8 @@ struct rx_ring {
 	union i40e_rx_desc	*rx_base;
 	uint64_t rx_paddr;
 	bool			discard;
-	u16			itr;
-	u16			latency;
+	u32			itr;
+	u32			latency;
 	
 	u32			mbuf_sz;
 	u32			tail;
@@ -409,6 +388,7 @@ struct rx_ring {
 	u64			split;
 	u64			rx_packets;
 	u64 			rx_bytes;
+	u64 			desc_errs;
 	u64 			discarded;
 };
 
@@ -455,7 +435,7 @@ struct ixl_vsi {
 
 #define num_rx_queues shared->isc_nrxqsets
 #define num_tx_queues shared->isc_ntxqsets
-#define max_frame_size shared->isc_max_frame_size
+#define if_max_frame_size shared->isc_max_frame_size
 
 	void 			*back;
 	struct i40e_hw		*hw;
@@ -474,6 +454,8 @@ struct ixl_vsi {
 	struct if_irq	irq;	
 	u16			uplink_seid;
 	u16			downlink_seid;
+	u16			rss_table_size;
+	u16			rss_size;
 
 	/* MAC/VLAN Filter list */
 	struct ixl_ftl_head ftl;
@@ -548,26 +530,6 @@ struct ixl_sysctl_info {
 
 extern int ixl_atr_rate;
 
-/*
-** ixl_fw_version_str - format the FW and NVM version strings
-*/
-static inline char *
-ixl_fw_version_str(struct i40e_hw *hw)
-{
-	static char buf[32];
-
-	snprintf(buf, sizeof(buf),
-	    "f%d.%d a%d.%d n%02x.%02x e%08x",
-	    hw->aq.fw_maj_ver, hw->aq.fw_min_ver,
-	    hw->aq.api_maj_ver, hw->aq.api_min_ver,
-	    (hw->nvm.version & IXL_NVM_VERSION_HI_MASK) >>
-	    IXL_NVM_VERSION_HI_SHIFT,
-	    (hw->nvm.version & IXL_NVM_VERSION_LO_MASK) >>
-	    IXL_NVM_VERSION_LO_SHIFT,
-	    hw->nvm.eetrack);
-	return buf;
-}
-
 /*********************************************************************
  *  TXRX Function prototypes
  *********************************************************************/
@@ -584,6 +546,6 @@ void	ixl_atr(struct ixl_rx_queue *, struct tcphdr *, int);
 int	ixl_if_media_change(if_ctx_t);
 int	ixl_if_tx_queues_alloc(if_ctx_t, caddr_t *, uint64_t *, int, int);
 int	ixl_if_rx_queues_alloc(if_ctx_t, caddr_t *, uint64_t *, int, int);
-void ixl_if_queues_free(if_ctx_t ctx);
+void	ixl_if_queues_free(if_ctx_t ctx);
 
 #endif /* _IXL_H_ */
