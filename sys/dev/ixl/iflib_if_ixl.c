@@ -2616,11 +2616,11 @@ ixl_add_hw_stats(struct ixl_pf *pf)
 #endif
 	}
 	for (int q = 0; q < vsi->num_tx_queues; q++) {
+		snprintf(queue_namebuf, QUEUE_NAME_LEN, "tx_que%d", q);
 		queue_node = SYSCTL_ADD_NODE(ctx, vsi_list,
 		    OID_AUTO, queue_namebuf, CTLFLAG_RD, NULL, "TX Queue #");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 		txr = &(tx_queues[q].txr);
-
 		SYSCTL_ADD_UINT(ctx, queue_list, OID_AUTO, "tx_itr",
 				CTLFLAG_RD, &(txr->itr), 0,
 				"Queue Tx ITR Interval");
@@ -3958,28 +3958,6 @@ ixl_add_device_sysctls(struct ixl_pf *pf)
 	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
 	    OID_AUTO, "fw_version", CTLTYPE_STRING | CTLFLAG_RD,
 	    pf, 0, ixl_sysctl_show_fw, "A", "Firmware version");
-
-#if 0
-	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "rx_itr", CTLFLAG_RW,
-	    &ixl_rx_itr, 0, "RX ITR");
-
-	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "dynamic_rx_itr", CTLFLAG_RW,
-	    &ixl_dynamic_rx_itr, 0, "Dynamic RX ITR");
-
-	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "tx_itr", CTLFLAG_RW,
-	    &ixl_tx_itr, 0, "TX ITR");
-
-	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
-	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
-	    OID_AUTO, "dynamic_tx_itr", CTLFLAG_RW,
-	    &ixl_dynamic_tx_itr, 0, "Dynamic TX ITR");
-#endif
 
 #ifdef IXL_DEBUG_SYSCTL
 	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
