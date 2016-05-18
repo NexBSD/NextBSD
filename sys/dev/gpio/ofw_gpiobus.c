@@ -139,9 +139,16 @@ gpio_pin_get_by_ofw_name(device_t consumer, phandle_t node,
 void
 gpio_pin_release(gpio_pin_t gpio)
 {
+	device_t busdev;
 
 	if (gpio == NULL)
 		return;
+
+	KASSERT(gpio->dev != NULL, ("invalid pin state"));
+
+	busdev = GPIO_GET_BUS(gpio->dev);
+	if (busdev != NULL)
+		gpiobus_release_pin(busdev, gpio->pin);
 
 	/* XXXX Unreserve pin. */
 	free(gpio, M_DEVBUF);
@@ -562,7 +569,7 @@ static device_method_t ofw_gpiobus_methods[] = {
 	DEVMETHOD_END
 };
 
-static devclass_t ofwgpiobus_devclass;
+devclass_t ofwgpiobus_devclass;
 
 DEFINE_CLASS_1(gpiobus, ofw_gpiobus_driver, ofw_gpiobus_methods,
     sizeof(struct gpiobus_softc), gpiobus_driver);
