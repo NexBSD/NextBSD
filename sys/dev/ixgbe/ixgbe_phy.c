@@ -110,8 +110,8 @@ static u8 ixgbe_ones_comp_byte_add(u8 add1, u8 add2)
  *
  * Returns an error code on error.
  */
-s32 ixgbe_read_i2c_combined_generic_int(struct ixgbe_hw *hw, u8 addr, u16 reg,
-					u16 *val, bool lock)
+static s32 ixgbe_read_i2c_combined_generic_int(struct ixgbe_hw *hw, u8 addr,
+					       u16 reg, u16 *val, bool lock)
 {
 	u32 swfw_mask = hw->phy.phy_semaphore_mask;
 	int max_retry = 10;
@@ -181,6 +181,37 @@ fail:
 }
 
 /**
+ * ixgbe_read_i2c_combined_generic - Perform I2C read combined operation
+ * @hw: pointer to the hardware structure
+ * @addr: I2C bus address to read from
+ * @reg: I2C device register to read from
+ * @val: pointer to location to receive read value
+ *
+ * Returns an error code on error.
+ **/
+static s32 ixgbe_read_i2c_combined_generic(struct ixgbe_hw *hw, u8 addr,
+					   u16 reg, u16 *val)
+{
+	return ixgbe_read_i2c_combined_generic_int(hw, addr, reg, val, TRUE);
+}
+
+/**
+ * ixgbe_read_i2c_combined_generic_unlocked - Do I2C read combined operation
+ * @hw: pointer to the hardware structure
+ * @addr: I2C bus address to read from
+ * @reg: I2C device register to read from
+ * @val: pointer to location to receive read value
+ *
+ * Returns an error code on error.
+ **/
+static s32
+ixgbe_read_i2c_combined_generic_unlocked(struct ixgbe_hw *hw, u8 addr,
+					 u16 reg, u16 *val)
+{
+	return ixgbe_read_i2c_combined_generic_int(hw, addr, reg, val, FALSE);
+}
+
+/**
  * ixgbe_write_i2c_combined_generic_int - Perform I2C write combined operation
  * @hw: pointer to the hardware structure
  * @addr: I2C bus address to write to
@@ -190,8 +221,8 @@ fail:
  *
  * Returns an error code on error.
  */
-s32 ixgbe_write_i2c_combined_generic_int(struct ixgbe_hw *hw, u8 addr, u16 reg,
-					 u16 val, bool lock)
+static s32 ixgbe_write_i2c_combined_generic_int(struct ixgbe_hw *hw, u8 addr,
+						u16 reg, u16 val, bool lock)
 {
 	u32 swfw_mask = hw->phy.phy_semaphore_mask;
 	int max_retry = 1;
@@ -246,6 +277,37 @@ fail:
 }
 
 /**
+ * ixgbe_write_i2c_combined_generic - Perform I2C write combined operation
+ * @hw: pointer to the hardware structure
+ * @addr: I2C bus address to write to
+ * @reg: I2C device register to write to
+ * @val: value to write
+ *
+ * Returns an error code on error.
+ **/
+static s32 ixgbe_write_i2c_combined_generic(struct ixgbe_hw *hw,
+					    u8 addr, u16 reg, u16 val)
+{
+	return ixgbe_write_i2c_combined_generic_int(hw, addr, reg, val, TRUE);
+}
+
+/**
+ * ixgbe_write_i2c_combined_generic_unlocked - Do I2C write combined operation
+ * @hw: pointer to the hardware structure
+ * @addr: I2C bus address to write to
+ * @reg: I2C device register to write to
+ * @val: value to write
+ *
+ * Returns an error code on error.
+ **/
+static s32
+ixgbe_write_i2c_combined_generic_unlocked(struct ixgbe_hw *hw,
+					  u8 addr, u16 reg, u16 val)
+{
+	return ixgbe_write_i2c_combined_generic_int(hw, addr, reg, val, FALSE);
+}
+
+/**
  *  ixgbe_init_phy_ops_generic - Inits PHY function ptrs
  *  @hw: pointer to the hardware structure
  *
@@ -276,44 +338,17 @@ s32 ixgbe_init_phy_ops_generic(struct ixgbe_hw *hw)
 	phy->ops.i2c_bus_clear = ixgbe_i2c_bus_clear;
 	phy->ops.identify_sfp = ixgbe_identify_module_generic;
 	phy->sfp_type = ixgbe_sfp_type_unknown;
+	phy->ops.read_i2c_combined = ixgbe_read_i2c_combined_generic;
+	phy->ops.write_i2c_combined = ixgbe_write_i2c_combined_generic;
+	phy->ops.read_i2c_combined_unlocked =
+				ixgbe_read_i2c_combined_generic_unlocked;
+	phy->ops.write_i2c_combined_unlocked =
+				ixgbe_write_i2c_combined_generic_unlocked;
 	phy->ops.read_i2c_byte_unlocked = ixgbe_read_i2c_byte_generic_unlocked;
 	phy->ops.write_i2c_byte_unlocked =
 				ixgbe_write_i2c_byte_generic_unlocked;
 	phy->ops.check_overtemp = ixgbe_tn_check_overtemp;
 	return IXGBE_SUCCESS;
-}
-
-/**
- * ixgbe_probe_phy - Probe a single address for a PHY
- * @hw: pointer to hardware structure
- * @phy_addr: PHY address to probe
- *
- * Returns TRUE if PHY found
- */
-static bool ixgbe_probe_phy(struct ixgbe_hw *hw, u16 phy_addr)
-{
-	u16 ext_ability = 0;
-
-	if (!ixgbe_validate_phy_addr(hw, phy_addr))
-		return FALSE;
-
-	if (ixgbe_get_phy_id(hw))
-		return FALSE;
-
-	hw->phy.type = ixgbe_get_phy_type_from_id(hw->phy.id);
-
-	if (hw->phy.type == ixgbe_phy_unknown) {
-		hw->phy.ops.read_reg(hw, IXGBE_MDIO_PHY_EXT_ABILITY,
-				     IXGBE_MDIO_PMA_PMD_DEV_TYPE, &ext_ability);
-		if (ext_ability &
-		    (IXGBE_MDIO_PHY_10GBASET_ABILITY |
-		     IXGBE_MDIO_PHY_1000BASET_ABILITY))
-			hw->phy.type = ixgbe_phy_cu_unknown;
-		else
-			hw->phy.type = ixgbe_phy_generic;
-	}
-
-	return TRUE;
 }
 
 /**
@@ -325,7 +360,8 @@ static bool ixgbe_probe_phy(struct ixgbe_hw *hw, u16 phy_addr)
 s32 ixgbe_identify_phy_generic(struct ixgbe_hw *hw)
 {
 	s32 status = IXGBE_ERR_PHY_ADDR_INVALID;
-	u16 phy_addr;
+	u32 phy_addr;
+	u16 ext_ability = 0;
 
 	DEBUGFUNC("ixgbe_identify_phy_generic");
 
@@ -336,18 +372,29 @@ s32 ixgbe_identify_phy_generic(struct ixgbe_hw *hw)
 			hw->phy.phy_semaphore_mask = IXGBE_GSSR_PHY0_SM;
 	}
 
-	if (hw->phy.type != ixgbe_phy_unknown)
-		return IXGBE_SUCCESS;
-
-	if (hw->phy.nw_mng_if_sel) {
-		phy_addr = (hw->phy.nw_mng_if_sel &
-			    IXGBE_NW_MNG_IF_SEL_MDIO_PHY_ADD) >>
-			   IXGBE_NW_MNG_IF_SEL_MDIO_PHY_ADD_SHIFT;
-		if (ixgbe_probe_phy(hw, phy_addr))
-			return IXGBE_SUCCESS;
-	} else {
+	if (hw->phy.type == ixgbe_phy_unknown) {
 		for (phy_addr = 0; phy_addr < IXGBE_MAX_PHY_ADDR; phy_addr++) {
-			if (ixgbe_probe_phy(hw, phy_addr)) {
+			if (ixgbe_validate_phy_addr(hw, phy_addr)) {
+				hw->phy.addr = phy_addr;
+				ixgbe_get_phy_id(hw);
+				hw->phy.type =
+					ixgbe_get_phy_type_from_id(hw->phy.id);
+
+				if (hw->phy.type == ixgbe_phy_unknown) {
+					hw->phy.ops.read_reg(hw,
+						  IXGBE_MDIO_PHY_EXT_ABILITY,
+						  IXGBE_MDIO_PMA_PMD_DEV_TYPE,
+						  &ext_ability);
+					if (ext_ability &
+					    (IXGBE_MDIO_PHY_10GBASET_ABILITY |
+					     IXGBE_MDIO_PHY_1000BASET_ABILITY))
+						hw->phy.type =
+							 ixgbe_phy_cu_unknown;
+					else
+						hw->phy.type =
+							 ixgbe_phy_generic;
+				}
+
 				status = IXGBE_SUCCESS;
 				break;
 			}
@@ -360,6 +407,8 @@ s32 ixgbe_identify_phy_generic(struct ixgbe_hw *hw)
 		if (status != IXGBE_SUCCESS) {
 			hw->phy.addr = 0;
 		}
+	} else {
+		status = IXGBE_SUCCESS;
 	}
 
 	return status;
@@ -446,7 +495,7 @@ s32 ixgbe_get_phy_id(struct ixgbe_hw *hw)
 
 /**
  *  ixgbe_get_phy_type_from_id - Get the phy type
- *  @phy_id: PHY ID information
+ *  @hw: pointer to hardware structure
  *
  **/
 enum ixgbe_phy_type ixgbe_get_phy_type_from_id(u32 phy_id)
@@ -472,17 +521,14 @@ enum ixgbe_phy_type ixgbe_get_phy_type_from_id(u32 phy_id)
 		phy_type = ixgbe_phy_nl;
 		break;
 	case X557_PHY_ID:
-	case X557_PHY_ID2:
 		phy_type = ixgbe_phy_x550em_ext_t;
-		break;
-	case IXGBE_M88E1500_E_PHY_ID:
-	case IXGBE_M88E1543_E_PHY_ID:
-		phy_type = ixgbe_phy_m88;
 		break;
 	default:
 		phy_type = ixgbe_phy_unknown;
 		break;
 	}
+
+	DEBUGOUT1("phy type found is %d\n", phy_type);
 	return phy_type;
 }
 
@@ -640,15 +686,13 @@ s32 ixgbe_read_phy_reg_generic(struct ixgbe_hw *hw, u32 reg_addr,
 
 	DEBUGFUNC("ixgbe_read_phy_reg_generic");
 
-	if (hw->phy.nw_mng_if_sel & IXGBE_NW_MNG_IF_SEL_EN_SHARED_MDIO)
-		gssr |= IXGBE_GSSR_TOKEN_SM;
-
-	if (hw->mac.ops.acquire_swfw_sync(hw, gssr))
-		return IXGBE_ERR_SWFW_SYNC;
-
-	status = hw->phy.ops.read_reg_mdi(hw, reg_addr, device_type, phy_data);
-
-	hw->mac.ops.release_swfw_sync(hw, gssr);
+	if (hw->mac.ops.acquire_swfw_sync(hw, gssr) == IXGBE_SUCCESS) {
+		status = ixgbe_read_phy_reg_mdi(hw, reg_addr, device_type,
+						phy_data);
+		hw->mac.ops.release_swfw_sync(hw, gssr);
+	} else {
+		status = IXGBE_ERR_SWFW_SYNC;
+	}
 
 	return status;
 }
@@ -906,9 +950,6 @@ s32 ixgbe_setup_phy_link_speed_generic(struct ixgbe_hw *hw,
 
 	if (speed & IXGBE_LINK_SPEED_100_FULL)
 		hw->phy.autoneg_advertised |= IXGBE_LINK_SPEED_100_FULL;
-
-	if (speed & IXGBE_LINK_SPEED_10_FULL)
-		hw->phy.autoneg_advertised |= IXGBE_LINK_SPEED_10_FULL;
 
 	/* Setup link based on the new speed settings */
 	ixgbe_setup_phy_link(hw);
