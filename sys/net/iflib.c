@@ -1258,13 +1258,10 @@ iflib_txsd_alloc(iflib_txq_t txq)
 					  sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
 		goto fail;
 	}
-#ifdef INVARIANTS
+#ifdef IFLIB_DEBUG
 	device_printf(dev,"maxsize: %zd nsegments: %d maxsegsize: %zd\n",
 		      sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
 #endif
-	device_printf(dev,"TSO maxsize: %d ntsosegments: %d maxsegsize: %d\n",
-		      scctx->isc_tx_tso_size_max, ntsosegments,
-		      scctx->isc_tx_tso_segsize_max);
 	if ((err = bus_dma_tag_create(bus_get_dma_tag(dev),
 			       1, 0,			/* alignment, bounds */
 			       BUS_SPACE_MAXADDR,	/* lowaddr */
@@ -1281,7 +1278,7 @@ iflib_txsd_alloc(iflib_txq_t txq)
 
 		goto fail;
 	}
-#ifdef INVARIANTS
+#ifdef IFLIB_DEBUG
 	device_printf(dev,"TSO maxsize: %d ntsosegments: %d maxsegsize: %d\n",
 		      scctx->isc_tx_tso_size_max, ntsosegments,
 		      scctx->isc_tx_tso_segsize_max);
