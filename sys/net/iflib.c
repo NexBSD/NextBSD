@@ -25,6 +25,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include "opt_inet.h"
+#include "opt_inet6.h"
+#include "opt_acpi.h"
+
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/bus.h>
@@ -74,11 +81,6 @@
 
 #include <net/iflib.h>
 
-
-#include "opt_inet.h"
-#include "opt_inet6.h"
-#include "opt_acpi.h"
-
 #include "ifdi_if.h"
 
 #if defined(__i386__) || defined(__amd64__)
@@ -98,8 +100,6 @@
 /*
  * Enable mbuf vectors for compressing long mbuf chains
  */
-#define ENABLE_MVEC 1
-
 
 /*
  * NB:
@@ -1258,9 +1258,13 @@ iflib_txsd_alloc(iflib_txq_t txq)
 					  sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
 		goto fail;
 	}
-#ifdef IFLIB_DEBUG
+#ifdef IFLIB_DEBUG	
 	device_printf(dev,"maxsize: %zd nsegments: %d maxsegsize: %zd\n",
 		      sctx->isc_tx_maxsize, nsegments, sctx->isc_tx_maxsegsize);
+
+	device_printf(dev,"TSO maxsize: %d ntsosegments: %d maxsegsize: %d\n",
+		      scctx->isc_tx_tso_size_max, ntsosegments,
+		      scctx->isc_tx_tso_segsize_max);
 #endif
 	if ((err = bus_dma_tag_create(bus_get_dma_tag(dev),
 			       1, 0,			/* alignment, bounds */
@@ -1530,7 +1534,6 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 
 	n  = count;
 	MPASS(n > 0);
-	MPASS(fl->ifl_credits >= 0);
 	MPASS(fl->ifl_credits + n <= fl->ifl_size);
 
 	if (pidx < fl->ifl_cidx)
@@ -1659,7 +1662,6 @@ iflib_fl_bufs_free(iflib_fl_t fl)
 	iflib_dma_info_t idi = fl->ifl_ifdi;
 	uint32_t i;
 
-	MPASS(fl->ifl_credits >= 0);
 	for (i = 0; i < fl->ifl_size; i++) {
 		iflib_rxsd_t d = &fl->ifl_sds[i];
 
@@ -2153,8 +2155,10 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		m->m_nextpkt = NULL;
 		rx_bytes += m->m_pkthdr.len;
 		rx_pkts++;
+#if defined(INET6) || defined(INET)
 		if (lro_enabled && tcp_lro_rx(&rxq->ifr_lc, m, 0) == 0)
 			continue;
+#endif
 		DBG_COUNTER_INC(rx_if_input);
 		ifp->if_input(ifp, m);
 	}
@@ -2166,7 +2170,9 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	 */
 	while ((queued = LIST_FIRST(&rxq->ifr_lc.lro_active)) != NULL) {
 		LIST_REMOVE(queued, next);
+#if defined(INET6) || defined(INET)
 		tcp_lro_flush(&rxq->ifr_lc, queued);
+#endif
 	}
 	return (iflib_rxd_avail(ctx, rxq, *cidxp));
 }
@@ -4080,9 +4086,13 @@ static int
 iflib_rx_structures_setup(if_ctx_t ctx)
 {
 	iflib_rxq_t rxq = ctx->ifc_rxqs;
-	int i,  q, err;
+	int q;
+#if defined(INET6) || defined(INET)
+	int i, err;
+#endif
 
 	for (q = 0; q < ctx->ifc_softc_ctx.isc_nrxqsets; q++, rxq++) {
+#if defined(INET6) || defined(INET)
 		tcp_lro_free(&rxq->ifr_lc);
 		if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
 			device_printf(ctx->ifc_dev, "LRO Initialization failed!\n");
@@ -4090,9 +4100,11 @@ iflib_rx_structures_setup(if_ctx_t ctx)
 		}
 		rxq->ifr_lro_enabled = TRUE;
 		rxq->ifr_lc.ifp = ctx->ifc_ifp;
+#endif
 		IFDI_RXQ_SETUP(ctx, rxq->ifr_id);
 	}
 	return (0);
+#if defined(INET6) || defined(INET)
 fail:
 	/*
 	 * Free RX software descriptors allocated so far, we will only handle
@@ -4105,6 +4117,7 @@ fail:
 		rxq->ifr_cq_gen = rxq->ifr_cq_cidx = rxq->ifr_cq_pidx = 0;
 	}
 	return (err);
+#endif
 }
 
 /*********************************************************************

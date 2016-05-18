@@ -38,50 +38,50 @@ __FBSDID("$FreeBSD$");
 #if EFSYS_OPT_SIENA
 
 static	__checkReturn	efx_rc_t
-falconsiena_intr_init(
+siena_intr_init(
 	__in		efx_nic_t *enp,
 	__in		efx_intr_type_t type,
 	__in		efsys_mem_t *esmp);
 
 static			void
-falconsiena_intr_enable(
+siena_intr_enable(
 	__in		efx_nic_t *enp);
 
 static			void
-falconsiena_intr_disable(
+siena_intr_disable(
 	__in		efx_nic_t *enp);
 
 static			void
-falconsiena_intr_disable_unlocked(
+siena_intr_disable_unlocked(
 	__in		efx_nic_t *enp);
 
 static	__checkReturn	efx_rc_t
-falconsiena_intr_trigger(
+siena_intr_trigger(
 	__in		efx_nic_t *enp,
 	__in		unsigned int level);
 
 static			void
-falconsiena_intr_fini(
+siena_intr_fini(
 	__in		efx_nic_t *enp);
 
 static			void
-falconsiena_intr_status_line(
+siena_intr_status_line(
 	__in		efx_nic_t *enp,
 	__out		boolean_t *fatalp,
 	__out		uint32_t *qmaskp);
 
 static			void
-falconsiena_intr_status_message(
+siena_intr_status_message(
 	__in		efx_nic_t *enp,
 	__in		unsigned int message,
 	__out		boolean_t *fatalp);
 
 static			void
-falconsiena_intr_fatal(
+siena_intr_fatal(
 	__in		efx_nic_t *enp);
 
 static	__checkReturn	boolean_t
-falconsiena_intr_check_fatal(
+siena_intr_check_fatal(
 	__in		efx_nic_t *enp);
 
 
@@ -89,21 +89,21 @@ falconsiena_intr_check_fatal(
 
 
 #if EFSYS_OPT_SIENA
-static efx_intr_ops_t	__efx_intr_siena_ops = {
-	falconsiena_intr_init,			/* eio_init */
-	falconsiena_intr_enable,		/* eio_enable */
-	falconsiena_intr_disable,		/* eio_disable */
-	falconsiena_intr_disable_unlocked,	/* eio_disable_unlocked */
-	falconsiena_intr_trigger,		/* eio_trigger */
-	falconsiena_intr_status_line,		/* eio_status_line */
-	falconsiena_intr_status_message,	/* eio_status_message */
-	falconsiena_intr_fatal,			/* eio_fatal */
-	falconsiena_intr_fini,			/* eio_fini */
+static const efx_intr_ops_t	__efx_intr_siena_ops = {
+	siena_intr_init,		/* eio_init */
+	siena_intr_enable,		/* eio_enable */
+	siena_intr_disable,		/* eio_disable */
+	siena_intr_disable_unlocked,	/* eio_disable_unlocked */
+	siena_intr_trigger,		/* eio_trigger */
+	siena_intr_status_line,		/* eio_status_line */
+	siena_intr_status_message,	/* eio_status_message */
+	siena_intr_fatal,		/* eio_fatal */
+	siena_intr_fini,		/* eio_fini */
 };
 #endif	/* EFSYS_OPT_SIENA */
 
 #if EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD
-static efx_intr_ops_t	__efx_intr_ef10_ops = {
+static const efx_intr_ops_t	__efx_intr_ef10_ops = {
 	ef10_intr_init,			/* eio_init */
 	ef10_intr_enable,		/* eio_enable */
 	ef10_intr_disable,		/* eio_disable */
@@ -123,7 +123,7 @@ efx_intr_init(
 	__in		efsys_mem_t *esmp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
-	efx_intr_ops_t *eiop;
+	const efx_intr_ops_t *eiop;
 	efx_rc_t rc;
 
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
@@ -143,19 +143,19 @@ efx_intr_init(
 	switch (enp->en_family) {
 #if EFSYS_OPT_SIENA
 	case EFX_FAMILY_SIENA:
-		eiop = (efx_intr_ops_t *)&__efx_intr_siena_ops;
+		eiop = &__efx_intr_siena_ops;
 		break;
 #endif	/* EFSYS_OPT_SIENA */
 
 #if EFSYS_OPT_HUNTINGTON
 	case EFX_FAMILY_HUNTINGTON:
-		eiop = (efx_intr_ops_t *)&__efx_intr_ef10_ops;
+		eiop = &__efx_intr_ef10_ops;
 		break;
 #endif	/* EFSYS_OPT_HUNTINGTON */
 
 #if EFSYS_OPT_MEDFORD
 	case EFX_FAMILY_MEDFORD:
-		eiop = (efx_intr_ops_t *)&__efx_intr_ef10_ops;
+		eiop = &__efx_intr_ef10_ops;
 		break;
 #endif	/* EFSYS_OPT_MEDFORD */
 
@@ -187,7 +187,7 @@ efx_intr_fini(
 	__in	efx_nic_t *enp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
-	efx_intr_ops_t *eiop = eip->ei_eiop;
+	const efx_intr_ops_t *eiop = eip->ei_eiop;
 
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_NIC);
@@ -203,7 +203,7 @@ efx_intr_enable(
 	__in		efx_nic_t *enp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
-	efx_intr_ops_t *eiop = eip->ei_eiop;
+	const efx_intr_ops_t *eiop = eip->ei_eiop;
 
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_INTR);
@@ -216,7 +216,7 @@ efx_intr_disable(
 	__in		efx_nic_t *enp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
-	efx_intr_ops_t *eiop = eip->ei_eiop;
+	const efx_intr_ops_t *eiop = eip->ei_eiop;
 
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_INTR);
@@ -229,7 +229,7 @@ efx_intr_disable_unlocked(
 	__in		efx_nic_t *enp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
-	efx_intr_ops_t *eiop = eip->ei_eiop;
+	const efx_intr_ops_t *eiop = eip->ei_eiop;
 
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_INTR);
@@ -244,7 +244,7 @@ efx_intr_trigger(
 	__in		unsigned int level)
 {
 	efx_intr_t *eip = &(enp->en_intr);
-	efx_intr_ops_t *eiop = eip->ei_eiop;
+	const efx_intr_ops_t *eiop = eip->ei_eiop;
 
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_INTR);
@@ -259,7 +259,7 @@ efx_intr_status_line(
 	__out		uint32_t *qmaskp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
-	efx_intr_ops_t *eiop = eip->ei_eiop;
+	const efx_intr_ops_t *eiop = eip->ei_eiop;
 
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_INTR);
@@ -274,7 +274,7 @@ efx_intr_status_message(
 	__out		boolean_t *fatalp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
-	efx_intr_ops_t *eiop = eip->ei_eiop;
+	const efx_intr_ops_t *eiop = eip->ei_eiop;
 
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_INTR);
@@ -287,7 +287,7 @@ efx_intr_fatal(
 	__in	efx_nic_t *enp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
-	efx_intr_ops_t *eiop = eip->ei_eiop;
+	const efx_intr_ops_t *eiop = eip->ei_eiop;
 
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_INTR);
@@ -303,7 +303,7 @@ efx_intr_fatal(
 #if EFSYS_OPT_SIENA
 
 static	__checkReturn	efx_rc_t
-falconsiena_intr_init(
+siena_intr_init(
 	__in		efx_nic_t *enp,
 	__in		efx_intr_type_t type,
 	__in		efsys_mem_t *esmp)
@@ -344,7 +344,7 @@ falconsiena_intr_init(
 }
 
 static			void
-falconsiena_intr_enable(
+siena_intr_enable(
 	__in		efx_nic_t *enp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
@@ -358,7 +358,7 @@ falconsiena_intr_enable(
 }
 
 static			void
-falconsiena_intr_disable(
+siena_intr_disable(
 	__in		efx_nic_t *enp)
 {
 	efx_oword_t oword;
@@ -371,7 +371,7 @@ falconsiena_intr_disable(
 }
 
 static			void
-falconsiena_intr_disable_unlocked(
+siena_intr_disable_unlocked(
 	__in		efx_nic_t *enp)
 {
 	efx_oword_t oword;
@@ -384,7 +384,7 @@ falconsiena_intr_disable_unlocked(
 }
 
 static	__checkReturn	efx_rc_t
-falconsiena_intr_trigger(
+siena_intr_trigger(
 	__in		efx_nic_t *enp,
 	__in		unsigned int level)
 {
@@ -437,7 +437,7 @@ fail1:
 }
 
 static	__checkReturn	boolean_t
-falconsiena_intr_check_fatal(
+siena_intr_check_fatal(
 	__in		efx_nic_t *enp)
 {
 	efx_intr_t *eip = &(enp->en_intr);
@@ -461,7 +461,7 @@ falconsiena_intr_check_fatal(
 }
 
 static			void
-falconsiena_intr_status_line(
+siena_intr_status_line(
 	__in		efx_nic_t *enp,
 	__out		boolean_t *fatalp,
 	__out		uint32_t *qmaskp)
@@ -482,13 +482,13 @@ falconsiena_intr_status_line(
 	EFSYS_PROBE1(qmask, uint32_t, *qmaskp);
 
 	if (*qmaskp & (1U << eip->ei_level))
-		*fatalp = falconsiena_intr_check_fatal(enp);
+		*fatalp = siena_intr_check_fatal(enp);
 	else
 		*fatalp = B_FALSE;
 }
 
 static			void
-falconsiena_intr_status_message(
+siena_intr_status_message(
 	__in		efx_nic_t *enp,
 	__in		unsigned int message,
 	__out		boolean_t *fatalp)
@@ -499,14 +499,14 @@ falconsiena_intr_status_message(
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_INTR);
 
 	if (message == eip->ei_level)
-		*fatalp = falconsiena_intr_check_fatal(enp);
+		*fatalp = siena_intr_check_fatal(enp);
 	else
 		*fatalp = B_FALSE;
 }
 
 
 static		void
-falconsiena_intr_fatal(
+siena_intr_fatal(
 	__in	efx_nic_t *enp)
 {
 #if EFSYS_OPT_DECODE_INTR_FATAL
@@ -562,7 +562,7 @@ falconsiena_intr_fatal(
 }
 
 static		void
-falconsiena_intr_fini(
+siena_intr_fini(
 	__in	efx_nic_t *enp)
 {
 	efx_oword_t oword;

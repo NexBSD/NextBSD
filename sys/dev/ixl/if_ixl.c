@@ -1,4 +1,4 @@
-
+/* $FreeBSD$ */
 #include "opt_iflib.h"
 
 #ifdef IFLIB
