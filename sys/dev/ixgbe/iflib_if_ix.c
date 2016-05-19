@@ -3721,7 +3721,8 @@ ixgbe_if_update_admin_status(if_ctx_t ctx)
 			ixgbe_fc_enable(hw);
 			/* Update DMA coalescing config */
 			ixgbe_config_dmac(adapter);
-			iflib_link_state_change(ctx, LINK_STATE_UP);
+			/* should actually be negotiated value */
+			iflib_link_state_change(ctx, LINK_STATE_UP, IF_Gbps(10));
 
 #ifdef PCI_IOV
 			ixgbe_ping_all_vfs(adapter);
@@ -3732,7 +3733,7 @@ ixgbe_if_update_admin_status(if_ctx_t ctx)
 		if (adapter->link_active == TRUE) {
 			if (bootverbose)
 				device_printf(dev,"Link is Down\n");
-			iflib_link_state_change(ctx, LINK_STATE_DOWN);
+			iflib_link_state_change(ctx, LINK_STATE_DOWN, 0);
 			adapter->link_active = FALSE;
 #ifdef PCI_IOV
 			ixgbe_ping_all_vfs(adapter);

@@ -1029,13 +1029,13 @@ ixv_if_update_admin_status(if_ctx_t ctx)
 				    ((adapter->link_speed == 128)? 10:1),
 				    "Full Duplex");
 			adapter->link_active = TRUE;
-			iflib_link_state_change(ctx, LINK_STATE_UP);
+			iflib_link_state_change(ctx, LINK_STATE_UP,  IF_Gbps(10));
 		}
 	} else { /* Link down */
 		if (adapter->link_active == TRUE) {
 			if (bootverbose)
 				device_printf(dev,"Link is Down\n");
-			iflib_link_state_change(ctx, LINK_STATE_DOWN);
+			iflib_link_state_change(ctx, LINK_STATE_DOWN,  0);
 			adapter->link_active = FALSE;
 		}
 	}

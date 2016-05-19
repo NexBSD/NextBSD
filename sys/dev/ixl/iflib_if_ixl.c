@@ -1709,13 +1709,13 @@ ixl_update_link_status(struct ixl_pf *pf)
 			   hw->phy.link_info.link_speed == I40E_LINK_SPEED_100MB))
 				device_printf(dev, "The partition detected link"
 				    "speed that is less than 10Gbps\n");
-			iflib_link_state_change(vsi->ctx, LINK_STATE_UP);
+			iflib_link_state_change(vsi->ctx, LINK_STATE_UP,  IF_Gbps(40));
 		}
 	} else { /* Link down */
 		if (vsi->link_active == TRUE) {
 			if (bootverbose)
 				device_printf(dev,"Link is Down\n");
-			iflib_link_state_change(vsi->ctx, LINK_STATE_DOWN);
+			iflib_link_state_change(vsi->ctx, LINK_STATE_DOWN, 0);
 			vsi->link_active = FALSE;
 		}
 	}
