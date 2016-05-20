@@ -2148,7 +2148,6 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 
 	ifp = ctx->ifc_ifp;
 	lro_enabled = (if_getcapenable(ifp) & IFCAP_LRO);
-
 	while (mh != NULL) {
 		m = mh;
 		mh = mh->m_nextpkt;
@@ -2162,18 +2161,16 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 		DBG_COUNTER_INC(rx_if_input);
 		ifp->if_input(ifp, m);
 	}
+
 	if_inc_counter(ifp, IFCOUNTER_IBYTES, rx_bytes);
 	if_inc_counter(ifp, IFCOUNTER_IPACKETS, rx_pkts);
 
 	/*
 	 * Flush any outstanding LRO work
 	 */
-	while ((queued = LIST_FIRST(&rxq->ifr_lc.lro_active)) != NULL) {
-		LIST_REMOVE(queued, next);
 #if defined(INET6) || defined(INET)
-		tcp_lro_flush(&rxq->ifr_lc, queued);
+	tcp_lro_flush_all(&rxq->ifr_lc);
 #endif
-	}
 	return (iflib_rxd_avail(ctx, rxq, *cidxp));
 }
 
