@@ -625,7 +625,7 @@ imx_sdhci_intr(void *arg)
 	 * out of the hardware now so that we can present it later when the DAT0
 	 * line is released.
 	 *
-	 * If we need to wait for the the DAT0 line to be released, we set up a
+	 * If we need to wait for the DAT0 line to be released, we set up a
 	 * timeout point 250ms in the future.  This number comes from the SD
 	 * spec, which allows a command to take that long.  In the real world,
 	 * cards tend to take 10-20ms for a long-running command such as a write
@@ -836,3 +836,4 @@ static driver_t imx_sdhci_driver = {
 DRIVER_MODULE(sdhci_imx, simplebus, imx_sdhci_driver, imx_sdhci_devclass, 0, 0);
 MODULE_DEPEND(sdhci_imx, sdhci, 1, 1, 1);
 DRIVER_MODULE(mmc, sdhci_imx, mmc_driver, mmc_devclass, NULL, NULL);
+MODULE_DEPEND(sdhci_imx, mmc, 1, 1, 1);

@@ -57,8 +57,9 @@ struct grouptask {
 	void			*gt_taskqueue;
 	LIST_ENTRY(grouptask)	gt_list;
 	void			*gt_uniq;
-        char			*gt_name;
-        int			gt_irq;
+	char			*gt_name;
+	int16_t			gt_irq;
+	int16_t			gt_cpu;
 };
 
 #endif /* !_SYS__TASK_H_ */

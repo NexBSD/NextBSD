@@ -127,7 +127,8 @@ static	int nexus_set_resource(device_t, device_t, int, int,
 static	int nexus_get_resource(device_t, device_t, int, int,
 			       rman_res_t *, rman_res_t *);
 static void nexus_delete_resource(device_t, device_t, int, int);
-static	int nexus_get_cpus(device_t, device_t, enum cpu_sets, cpuset_t *, int size);
+static	int nexus_get_cpus(device_t, device_t, enum cpu_sets, size_t,
+			   cpuset_t *);
 #ifdef DEV_APIC
 static	int nexus_alloc_msi(device_t pcib, device_t dev, int count, int maxcount, int *irqs);
 static	int nexus_release_msi(device_t pcib, device_t dev, int count, int *irqs);
@@ -303,9 +304,9 @@ nexus_print_all_resources(device_t dev)
 	if (STAILQ_FIRST(rl))
 		retval += printf(" at");
 
-	retval += resource_list_print_type(rl, "port", SYS_RES_IOPORT, "%#lx");
-	retval += resource_list_print_type(rl, "iomem", SYS_RES_MEMORY, "%#lx");
-	retval += resource_list_print_type(rl, "irq", SYS_RES_IRQ, "%ld");
+	retval += resource_list_print_type(rl, "port", SYS_RES_IOPORT, "%#jx");
+	retval += resource_list_print_type(rl, "iomem", SYS_RES_MEMORY, "%#jx");
+	retval += resource_list_print_type(rl, "irq", SYS_RES_IRQ, "%jd");
 
 	return retval;
 }
@@ -399,7 +400,7 @@ nexus_alloc_resource(device_t bus, device_t child, int type, int *rid,
 		return (NULL);
 
 	rv = rman_reserve_resource(rm, start, end, count, flags, child);
-	if (rv == 0)
+	if (rv == NULL)
 		return 0;
 	rman_set_rid(rv, *rid);
 
@@ -528,7 +529,7 @@ nexus_setup_intr(device_t bus, device_t child, struct resource *irq,
 	if (irq == NULL)
 		panic("nexus_setup_intr: NULL irq resource!");
 
-	*cookiep = 0;
+	*cookiep = NULL;
 	if ((rman_get_flags(irq) & RF_SHAREABLE) == 0)
 		flags |= INTR_EXCL;
 
@@ -622,17 +623,20 @@ nexus_delete_resource(device_t dev, device_t child, int type, int rid)
 }
 
 static int
-nexus_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset, int size)
+nexus_get_cpus(device_t dev, device_t child, enum cpu_sets op, size_t setsize,
+    cpuset_t *cpuset)
 {
 
 	switch (op) {
 #ifdef SMP
 	case INTR_CPUS:
+		if (setsize != sizeof(cpuset_t))
+			return (EINVAL);
 		*cpuset = intr_cpus;
 		return (0);
 #endif
 	default:
-		return (bus_generic_get_cpus(dev, child, op, cpuset, size));
+		return (bus_generic_get_cpus(dev, child, op, setsize, cpuset));
 	}
 }
 

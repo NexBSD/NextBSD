@@ -430,7 +430,7 @@ kern_accept4(struct thread *td, int s, struct sockaddr **name,
 	(void) fo_ioctl(nfp, FIONBIO, &tmp, td->td_ucred, td);
 	tmp = fflag & FASYNC;
 	(void) fo_ioctl(nfp, FIOASYNC, &tmp, td->td_ucred, td);
-	sa = 0;
+	sa = NULL;
 	error = soaccept(so, &sa);
 	if (error != 0)
 		goto noconnection;
@@ -1698,6 +1698,9 @@ sockargs(mp, buf, buflen, type)
 	struct sockaddr *sa;
 	struct mbuf *m;
 	int error;
+
+	if (buflen < 0)
+		return (EINVAL);
 
 	if (buflen > MLEN) {
 #ifdef COMPAT_OLDSOCK

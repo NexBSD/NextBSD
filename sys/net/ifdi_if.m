@@ -23,6 +23,9 @@
 # CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
+#
+# $FreeBSD$
+#
 
 #include <sys/types.h>
 #include <sys/systm.h>
@@ -103,7 +106,7 @@ CODE {
 	}
 
 	static int
-	null_priv_ioctl(if_ctx_t _ctx __unused, caddr_t *data __unused)
+	null_priv_ioctl(if_ctx_t _ctx __unused, u_long command, caddr_t *data __unused)
 	{
 		return (ENOTSUP);
 	}
@@ -142,12 +145,20 @@ METHOD int resume {
 # own queue state and tie it to the parent
 #
 
-METHOD int queues_alloc {
+METHOD int tx_queues_alloc {
 	if_ctx_t _ctx;
 	caddr_t *_vaddrs;
 	uint64_t *_paddrs;
-	int nqs;
-	int nqsets;
+	int ntxqs;
+	int ntxqsets;
+};
+
+METHOD int rx_queues_alloc {
+	if_ctx_t _ctx;
+	caddr_t *_vaddrs;
+	uint64_t *_paddrs;
+	int nrxqs;
+	int nrxqsets;
 };
 
 METHOD void queues_free {
@@ -268,6 +279,7 @@ METHOD uint64_t get_counter {
 
 METHOD int priv_ioctl {
 	if_ctx_t _ctx;
+	u_long   _cmd;
 	caddr_t _data;
 } DEFAULT null_priv_ioctl;
 

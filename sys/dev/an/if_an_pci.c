@@ -128,6 +128,7 @@ an_probe_pci(device_t dev)
 	while (t->an_name != NULL) {
 		if (vid == t->an_vid &&
 		    did == t->an_did) {
+			device_set_desc(dev, t->an_name);
 			return(BUS_PROBE_DEFAULT);
 		}
 		t++;
@@ -156,13 +157,15 @@ an_attach_pci(dev)
 	}
 
 	sc = device_get_softc(dev);
-	/* almost certainly gratuitous */
 	bzero(sc, sizeof(struct an_softc));
 	flags = device_get_flags(dev);
 
+	/*
+	 * Setup the lock in PCI attachment since it skips the an_probe
+	 * function.
+	 */
 	mtx_init(&sc->an_mtx, device_get_nameunit(dev), MTX_NETWORK_LOCK,
 	    MTX_DEF);
-
 
 	if (pci_get_vendor(dev) == AIRONET_VENDORID &&
 	    pci_get_device(dev) == AIRONET_DEVICEID_MPI350) {

@@ -298,7 +298,7 @@ SYSCTL_INT(_hw_igb, OID_AUTO, buf_ring_size, CTLFLAG_RDTUN,
 
 /*
 ** Header split causes the packet header to
-** be dma'd to a seperate mbuf from the payload.
+** be dma'd to a separate mbuf from the payload.
 ** this can have memory alignment benefits. But
 ** another plus is that small packets often fit
 ** into the header and thus use no cluster. Its
@@ -739,6 +739,7 @@ igb_if_attach_post(if_ctx_t ctx)
 	return (0);
 
 err_late:
+
     free(adapter->mta, M_DEVBUF);
 	free(adapter->stats, M_DEVBUF); 
 	igb_release_hw_control(adapter);
@@ -967,6 +968,7 @@ igb_handle_link(void *context, int pending)
 	printf("link status set to 1: igb_handle_link_called\n"); 
 	adapter->hw.mac.get_link_status = 1;
 	iflib_admin_intr_deferred(adapter->ctx); 
+
 }
 
 /*********************************************************************
@@ -2134,7 +2136,7 @@ igb_setup_interface(if_ctx_t ctx)
 	** operation, but with HW FILTER off it works. If
 	** using vlans directly on the igb driver you can
 	** enable this and get full hardware tag filtering.
-	*/
+        */
 	ifp->if_capabilities |= IFCAP_VLAN_HWFILTER;
 
 	/*
@@ -2440,8 +2442,7 @@ igb_initialize_receive_units(if_ctx_t ctx)
 		rxcsum |= E1000_RXCSUM_PCSD;
 #if __FreeBSD_version >= 800000
 		/* For SCTP Offload */
-		if (((hw->mac.type == e1000_82576) ||
-		     (hw->mac.type == e1000_82580)) &&
+		if ((hw->mac.type != e1000_82575) &&
 		    (ifp->if_capenable & IFCAP_RXCSUM))
 			rxcsum |= E1000_RXCSUM_CRCOFL;
 #endif
@@ -2450,8 +2451,7 @@ igb_initialize_receive_units(if_ctx_t ctx)
 		if (ifp->if_capenable & IFCAP_RXCSUM) {
 			rxcsum |= E1000_RXCSUM_IPPCSE;
 #if __FreeBSD_version >= 800000
-			if ((adapter->hw.mac.type == e1000_82576) ||
-			    (adapter->hw.mac.type == e1000_82580))
+			if (adapter->hw.mac.type != e1000_82575)
 				rxcsum |= E1000_RXCSUM_CRCOFL;
 #endif
 		} else
@@ -2505,7 +2505,6 @@ igb_initialize_receive_units(if_ctx_t ctx)
 	}
 	return;
 }
-
 
 static void
 igb_if_vlan_register(if_ctx_t ctx, u16 vtag)

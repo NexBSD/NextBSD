@@ -906,6 +906,7 @@ taskqgroup_attach(struct taskqgroup *qgroup, struct grouptask *gtask,
 	gtask->gt_uniq = uniq;
 	gtask->gt_name = name;
 	gtask->gt_irq = irq;
+	gtask->gt_cpu = -1;
 	mtx_lock(&qgroup->tqg_lock);
 	qid = taskqgroup_find(qgroup, uniq);
 	qgroup->tqg_queue[qid].tgc_cnt++;
@@ -931,16 +932,20 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 	gtask->gt_uniq = uniq;
 	gtask->gt_name = name;
 	gtask->gt_irq = irq;
+	gtask->gt_cpu = cpu;
 	mtx_lock(&qgroup->tqg_lock);
-	for (i = 0; i < qgroup->tqg_cnt; i++)
-		if (qgroup->tqg_queue[i].tgc_cpu == cpu) {
-			qid = i;
-			break;
+	if (smp_started) {
+		for (i = 0; i < qgroup->tqg_cnt; i++)
+			if (qgroup->tqg_queue[i].tgc_cpu == cpu) {
+				qid = i;
+				break;
+			}
+		if (qid == -1) {
+			mtx_unlock(&qgroup->tqg_lock);
+			return (EINVAL);
 		}
-	if (qid == -1) {
-		mtx_unlock(&qgroup->tqg_lock);
-		return (EINVAL);
-	}
+	} else
+		qid = 0;
 	qgroup->tqg_queue[qid].tgc_cnt++;
 	LIST_INSERT_HEAD(&qgroup->tqg_queue[qid].tgc_tasks, gtask, gt_list);
 	gtask->gt_taskqueue = qgroup->tqg_queue[qid].tgc_taskq;
@@ -1063,7 +1068,15 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
 
 	while ((gtask = LIST_FIRST(&gtask_head))) {
 		LIST_REMOVE(gtask, gt_list);
-		qid = taskqgroup_find(qgroup, gtask->gt_uniq);
+		if (gtask->gt_cpu == -1)
+			qid = taskqgroup_find(qgroup, gtask->gt_uniq);
+		else {
+			for (i = 0; i < qgroup->tqg_cnt; i++)
+				if (qgroup->tqg_queue[i].tgc_cpu == gtask->gt_cpu) {
+					qid = i;
+					break;
+				}
+		}
 		qgroup->tqg_queue[qid].tgc_cnt++;
 		LIST_INSERT_HEAD(&qgroup->tqg_queue[qid].tgc_tasks, gtask,
 		    gt_list);

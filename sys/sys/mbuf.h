@@ -44,6 +44,32 @@
 #endif
 #endif
 
+#ifdef _KERNEL
+#include <sys/sdt.h>
+
+#define	MBUF_PROBE1(probe, arg0)					\
+	SDT_PROBE1(sdt, , , probe, arg0)
+#define	MBUF_PROBE2(probe, arg0, arg1)					\
+	SDT_PROBE2(sdt, , , probe, arg0, arg1)
+#define	MBUF_PROBE3(probe, arg0, arg1, arg2)				\
+	SDT_PROBE3(sdt, , , probe, arg0, arg1, arg2)
+#define	MBUF_PROBE4(probe, arg0, arg1, arg2, arg3)			\
+	SDT_PROBE4(sdt, , , probe, arg0, arg1, arg2, arg3)
+#define	MBUF_PROBE5(probe, arg0, arg1, arg2, arg3, arg4)		\
+	SDT_PROBE5(sdt, , , probe, arg0, arg1, arg2, arg3, arg4)
+
+SDT_PROBE_DECLARE(sdt, , , m__init);
+SDT_PROBE_DECLARE(sdt, , , m__gethdr);
+SDT_PROBE_DECLARE(sdt, , , m__get);
+SDT_PROBE_DECLARE(sdt, , , m__getcl);
+SDT_PROBE_DECLARE(sdt, , , m__clget);
+SDT_PROBE_DECLARE(sdt, , , m__cljget);
+SDT_PROBE_DECLARE(sdt, , , m__cljset);
+SDT_PROBE_DECLARE(sdt, , , m__free);
+SDT_PROBE_DECLARE(sdt, , , m__freem);
+
+#endif /* _KERNEL */
+
 /*
  * Mbufs are of a single size, MSIZE (sys/param.h), which includes overhead.
  * An mbuf may add a single "mbuf cluster" of size MCLBYTES (also in
@@ -239,6 +265,7 @@ struct mbuf {
 #define	M_VLANTAG	0x00000080 /* ether_vtag is valid */
 #define	M_UNUSED_8	0x00000100 /* --available-- */
 #define	M_NOFREE	0x00000200 /* do not free mbuf, embedded in cluster */
+#define	M_MVEC		0x00000400 /* is mbuf vector - has associated external storage */
 
 #define	M_PROTO1	0x00001000 /* protocol-specific */
 #define	M_PROTO2	0x00002000 /* protocol-specific */
@@ -252,6 +279,8 @@ struct mbuf {
 #define	M_PROTO10	0x00200000 /* protocol-specific */
 #define	M_PROTO11	0x00400000 /* protocol-specific */
 #define	M_PROTO12	0x00800000 /* protocol-specific */
+
+#define MB_DTOR_SKIP	0x1	/* don't pollute the cache by touching a freed mbuf */
 
 /*
  * Flags to purge when crossing layers.
@@ -375,6 +404,8 @@ struct mbuf {
  */
 #define	EXT_FLAG_EMBREF		0x000001	/* embedded ext_count */
 #define	EXT_FLAG_EXTREF		0x000002	/* external ext_cnt, notyet */
+#define	EXT_FLAG_MVEC_EMBREF	0x000008	/* mvec embedded ext_count */
+
 #define	EXT_FLAG_NOFREE		0x000010	/* don't free mbuf to pool, notyet */
 
 #define	EXT_FLAG_VENDOR1	0x010000	/* for vendor-internal use */
@@ -557,6 +588,7 @@ void		 m_extadd(struct mbuf *, caddr_t, u_int,
 u_int		 m_fixhdr(struct mbuf *);
 struct mbuf	*m_fragment(struct mbuf *, int, int);
 void		 m_freem(struct mbuf *);
+void		 mvec_free_one(struct mbuf *);
 struct mbuf	*m_get2(int, int, short, int);
 struct mbuf	*m_getjcl(int, short, int, int);
 struct mbuf	*m_getm2(struct mbuf *, int, int, short, int);
@@ -672,42 +704,52 @@ m_init(struct mbuf *m, int how, short type, int flags)
 	m->m_len = 0;
 	m->m_flags = flags;
 	m->m_type = type;
-	if (flags & M_PKTHDR) {
-		if ((error = m_pkthdr_init(m, how)) != 0)
-			return (error);
-	}
+	if (flags & M_PKTHDR)
+		error = m_pkthdr_init(m, how);
+	else
+		error = 0;
 
-	return (0);
+	MBUF_PROBE5(m__init, m, how, type, flags, error);
+	return (error);
 }
 
 static __inline struct mbuf *
 m_get(int how, short type)
 {
+	struct mbuf *m;
 	struct mb_args args;
 
 	args.flags = 0;
 	args.type = type;
-	return (uma_zalloc_arg(zone_mbuf, &args, how));
+	m = uma_zalloc_arg(zone_mbuf, &args, how);
+	MBUF_PROBE3(m__get, how, type, m);
+	return (m);
 }
 
 static __inline struct mbuf *
 m_gethdr(int how, short type)
 {
+	struct mbuf *m;
 	struct mb_args args;
 
 	args.flags = M_PKTHDR;
 	args.type = type;
-	return (uma_zalloc_arg(zone_mbuf, &args, how));
+	m = uma_zalloc_arg(zone_mbuf, &args, how);
+	MBUF_PROBE3(m__gethdr, how, type, m);
+	return (m);
 }
 
 static __inline struct mbuf *
 m_getcl(int how, short type, int flags)
 {
+	struct mbuf *m;
 	struct mb_args args;
 
 	args.flags = flags;
 	args.type = type;
-	return (uma_zalloc_arg(zone_pack, &args, how));
+	m = uma_zalloc_arg(zone_pack, &args, how);
+	MBUF_PROBE4(m__getcl, how, type, flags, m);
+	return (m);
 }
 
 /*
@@ -747,6 +789,7 @@ m_cljset(struct mbuf *m, void *cl, int type)
 	m->m_ext.ext_flags = EXT_FLAG_EMBREF;
 	m->m_ext.ext_count = 1;
 	m->m_flags |= M_EXT;
+	MBUF_PROBE3(m__cljset, m, cl, type);
 }
 
 static __inline void
@@ -1122,9 +1165,12 @@ m_free(struct mbuf *m)
 {
 	struct mbuf *n = m->m_next;
 
+	MBUF_PROBE1(m__free, m);
 	if ((m->m_flags & (M_PKTHDR|M_NOFREE)) == (M_PKTHDR|M_NOFREE))
 		m_tag_delete_chain(m, NULL);
-	if (m->m_flags & M_EXT)
+	if (m->m_flags & M_MVEC)
+		mvec_free_one(m);
+	else if (m->m_flags & M_EXT)
 		mb_free_ext(m);
 	else if ((m->m_flags & M_NOFREE) == 0)
 		uma_zfree(zone_mbuf, m);

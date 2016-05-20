@@ -1170,6 +1170,7 @@ zfs_domount(vfs_t *vfsp, char *osname)
 	vfsp->mnt_kern_flag |= MNTK_LOOKUP_SHARED;
 	vfsp->mnt_kern_flag |= MNTK_SHARED_WRITES;
 	vfsp->mnt_kern_flag |= MNTK_EXTENDED_SHARED;
+	vfsp->mnt_kern_flag |= MNTK_NO_IOPF;	/* vn_io_fault can be used */
 
 	/*
 	 * The fsid is 64 bits, composed of an 8-bit fs type, which
@@ -1779,11 +1780,8 @@ zfs_root(vfs_t *vfsp, int flags, vnode_t **vpp)
 
 	ZFS_EXIT(zfsvfs);
 
-	if (error == 0) {
+	if (error == 0)
 		error = vn_lock(*vpp, flags);
-		if (error == 0)
-			(*vpp)->v_vflag |= VV_ROOT;
-	}
 	if (error != 0)
 		*vpp = NULL;
 
@@ -2004,12 +2002,6 @@ zfs_umount(vfs_t *vfsp, int fflag)
 	 */
 	if (zfsvfs->z_ctldir != NULL)
 		zfsctl_destroy(zfsvfs);
-	if (zfsvfs->z_issnap) {
-		vnode_t *svp = vfsp->mnt_vnodecovered;
-
-		if (svp->v_count >= 2)
-			VN_RELE(svp);
-	}
 	zfs_freevfs(vfsp);
 
 	return (0);

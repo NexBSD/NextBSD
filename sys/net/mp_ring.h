@@ -54,7 +54,9 @@ struct ifmp_ring {
 	counter_u64_t		stalls;
 	counter_u64_t		restarts;	/* recovered after stalling */
 	counter_u64_t		abdications;
-
+#ifdef NO_64BIT_ATOMICS
+	struct mtx		lock;
+#endif
 	void * volatile		items[] __aligned(CACHE_LINE_SIZE);
 };
 

@@ -23,6 +23,8 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 #ifndef __IFLIB_H_
 #define __IFLIB_H_
@@ -164,7 +166,8 @@ typedef struct if_txrx {
 
 typedef struct if_softc_ctx {
 	int isc_vectors;
-	int isc_nqsets;
+	int isc_nrxqsets;
+	int isc_ntxqsets;
 	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_tso_segments_max;
@@ -198,8 +201,10 @@ struct if_shared_ctx {
 	int isc_rx_process_limit;
 
 
-	uint32_t isc_qsizes[8];
-	int isc_nqs;			/* # of queues per qset - usually 2 */
+	uint32_t isc_txqsizes[8];
+	int isc_ntxqs;			/* # of tx queues per tx qset - usually 1 */
+	uint32_t isc_rxqsizes[8];
+	int isc_nrxqs;			/* # of rx queues per rx qset - intel 1, chelsio 2, broadcom 3 */
 	int isc_admin_intrcnt;		/* # of admin/link interrupts */
 
 	int isc_tx_reclaim_thresh;
@@ -312,8 +317,10 @@ void iflib_admin_intr_deferred(if_ctx_t ctx);
 void iflib_iov_intr_deferred(if_ctx_t ctx);
 
 
-void iflib_link_state_change(if_ctx_t ctx, int linkstate);
+void iflib_link_state_change(if_ctx_t ctx, int linkstate, uint64_t baudrate);
 
+int iflib_dma_alloc(if_ctx_t ctx, int size, iflib_dma_info_t dma, int mapflags);
+void iflib_dma_free(iflib_dma_info_t dma);
 
 int iflib_dma_alloc_multi(if_ctx_t ctx, int *sizes, iflib_dma_info_t *dmalist, int mapflags, int count);
 
