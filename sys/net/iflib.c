@@ -2069,7 +2069,6 @@ iflib_rxeof(iflib_rxq_t rxq, int budget)
 	int err, budget_left, rx_bytes, rx_pkts;
 	iflib_fl_t fl;
 	struct ifnet *ifp;
-	struct lro_entry *queued;
 	int lro_enabled;
 	/*
 	 * XXX early demux data packets so that if_input processing only handles
