@@ -3870,8 +3870,8 @@ iflib_queues_alloc(if_ctx_t ctx)
 	struct ifmp_ring **brscp;
 	int nbuf_rings = 1; /* XXX determine dynamically */
 
-	KASSERT(ntxqs > 0, ("number of queues must be at least 1"));
-	KASSERT(nrxqs > 0, ("number of queues must be at least 1"));
+	KASSERT(ntxqs > 0, ("number of queues per qset must be at least 1"));
+	KASSERT(nrxqs > 0, ("number of queues per qset must be at least 1"));
 
 /* Allocate the TX ring struct memory */
 	if (!(txq =
@@ -4549,14 +4549,16 @@ iflib_msix_init(if_ctx_t ctx)
 		queues = rss_getnumbuckets();
 #endif
 	if (iflib_num_rx_queues > 0 && iflib_num_rx_queues < queues)
-		queues = rx_queues = iflib_num_rx_queues;
+		rx_queues = queues = iflib_num_rx_queues;
 	else
 		rx_queues = queues;
+	/*
+	 * We want this to be all logical CPUs by default
+	 */
 	if (iflib_num_tx_queues > 0 && iflib_num_tx_queues < queues)
 		tx_queues = iflib_num_tx_queues;
 	else
 		tx_queues = queues;
-
 	device_printf(dev, "using %d rx queues %d tx queues \n", rx_queues, tx_queues);
 
 	vectors = queues + admincnt;
@@ -4637,8 +4639,8 @@ iflib_add_device_sysctl_pre(if_ctx_t ctx)
 		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_ntxqs, 0,
 			"# of txqs to use, 0 => use default #");
 	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_nrxqs",
-		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_ntxqs, 0,
-			"# of txqs to use, 0 => use default #");
+		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_nrxqs, 0,
+			"# of rxqs to use, 0 => use default #");
 	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_ntxds",
 		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_ntxds, 0,
 			"# of tx descriptors to use, 0 => use default #");
