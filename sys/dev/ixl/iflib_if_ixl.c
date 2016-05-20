@@ -4644,7 +4644,6 @@ ixl_sysctl_hw_res_alloc(SYSCTL_HANDLER_ARGS)
 			sbuf_cat(buf, "\n");
 	}
 
-	sbuf_trim(buf);
 	error = sbuf_finish(buf);
 	sbuf_delete(buf);
 	if (error)
