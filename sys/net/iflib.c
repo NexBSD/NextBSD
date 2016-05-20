@@ -4549,7 +4549,7 @@ iflib_msix_init(if_ctx_t ctx)
 		queues = rss_getnumbuckets();
 #endif
 	if (iflib_num_rx_queues > 0 && iflib_num_rx_queues < queues)
-		rx_queues = queues = iflib_num_rx_queues;
+		rx_queues = iflib_num_rx_queues;
 	else
 		rx_queues = queues;
 	/*
@@ -4558,10 +4558,10 @@ iflib_msix_init(if_ctx_t ctx)
 	if (iflib_num_tx_queues > 0 && iflib_num_tx_queues < queues)
 		tx_queues = iflib_num_tx_queues;
 	else
-		tx_queues = queues;
+		tx_queues = mp_ncpus;
 	device_printf(dev, "using %d rx queues %d tx queues \n", rx_queues, tx_queues);
 
-	vectors = queues + admincnt;
+	vectors = rx_queues + admincnt;
 	if ((err = pci_alloc_msix(dev, &vectors)) == 0) {
 		device_printf(dev,
 					  "Using MSIX interrupts with %d vectors\n", vectors);
