@@ -78,11 +78,6 @@ static pci_vendor_info_t ixl_vendor_info_array[] =
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_QSFP_C, "Intel(R) Ethernet Connection XL710 Driver"),
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_10G_BASE_T, "Intel(R) Ethernet Connection XL710 Driver"),
 	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_10G_BASE_T4,"Intel(R) Ethernet Connection XL710 Driver"),
-#ifdef X722_SUPPORT
-	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_SFP_X722, "Intel(R) Ethernet Connection XL710 Driver"),
-	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_1G_BASE_T_X722, "Intel(R) Ethernet Connection XL710 Driver"),
-	PVID(I40E_INTEL_VENDOR_ID, I40E_DEV_ID_10G_BASE_T_X722, "Intel(R) Ethernet Connection XL710 Driver"),
-#endif
 	/* required last entry */
 	PVID_END
 };
@@ -97,7 +92,8 @@ static int      ixl_allocate_pci_resources(struct ixl_pf *);
 static u16	ixl_get_bus_info(struct i40e_hw *, device_t);
 static int	ixl_switch_config(struct ixl_pf *);
 static int	ixl_initialize_vsi(struct ixl_vsi *);
-static void	ixl_configure_msix(struct ixl_pf *);
+static void	ixl_configure_intr0_msix(struct ixl_pf *);
+static void	ixl_configure_queue_intr_msix(struct ixl_pf *);
 static void	ixl_configure_itr(struct ixl_pf *);
 static void	ixl_configure_legacy(struct ixl_pf *);
 static void	ixl_free_pci_resources(struct ixl_pf *);
@@ -572,7 +568,7 @@ ixl_if_attach_pre(if_ctx_t ctx)
 		goto err_mac_hmc;
 	}
 
-	/* Disable LLDP from the firmware */
+	/* Disable LLDP from the firmware for certain NVM versions */
 	if (((pf->hw.aq.fw_maj_ver == 4) && (pf->hw.aq.fw_min_ver < 3)) ||
 	    (pf->hw.aq.fw_maj_ver < 4))
 		i40e_aq_stop_lldp(hw, TRUE, NULL);
@@ -673,6 +669,13 @@ ixl_if_attach_post(if_ctx_t ctx)
 	/* Get the bus configuration and set the shared code */
 	bus = ixl_get_bus_info(hw, dev);
 	i40e_set_pci_config_data(hw, bus);
+
+	if (vsi->shared->isc_vectors > 1) {
+		ixl_configure_intr0_msix(pf);
+		ixl_configure_queue_intr_msix(pf);
+		ixl_configure_itr(pf);
+	} else
+		ixl_configure_legacy(pf);
 
 	/* Initialize statistics & add sysctls */
 	ixl_add_device_sysctls(pf);
@@ -1043,13 +1046,6 @@ ixl_if_init(if_ctx_t ctx)
 
 	/* Setup vlan's if needed */
 	ixl_setup_vlan_filters(vsi);
-
-	/* Set up MSI/X routing and the ITR settings */
-	if (ixl_enable_msix) {
-		ixl_configure_msix(pf);
-		ixl_configure_itr(pf);
-	} else
-		ixl_configure_legacy(pf);
 
 	ixl_enable_rings(vsi);
 
@@ -1744,15 +1740,13 @@ ixl_if_stop(if_ctx_t ctx)
 }
 
 /*
- * Plumb MSI/X vectors
+ * Configure admin queue/misc interrupt cause registers in hardware.
  */
 static void
-ixl_configure_msix(struct ixl_pf *pf)
+ixl_configure_intr0_msix(struct ixl_pf *pf)
 {
-	struct i40e_hw	*hw = &pf->hw;
-	struct ixl_vsi *vsi = &pf->vsi;
-	u32		reg;
-	u16		vector = 1;
+	struct i40e_hw *hw = &pf->hw;
+	u32 reg;
 
 	/* First set up the adminq - vector 0 */
 	wr32(hw, I40E_PFINT_ICR0_ENA, 0);  /* disable all */
@@ -1767,19 +1761,36 @@ ixl_configure_msix(struct ixl_pf *pf)
 	    I40E_PFINT_ICR0_ENA_PCI_EXCEPTION_MASK;
 	wr32(hw, I40E_PFINT_ICR0_ENA, reg);
 
+	/*
+	 * 0x7FF is the end of the queue list.
+	 * This means we won't use MSI-X vector 0 for a queue interrupt
+	 * in MSIX mode.
+	 */
 	wr32(hw, I40E_PFINT_LNKLST0, 0x7FF);
-	wr32(hw, I40E_PFINT_ITR0(IXL_RX_ITR), 0x003E);
+	/* Value is in 2 usec units, so 0x3E is 62*2 = 124 usecs. */
+	wr32(hw, I40E_PFINT_ITR0(IXL_RX_ITR), 0x3E);
 
 	wr32(hw, I40E_PFINT_DYN_CTL0,
 	    I40E_PFINT_DYN_CTL0_SW_ITR_INDX_MASK |
 	    I40E_PFINT_DYN_CTL0_INTENA_MSK_MASK);
 
 	wr32(hw, I40E_PFINT_STAT_CTL0, 0);
+}
 
-	/* Next configure the queues */
+/*
+ * Configure queue interrupt cause registers in hardware.
+ */
+static void
+ixl_configure_queue_intr_msix(struct ixl_pf *pf)
+{
+	struct i40e_hw	*hw = &pf->hw;
+	struct ixl_vsi *vsi = &pf->vsi;
+	u32		reg;
+	u16		vector = 1;
+
 	for (int i = 0; i < vsi->num_rx_queues; i++, vector++) {
 		wr32(hw, I40E_PFINT_DYN_CTLN(i), 0);
-		/* First queue type is RX / type 0 */
+		/* First queue type is RX / 0 */
 		wr32(hw, I40E_PFINT_LNKLSTN(i), i);
 
 		reg = I40E_QINT_RQCTL_CAUSE_ENA_MASK |
@@ -3224,9 +3235,12 @@ ixl_if_intr_enable(if_ctx_t ctx)
 {
 	struct ixl_vsi	*vsi = iflib_get_softc(ctx);
 	struct i40e_hw		*hw = vsi->hw;
+	struct ixl_rx_queue     *que = vsi->rx_queues;
 
 	if (ixl_enable_msix) {
 		ixl_enable_adminq(hw);
+		for (int i = 0; i < vsi->num_rx_queues; i++, que++)
+			ixl_if_queue_intr_enable(vsi->ctx, que->rxr.me);
 	} else
 		ixl_enable_legacy(hw);
 }
@@ -3392,20 +3406,6 @@ ixl_handle_mdd_event(struct ixl_pf *pf)
 	ixl_flush(hw);
 }
 
-#if 0
-static void
-ixl_enable_intr(struct ixl_vsi *vsi)
-{
-	struct i40e_hw		*hw = vsi->hw;
-	struct ixl_rx_queue	*que = vsi->rx_queues;
-
-	if (ixl_enable_msix) {
-		for (int i = 0; i < vsi->num_rx_queues; i++, que++)
-			ixl_if_queue_intr_enable(vsi->ctx, que->rxr.me);
-	} else
-		ixl_enable_legacy(hw);
-}
-#endif
 static void
 ixl_enable_adminq(struct i40e_hw *hw)
 {
@@ -3652,6 +3652,8 @@ ixl_rebuild_hw_structs_after_reset(struct ixl_pf *pf)
 		device_printf(dev, "Unable to initialize Admin Queue, error %d\n",
 		    error);
 	}
+
+	ixl_configure_intr0_msix(pf);
 	ixl_enable_adminq(hw);
 	error = i40e_init_lan_hmc(hw, hw->func_caps.num_tx_qp,
 	    hw->func_caps.num_rx_qp, 0, 0);
@@ -6177,7 +6179,7 @@ ixl_if_iov_init(if_ctx_t ctx, uint16_t num_vfs, const nvlist_t *params)
 		goto fail;
 	}
 	// TODO: [Configure MSI-X here]
-	ixl_configure_msix(pf);
+	/* ixl_configure_msix(pf); */
 	ixl_enable_adminq(hw);
 
 	pf->num_vfs = num_vfs;
