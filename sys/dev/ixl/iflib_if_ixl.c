@@ -6217,9 +6217,6 @@ ixl_if_iov_uninit(if_ctx_t ctx)
 		pf->veb_seid = 0;
 	}
 
-	if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0)
-		ixl_if_intr_disable(ctx);
-
 	vfs = pf->vfs;
 	num_vfs = pf->num_vfs;
 
