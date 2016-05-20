@@ -966,7 +966,7 @@ iflib_netmap_attach(if_ctx_t ctx)
 	MPASS(ctx->ifc_softc_ctx.isc_nrxqsets);
 
 	na.num_tx_desc = ctx->ifc_sctx->isc_ntxd;
-	na.num_rx_desc = ctx->ifc_sctx->isc_ntxd;
+	na.num_rx_desc = ctx->ifc_sctx->isc_nrxd;
 	na.nm_txsync = iflib_netmap_txsync;
 	na.nm_rxsync = iflib_netmap_rxsync;
 	na.nm_register = iflib_netmap_register;
@@ -2025,8 +2025,6 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri)
 	return (mh);
 }
 
-
-
 /*
  * Process one software descriptor
  */
@@ -3044,8 +3042,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	if_ctx_t	ctx = if_getsoftc(ifp);
 
 	iflib_txq_t txq;
-	struct mbuf *marr[8], **mp, *next;
-	int err, i, count, qidx;
+	int err, qidx;
 
 	if (__predict_false((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 || !LINK_ACTIVE(ctx))) {
 		DBG_COUNTER_INC(tx_frees);
@@ -3053,6 +3050,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		return (0);
 	}
 
+	MPASS(m->m_nextpkt == NULL);
 	qidx = 0;
 	if ((NTXQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
 		qidx = QIDX(ctx, m);
@@ -3072,6 +3070,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		return (ENOBUFS);
 	}
 #endif
+#ifdef notyet
 	qidx = count = 0;
 	mp = marr;
 	next = m;
@@ -3093,8 +3092,9 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		next = next->m_nextpkt;
 		mp[i]->m_nextpkt = NULL;
 	}
+#endif
 	DBG_COUNTER_INC(tx_seen);
-	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)mp, count, TX_BATCH_SIZE);
+	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)&m, 1, TX_BATCH_SIZE);
 
 	if (iflib_txq_can_drain(txq->ift_br[0]))
 		GROUPTASK_ENQUEUE(&txq->ift_task);
@@ -3103,12 +3103,8 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 #ifdef DRIVER_BACKPRESSURE
 		txq->ift_closed = TRUE;
 #endif
-		for (i = 0; i < count; i++)
-			m_freem(mp[i]);
 		ifmp_ring_check_drainage(txq->ift_br[0], TX_BATCH_SIZE);
 	}
-	if (count > 16)
-		free(mp, M_IFLIB);
 
 	return (err);
 }
@@ -3454,16 +3450,35 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	scctx = &ctx->ifc_softc_ctx;
 	msix_bar = scctx->isc_msix_bar;
 
-	if (scctx->isc_tx_nsegments > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
-		scctx->isc_tx_nsegments = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
-	if (scctx->isc_tx_tso_segments_max > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
-		scctx->isc_tx_tso_segments_max = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
-
 	ifp = ctx->ifc_ifp;
 
 	/*
 	 * XXX sanity check that ntxd & nrxd are a power of 2
 	 */
+	if (ctx->ifc_sysctl_ntxqs != 0)
+		scctx->isc_ntxqsets = ctx->ifc_sysctl_ntxqs;
+	if (ctx->ifc_sysctl_nrxqs != 0)
+		scctx->isc_nrxqsets = ctx->ifc_sysctl_nrxqs;
+	if (ctx->ifc_sysctl_ntxds != 0)
+		sctx->isc_ntxd = ctx->ifc_sysctl_ntxds;
+	if (ctx->ifc_sysctl_nrxds != 0)
+		sctx->isc_nrxd = ctx->ifc_sysctl_nrxds;
+
+	if (!powerof2(sctx->isc_nrxd)) {
+		device_printf(dev, "# rx descriptors must be a power of 2");
+		err = EINVAL;
+		goto fail;
+	}
+	if (!powerof2(sctx->isc_ntxd)) {
+		device_printf(dev, "# tx descriptors must be a power of 2");
+		err = EINVAL;
+		goto fail;
+	}
+
+	if (scctx->isc_tx_nsegments > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
+		scctx->isc_tx_nsegments = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
+	if (scctx->isc_tx_tso_segments_max > sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION)
+		scctx->isc_tx_tso_segments_max = max(1, sctx->isc_ntxd / MAX_SINGLE_PACKET_FRACTION);
 
 	/*
 	 * Protect the stack against modern hardware
