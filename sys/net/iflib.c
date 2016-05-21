@@ -4110,12 +4110,11 @@ iflib_rx_structures_setup(if_ctx_t ctx)
 	for (q = 0; q < ctx->ifc_softc_ctx.isc_nrxqsets; q++, rxq++) {
 #if defined(INET6) || defined(INET)
 		tcp_lro_free(&rxq->ifr_lc);
-		if ((err = tcp_lro_init(&rxq->ifr_lc)) != 0) {
+		if ((err = tcp_lro_init_args(&rxq->ifr_lc, ctx->ifc_ifp, TCP_LRO_ENTRIES, 64)) != 0) {
 			device_printf(ctx->ifc_dev, "LRO Initialization failed!\n");
 			goto fail;
 		}
 		rxq->ifr_lro_enabled = TRUE;
-		rxq->ifr_lc.ifp = ctx->ifc_ifp;
 #endif
 		IFDI_RXQ_SETUP(ctx, rxq->ifr_id);
 	}
