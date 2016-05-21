@@ -175,6 +175,8 @@ typedef struct if_softc_ctx {
 
 	uint32_t isc_txqsizes[8];
 	uint32_t isc_rxqsizes[8];
+	int isc_max_txqsets;
+	int isc_max_rxqsets;
 	int isc_tx_tso_segments_max;
 	int isc_tx_tso_size_max;
 	int isc_tx_tso_segsize_max;

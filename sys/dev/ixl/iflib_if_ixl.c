@@ -459,6 +459,9 @@ ixl_if_attach_pre(if_ctx_t ctx)
                                                                           sizeof(u32), DBA_ALIGN);
 	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd *sizeof(union i40e_rx_desc), DBA_ALIGN);
 
+	/* XXX */
+	scctx->isc_max_txqsets = scctx->isc_max_rxqsets = 32;
+
 	/*
 	** Note this assumes we have a single embedded VSI,
 	** this could be enhanced later to allocate multiple
