@@ -170,6 +170,11 @@ typedef struct if_softc_ctx {
 	int isc_ntxqsets;
 	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
+	int isc_ntxd;
+	int isc_nrxd;
+
+	uint32_t isc_txqsizes[8];
+	uint32_t isc_rxqsizes[8];
 	int isc_tx_tso_segments_max;
 	int isc_tx_tso_size_max;
 	int isc_tx_tso_segsize_max;
@@ -188,8 +193,6 @@ struct if_shared_ctx {
 	int isc_magic;
 	if_txrx_t isc_txrx;
 	driver_t *isc_driver;
-	int isc_ntxd;
-	int isc_nrxd;
 	int isc_nfl;
 	int isc_flags;
 	bus_size_t isc_q_align;
@@ -199,13 +202,10 @@ struct if_shared_ctx {
 	bus_size_t isc_rx_maxsegsize;
 	int isc_rx_nsegments;
 	int isc_rx_process_limit;
-
-
-	uint32_t isc_txqsizes[8];
 	int isc_ntxqs;			/* # of tx queues per tx qset - usually 1 */
-	uint32_t isc_rxqsizes[8];
 	int isc_nrxqs;			/* # of rx queues per rx qset - intel 1, chelsio 2, broadcom 3 */
 	int isc_admin_intrcnt;		/* # of admin/link interrupts */
+
 
 	int isc_tx_reclaim_thresh;
 

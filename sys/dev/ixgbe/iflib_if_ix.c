@@ -431,13 +431,7 @@ static struct if_shared_ctx ixgbe_sctx_init = {
 	.isc_rx_maxsize = PAGE_SIZE*4,
 	.isc_rx_nsegments = 1,
 	.isc_rx_maxsegsize = PAGE_SIZE*4,
-	.isc_ntxd = DEFAULT_TXD,
-	.isc_nrxd = DEFAULT_RXD,
 	.isc_nfl = 1,
-	.isc_txqsizes[0] = roundup2((DEFAULT_TXD * sizeof(union ixgbe_adv_tx_desc)) +
-							  sizeof(u32), DBA_ALIGN),
-	.isc_rxqsizes[0] = roundup2(DEFAULT_RXD *
-							  sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN),
 	.isc_ntxqs = 1,
 	.isc_nrxqs = 1,
 
@@ -454,6 +448,7 @@ static int
 ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxqs, int ntxqsets)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	struct ix_tx_queue *que;
 	int i, j, error;
 #ifdef PCI_IOV
@@ -482,7 +477,7 @@ ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nt
 	for (i = 0, que = adapter->tx_queues; i < ntxqsets; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
 
-		if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * ixgbe_sctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+		if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * scctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 			device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
 			error = ENOMEM;
 			goto fail;
@@ -502,7 +497,7 @@ ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nt
 		txr->tx_paddr = paddrs[i];
 
 		txr->que = que;
-		for (j = 0; j < ixgbe_sctx->isc_ntxd; j++) {
+		for (j = 0; j < scctx->isc_ntxd; j++) {
 			txr->tx_buffers[j].eop = -1;
 		}
 		txr->bytes = 0;
@@ -740,6 +735,7 @@ static void
 ixgbe_initialize_receive_units(if_ctx_t ctx)
 {
         struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	struct ixgbe_hw	*hw = &adapter->hw;
 	struct ifnet   *ifp = iflib_get_ifp(ctx);
 
@@ -792,7 +788,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 			       (rdba & 0x00000000ffffffffULL));
 		IXGBE_WRITE_REG(hw, IXGBE_RDBAH(j), (rdba >> 32));
 		IXGBE_WRITE_REG(hw, IXGBE_RDLEN(j),
-		     ixgbe_sctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc));
+		     scctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc));
 
 		/* Set up the SRRCTL register */
 		srrctl = IXGBE_READ_REG(hw, IXGBE_SRRCTL(j));
@@ -861,6 +857,7 @@ static void
 ixgbe_initialize_transmit_units(if_ctx_t ctx)
 {
   struct adapter *adapter = iflib_get_softc(ctx);
+  if_softc_ctx_t scctx = adapter->shared;
   struct ixgbe_hw	*hw = &adapter->hw;
   struct ix_tx_queue *que;
   int i;
@@ -876,7 +873,7 @@ ixgbe_initialize_transmit_units(if_ctx_t ctx)
 		       (tdba & 0x00000000ffffffffULL));
 		IXGBE_WRITE_REG(hw, IXGBE_TDBAH(j), (tdba >> 32));
 		IXGBE_WRITE_REG(hw, IXGBE_TDLEN(j),
-		    ixgbe_sctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc));
+		    scctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc));
 
 		/* Setup the HW Tx Head and Tail descriptor pointers */
 		IXGBE_WRITE_REG(hw, IXGBE_TDH(j), 0);
@@ -935,20 +932,6 @@ ixgbe_initialize_transmit_units(if_ctx_t ctx)
 static void *
 ixgbe_register(device_t dev)
 {
-	/* Do descriptor calc and sanity checks */
-	if (((ixgbe_txd * sizeof(union ixgbe_adv_tx_desc)) % DBA_ALIGN) != 0 ||
-		ixgbe_txd < MIN_TXD || ixgbe_txd > MAX_TXD) {
-		device_printf(dev, "TXD config issue, using default!\n");
-		ixgbe_sctx->isc_ntxd = DEFAULT_TXD;
-	} else {
-		ixgbe_sctx->isc_ntxd = ixgbe_txd;
-	}
-	ixgbe_tx_process_limit = min(ixgbe_sctx->isc_ntxd, ixgbe_txd);
-	ixgbe_sctx->isc_txqsizes[0] = roundup2((ixgbe_sctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc)) +
-										 sizeof(u32), DBA_ALIGN);
-	ixgbe_sctx->isc_rxqsizes[1] = roundup2(ixgbe_rxd *
-										 sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
-
 	return (ixgbe_sctx);
 }
 
@@ -967,6 +950,7 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 {
 	device_t dev;
 	struct adapter *adapter;
+	if_softc_ctx_t scctx;
 	struct ixgbe_hw *hw;
 	uint16_t csum;
 	int error = 0;
@@ -978,7 +962,7 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	adapter = iflib_get_softc(ctx);
 	adapter->ctx = ctx;
 	adapter->dev = dev;
-	adapter->shared = iflib_get_softc_ctx(ctx);
+	scctx = adapter->shared = iflib_get_softc_ctx(ctx);
 	adapter->media = iflib_get_media(ctx);
 	hw = &adapter->hw;
 
@@ -986,17 +970,33 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	ixgbe_identify_hardware(ctx);
 
 	if (adapter->hw.mac.type == ixgbe_mac_82598EB) {
-		adapter->shared->isc_tx_nsegments = IXGBE_82598_SCATTER;
-		adapter->shared->isc_msix_bar = PCIR_BAR(MSIX_82598_BAR);
+		scctx->isc_tx_nsegments = IXGBE_82598_SCATTER;
+		scctx->isc_msix_bar = PCIR_BAR(MSIX_82598_BAR);
 	} else {
 		hw->phy.smart_speed = ixgbe_smart_speed;
-		adapter->shared->isc_tx_nsegments = IXGBE_82599_SCATTER;
-		adapter->shared->isc_msix_bar = PCIR_BAR(MSIX_82599_BAR);
+		scctx->isc_tx_nsegments = IXGBE_82599_SCATTER;
+		scctx->isc_msix_bar = PCIR_BAR(MSIX_82599_BAR);
 	}
+	if (scctx->isc_ntxd == 0)
+		scctx->isc_ntxd = DEFAULT_TXD;
+	if (scctx->isc_nrxd == 0)
+		scctx->isc_nrxd = DEFAULT_RXD;
+	if (scctx->isc_nrxd < MIN_RXD || scctx->isc_nrxd > MAX_RXD) {
+		device_printf(dev, "nrxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_nrxd, MIN_RXD, MAX_RXD, DEFAULT_RXD);
+		scctx->isc_nrxd = DEFAULT_RXD;
+	}
+	if (scctx->isc_ntxd < MIN_TXD || scctx->isc_ntxd > MAX_TXD) {
+		device_printf(dev, "ntxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_ntxd, MIN_TXD, MAX_TXD, DEFAULT_TXD);
+		scctx->isc_ntxd = DEFAULT_TXD;
+	}
+	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc) + sizeof(u32), DBA_ALIGN),
+	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
 
-	adapter->shared->isc_tx_tso_segments_max = adapter->shared->isc_tx_nsegments;
-	adapter->shared->isc_tx_tso_size_max = IXGBE_TSO_SIZE;
-	adapter->shared->isc_tx_tso_segsize_max = PAGE_SIZE;
+	scctx->isc_tx_tso_segments_max = scctx->isc_tx_nsegments;
+	scctx->isc_tx_tso_size_max = IXGBE_TSO_SIZE;
+	scctx->isc_tx_tso_segsize_max = PAGE_SIZE;
 	/* Sysctls */
 	ixgbe_add_device_sysctls(ctx);
 
@@ -1014,14 +1014,6 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	ixgbe_set_sysctl_value(adapter, "tx_processing_limit",
 	    "max number of tx packets to process",
 	&adapter->tx_process_limit, ixgbe_tx_process_limit);
-
-	if (((ixgbe_rxd * sizeof(union ixgbe_adv_rx_desc)) % DBA_ALIGN) != 0 ||
-		ixgbe_rxd < MIN_RXD || ixgbe_rxd > MAX_RXD) {
-		device_printf(dev, "RXD config issue, using default!\n");
-		ixgbe_sctx->isc_nrxd = DEFAULT_RXD;
-	} else {
-		ixgbe_sctx->isc_nrxd = ixgbe_rxd;
-	}
 
 	/* Allocate multicast array memory. */
 	adapter->mta = malloc(sizeof(*adapter->mta) *
@@ -1085,10 +1077,10 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	switch (adapter->hw.mac.type) {
 	case ixgbe_mac_X550:
 	case ixgbe_mac_X550EM_x:
-		adapter->shared->isc_rss_table_size = 512;
+		scctx->isc_rss_table_size = 512;
 		break;
 	default:
-		adapter->shared->isc_rss_table_size = 128;
+		scctx->isc_rss_table_size = 128;
 	}
 	return (0);
 err_late:

@@ -175,6 +175,13 @@ MALLOC_DECLARE(M_IXL);
 #define MAX_RING	4096
 #define MIN_RING	32
 
+#define DEFAULT_RXD	DEFAULT_RING
+#define MIN_RXD		MIN_RING
+#define MAX_RXD		MAX_RING
+#define DEFAULT_TXD	DEFAULT_RING
+#define MIN_TXD		MIN_RING
+#define MAX_TXD		MAX_RING
+
 /*
 ** Default number of entries in Tx queue buf_ring.
 */

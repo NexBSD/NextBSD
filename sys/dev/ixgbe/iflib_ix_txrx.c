@@ -82,10 +82,11 @@ void
 ixgbe_init_tx_ring(struct ix_tx_queue *que)
 {
 	struct tx_ring *txr = &que->txr;
+	if_softc_ctx_t scctx = que->adapter->shared;
 	struct ixgbe_tx_buf *buf;
 
 	buf = txr->tx_buffers;
-	for (int i = 0; i < ixgbe_sctx->isc_ntxd; i++, buf++) {
+	for (int i = 0; i < scctx->isc_ntxd; i++, buf++) {
 		buf->eop = -1;
 	}
 }
@@ -166,6 +167,7 @@ static int
 ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 {
 	struct adapter *sc       = arg;
+	if_softc_ctx_t scctx = sc->shared;
 	struct ix_tx_queue *que     = &sc->tx_queues[pi->ipi_qsidx];
 	struct tx_ring *txr      = &que->txr;
 	struct ixgbe_tx_buf *buf;
@@ -197,7 +199,7 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 			++txr->tso_tx;
 		}
 
-		if (++i == ixgbe_sctx->isc_ntxd)
+		if (++i == scctx->isc_ntxd)
 			i = 0;
 	} else {
 		/* Indicate the whole packet as payload when not doing TSO */
@@ -219,7 +221,7 @@ ixgbe_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		txd->read.olinfo_status = htole32(olinfo_status);
 
 		cidx_last = i;
-		if (++i == ixgbe_sctx->isc_ntxd) {
+		if (++i == scctx->isc_ntxd) {
 			i = 0;
 		}
 	}
@@ -253,6 +255,7 @@ static int
 ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool clear)
 {
 	struct adapter   *sc = arg;
+	if_softc_ctx_t scctx = sc->shared;
 	struct ix_tx_queue  *que = &sc->tx_queues[txqid];
 	struct tx_ring   *txr = &que->txr;
 	
@@ -266,7 +269,7 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool
 
 	buf = &txr->tx_buffers[cidx];
 	txd = &txr->tx_base[cidx];
-	ntxd = ixgbe_sctx->isc_ntxd;
+	ntxd = scctx->isc_ntxd;
 	do {
 		int delta, eop = buf->eop;
 		union ixgbe_adv_tx_desc *eopd;
@@ -303,7 +306,7 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool
 		buf++;
 		cidx++;
 		/* reset with a wrap */
-		if (__predict_false(cidx == ixgbe_sctx->isc_ntxd)) {
+		if (__predict_false(cidx == scctx->isc_ntxd)) {
 			cidx = 0;
 			buf = txr->tx_buffers;
 			txd = txr->tx_base;
@@ -327,7 +330,7 @@ ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 
 	for (i = 0, next_pidx = pidx; i < count; i++) {
 		rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
-		if (++next_pidx == ixgbe_sctx->isc_nrxd)
+		if (++next_pidx == sc->shared->isc_nrxd)
 			next_pidx = 0;
 	}
 }
@@ -350,15 +353,16 @@ ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 	struct rx_ring *rxr      = &que->rxr;
 	union ixgbe_adv_rx_desc *rxd;
 	u32                      staterr;
-	int                      cnt, i;
-  
-	for (cnt = 0, i = idx; cnt < ixgbe_sctx->isc_nrxd;) {
+	int                      cnt, i, nrxd;
+
+	nrxd = sc->shared->isc_nrxd;
+	for (cnt = 0, i = idx; cnt < nrxd-1;) {
 		rxd = &rxr->rx_base[i];
 		staterr = le32toh(rxd->wb.upper.status_error);
 
 		if ((staterr & IXGBE_RXD_STAT_DD) == 0)
 			break;
-		if (++i == ixgbe_sctx->isc_nrxd)
+		if (++i == nrxd)
 			i = 0;
 		if (staterr & IXGBE_RXD_STAT_EOP)
 			cnt++;
@@ -427,7 +431,7 @@ ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		}
 		ri->iri_frags[i].irf_flid = 0;
 		ri->iri_frags[i].irf_idx = cidx;
-		if (++cidx == ixgbe_sctx->isc_nrxd)
+		if (++cidx == adapter->shared->isc_nrxd)
 			cidx = 0;
 		i++;
 		/* even a 16K packet shouldn't consume more than 8 clusters */

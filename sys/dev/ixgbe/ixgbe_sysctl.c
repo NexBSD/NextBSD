@@ -14,7 +14,7 @@ int ixgbe_get_regs(SYSCTL_HANDLER_ARGS)
 {
         struct adapter *adapter = (struct adapter *) arg1;
 	struct ixgbe_hw *hw = &adapter->hw;
-#ifdef PRINT_QSET
+#if 0
 	struct ix_tx_queue *tx_que = &adapter->tx_queues[0];
 	struct ix_rx_queue *rx_que = &adapter->rx_queues[0];
 	struct rx_ring *rxr = &rx_que->rxr;

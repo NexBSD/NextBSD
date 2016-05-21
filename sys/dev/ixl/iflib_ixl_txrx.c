@@ -76,7 +76,6 @@ struct if_txrx ixl_txrx  = {
 	ixl_intr
 };
 
-extern if_shared_ctx_t ixl_sctx;
 
 /*
 ** Find mbuf chains passed to the driver 
@@ -175,11 +174,13 @@ ixl_tx_setup_offload(struct ixl_tx_queue *que,
 static int
 ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 {
+	if_softc_ctx_t			scctx;
 	struct i40e_tx_context_desc	*TXD;
 	u32				cmd, mss, type, tsolen;
 	int				idx;
 	u64				type_cmd_tso_mss;
 
+	scctx = txr->que->vsi->shared;
 	idx = pi->ipi_pidx;
 	TXD = (struct i40e_tx_context_desc *) &txr->tx_base[idx];
 	tsolen = pi->ipi_len - (pi->ipi_ehdrlen + pi->ipi_ip_hlen + pi->ipi_tcp_hlen);
@@ -196,7 +197,7 @@ ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 
 	TXD->tunneling_params = htole32(0);
 
-	return ((idx + 1) & (ixl_sctx->isc_ntxd-1));
+	return ((idx + 1) & (scctx->isc_ntxd-1));
 }
 
 /*********************************************************************
@@ -212,6 +213,7 @@ static int
 ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 {
 	struct ixl_vsi		*vsi = arg;
+	if_softc_ctx_t		scctx = vsi->shared;
 	struct ixl_tx_queue	*que = &vsi->tx_queues[pi->ipi_qsidx];
 	struct tx_ring		*txr = &que->txr;
 	int			nsegs = pi->ipi_nsegs;
@@ -242,7 +244,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		cmd |= I40E_TX_DESC_CMD_IL2TAG1;
 
 	cmd |= I40E_TX_DESC_CMD_ICRC;
-	mask = ixl_sctx->isc_ntxd-1;
+	mask = scctx->isc_ntxd-1;
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seglen;
 
@@ -291,10 +293,11 @@ void
 ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_tx_queue *que)
 {
 	struct tx_ring *txr = &que->txr;
+	if_softc_ctx_t		scctx = vsi->shared;
 
 	/* Clear the old ring contents */
 	bzero((void *)txr->tx_base,
-	      (sizeof(struct i40e_tx_desc)) * ixl_sctx->isc_ntxd);
+	      (sizeof(struct i40e_tx_desc)) * scctx->isc_ntxd);
 
 #ifdef IXL_FDIR
 	/* Initialize flow director */
@@ -312,8 +315,9 @@ ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_tx_queue *que)
 static inline u32
 ixl_get_tx_head(struct ixl_tx_queue *que)
 {
+	if_softc_ctx_t		scctx = que->vsi->shared;
 	struct tx_ring  *txr = &que->txr;
-	void *head = &txr->tx_base[ixl_sctx->isc_ntxd];
+	void *head = &txr->tx_base[scctx->isc_ntxd];
 
 	return LE32_TO_CPU(*(volatile __le32 *)head);
 }
@@ -329,6 +333,7 @@ static int
 ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx, bool clear)
 {
 	struct ixl_vsi		*vsi = arg;
+	if_softc_ctx_t		scctx = vsi->shared;
 	struct ixl_tx_queue	*que = &vsi->tx_queues[qid];
 
 	int head, credits;
@@ -338,7 +343,7 @@ ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx, bool clear)
 
 	credits = head - cidx;
 	if (credits < 0)
-		credits += ixl_sctx->isc_ntxd;
+		credits += scctx->isc_ntxd;
 	return (credits);
 }
 
@@ -361,7 +366,7 @@ ixl_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 	int			i, mask;
 	uint32_t next_pidx;
 
-	mask = ixl_sctx->isc_nrxd-1;
+	mask = vsi->shared->isc_nrxd-1;
 	for (i = 0, next_pidx = pidx; i < count; i++) {
 		rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
 		next_pidx = (next_pidx + 1) & mask;
@@ -387,8 +392,8 @@ ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 	uint32_t status;
 	int cnt, i, mask;
 
-	mask = ixl_sctx->isc_nrxd-1;
-	for (cnt = 0, i = idx; cnt < ixl_sctx->isc_nrxd;) {
+	mask = vsi->shared->isc_nrxd-1;
+	for (cnt = 0, i = idx; cnt < vsi->shared->isc_nrxd;) {
 		cur = &rxr->rx_base[i];
 		qword = le64toh(cur->wb.qword1.status_error_len);
 		status = (qword & I40E_RXD_QW1_STATUS_MASK)
@@ -470,6 +475,7 @@ static int
 ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 {
 	struct ixl_vsi		*vsi = arg;
+	if_softc_ctx_t		scctx = vsi->shared;
 	struct ixl_rx_queue	*que = &vsi->rx_queues[ri->iri_qsidx];
 	struct rx_ring		*rxr = &que->rxr;
 	union i40e_rx_desc	*cur;
@@ -520,7 +526,7 @@ ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		}
 		ri->iri_frags[i].irf_flid = 0;
 		ri->iri_frags[i].irf_idx = cidx;
-		if (++cidx == ixl_sctx->isc_ntxd)
+		if (++cidx == scctx->isc_ntxd)
 			cidx = 0;
 		i++;
 		/* even a 16K packet shouldn't consume more than 8 clusters */

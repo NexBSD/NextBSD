@@ -377,15 +377,7 @@ static struct if_shared_ctx ixl_sctx_init = {
 	.isc_rx_maxsize = PAGE_SIZE*4,
 	.isc_rx_nsegments = 1,
 	.isc_rx_maxsegsize = PAGE_SIZE*4,
-	.isc_ntxd = DEFAULT_RING,
-	.isc_nrxd = DEFAULT_RING,
 	.isc_nfl = 1,
-	.isc_txqsizes[0] = roundup2((DEFAULT_RING * sizeof(struct i40e_tx_desc)) +
-							  sizeof(u32), DBA_ALIGN),
-	.isc_rxqsizes[0] = roundup2(DEFAULT_RING *
-							  sizeof(union i40e_rx_desc), DBA_ALIGN),
-	.isc_ntxqs = 1,
-	.isc_nrxqs = 1,
 	.isc_admin_intrcnt = 1,
 	.isc_vendor_info = ixl_vendor_info_array,
 	.isc_driver_version = ixl_driver_version,
@@ -402,14 +394,6 @@ static uint8_t ixl_bcast_addr[ETHER_ADDR_LEN] =
 static void *
 ixl_register(device_t dev)
 {
-	ixl_sctx->isc_ntxd = ixl_ringsz;
-	ixl_sctx->isc_nrxd = ixl_ringsz;
-	ixl_sctx->isc_txqsizes[0] = roundup2((ixl_ringsz * sizeof(struct i40e_tx_desc)) +
-									   sizeof(u32), DBA_ALIGN);
-	ixl_sctx->isc_rxqsizes[1] = roundup2(ixl_ringsz *
-									   sizeof(union i40e_rx_desc), DBA_ALIGN);
-
-
 	return (ixl_sctx);
 }
 
@@ -431,6 +415,7 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	struct ixl_pf	*pf;
 	struct i40e_hw	*hw;
 	struct ixl_vsi *vsi;
+	if_softc_ctx_t scctx;
 	int             error = 0;
 
 	INIT_DEBUGOUT("ixl_attach: begin");
@@ -445,7 +430,7 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	vsi->num_vlans = 0;
 	vsi->ctx = ctx;
 	vsi->media = iflib_get_media(ctx);
-	vsi->shared = iflib_get_softc_ctx(ctx);
+	scctx = vsi->shared = iflib_get_softc_ctx(ctx);
 	pf->dev = iflib_get_dev(ctx);
 
 	/*
@@ -457,13 +442,28 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	vsi->shared->isc_tx_tso_segments_max = IXL_MAX_TSO_SEGS;
 	vsi->shared->isc_tx_tso_size_max = IXL_TSO_SIZE;
 	vsi->shared->isc_tx_tso_segsize_max = PAGE_SIZE;
+ 
+	if (scctx->isc_nrxd == 0)
+		scctx->isc_nrxd = DEFAULT_RXD;
+	if (scctx->isc_nrxd < MIN_RXD || scctx->isc_nrxd > MAX_RXD) {
+		device_printf(dev, "nrxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_nrxd, MIN_RXD, MAX_RXD, DEFAULT_RXD);
+		scctx->isc_nrxd = DEFAULT_RXD;
+	}
+	if (scctx->isc_ntxd < MIN_TXD || scctx->isc_ntxd > MAX_TXD) {
+		device_printf(dev, "ntxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_ntxd, MIN_TXD, MAX_TXD, DEFAULT_TXD);
+		scctx->isc_ntxd = DEFAULT_TXD;
+	}
+	scctx->isc_txqsizes[0] = roundup2((scctx->isc_ntxd * sizeof(struct i40e_tx_desc)) +
+                                                                          sizeof(u32), DBA_ALIGN);
+	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd *sizeof(union i40e_rx_desc), DBA_ALIGN);
 
 	/*
 	** Note this assumes we have a single embedded VSI,
 	** this could be enhanced later to allocate multiple
 	*/
 	vsi = &pf->vsi;
-
 
 	/* Save off the PCI information */
 	hw->vendor_id = pci_get_vendor(dev);
@@ -1471,7 +1471,8 @@ void
 ixl_atr(struct ixl_tx_queue *que, int hflags, int etype)
 {
 	struct ixl_vsi			*vsi = que->vsi;
-	if_shared_ctx_t sctx = ixl_sctx;
+	if_shared_ctx_t			sctx = ixl_sctx;
+	if_softc_ctx_t			scctx = vsi->shared;
 	struct tx_ring			*txr = &que->txr;
 	struct i40e_filter_program_desc	*FDIR;
 	u32				ptype, dtype;
@@ -1493,7 +1494,7 @@ ixl_atr(struct ixl_tx_queue *que, int hflags, int etype)
 	/* Get a descriptor to use */
 	idx = txr->next_avail;
 	FDIR = (struct i40e_filter_program_desc *) &txr->base[idx];
-	if (++idx == sctx->isc_ntxd)
+	if (++idx == scctx->isc_ntxd)
 		idx = 0;
 
 	ptype = (que->txr.me << I40E_TXD_FLTR_QW0_QINDEX_SHIFT) &
@@ -2179,7 +2180,7 @@ ixl_switch_config(struct ixl_pf *pf)
 static int
 ixl_initialize_vsi(struct ixl_vsi *vsi)
 {
-	if_shared_ctx_t sctx = ixl_sctx;
+	if_softc_ctx_t scctx = vsi->shared;
 	struct ixl_tx_queue	*tx_que = vsi->tx_queues;
 	struct ixl_rx_queue	*rx_que = vsi->rx_queues;
 	device_t		dev = iflib_get_dev(vsi->ctx);
@@ -2261,18 +2262,18 @@ ixl_initialize_vsi(struct ixl_vsi *vsi)
 		u16			size;
 
 		/* Setup the HMC TX Context  */
-		size = sctx->isc_ntxd * sizeof(struct i40e_tx_desc);
+		size = scctx->isc_ntxd * sizeof(struct i40e_tx_desc);
 		memset(&tctx, 0, sizeof(struct i40e_hmc_obj_txq));
 		tctx.new_context = 1;
 
 		tctx.base = (txr->tx_paddr/IXL_TX_CTX_BASE_UNITS);
-		tctx.qlen = sctx->isc_ntxd;
+		tctx.qlen = scctx->isc_ntxd;
 		tctx.fc_ena = 0;
 		tctx.rdylist = vsi->info.qs_handle[0]; /* index is TC */
 		/* Enable HEAD writeback */
 		tctx.head_wb_ena = 1;
 		tctx.head_wb_addr = txr->tx_paddr +
-		    (sctx->isc_ntxd * sizeof(struct i40e_tx_desc));
+		    (scctx->isc_ntxd * sizeof(struct i40e_tx_desc));
 		tctx.rdylist_act = 0;
 		err = i40e_clear_lan_tx_queue_context(hw, i);
 		if (err) {
@@ -2317,7 +2318,7 @@ ixl_initialize_vsi(struct ixl_vsi *vsi)
 		rctx.dsize = 1;	/* do 32byte descriptors */
 		rctx.hsplit_0 = 0;  /* no HDR split initially */
 		rctx.base = (rxr->rx_paddr/IXL_RX_CTX_BASE_UNITS);
-		rctx.qlen = sctx->isc_nrxd;
+		rctx.qlen = scctx->isc_nrxd;
 		rctx.tphrdesc_ena = 1;
 		rctx.tphwdesc_ena = 1;
 		rctx.tphdata_ena = 0;
