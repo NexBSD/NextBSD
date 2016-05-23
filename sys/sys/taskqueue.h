@@ -56,6 +56,7 @@ enum taskqueue_callback_type {
 #define	TASKQUEUE_CALLBACK_TYPE_MIN	TASKQUEUE_CALLBACK_TYPE_INIT
 #define	TASKQUEUE_CALLBACK_TYPE_MAX	TASKQUEUE_CALLBACK_TYPE_SHUTDOWN
 #define	TASKQUEUE_NUM_CALLBACKS		TASKQUEUE_CALLBACK_TYPE_MAX + 1
+#define	TASKQUEUE_NAMELEN		32
 
 typedef void (*taskqueue_callback_fn)(void *context);
 
@@ -221,7 +222,6 @@ int	taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride);
 
 #define GTASK_INIT(task, priority, func, context) do {	\
 	(task)->ta_pending = 0;				\
-	(task)->ta_flags = TASK_SKIP_WAKEUP;		\
 	(task)->ta_priority = (priority);		\
 	(task)->ta_func = (func);			\
 	(task)->ta_context = (context);			\
