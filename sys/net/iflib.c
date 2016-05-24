@@ -3465,7 +3465,7 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	if (ctx->ifc_sysctl_nrxds != 0)
 		scctx->isc_nrxd = ctx->ifc_sysctl_nrxds;
 
-	device_printf(dev, "using %d tx descriptors and %d rx descriptors",
+	device_printf(dev, "using %d tx descriptors and %d rx descriptors\n",
 		      scctx->isc_ntxd, scctx->isc_nrxd);
 	if (!powerof2(scctx->isc_nrxd)) {
 		/* round down instead? */
