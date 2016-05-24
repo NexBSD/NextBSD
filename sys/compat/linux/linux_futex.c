@@ -673,7 +673,7 @@ linux_sys_futex(struct thread *td, struct linux_sys_futex_args *args)
 	struct l_timespec ltimeout;
 	struct timespec timeout;
 	struct timeval utv, ctv;
-	int timeout_hz;
+	int64_t timeout_hz;
 	int error;
 	uint32_t flags, val;
 
@@ -743,7 +743,7 @@ linux_sys_futex(struct thread *td, struct linux_sys_futex_args *args)
 			}
 			if (utv.tv_sec < 0)
 				timevalclear(&utv);
-			timeout_hz = tvtohz(&utv);
+			timeout_hz = tvtohz64(&utv);
 		} else
 			timeout_hz = 0;
 
