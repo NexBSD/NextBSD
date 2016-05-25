@@ -1261,7 +1261,7 @@ ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 {
 	struct 		ixl_vsi *vsi = iflib_get_softc(ctx);
 	struct ixl_pf	*pf = vsi->back;
-	struct 		ixl_rx_queue *que = vsi->rx_queues;
+	struct 		ixl_rx_queue *rx_que = vsi->rx_queues;
 	struct 		ixl_tx_queue *tx_que = vsi->tx_queues;
 	int 		err, i, rid, vector = 0;
 	char buf[16];
@@ -1281,32 +1281,35 @@ ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_IOV, pf, 0, "ixl_iov");
 
 	/* Now set up the stations */
-	for (i = 0; i < vsi->num_rx_queues; i++, vector++, que++) {
+	for (i = 0; i < vsi->num_rx_queues; i++, vector++, rx_que++) {
 		rid = vector + 1;
 
 		snprintf(buf, sizeof(buf), "rxq%d", i);
-		err = iflib_irq_alloc_generic(ctx, &que->que_irq, rid, IFLIB_INTR_RX,
-									  ixl_msix_que, que, que->rxr.me, buf);
+		err = iflib_irq_alloc_generic(ctx, &rx_que->que_irq, rid, IFLIB_INTR_RX,
+									  ixl_msix_que, rx_que, rx_que->rxr.me, buf);
 		if (err) {
 			device_printf(iflib_get_dev(ctx), "Failed to allocate q int %d err: %d", i, err);
 			vsi->num_rx_queues = i + 1;
 			goto fail;
 		}
-		que->msix = vector;
+		rx_que->msix = vector;
 	}
 
 	for (i = 0, tx_que = vsi->tx_queues; i < vsi->num_tx_queues; i++, tx_que++) {
 		snprintf(buf, sizeof(buf), "txq%d", i);
-		rid = que->msix + 1;
+		tx_que->msix = i;
+		rid = i + 1;
 		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, tx_que, tx_que->txr.me, buf);
 	}
 
 	return (0);
 fail:
 	iflib_irq_free(ctx, &vsi->irq);
-	que = vsi->rx_queues;
-	for (int i = 0; i < vsi->num_rx_queues; i++, que++)
-		iflib_irq_free(ctx, &que->que_irq);
+	rx_que = vsi->rx_queues;
+	for (int i = 0; i < vsi->num_rx_queues; i++, rx_que++)
+		iflib_irq_free(ctx, &rx_que->que_irq);
+
+	/* detaching tx queues ? */
 	return (err);
 }
 

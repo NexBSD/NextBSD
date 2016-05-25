@@ -407,6 +407,7 @@ struct ixl_tx_queue {
 	struct ixl_vsi		*vsi;
 	int			busy;
 	struct tx_ring		txr;
+	u32			msix;           /* This queue's MSIX vector */
 	/* Queue stats */
 	u64			irqs;
 	u64			tso;
