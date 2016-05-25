@@ -3441,20 +3441,8 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		return (err);
 	}
 	iflib_add_device_sysctl_pre(ctx);
-	if ((err = IFDI_ATTACH_PRE(ctx)) != 0) {
-		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
-		return (err);
-	}
-#ifdef ACPI_DMAR
-	if (dmar_get_dma_tag(device_get_parent(dev), dev) != NULL)
-		ctx->ifc_flags |= IFC_DMAR;
-#endif
 
 	scctx = &ctx->ifc_softc_ctx;
-	msix_bar = scctx->isc_msix_bar;
-
-	ifp = ctx->ifc_ifp;
-
 	/*
 	 * XXX sanity check that ntxd & nrxd are a power of 2
 	 */
@@ -3466,6 +3454,19 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		scctx->isc_ntxd = ctx->ifc_sysctl_ntxds;
 	if (ctx->ifc_sysctl_nrxds != 0)
 		scctx->isc_nrxd = ctx->ifc_sysctl_nrxds;
+
+	if ((err = IFDI_ATTACH_PRE(ctx)) != 0) {
+		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
+		return (err);
+	}
+#ifdef ACPI_DMAR
+	if (dmar_get_dma_tag(device_get_parent(dev), dev) != NULL)
+		ctx->ifc_flags |= IFC_DMAR;
+#endif
+
+	msix_bar = scctx->isc_msix_bar;
+
+	ifp = ctx->ifc_ifp;
 
 	device_printf(dev, "using %d tx descriptors and %d rx descriptors\n",
 		      scctx->isc_ntxd, scctx->isc_nrxd);
@@ -4553,7 +4554,7 @@ iflib_msix_init(if_ctx_t ctx)
 	if (queues > rss_getnumbuckets())
 		queues = rss_getnumbuckets();
 #endif
-	if (iflib_num_rx_queues > 0 && iflib_num_rx_queues < queues)
+	if (iflib_num_rx_queues > 0 && iflib_num_rx_queues < queuemsgs - admincnt)
 		rx_queues = iflib_num_rx_queues;
 	else
 		rx_queues = queues;
