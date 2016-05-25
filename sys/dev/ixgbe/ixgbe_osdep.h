@@ -139,6 +139,7 @@ enum {
 #define IXGBE_LE32_TO_CPUS(x)
 #define IXGBE_CPU_TO_BE16 htobe16
 #define IXGBE_CPU_TO_BE32 htobe32
+#define IXGBE_BE32_TO_CPU be32toh
 
 typedef uint8_t		u8;
 typedef int8_t		s8;

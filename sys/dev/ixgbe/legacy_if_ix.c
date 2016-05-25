@@ -49,7 +49,7 @@
 /*********************************************************************
  *  Driver version
  *********************************************************************/
-char ixgbe_driver_version[] = "3.1.13-k";
+char ixgbe_driver_version[] = "3.1.14-k";
 
 
 /*********************************************************************
@@ -96,6 +96,12 @@ static ixgbe_vendor_info_t ixgbe_vendor_info_array[] =
 	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_KX4, 0, 0, 0},
 	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_10G_T, 0, 0, 0},
 	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_SFP, 0, 0, 0},
+	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_KR, 0, 0, 0},
+	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_KR_L, 0, 0, 0},
+	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SFP, 0, 0, 0},
+	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SFP_N, 0, 0, 0},
+	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SGMII, 0, 0, 0},
+	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SGMII_L, 0, 0, 0},
 	/* required last entry */
 	{0, 0, 0, 0, 0}
 };
@@ -184,11 +190,6 @@ static int	ixgbe_sysctl_print_rss_config(SYSCTL_HANDLER_ARGS);
 #endif
 static int	ixgbe_sysctl_wol_enable(SYSCTL_HANDLER_ARGS);
 static int	ixgbe_sysctl_wufc(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_enable(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_negotiated(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_rx_lpi_status(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_tx_lpi_status(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_tx_lpi_delay(SYSCTL_HANDLER_ARGS);
 
 /* Support for pluggable optic modules */
 static bool	ixgbe_sfp_probe(struct adapter *);
@@ -617,7 +618,6 @@ ixgbe_attach(device_t dev)
 	/* Set an initial default flow control & dmac value */
 	adapter->fc = ixgbe_fc_full;
 	adapter->dmac = 0;
-	adapter->eee_enabled = 0;
 
 #ifdef PCI_IOV
 	if ((hw->mac.type != ixgbe_mac_82598EB) && (adapter->msix > 1)) {
@@ -1263,16 +1263,6 @@ ixgbe_init_locked(struct adapter *adapter)
 	/* Set moderation on the Link interrupt */
 	IXGBE_WRITE_REG(hw, IXGBE_EITR(adapter->vector), IXGBE_LINK_ITR);
 
-	/* Configure Energy Efficient Ethernet for supported devices */
-	if (hw->mac.ops.setup_eee) {
-		err = hw->mac.ops.setup_eee(hw, adapter->eee_enabled);
-		if (err)
-			device_printf(dev, "Error setting up EEE: %d\n", err);
-	}
-
-	/* Enable power to the phy. */
-	ixgbe_set_phy_power(hw, TRUE);
-
 	/* Config/Enable Link */
 	ixgbe_config_link(adapter);
 
@@ -1374,6 +1364,7 @@ ixgbe_config_delay_values(struct adapter *adapter)
 	switch (hw->mac.type) {
 	case ixgbe_mac_X540:
 	case ixgbe_mac_X550:
+	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		tmp = IXGBE_DV_X540(frame, frame);
 		break;
@@ -1389,6 +1380,7 @@ ixgbe_config_delay_values(struct adapter *adapter)
 	switch (hw->mac.type) {
 	case ixgbe_mac_X540:
 	case ixgbe_mac_X550:
+	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		tmp = IXGBE_LOW_DV_X540(frame);
 		break;
@@ -2983,7 +2975,12 @@ ixgbe_config_link(struct adapter *adapter)
 	sfp = ixgbe_is_sfp(hw);
 
 	if (sfp) { 
-		taskqueue_enqueue(adapter->tq, &adapter->mod_task);
+		if (hw->phy.multispeed_fiber) {
+			hw->mac.ops.setup_sfp(hw);
+			ixgbe_enable_tx_laser(hw);
+			taskqueue_enqueue(adapter->tq, &adapter->msf_task);
+		} else
+			taskqueue_enqueue(adapter->tq, &adapter->mod_task);
 	} else {
 		if (hw->mac.ops.check_link)
 			err = ixgbe_check_link(hw, &adapter->link_speed,
@@ -3114,6 +3111,7 @@ ixgbe_initialize_rss_mapping(struct adapter *adapter)
 		index_mult = 0x11;
 		break;
 	case ixgbe_mac_X550:
+	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		table_size = 512;
 		break;
@@ -3470,11 +3468,14 @@ ixgbe_enable_intr(struct adapter *adapter)
 #endif
 			break;
 		case ixgbe_mac_X550:
+		case ixgbe_mac_X550EM_a:
 		case ixgbe_mac_X550EM_x:
 			/* MAC thermal sensor is automatically enabled */
 			mask |= IXGBE_EIMS_TS;
 			/* Some devices use SDP0 for important information */
 			if (hw->device_id == IXGBE_DEV_ID_X550EM_X_SFP ||
+			    hw->device_id == IXGBE_DEV_ID_X550EM_A_SFP ||
+			    hw->device_id == IXGBE_DEV_ID_X550EM_A_SFP_N ||
 			    hw->device_id == IXGBE_DEV_ID_X550EM_X_10G_T)
 				mask |= IXGBE_EIMS_GPI_SDP0_BY_MAC(hw);
 			mask |= IXGBE_EIMS_ECC;
@@ -3550,6 +3551,7 @@ ixgbe_get_slot_info(struct adapter *adapter)
 		ixgbe_get_bus_info(hw);
 		/* These devices don't use PCI-E */
 		switch (hw->mac.type) {
+		case ixgbe_mac_X550EM_a:
 		case ixgbe_mac_X550EM_x:
 			return;
 		default:
@@ -3676,6 +3678,7 @@ ixgbe_set_ivar(struct adapter *adapter, u8 entry, u8 vector, s8 type)
 	case ixgbe_mac_82599EB:
 	case ixgbe_mac_X540:
 	case ixgbe_mac_X550:
+	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		if (type == -1) { /* MISC IVAR */
 			index = (entry & 1) * 8;
@@ -5176,6 +5179,7 @@ ixgbe_sysctl_print_rss_config(SYSCTL_HANDLER_ARGS)
 	/* Set multiplier for RETA setup and table size based on MAC */
 	switch (adapter->hw.mac.type) {
 	case ixgbe_mac_X550:
+	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		reta_size = 128;
 		break;
@@ -5269,6 +5273,7 @@ ixgbe_rearm_queues(struct adapter *adapter, u64 queues)
 	case ixgbe_mac_X540:
 	case ixgbe_mac_X550:
 	case ixgbe_mac_X550EM_x:
+	case ixgbe_mac_X550EM_a:
 		mask = (queues & 0xFFFFFFFF);
 		IXGBE_WRITE_REG(&adapter->hw, IXGBE_EICS_EX(0), mask);
 		mask = (queues >> 32);
