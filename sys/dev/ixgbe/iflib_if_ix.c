@@ -1548,15 +1548,6 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 		queue_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf,
 					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
-
-		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "interrupt_rate",
-				CTLTYPE_UINT | CTLFLAG_RW, &adapter->rx_queues[i],
-				sizeof(&adapter->rx_queues[i]),
-				ixgbe_sysctl_interrupt_rate_handler, "IU",
-				"Interrupt Rate");
-		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "irqs",
-				CTLFLAG_RD, &(adapter->rx_queues[i].irqs),
-				"irqs on this queue");
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "txd_head", 
 				CTLTYPE_UINT | CTLFLAG_RD, txr, sizeof(txr),
 				ixgbe_sysctl_tdh_handler, "IU",
@@ -1585,6 +1576,14 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 
+		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "interrupt_rate",
+				CTLTYPE_UINT | CTLFLAG_RW, &adapter->rx_queues[i],
+				sizeof(&adapter->rx_queues[i]),
+				ixgbe_sysctl_interrupt_rate_handler, "IU",
+				"Interrupt Rate");
+		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "irqs",
+				CTLFLAG_RD, &(adapter->rx_queues[i].irqs),
+				"irqs on this queue");
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "rxd_head", 
 				CTLTYPE_UINT | CTLFLAG_RD, rxr, sizeof(rxr),
 				ixgbe_sysctl_rdh_handler, "IU",
@@ -4884,7 +4883,7 @@ ixgbe_vf_set_vlan(struct adapter *adapter, struct ixgbe_vf *vf, uint32_t *msg)
 		return;
 	}
 	
-	ixgbe_set_vfta(hw, tag, vf->pool, enable);
+	ixgbe_set_vfta(hw, tag, vf->pool, enable, TRUE);
 	ixgbe_send_vf_ack(adapter, vf, msg[0]);
 }
 
