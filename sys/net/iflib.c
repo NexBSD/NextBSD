@@ -180,7 +180,6 @@ struct iflib_ctx {
 	struct sysctl_oid *ifc_sysctl_node;
 	uint16_t ifc_sysctl_ntxqs;
 	uint16_t ifc_sysctl_nrxqs;
-	uint16_t ifc_sysctl_qs_eq_override;
 
 	uint16_t ifc_sysctl_ntxds;
 	uint16_t ifc_sysctl_nrxds;
@@ -4566,13 +4565,6 @@ iflib_msix_init(if_ctx_t ctx)
 	else
 		tx_queues = mp_ncpus;
 
-	if (ctx->ifc_sysctl_qs_eq_override == 0) {
-		if (tx_queues != rx_queues)
-			device_printf(dev, "queue equality override not set, capping rx_queues at %d and tx_queues at %d\n",
-				      min(rx_queues, tx_queues), min(rx_queues, tx_queues));
-		tx_queues = min(rx_queues, tx_queues);
-		rx_queues = min(rx_queues, tx_queues);
-	}
 	device_printf(dev, "using %d rx queues %d tx queues \n", rx_queues, tx_queues);
 
 	vectors = rx_queues + admincnt;
@@ -4653,9 +4645,6 @@ iflib_add_device_sysctl_pre(if_ctx_t ctx)
 	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_nrxqs",
 		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_nrxqs, 0,
 			"# of rxqs to use, 0 => use default #");
-	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_qs_enable",
-		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_qs_eq_override, 0,
-			"permit #txq != #rxq");
 
 	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_ntxds",
 		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_ntxds, 0,
