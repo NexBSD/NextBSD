@@ -180,6 +180,8 @@ struct iflib_ctx {
 	struct sysctl_oid *ifc_sysctl_node;
 	uint16_t ifc_sysctl_ntxqs;
 	uint16_t ifc_sysctl_nrxqs;
+	uint16_t ifc_sysctl_qs_eq_override;
+
 	uint16_t ifc_sysctl_ntxds;
 	uint16_t ifc_sysctl_nrxds;
 	struct if_txrx ifc_txrx;
@@ -3439,20 +3441,8 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		return (err);
 	}
 	iflib_add_device_sysctl_pre(ctx);
-	if ((err = IFDI_ATTACH_PRE(ctx)) != 0) {
-		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
-		return (err);
-	}
-#ifdef ACPI_DMAR
-	if (dmar_get_dma_tag(device_get_parent(dev), dev) != NULL)
-		ctx->ifc_flags |= IFC_DMAR;
-#endif
 
 	scctx = &ctx->ifc_softc_ctx;
-	msix_bar = scctx->isc_msix_bar;
-
-	ifp = ctx->ifc_ifp;
-
 	/*
 	 * XXX sanity check that ntxd & nrxd are a power of 2
 	 */
@@ -3464,6 +3454,19 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 		scctx->isc_ntxd = ctx->ifc_sysctl_ntxds;
 	if (ctx->ifc_sysctl_nrxds != 0)
 		scctx->isc_nrxd = ctx->ifc_sysctl_nrxds;
+
+	if ((err = IFDI_ATTACH_PRE(ctx)) != 0) {
+		device_printf(dev, "IFDI_ATTACH_PRE failed %d\n", err);
+		return (err);
+	}
+#ifdef ACPI_DMAR
+	if (dmar_get_dma_tag(device_get_parent(dev), dev) != NULL)
+		ctx->ifc_flags |= IFC_DMAR;
+#endif
+
+	msix_bar = scctx->isc_msix_bar;
+
+	ifp = ctx->ifc_ifp;
 
 	device_printf(dev, "using %d tx descriptors and %d rx descriptors\n",
 		      scctx->isc_ntxd, scctx->isc_nrxd);
@@ -4551,7 +4554,7 @@ iflib_msix_init(if_ctx_t ctx)
 	if (queues > rss_getnumbuckets())
 		queues = rss_getnumbuckets();
 #endif
-	if (iflib_num_rx_queues > 0 && iflib_num_rx_queues < queues)
+	if (iflib_num_rx_queues > 0 && iflib_num_rx_queues < queuemsgs - admincnt)
 		rx_queues = iflib_num_rx_queues;
 	else
 		rx_queues = queues;
@@ -4562,6 +4565,14 @@ iflib_msix_init(if_ctx_t ctx)
 		tx_queues = iflib_num_tx_queues;
 	else
 		tx_queues = mp_ncpus;
+
+	if (ctx->ifc_sysctl_qs_eq_override == 0) {
+		if (tx_queues != rx_queues)
+			device_printf(dev, "queue equality override not set, capping rx_queues at %d and tx_queues at %d\n",
+				      min(rx_queues, tx_queues), min(rx_queues, tx_queues));
+		tx_queues = min(rx_queues, tx_queues);
+		rx_queues = min(rx_queues, tx_queues);
+	}
 	device_printf(dev, "using %d rx queues %d tx queues \n", rx_queues, tx_queues);
 
 	vectors = rx_queues + admincnt;
@@ -4621,8 +4632,6 @@ mp_ring_state_handler(SYSCTL_HANDLER_ARGS)
         return(rc);
 }
 
-
-
 #define NAME_BUFLEN 32
 static void
 iflib_add_device_sysctl_pre(if_ctx_t ctx)
@@ -4644,6 +4653,10 @@ iflib_add_device_sysctl_pre(if_ctx_t ctx)
 	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_nrxqs",
 		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_nrxqs, 0,
 			"# of rxqs to use, 0 => use default #");
+	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_qs_enable",
+		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_qs_eq_override, 0,
+			"permit #txq != #rxq");
+
 	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_ntxds",
 		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_ntxds, 0,
 			"# of tx descriptors to use, 0 => use default #");

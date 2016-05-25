@@ -2072,6 +2072,7 @@ ixgbe_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	for (int i = 0; i < adapter->num_tx_queues; i++) {
 		snprintf(buf, sizeof(buf), "txq%d", i);
 		tx_que = &adapter->tx_queues[i];
+		tx_que->msix = i % adapter->num_rx_queues;
 		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, tx_que, tx_que->txr.me, buf);
 	}
 	rid = vector + 1;
@@ -3277,7 +3278,8 @@ ixgbe_set_ivar(struct adapter *adapter, u8 entry, u8 vector, s8 type)
 static void
 ixgbe_configure_ivars(struct adapter *adapter)
 {
-	struct  ix_rx_queue	*que = adapter->rx_queues;
+	struct  ix_rx_queue	*rx_que = adapter->rx_queues;
+	struct  ix_tx_queue	*tx_que = adapter->tx_queues;
 	u32			newitr;
 
 	if (ixgbe_max_interrupt_rate > 0)
@@ -3291,22 +3293,21 @@ ixgbe_configure_ivars(struct adapter *adapter)
 		newitr = 0;
 	}
 
-	for (int i = 0; i < adapter->num_rx_queues; i++, que++) {
-		struct rx_ring *rxr = &adapter->rx_queues[i].rxr;
-		struct tx_ring *txr;
+	for (int i = 0; i < adapter->num_rx_queues; i++, rx_que++) {
+		struct rx_ring *rxr = &rx_que->rxr;
+
 		/* First the RX queue entry */
-		ixgbe_set_ivar(adapter, rxr->me, que->msix, 0);
-		/* ... and the TX */
+		ixgbe_set_ivar(adapter, rxr->me, rx_que->msix, 0);
 
-		if (adapter->num_tx_queues == adapter->num_rx_queues) {
-			txr = &adapter->tx_queues[i].txr;
-			ixgbe_set_ivar(adapter, txr->me, que->msix, 1);
-		}
 		/* Set an Initial EITR value */
-		IXGBE_WRITE_REG(&adapter->hw,
-						IXGBE_EITR(que->msix), newitr);
-		}
+		IXGBE_WRITE_REG(&adapter->hw, IXGBE_EITR(rx_que->msix), newitr);
+	}
+	for (int i = 0; i < adapter->num_tx_queues; i++, tx_que++) {
+		struct tx_ring *txr = &tx_que->txr;
 
+		/* ... and the TX */
+		ixgbe_set_ivar(adapter, txr->me, tx_que->msix, 1);
+	}
 	/* For the Link interrupt */
 	ixgbe_set_ivar(adapter, 1, adapter->vector, -1);
 }
