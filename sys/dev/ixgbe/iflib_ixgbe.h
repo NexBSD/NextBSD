@@ -387,6 +387,7 @@ struct ix_rx_queue {
 
 struct ix_tx_queue {
 	struct adapter		*adapter;
+	u32			msix;           /* This queue's MSIX vector */
 	struct tx_ring		txr;
 };
 
