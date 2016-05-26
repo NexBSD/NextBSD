@@ -447,6 +447,8 @@ ixl_if_attach_pre(if_ctx_t ctx)
  
 	if (scctx->isc_nrxd == 0)
 		scctx->isc_nrxd = DEFAULT_RXD;
+	if (scctx->isc_ntxd == 0)
+		scctx->isc_ntxd = DEFAULT_TXD;
 	if (scctx->isc_nrxd < MIN_RXD || scctx->isc_nrxd > MAX_RXD) {
 		device_printf(dev, "nrxd: %d not within permitted range of %d-%d setting to default value: %d\n",
 			      scctx->isc_nrxd, MIN_RXD, MAX_RXD, DEFAULT_RXD);
@@ -1299,8 +1301,9 @@ ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 
 	for (i = 0, tx_que = vsi->tx_queues; i < vsi->num_tx_queues; i++, tx_que++) {
 		snprintf(buf, sizeof(buf), "txq%d", i);
-		tx_que->msix = i;
-		rid = i + 1;
+		vector = (i % vsi->num_rx_queues);
+		tx_que->msix = vector;
+		rid = vector + 1;
 		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, tx_que, tx_que->txr.me, buf);
 	}
 
