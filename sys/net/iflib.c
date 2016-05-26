@@ -3615,7 +3615,7 @@ iflib_device_deregister(if_ctx_t ctx)
 		led_destroy(ctx->ifc_led_dev);
 	/* XXX drain any dependent tasks */
 	tqg = qgroup_if_io_tqg;
-	for (txq = ctx->ifc_txqs, i = 0, rxq = ctx->ifc_rxqs; i < NTXQSETS(ctx); i++, txq++) {
+	for (txq = ctx->ifc_txqs, i = 0; i < NTXQSETS(ctx); i++, txq++) {
 		callout_drain(&txq->ift_timer);
 		callout_drain(&txq->ift_db_check);
 		if (txq->ift_task.gt_uniq != NULL)
@@ -4395,6 +4395,13 @@ iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask, task_fn_t *fn,
 
 	GROUPTASK_INIT(gtask, 0, fn, ctx);
 	taskqgroup_attach(qgroup_if_config_tqg, gtask, gtask, -1, name);
+}
+
+void
+iflib_config_gtask_deinit(struct grouptask *gtask)
+{
+
+	taskqgroup_detach(qgroup_if_config_tqg, gtask);	
 }
 
 void

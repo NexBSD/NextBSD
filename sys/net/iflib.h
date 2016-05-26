@@ -312,6 +312,9 @@ void iflib_io_tqg_attach(struct grouptask *gt, void *uniq, int cpu, char *name);
 void iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask,
 			     task_fn_t *fn, char *name);
 
+void iflib_config_gtask_deinit(struct grouptask *gtask);
+
+
 
 void iflib_tx_intr_deferred(if_ctx_t ctx, int txqid);
 void iflib_rx_intr_deferred(if_ctx_t ctx, int rxqid);
