@@ -1,4 +1,3 @@
-#include "opt_iflib.h"
 
 #ifdef IFLIB
 #include "ixgbe.h"
