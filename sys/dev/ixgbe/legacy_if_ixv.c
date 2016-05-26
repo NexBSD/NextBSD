@@ -1801,7 +1801,7 @@ ixv_setup_vlan_support(struct adapter *adapter)
 				continue;
 			vid = (i * 32) + j;
 			/* Call the shared code mailbox routine */
-			while (ixgbe_set_vfta(hw, vid, 0, TRUE)) {
+			while (ixgbe_set_vfta(hw, vid, 0, TRUE, TRUE)) {
 				if (++retry > 5)
 					break;
 			}

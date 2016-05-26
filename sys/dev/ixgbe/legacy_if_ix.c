@@ -190,6 +190,11 @@ static int	ixgbe_sysctl_print_rss_config(SYSCTL_HANDLER_ARGS);
 #endif
 static int	ixgbe_sysctl_wol_enable(SYSCTL_HANDLER_ARGS);
 static int	ixgbe_sysctl_wufc(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_enable(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_negotiated(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_rx_lpi_status(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_tx_lpi_status(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_tx_lpi_delay(SYSCTL_HANDLER_ARGS);
 
 /* Support for pluggable optic modules */
 static bool	ixgbe_sfp_probe(struct adapter *);
@@ -5551,7 +5556,7 @@ ixgbe_vf_set_vlan(struct adapter *adapter, struct ixgbe_vf *vf, uint32_t *msg)
 		return;
 	}
 	
-	ixgbe_set_vfta(hw, tag, vf->pool, enable);
+	ixgbe_set_vfta(hw, tag, vf->pool, enable, TRUE);
 	ixgbe_send_vf_ack(adapter, vf, msg[0]);
 }
 
