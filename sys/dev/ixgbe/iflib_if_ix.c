@@ -2815,7 +2815,14 @@ ixgbe_if_detach(if_ctx_t ctx)
 		return (EBUSY);
 	}
 #endif /* PCI_IOV */
-  
+
+	iflib_config_gtask_deinit(&adapter->mod_task);
+	iflib_config_gtask_deinit(&adapter->msf_task);
+	iflib_config_gtask_deinit(&adapter->phy_task);
+#ifdef PCI_IOV
+	iflib_config_gtask_deinit(&adapter->mbx_task);
+#endif
+
 	ixgbe_setup_low_power_mode(ctx);
 
 	/* let hardware know driver is unloading */
