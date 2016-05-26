@@ -1299,9 +1299,9 @@ ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 		rx_que->msix = vector;
 	}
 
-	for (i = 0, tx_que = vsi->tx_queues; i < vsi->num_tx_queues; i++, tx_que++) {
+	for (i = 0; i < vsi->num_tx_queues; i++, tx_que++) {
 		snprintf(buf, sizeof(buf), "txq%d", i);
-		vector = (i % vsi->num_rx_queues);
+		vector = (i % vsi->num_rx_queues) + 1;
 		tx_que->msix = vector;
 		rid = vector + 1;
 		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, tx_que, tx_que->txr.me, buf);
