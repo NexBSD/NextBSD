@@ -1795,9 +1795,9 @@ ixl_configure_queue_intr_msix(struct ixl_pf *pf)
 	struct i40e_hw	*hw = &pf->hw;
 	struct ixl_vsi *vsi = &pf->vsi;
 	u32		reg;
-	u16		vector = 1;
+	u16		i, vector;
 
-	for (int i = 0; i < vsi->num_rx_queues; i++, vector++) {
+	for (vector = 1, i = 0; i < vsi->num_rx_queues; i++, vector++) {
 		wr32(hw, I40E_PFINT_DYN_CTLN(i), 0);
 		/* First queue type is RX / 0 */
 		wr32(hw, I40E_PFINT_LNKLSTN(i), i);
@@ -1808,7 +1808,9 @@ ixl_configure_queue_intr_msix(struct ixl_pf *pf)
 		(i << I40E_QINT_RQCTL_NEXTQ_INDX_SHIFT) |
 		(I40E_QUEUE_TYPE_TX << I40E_QINT_RQCTL_NEXTQ_TYPE_SHIFT);
 		wr32(hw, I40E_QINT_RQCTL(i), reg);
-
+	}
+	for (i = 0; i < vsi->num_tx_queues; i++) {
+		vector = (i % vsi->num_rx_queues) + 1;
 		reg = I40E_QINT_TQCTL_CAUSE_ENA_MASK |
 		(IXL_TX_ITR << I40E_QINT_TQCTL_ITR_INDX_SHIFT) |
 		(vector << I40E_QINT_TQCTL_MSIX_INDX_SHIFT) |
