@@ -64,61 +64,65 @@ __FBSDID("$FreeBSD$");
 devclass_t bhnd_chipc_devclass;	/**< bhnd(4) chipcommon device class */
 
 static struct bhnd_device_quirk chipc_quirks[];
-static struct bhnd_chip_quirk chipc_chip_quirks[];
 
 /* Supported device identifiers */
 static const struct bhnd_device chipc_devices[] = {
-	BHND_DEVICE(CC, "CC", chipc_quirks, chipc_chip_quirks),
+	BHND_DEVICE(CC,	NULL,	chipc_quirks),
 	BHND_DEVICE_END
 };
 
 
 /* Device quirks table */
 static struct bhnd_device_quirk chipc_quirks[] = {
-	{ BHND_HWREV_GTE	(32),	CHIPC_QUIRK_SUPPORTS_SPROM },
-	{ BHND_HWREV_GTE	(35),	CHIPC_QUIRK_SUPPORTS_CAP_EXT },
-	{ BHND_HWREV_EQ		(38),	CHIPC_QUIRK_4706_NFLASH }, /*BCM5357 ?*/
-	{ BHND_HWREV_GTE	(49),	CHIPC_QUIRK_IPX_OTPLAYOUT_SIZE },
+	/* core revision quirks */
+	BHND_CORE_QUIRK	(HWREV_GTE(32),		CHIPC_QUIRK_SUPPORTS_SPROM),
+	BHND_CORE_QUIRK	(HWREV_GTE(35),		CHIPC_QUIRK_SUPPORTS_CAP_EXT),
+	BHND_CORE_QUIRK	(HWREV_GTE(49),		CHIPC_QUIRK_IPX_OTPLAYOUT_SIZE),
+
+	/* 4706 variant quirks */
+	BHND_CORE_QUIRK	(HWREV_EQ (38),		CHIPC_QUIRK_4706_NFLASH), /* BCM5357? */
+	BHND_CHIP_QUIRK	(4706,	HWREV_ANY,	CHIPC_QUIRK_4706_NFLASH),
+
+	/* 4331 quirks*/
+	BHND_CHIP_QUIRK	(4331,	HWREV_ANY,	CHIPC_QUIRK_4331_EXTPA_MUX_SPROM),
+	BHND_PKG_QUIRK	(4331,	TN,		CHIPC_QUIRK_4331_GPIO2_5_MUX_SPROM),
+	BHND_PKG_QUIRK	(4331,	TNA0,		CHIPC_QUIRK_4331_GPIO2_5_MUX_SPROM),
+	BHND_PKG_QUIRK	(4331,	TT,		CHIPC_QUIRK_4331_EXTPA2_MUX_SPROM),
+
+	/* 4360 quirks */
+	BHND_CHIP_QUIRK	(4352,	HWREV_LTE(2),	CHIPC_QUIRK_4360_FEM_MUX_SPROM),
+	BHND_CHIP_QUIRK	(43460,	HWREV_LTE(2),	CHIPC_QUIRK_4360_FEM_MUX_SPROM),
+	BHND_CHIP_QUIRK	(43462,	HWREV_LTE(2),	CHIPC_QUIRK_4360_FEM_MUX_SPROM),
+	BHND_CHIP_QUIRK	(43602,	HWREV_LTE(2),	CHIPC_QUIRK_4360_FEM_MUX_SPROM),
 
 	BHND_DEVICE_QUIRK_END
 };
 
-/* Chip-specific quirks table */
-static struct bhnd_chip_quirk chipc_chip_quirks[] = {
-	/* 4331 12x9 packages */
-	{{ BHND_CHIP_IP(4331, 4331TN) },
-		CHIPC_QUIRK_4331_GPIO2_5_MUX_SPROM
-	},
-	{{ BHND_CHIP_IP(4331, 4331TNA0) },
-		CHIPC_QUIRK_4331_GPIO2_5_MUX_SPROM
-	},
 
-	/* 4331 12x12 packages */
-	{{ BHND_CHIP_IPR(4331, 4331TT, HWREV_GTE(1)) },
-		CHIPC_QUIRK_4331_EXTPA2_MUX_SPROM
-	},
-
-	/* 4331 (all packages/revisions) */
-	{{ BHND_CHIP_ID(4331) },
-		CHIPC_QUIRK_4331_EXTPA_MUX_SPROM
-	},
-
-	/* 4360 family (all revs <= 2) */
-	{{ BHND_CHIP_IR(4352, HWREV_LTE(2)) },
-		CHIPC_QUIRK_4360_FEM_MUX_SPROM },
-	{{ BHND_CHIP_IR(43460, HWREV_LTE(2)) },
-		CHIPC_QUIRK_4360_FEM_MUX_SPROM },
-	{{ BHND_CHIP_IR(43462, HWREV_LTE(2)) },
-		CHIPC_QUIRK_4360_FEM_MUX_SPROM },
-	{{ BHND_CHIP_IR(43602, HWREV_LTE(2)) },
-		CHIPC_QUIRK_4360_FEM_MUX_SPROM },
-
-	/* BCM4706 */
-	{{ BHND_CHIP_ID(4306) },
-		CHIPC_QUIRK_4706_NFLASH },
-
-	BHND_CHIP_QUIRK_END
+static const struct chipc_hint {
+	const char	*name;
+	int		 unit;
+	int		 type;
+	int		 rid;
+	rman_res_t	 base;		/* relative to parent resource */
+	rman_res_t	 size;
+	u_int		 port;		/* ignored if SYS_RES_IRQ */
+	u_int		 region;
+} chipc_hints[] = {
+	// FIXME: cfg/spi port1.1 mapping on siba(4) SoCs
+	/* device	unit	type		rid	base			size			port,region */
+	{ "bhnd_nvram",	0, SYS_RES_MEMORY,	0,	CHIPC_SPROM_OTP,	CHIPC_SPROM_OTP_SIZE,	0,0 },
+	{ "uart",	0, SYS_RES_MEMORY,	0,	CHIPC_UART0_BASE,	CHIPC_UART_SIZE,	0,0 },
+	{ "uart",	0, SYS_RES_IRQ,		0,	0,			RM_MAX_END },
+	{ "uart",	1, SYS_RES_MEMORY,	0,	CHIPC_UART1_BASE,	CHIPC_UART_SIZE,	0,0 },
+	{ "uart",	1, SYS_RES_IRQ,		0,	0,			RM_MAX_END },
+	{ "spi",	0, SYS_RES_MEMORY,	0,	0,			RM_MAX_END,		1,1 },
+	{ "spi",	0, SYS_RES_MEMORY,	1,	CHIPC_SFLASH_BASE,	CHIPC_SFLASH_SIZE,	0,0 },
+	{ "cfi",	0, SYS_RES_MEMORY,	0,	0,			RM_MAX_END,		1,1},
+	{ "cfi",	0, SYS_RES_MEMORY, 	1,	CHIPC_SFLASH_BASE,	CHIPC_SFLASH_SIZE,	0,0 },
+	{ NULL }
 };
+
 
 static int			 chipc_try_activate_resource(
 				    struct chipc_softc *sc, device_t child,
@@ -128,7 +132,6 @@ static int			 chipc_try_activate_resource(
 static int			 chipc_read_caps(struct chipc_softc *sc,
 				     struct chipc_caps *caps);
 
-static int			 chipc_nvram_attach(struct chipc_softc *sc);
 static bhnd_nvram_src_t		 chipc_nvram_identify(struct chipc_softc *sc);
 static bool			 chipc_should_enable_sprom(
 				     struct chipc_softc *sc);
@@ -232,12 +235,11 @@ chipc_attach(device_t dev)
 	if (bootverbose)
 		chipc_print_caps(sc->dev, &sc->caps);
 
-	/* Identify NVRAM source and add child device. */
+	/* Identify NVRAM source */
 	sc->nvram_src = chipc_nvram_identify(sc);
-	if ((error = chipc_nvram_attach(sc)))
-		goto failed;
 
-	/* Standard bus probe */
+	/* Probe and attach children */
+	bus_generic_probe(dev);
 	if ((error = bus_generic_attach(dev)))
 		goto failed;
 
@@ -267,7 +269,6 @@ chipc_detach(device_t dev)
 
 	chipc_release_region(sc, sc->core_region, RF_ALLOCATED|RF_ACTIVE);
 	chipc_free_rman(sc);
-	bhnd_sprom_fini(&sc->sprom);
 
 	CHIPC_LOCK_DESTROY(sc);
 
@@ -316,7 +317,7 @@ chipc_read_caps(struct chipc_softc *sc, struct chipc_caps *caps)
 		caps->otp_size = CHIPC_GET_BITS(regval, CHIPC_OTPL_SIZE);
 	}
 
-	/* Determine flash type and paramters */
+	/* Determine flash type and parameters */
 	caps->cfi_width = 0;
 
 	switch (CHIPC_GET_BITS(cap_reg, CHIPC_CAP_FLASH)) {
@@ -354,51 +355,6 @@ chipc_read_caps(struct chipc_softc *sc, struct chipc_caps *caps)
 	}
 
 	return (0);
-}
-
-/**
- * If supported, add an appropriate NVRAM child device.
- */
-static int
-chipc_nvram_attach(struct chipc_softc *sc)
-{
-	device_t	 nvram_dev;
-	rman_res_t	 start;
-	int		 error;
-
-	switch (sc->nvram_src) {
-	case BHND_NVRAM_SRC_OTP:
-		// TODO OTP support
-		device_printf(sc->dev, "OTP nvram source unsupported\n");
-		return (0);
-
-	case BHND_NVRAM_SRC_SPROM:
-		/* Add OTP/SPROM device */
-		nvram_dev = BUS_ADD_CHILD(sc->dev, 0, "bhnd_nvram", -1);
-		if (nvram_dev == NULL) {
-			device_printf(sc->dev, "failed to add NVRAM device\n");
-			return (ENXIO);
-		}
-
-		start = rman_get_start(sc->core->res) + CHIPC_SPROM_OTP;
-		error = bus_set_resource(nvram_dev, SYS_RES_MEMORY, 0, start,
-		    CHIPC_SPROM_OTP_SIZE);
-		return (error);
-
-	case BHND_NVRAM_SRC_FLASH:
-		// TODO flash support
-		device_printf(sc->dev, "flash nvram source unsupported\n");
-		return (0);
-
-	case BHND_NVRAM_SRC_UNKNOWN:
-		/* Handled externally */
-		return (0);
-
-	default:
-		device_printf(sc->dev, "invalid nvram source: %u\n",
-		     sc->nvram_src);
-		return (ENXIO);
-	}
 }
 
 /**
@@ -522,7 +478,9 @@ static device_t
 chipc_add_child(device_t dev, u_int order, const char *name, int unit)
 {
 	struct chipc_devinfo	*dinfo;
+	const struct chipc_hint	*hint;
 	device_t		 child;
+	int			 error;
 
 	child = device_add_child_ordered(dev, order, name, unit);
 	if (child == NULL)
@@ -535,10 +493,81 @@ chipc_add_child(device_t dev, u_int order, const char *name, int unit)
 	}
 
 	resource_list_init(&dinfo->resources);
-
 	device_set_ivars(child, dinfo);
 
+	/* Hint matching requires a device name */
+	if (name == NULL)
+		return (child);
+
+	/* Use hint table to set child resources */
+	for (hint = chipc_hints; hint->name != NULL; hint++) {
+		bhnd_addr_t	region_addr;
+		bhnd_size_t	region_size;
+
+		if (strcmp(hint->name, name) != 0)
+			continue;
+
+		switch (hint->type) {
+		case SYS_RES_IRQ:
+			/* Add child resource */
+			error = bus_set_resource(child, hint->type, hint->rid,
+			    hint->base, hint->size);
+			if (error) {
+				device_printf(dev,
+				    "bus_set_resource() failed for %s: %d\n",
+				    device_get_nameunit(child), error);
+				goto failed;
+			}
+			break;
+
+		case SYS_RES_MEMORY:
+			/* Fetch region address and size */
+			error = bhnd_get_region_addr(dev, BHND_PORT_DEVICE,
+			    hint->port, hint->region, &region_addr,
+			    &region_size);
+			if (error) {
+				device_printf(dev,
+				    "lookup of %s%u.%u failed: %d\n",
+				    bhnd_port_type_name(BHND_PORT_DEVICE),
+				    hint->port, hint->region, error);
+				goto failed;
+			}
+
+			/* Verify requested range is mappable */
+			if (hint->base > region_size ||
+			    hint->size > region_size ||
+			    region_size - hint->base < hint->size )
+			{
+				device_printf(dev,
+				    "%s%u.%u region cannot map requested range "
+				        "%#jx+%#jx\n",
+				    bhnd_port_type_name(BHND_PORT_DEVICE),
+				    hint->port, hint->region, hint->base,
+				    hint->size);
+			}
+
+			/* Add child resource */
+			error = bus_set_resource(child, hint->type,
+			    hint->rid, region_addr + hint->base, hint->size);
+			if (error) {
+				device_printf(dev,
+				    "bus_set_resource() failed for %s: %d\n",
+				    device_get_nameunit(child), error);
+				goto failed;
+			}
+			break;
+		default:
+			device_printf(child, "unknown hint resource type: %d\n",
+			    hint->type);
+			break;
+		}
+	}
+
 	return (child);
+
+failed:
+	device_delete_child(dev, child);
+	return (NULL);
 }
 
 static void

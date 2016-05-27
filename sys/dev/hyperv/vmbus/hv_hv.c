@@ -46,72 +46,60 @@ __FBSDID("$FreeBSD$");
 #include <dev/hyperv/include/hyperv_busdma.h>
 #include <dev/hyperv/vmbus/hv_vmbus_priv.h>
 #include <dev/hyperv/vmbus/hyperv_reg.h>
+#include <dev/hyperv/vmbus/hyperv_var.h>
 #include <dev/hyperv/vmbus/vmbus_var.h>
 
 #define HV_NANOSECONDS_PER_SEC		1000000000L
 
-#define	HYPERV_INTERFACE		0x31237648	/* HV#1 */
+#define HYPERV_FREEBSD_BUILD		0ULL
+#define HYPERV_FREEBSD_VERSION		((uint64_t)__FreeBSD_version)
+#define HYPERV_FREEBSD_OSID		0ULL
 
-/*
- * The guest OS needs to register the guest ID with the hypervisor.
- * The guest ID is a 64 bit entity and the structure of this ID is
- * specified in the Hyper-V specification:
- *
- * http://msdn.microsoft.com/en-us/library/windows/
- * hardware/ff542653%28v=vs.85%29.aspx
- *
- * While the current guideline does not specify how FreeBSD guest ID(s)
- * need to be generated, our plan is to publish the guidelines for
- * FreeBSD and other guest operating systems that currently are hosted
- * on Hyper-V. The implementation here conforms to this yet
- * unpublished guidelines.
- *
- * Bit(s)
- * 63    - Indicates if the OS is Open Source or not; 1 is Open Source
- * 62:56 - Os Type: FreeBSD is 0x02
- * 55:48 - Distro specific identification
- * 47:16 - FreeBSD kernel version number
- * 15:0  - Distro specific identification
- */
-#define HYPERV_GUESTID_OSS		(0x1ULL << 63)
-#define HYPERV_GUESTID_FREEBSD		(0x02ULL << 56)
-#define HYPERV_GUESTID(id)				\
-	(HYPERV_GUESTID_OSS | HYPERV_GUESTID_FREEBSD |	\
-	 (((uint64_t)(((id) & 0xff0000) >> 16)) << 48) |\
-	 (((uint64_t)__FreeBSD_version) << 16) |	\
-	 ((uint64_t)((id) & 0x00ffff)))
+#define MSR_HV_GUESTID_BUILD_FREEBSD	\
+	(HYPERV_FREEBSD_BUILD & MSR_HV_GUESTID_BUILD_MASK)
+#define MSR_HV_GUESTID_VERSION_FREEBSD	\
+	((HYPERV_FREEBSD_VERSION << MSR_HV_GUESTID_VERSION_SHIFT) & \
+	 MSR_HV_GUESTID_VERSION_MASK)
+#define MSR_HV_GUESTID_OSID_FREEBSD	\
+	((HYPERV_FREEBSD_OSID << MSR_HV_GUESTID_OSID_SHIFT) & \
+	 MSR_HV_GUESTID_OSID_MASK)
+
+#define MSR_HV_GUESTID_FREEBSD		\
+	(MSR_HV_GUESTID_BUILD_FREEBSD |	\
+	 MSR_HV_GUESTID_VERSION_FREEBSD | \
+	 MSR_HV_GUESTID_OSID_FREEBSD |	\
+	 MSR_HV_GUESTID_OSTYPE_FREEBSD)
 
 struct hypercall_ctx {
 	void			*hc_addr;
 	struct hyperv_dma	hc_dma;
 };
 
-static struct hypercall_ctx	hypercall_context;
+static u_int	hyperv_get_timecount(struct timecounter *tc);
 
-static u_int hv_get_timecount(struct timecounter *tc);
-
-u_int	hyperv_features;
-u_int	hyperv_recommends;
+u_int		hyperv_features;
+u_int		hyperv_recommends;
 
 static u_int	hyperv_pm_features;
 static u_int	hyperv_features3;
 
-/**
- * Globals
- */
-hv_vmbus_context hv_vmbus_g_context = {
-	.syn_ic_initialized = FALSE,
+static struct timecounter	hyperv_timecounter = {
+	.tc_get_timecount	= hyperv_get_timecount,
+	.tc_poll_pps		= NULL,
+	.tc_counter_mask	= 0xffffffff,
+	.tc_frequency		= HV_NANOSECONDS_PER_SEC/100,
+	.tc_name		= "Hyper-V",
+	.tc_quality		= 2000,
+	.tc_flags		= 0,
+	.tc_priv		= NULL
 };
 
-static struct timecounter hv_timecounter = {
-	hv_get_timecount, 0, ~0u, HV_NANOSECONDS_PER_SEC/100, "Hyper-V", HV_NANOSECONDS_PER_SEC/100
-};
+static struct hypercall_ctx	hypercall_context;
 
 static u_int
-hv_get_timecount(struct timecounter *tc)
+hyperv_get_timecount(struct timecounter *tc __unused)
 {
-	u_int now = rdmsr(HV_X64_MSR_TIME_REF_COUNT);
-	return (now);
+	return rdmsr(MSR_HV_TIME_REF_COUNT);
 }
 
 /**
@@ -216,157 +204,27 @@ hv_vmbus_signal_event(void *con_id)
 	return (status);
 }
 
-/**
- * @brief hv_vmbus_synic_init
- */
-void
-hv_vmbus_synic_init(void *arg)
-{
-	struct vmbus_softc *sc = vmbus_get_softc();
-	int			cpu;
-	uint64_t		hv_vcpu_index;
-	hv_vmbus_synic_simp	simp;
-	hv_vmbus_synic_siefp	siefp;
-	hv_vmbus_synic_scontrol sctrl;
-	hv_vmbus_synic_sint	shared_sint;
-	uint64_t		version;
-	hv_setup_args* 		setup_args = (hv_setup_args *)arg;
-
-	cpu = PCPU_GET(cpuid);
-
-	/*
-	 * TODO: Check the version
-	 */
-	version = rdmsr(HV_X64_MSR_SVERSION);
-	
-	hv_vmbus_g_context.syn_ic_msg_page[cpu] =
-	    setup_args->page_buffers[2 * cpu];
-	hv_vmbus_g_context.syn_ic_event_page[cpu] =
-	    setup_args->page_buffers[2 * cpu + 1];
-
-	/*
-	 * Setup the Synic's message page
-	 */
-
-	simp.as_uint64_t = rdmsr(HV_X64_MSR_SIMP);
-	simp.u.simp_enabled = 1;
-	simp.u.base_simp_gpa = ((hv_get_phys_addr(
-	    hv_vmbus_g_context.syn_ic_msg_page[cpu])) >> PAGE_SHIFT);
-
-	wrmsr(HV_X64_MSR_SIMP, simp.as_uint64_t);
-
-	/*
-	 * Setup the Synic's event page
-	 */
-	siefp.as_uint64_t = rdmsr(HV_X64_MSR_SIEFP);
-	siefp.u.siefp_enabled = 1;
-	siefp.u.base_siefp_gpa = ((hv_get_phys_addr(
-	    hv_vmbus_g_context.syn_ic_event_page[cpu])) >> PAGE_SHIFT);
-
-	wrmsr(HV_X64_MSR_SIEFP, siefp.as_uint64_t);
-
-	/*HV_SHARED_SINT_IDT_VECTOR + 0x20; */
-	shared_sint.as_uint64_t = 0;
-	shared_sint.u.vector = sc->vmbus_idtvec;
-	shared_sint.u.masked = FALSE;
-	shared_sint.u.auto_eoi = TRUE;
-
-	wrmsr(HV_X64_MSR_SINT0 + HV_VMBUS_MESSAGE_SINT,
-	    shared_sint.as_uint64_t);
-
-	wrmsr(HV_X64_MSR_SINT0 + HV_VMBUS_TIMER_SINT,
-	    shared_sint.as_uint64_t);
-
-	/* Enable the global synic bit */
-	sctrl.as_uint64_t = rdmsr(HV_X64_MSR_SCONTROL);
-	sctrl.u.enable = 1;
-
-	wrmsr(HV_X64_MSR_SCONTROL, sctrl.as_uint64_t);
-
-	hv_vmbus_g_context.syn_ic_initialized = TRUE;
-
-	/*
-	 * Set up the cpuid mapping from Hyper-V to FreeBSD.
-	 * The array is indexed using FreeBSD cpuid.
-	 */
-	hv_vcpu_index = rdmsr(HV_X64_MSR_VP_INDEX);
-	hv_vmbus_g_context.hv_vcpu_index[cpu] = (uint32_t)hv_vcpu_index;
-
-	return;
-}
-
-/**
- * @brief Cleanup routine for hv_vmbus_synic_init()
- */
-void hv_vmbus_synic_cleanup(void *arg)
-{
-	hv_vmbus_synic_sint	shared_sint;
-	hv_vmbus_synic_simp	simp;
-	hv_vmbus_synic_siefp	siefp;
-
-	if (!hv_vmbus_g_context.syn_ic_initialized)
-	    return;
-
-	shared_sint.as_uint64_t = rdmsr(
-	    HV_X64_MSR_SINT0 + HV_VMBUS_MESSAGE_SINT);
-
-	shared_sint.u.masked = 1;
-
-	/*
-	 * Disable the interrupt 0
-	 */
-	wrmsr(
-	    HV_X64_MSR_SINT0 + HV_VMBUS_MESSAGE_SINT,
-	    shared_sint.as_uint64_t);
-
-	shared_sint.as_uint64_t = rdmsr(
-	    HV_X64_MSR_SINT0 + HV_VMBUS_TIMER_SINT);
-
-	shared_sint.u.masked = 1;
-
-	/*
-	 * Disable the interrupt 1
-	 */
-	wrmsr(
-	    HV_X64_MSR_SINT0 + HV_VMBUS_TIMER_SINT,
-	    shared_sint.as_uint64_t);
-	simp.as_uint64_t = rdmsr(HV_X64_MSR_SIMP);
-	simp.u.simp_enabled = 0;
-	simp.u.base_simp_gpa = 0;
-
-	wrmsr(HV_X64_MSR_SIMP, simp.as_uint64_t);
-
-	siefp.as_uint64_t = rdmsr(HV_X64_MSR_SIEFP);
-	siefp.u.siefp_enabled = 0;
-	siefp.u.base_siefp_gpa = 0;
-
-	wrmsr(HV_X64_MSR_SIEFP, siefp.as_uint64_t);
-}
 
 static bool
 hyperv_identify(void)
 {
 	u_int regs[4];
-	unsigned int maxLeaf;
-	unsigned int op;
+	unsigned int maxleaf;
 
 	if (vm_guest != VM_GUEST_HV)
 		return (false);
 
-	op = HV_CPU_ID_FUNCTION_HV_VENDOR_AND_MAX_FUNCTION;
-	do_cpuid(op, regs);
-	maxLeaf = regs[0];
-	if (maxLeaf < HV_CPU_ID_FUNCTION_MS_HV_IMPLEMENTATION_LIMITS)
+	do_cpuid(CPUID_LEAF_HV_MAXLEAF, regs);
+	maxleaf = regs[0];
+	if (maxleaf < CPUID_LEAF_HV_LIMITS)
 		return (false);
 
-	op = HV_CPU_ID_FUNCTION_HV_INTERFACE;
-	do_cpuid(op, regs);
-	if (regs[0] != HYPERV_INTERFACE)
+	do_cpuid(CPUID_LEAF_HV_INTERFACE, regs);
+	if (regs[0] != CPUID_HV_IFACE_HYPERV)
 		return (false);
 
-	op = HV_CPU_ID_FUNCTION_MS_HV_FEATURES;
-	do_cpuid(op, regs);
-	if ((regs[0] & HV_FEATURE_MSR_HYPERCALL) == 0) {
+	do_cpuid(CPUID_LEAF_HV_FEATURES, regs);
+	if ((regs[0] & CPUID_HV_MSR_HYPERCALL) == 0) {
 		/*
 		 * Hyper-V w/o Hypercall is impossible; someone
 		 * is faking Hyper-V.
@@ -377,31 +235,30 @@ hyperv_identify(void)
 	hyperv_pm_features = regs[2];
 	hyperv_features3 = regs[3];
 
-	op = HV_CPU_ID_FUNCTION_MS_HV_VERSION;
-	do_cpuid(op, regs);
+	do_cpuid(CPUID_LEAF_HV_IDENTITY, regs);
 	printf("Hyper-V Version: %d.%d.%d [SP%d]\n",
 	    regs[1] >> 16, regs[1] & 0xffff, regs[0], regs[2]);
 
 	printf("  Features=0x%b\n", hyperv_features,
 	    "\020"
-	    "\001VPRUNTIME"	/* MSR_VP_RUNTIME */
-	    "\002TMREFCNT"	/* MSR_TIME_REF_COUNT */
+	    "\001VPRUNTIME"	/* MSR_HV_VP_RUNTIME */
+	    "\002TMREFCNT"	/* MSR_HV_TIME_REF_COUNT */
 	    "\003SYNIC"		/* MSRs for SynIC */
 	    "\004SYNTM"		/* MSRs for SynTimer */
-	    "\005APIC"		/* MSR_{EOI,ICR,TPR} */
-	    "\006HYPERCALL"	/* MSR_{GUEST_OS_ID,HYPERCALL} */
-	    "\007VPINDEX"	/* MSR_VP_INDEX */
-	    "\010RESET"		/* MSR_RESET */
-	    "\011STATS"		/* MSR_STATS_ */
-	    "\012REFTSC"	/* MSR_REFERENCE_TSC */
-	    "\013IDLE"		/* MSR_GUEST_IDLE */
-	    "\014TMFREQ"	/* MSR_{TSC,APIC}_FREQUENCY */
-	    "\015DEBUG");	/* MSR_SYNTH_DEBUG_ */
-	printf("  PM Features=max C%u, 0x%b\n",
-	    HV_PM_FEATURE_CSTATE(hyperv_pm_features),
-	    (hyperv_pm_features & ~HV_PM_FEATURE_CSTATE_MASK),
+	    "\005APIC"		/* MSR_HV_{EOI,ICR,TPR} */
+	    "\006HYPERCALL"	/* MSR_HV_{GUEST_OS_ID,HYPERCALL} */
+	    "\007VPINDEX"	/* MSR_HV_VP_INDEX */
+	    "\010RESET"		/* MSR_HV_RESET */
+	    "\011STATS"		/* MSR_HV_STATS_ */
+	    "\012REFTSC"	/* MSR_HV_REFERENCE_TSC */
+	    "\013IDLE"		/* MSR_HV_GUEST_IDLE */
+	    "\014TMFREQ"	/* MSR_HV_{TSC,APIC}_FREQUENCY */
+	    "\015DEBUG");	/* MSR_HV_SYNTH_DEBUG_ */
+	printf("  PM Features=0x%b [C%u]\n",
+	    (hyperv_pm_features & ~CPUPM_HV_CSTATE_MASK),
 	    "\020"
-	    "\005C3HPET");	/* HPET is required for C3 state */
+	    "\005C3HPET",	/* HPET is required for C3 state */
+	    CPUPM_HV_CSTATE(hyperv_pm_features));
 	printf("  Features3=0x%b\n", hyperv_features3,
 	    "\020"
 	    "\001MWAIT"		/* MWAIT */
@@ -419,24 +276,21 @@ hyperv_identify(void)
 	    "\015NPIEP"		/* NPIEP */
 	    "\016HVDIS");	/* disabling hypervisor */
 
-	op = HV_CPU_ID_FUNCTION_MS_HV_ENLIGHTENMENT_INFORMATION;
-	do_cpuid(op, regs);
+	do_cpuid(CPUID_LEAF_HV_RECOMMENDS, regs);
 	hyperv_recommends = regs[0];
 	if (bootverbose)
 		printf("  Recommends: %08x %08x\n", regs[0], regs[1]);
 
-	op = HV_CPU_ID_FUNCTION_MS_HV_IMPLEMENTATION_LIMITS;
-	do_cpuid(op, regs);
+	do_cpuid(CPUID_LEAF_HV_LIMITS, regs);
 	if (bootverbose) {
 		printf("  Limits: Vcpu:%d Lcpu:%d Int:%d\n",
 		    regs[0], regs[1], regs[2]);
 	}
 
-	if (maxLeaf >= HV_CPU_ID_FUNCTION_MS_HV_HARDWARE_FEATURE) {
-		op = HV_CPU_ID_FUNCTION_MS_HV_HARDWARE_FEATURE;
-		do_cpuid(op, regs);
+	if (maxleaf >= CPUID_LEAF_HV_HWFEATURES) {
+		do_cpuid(CPUID_LEAF_HV_HWFEATURES, regs);
 		if (bootverbose) {
-			printf("  HW Features: %08x AMD: %08x\n",
+			printf("  HW Features: %08x, AMD: %08x\n",
 			    regs[0], regs[3]);
 		}
 	}
@@ -454,12 +308,12 @@ hyperv_init(void *dummy __unused)
 		return;
 	}
 
-	/* Write guest id */
-	wrmsr(HV_X64_MSR_GUEST_OS_ID, HYPERV_GUESTID(0));
+	/* Set guest id */
+	wrmsr(MSR_HV_GUEST_OS_ID, MSR_HV_GUESTID_FREEBSD);
 
-	if (hyperv_features & HV_FEATURE_MSR_TIME_REFCNT) {
-		/* Register virtual timecount */
-		tc_init(&hv_timecounter);
+	if (hyperv_features & CPUID_HV_MSR_TIME_REFCNT) {
+		/* Register Hyper-V timecounter */
+		tc_init(&hyperv_timecounter);
 	}
 }
 SYSINIT(hyperv_initialize, SI_SUB_HYPERVISOR, SI_ORDER_FIRST, hyperv_init,
@@ -523,11 +377,14 @@ SYSINIT(hypercall_ctor, SI_SUB_DRIVERS, SI_ORDER_FIRST, hypercall_create, NULL);
 static void
 hypercall_destroy(void *arg __unused)
 {
+	uint64_t hc;
+
 	if (hypercall_context.hc_addr == NULL)
 		return;
 
 	/* Disable Hypercall */
-	wrmsr(MSR_HV_HYPERCALL, 0);
+	hc = rdmsr(MSR_HV_HYPERCALL);
+	wrmsr(MSR_HV_HYPERCALL, (hc & MSR_HV_HYPERCALL_RSVD_MASK));
 	hypercall_memfree();
 
 	if (bootverbose)
