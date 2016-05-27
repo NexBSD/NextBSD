@@ -1264,7 +1264,7 @@ int
 ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 {
 	struct 		ixl_vsi *vsi = iflib_get_softc(ctx);
-	struct ixl_pf	*pf = vsi->back;
+	struct		ixl_pf	*pf = vsi->back;
 	struct 		ixl_rx_queue *rx_que = vsi->rx_queues;
 	struct 		ixl_tx_queue *tx_que = vsi->tx_queues;
 	int 		err, i, rid, vector = 0;

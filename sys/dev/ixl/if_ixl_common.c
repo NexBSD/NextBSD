@@ -1,4 +1,6 @@
+#ifndef IFLIB
 #include "opt_iflib.h"
+#endif
 
 #ifdef IFLIB
 #ifndef IXL_STANDALONE_BUILD
