@@ -645,7 +645,7 @@ mb_free_ext(struct mbuf *m)
 	if (m->m_flags & M_NOFREE) {
 		freembuf = 0;
 		KASSERT(m->m_ext.ext_type == EXT_EXTREF,
-		    ("%s: no-free mbuf %p has wrong type", __func__, m));			
+		    ("%s: no-free mbuf %p has wrong type", __func__, m));
 	} else
 		freembuf = 1;
 
