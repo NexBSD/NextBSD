@@ -212,9 +212,9 @@ static int ixgbe_sysctl_eee_tx_lpi_delay(SYSCTL_HANDLER_ARGS);
 static void	ixgbe_setup_optics(struct adapter *);
 
 /* Deferred interrupt tasklets */
-static void	ixgbe_handle_msf(void *, int);
-static void	ixgbe_handle_mod(void *, int);
-static void	ixgbe_handle_phy(void *, int);
+static void	ixgbe_handle_msf(void *);
+static void	ixgbe_handle_mod(void *);
+static void	ixgbe_handle_phy(void *);
 
 #ifdef IXGBE_FDIR
 static void	ixgbe_reinit_fdir(void *, int);
@@ -222,7 +222,7 @@ static void	ixgbe_reinit_fdir(void *, int);
 
 #ifdef PCI_IOV
 static void	ixgbe_ping_all_vfs(struct adapter *);
-static void	ixgbe_handle_mbx(void *, int);
+static void	ixgbe_handle_mbx(void *);
 static int	ixgbe_init_iov(device_t, u16, const nvlist_t *);
 static void	ixgbe_uninit_iov(device_t);
 static int	ixgbe_add_vf(device_t, u16, const nvlist_t *);
@@ -3565,7 +3565,7 @@ out:
 ** Tasklet for handling SFP module interrupts
 */
 static void
-ixgbe_handle_mod(void *context, int pending)
+ixgbe_handle_mod(void *context)
 {
 	if_ctx_t ctx = context;
 	struct adapter  *adapter = iflib_get_softc(ctx);
@@ -3632,7 +3632,7 @@ out:
 /* Tasklet for handling MSF (multispeed fiber) interrupts */
 
 static void
-ixgbe_handle_msf(void *context, int pending)
+ixgbe_handle_msf(void *context)
 {
 	if_ctx_t ctx = context;
 	struct adapter  *adapter = iflib_get_softc(ctx);
@@ -3657,7 +3657,7 @@ ixgbe_handle_msf(void *context, int pending)
 /* Tasklet for handling interrupts from an external PHY */
 
 static void
-ixgbe_handle_phy(void *context, int pending)
+ixgbe_handle_phy(void *context)
 {
 	if_ctx_t ctx = context;
 	struct adapter  *adapter = iflib_get_softc(ctx);
@@ -5057,7 +5057,7 @@ ixgbe_process_vf_msg(struct adapter *adapter, struct ixgbe_vf *vf)
  * Tasklet for handling VF -> PF mailbox messages.
  */
 static void
-ixgbe_handle_mbx(void *context, int pending)
+ixgbe_handle_mbx(void *context)
 {
 	struct adapter *adapter;
 	struct ixgbe_hw *hw;

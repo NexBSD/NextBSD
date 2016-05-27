@@ -3313,6 +3313,7 @@ kern/subr_sleepqueue.c		standard
 kern/subr_smp.c			standard
 kern/subr_stack.c		optional ddb | stack | ktr
 kern/subr_taskqueue.c		standard
+kern/subr_gtaskqueue.c		standard
 kern/subr_terminal.c		optional vt
 kern/subr_trap.c		standard
 kern/subr_turnstile.c		standard

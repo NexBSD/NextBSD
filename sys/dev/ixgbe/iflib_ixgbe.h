@@ -75,7 +75,7 @@
 #include <sys/proc.h>
 #include <sys/sysctl.h>
 #include <sys/endian.h>
-#include <sys/taskqueue.h>
+#include <sys/gtaskqueue.h>
 #include <sys/pcpu.h>
 #include <sys/smp.h>
 #include <machine/smp.h>

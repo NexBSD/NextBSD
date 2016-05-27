@@ -35,6 +35,7 @@
 #include <machine/bus.h>
 #include <sys/bus_dma.h>
 #include <sys/nv.h>
+#include <sys/gtaskqueue.h>
 
 
 /*
@@ -310,7 +311,7 @@ void iflib_irq_free(if_ctx_t ctx, if_irq_t irq);
 void iflib_io_tqg_attach(struct grouptask *gt, void *uniq, int cpu, char *name);
 
 void iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask,
-			     task_fn_t *fn, char *name);
+			     gtask_fn_t *fn, char *name);
 
 void iflib_config_gtask_deinit(struct grouptask *gtask);
 

@@ -2640,7 +2640,7 @@ defrag:
 		if (map != NULL)
 			bus_dmamap_unload(desc_tag, map);
 		DBG_COUNTER_INC(encap_txq_avail_fail);
-		if (txq->ift_task.gt_task.ta_pending == 0)
+		if ((txq->ift_task.gt_task.ta_flags & TASK_ENQUEUED) == 0)
 			GROUPTASK_ENQUEUE(&txq->ift_task);
 		return (ENOBUFS);
 	}
@@ -2919,7 +2919,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 }
 
 static void
-_task_fn_tx(void *context, int pending)
+_task_fn_tx(void *context)
 {
 	iflib_txq_t txq = context;
 	if_ctx_t ctx = txq->ift_ctx;
@@ -2930,7 +2930,7 @@ _task_fn_tx(void *context, int pending)
 }
 
 static void
-_task_fn_rx(void *context, int pending)
+_task_fn_rx(void *context)
 {
 	iflib_rxq_t rxq = context;
 	if_ctx_t ctx = rxq->ifr_ctx;
@@ -2955,7 +2955,7 @@ _task_fn_rx(void *context, int pending)
 }
 
 static void
-_task_fn_admin(void *context, int pending)
+_task_fn_admin(void *context)
 {
 	if_ctx_t ctx = context;
 	if_softc_ctx_t sctx = &ctx->ifc_softc_ctx;
@@ -2985,7 +2985,7 @@ _task_fn_admin(void *context, int pending)
 
 
 static void
-_task_fn_iov(void *context, int pending)
+_task_fn_iov(void *context)
 {
 	if_ctx_t ctx = context;
 
@@ -4197,7 +4197,7 @@ iflib_irq_alloc_generic(if_ctx_t ctx, if_irq_t irq, int rid,
 	struct taskqgroup *tqg;
 	iflib_filter_info_t info;
 	cpuset_t cpus;
-	task_fn_t *fn;
+	gtask_fn_t *fn;
 	int tqrid, err;
 	void *q;
 
@@ -4258,7 +4258,7 @@ iflib_softirq_alloc_generic(if_ctx_t ctx, int rid, iflib_intr_type_t type,  void
 {
 	struct grouptask *gtask;
 	struct taskqgroup *tqg;
-	task_fn_t *fn;
+	gtask_fn_t *fn;
 	void *q;
 
 	switch (type) {
@@ -4314,7 +4314,7 @@ iflib_legacy_setup(if_ctx_t ctx, driver_filter_t filter, void *filter_arg, int *
 	iflib_filter_info_t info;
 	struct grouptask *gtask;
 	struct taskqgroup *tqg;
-	task_fn_t *fn;
+	gtask_fn_t *fn;
 	int tqrid;
 	void *q;
 	int err;
@@ -4389,7 +4389,7 @@ iflib_io_tqg_attach(struct grouptask *gt, void *uniq, int cpu, char *name)
 }
 
 void
-iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask, task_fn_t *fn,
+iflib_config_gtask_init(if_ctx_t ctx, struct grouptask *gtask, gtask_fn_t *fn,
 	char *name)
 {
 

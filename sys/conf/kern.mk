@@ -198,7 +198,7 @@ CFLAGS+=	-fstack-protector
 # but critical for these newer versions.
 #
 .if ${CFLAGS:M-g} != "" && ${CFLAGS:M-gdwarf*} == ""
-CFLAGS+=	-gdwarf-2
+CFLAGS+=	-gdwarf-4
 .endif
 
 CFLAGS+= ${CWARNFLAGS} ${CWARNFLAGS.${.IMPSRC:T}}
