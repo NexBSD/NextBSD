@@ -1,3 +1,6 @@
+#ifndef IFLIB
+#include "opt_iflib.h"
+#endif
 
 #ifdef IFLIB
 #include "ixgbe.h"
