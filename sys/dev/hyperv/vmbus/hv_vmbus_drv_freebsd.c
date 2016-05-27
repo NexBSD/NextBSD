@@ -61,14 +61,14 @@ __FBSDID("$FreeBSD$");
 
 #include <dev/hyperv/include/hyperv.h>
 #include <dev/hyperv/vmbus/hv_vmbus_priv.h>
+#include <dev/hyperv/vmbus/hyperv_reg.h>
+#include <dev/hyperv/vmbus/hyperv_var.h>
 #include <dev/hyperv/vmbus/vmbus_var.h>
 
 #include <contrib/dev/acpica/include/acpi.h>
 #include "acpi_if.h"
 
 struct vmbus_softc	*vmbus_sc;
-
-static int vmbus_inited;
 
 static char *vmbus_ids[] = { "VMBUS", NULL };
 
@@ -119,7 +119,7 @@ handled:
 			 * This will cause message queue rescan to possibly
 			 * deliver another msg from the hypervisor
 			 */
-			wrmsr(HV_X64_MSR_EOM, 0);
+			wrmsr(MSR_HV_EOM, 0);
 		}
 	}
 }
@@ -171,14 +171,14 @@ hv_vmbus_isr(struct vmbus_softc *sc, struct trapframe *frame, int cpu)
 			 * This will cause message queue rescan to possibly
 			 * deliver another msg from the hypervisor
 			 */
-			wrmsr(HV_X64_MSR_EOM, 0);
+			wrmsr(MSR_HV_EOM, 0);
 		}
 	}
 
 	msg = msg_base + HV_VMBUS_MESSAGE_SINT;
 	if (msg->header.message_type != HV_MESSAGE_TYPE_NONE) {
-		taskqueue_enqueue(hv_vmbus_g_context.hv_msg_tq[cpu],
-		    &hv_vmbus_g_context.hv_msg_task[cpu]);
+		taskqueue_enqueue(VMBUS_PCPU_GET(sc, message_tq, cpu),
+		    VMBUS_PCPU_PTR(sc, message_task, cpu));
 	}
 
 	return (FILTER_HANDLED);
@@ -209,136 +209,141 @@ hv_vector_handler(struct trapframe *trap_frame)
 }
 
 static void
-vmbus_synic_setup(void *arg __unused)
+vmbus_synic_setup(void *xsc)
 {
-	struct vmbus_softc *sc = vmbus_get_softc();
-	int			cpu;
-	uint64_t		hv_vcpu_index;
-	hv_vmbus_synic_simp	simp;
-	hv_vmbus_synic_siefp	siefp;
-	hv_vmbus_synic_scontrol sctrl;
-	hv_vmbus_synic_sint	shared_sint;
-	uint64_t		version;
+	struct vmbus_softc *sc = xsc;
+	int cpu = curcpu;
+	uint64_t val, orig;
+	uint32_t sint;
 
-	cpu = PCPU_GET(cpuid);
-
-	/*
-	 * TODO: Check the version
-	 */
-	version = rdmsr(HV_X64_MSR_SVERSION);
-
-	/*
-	 * Setup the Synic's message page
-	 */
-	simp.as_uint64_t = rdmsr(HV_X64_MSR_SIMP);
-	simp.u.simp_enabled = 1;
-	simp.u.base_simp_gpa =
-	    VMBUS_PCPU_GET(sc, message_dma.hv_paddr, cpu) >> PAGE_SHIFT;
-
-	wrmsr(HV_X64_MSR_SIMP, simp.as_uint64_t);
+	if (hyperv_features & CPUID_HV_MSR_VP_INDEX) {
+		/*
+		 * Save virtual processor id.
+		 */
+		VMBUS_PCPU_GET(sc, vcpuid, cpu) = rdmsr(MSR_HV_VP_INDEX);
+	} else {
+		/*
+		 * XXX
+		 * Virtual processoor id is only used by a pretty broken
+		 * channel selection code from storvsc.  It's nothing
+		 * critical even if CPUID_HV_MSR_VP_INDEX is not set; keep
+		 * moving on.
+		 */
+		VMBUS_PCPU_GET(sc, vcpuid, cpu) = cpu;
+	}
 
 	/*
-	 * Setup the Synic's event page
+	 * Setup the SynIC message.
 	 */
-	siefp.as_uint64_t = rdmsr(HV_X64_MSR_SIEFP);
-	siefp.u.siefp_enabled = 1;
-	siefp.u.base_siefp_gpa =
-	    VMBUS_PCPU_GET(sc, event_flag_dma.hv_paddr, cpu) >> PAGE_SHIFT;
-
-	wrmsr(HV_X64_MSR_SIEFP, siefp.as_uint64_t);
-
-	/*HV_SHARED_SINT_IDT_VECTOR + 0x20; */
-	shared_sint.as_uint64_t = 0;
-	shared_sint.u.vector = sc->vmbus_idtvec;
-	shared_sint.u.masked = FALSE;
-	shared_sint.u.auto_eoi = TRUE;
-
-	wrmsr(HV_X64_MSR_SINT0 + HV_VMBUS_MESSAGE_SINT,
-	    shared_sint.as_uint64_t);
-
-	wrmsr(HV_X64_MSR_SINT0 + HV_VMBUS_TIMER_SINT,
-	    shared_sint.as_uint64_t);
-
-	/* Enable the global synic bit */
-	sctrl.as_uint64_t = rdmsr(HV_X64_MSR_SCONTROL);
-	sctrl.u.enable = 1;
-
-	wrmsr(HV_X64_MSR_SCONTROL, sctrl.as_uint64_t);
-
-	hv_vmbus_g_context.syn_ic_initialized = TRUE;
+	orig = rdmsr(MSR_HV_SIMP);
+	val = MSR_HV_SIMP_ENABLE | (orig & MSR_HV_SIMP_RSVD_MASK) |
+	    ((VMBUS_PCPU_GET(sc, message_dma.hv_paddr, cpu) >> PAGE_SHIFT) <<
+	     MSR_HV_SIMP_PGSHIFT);
+	wrmsr(MSR_HV_SIMP, val);
 
 	/*
-	 * Set up the cpuid mapping from Hyper-V to FreeBSD.
-	 * The array is indexed using FreeBSD cpuid.
+	 * Setup the SynIC event flags.
 	 */
-	hv_vcpu_index = rdmsr(HV_X64_MSR_VP_INDEX);
-	hv_vmbus_g_context.hv_vcpu_index[cpu] = (uint32_t)hv_vcpu_index;
+	orig = rdmsr(MSR_HV_SIEFP);
+	val = MSR_HV_SIEFP_ENABLE | (orig & MSR_HV_SIEFP_RSVD_MASK) |
+	    ((VMBUS_PCPU_GET(sc, event_flag_dma.hv_paddr, cpu) >> PAGE_SHIFT) <<
+	     MSR_HV_SIEFP_PGSHIFT);
+	wrmsr(MSR_HV_SIEFP, val);
+
+
+	/*
+	 * Configure and unmask SINT for message and event flags.
+	 */
+	sint = MSR_HV_SINT0 + HV_VMBUS_MESSAGE_SINT;
+	orig = rdmsr(sint);
+	val = sc->vmbus_idtvec | MSR_HV_SINT_AUTOEOI |
+	    (orig & MSR_HV_SINT_RSVD_MASK);
+	wrmsr(sint, val);
+
+	/*
+	 * Configure and unmask SINT for timer.
+	 */
+	sint = MSR_HV_SINT0 + HV_VMBUS_TIMER_SINT;
+	orig = rdmsr(sint);
+	val = sc->vmbus_idtvec | MSR_HV_SINT_AUTOEOI |
+	    (orig & MSR_HV_SINT_RSVD_MASK);
+	wrmsr(sint, val);
+
+	/*
+	 * All done; enable SynIC.
+	 */
+	orig = rdmsr(MSR_HV_SCONTROL);
+	val = MSR_HV_SCTRL_ENABLE | (orig & MSR_HV_SCTRL_RSVD_MASK);
+	wrmsr(MSR_HV_SCONTROL, val);
 }
 
 static void
 vmbus_synic_teardown(void *arg)
 {
-	hv_vmbus_synic_sint	shared_sint;
-	hv_vmbus_synic_simp	simp;
-	hv_vmbus_synic_siefp	siefp;
-
-	if (!hv_vmbus_g_context.syn_ic_initialized)
-	    return;
-
-	shared_sint.as_uint64_t = rdmsr(
-	    HV_X64_MSR_SINT0 + HV_VMBUS_MESSAGE_SINT);
-
-	shared_sint.u.masked = 1;
+	uint64_t orig;
+	uint32_t sint;
 
 	/*
-	 * Disable the interrupt 0
+	 * Disable SynIC.
 	 */
-	wrmsr(
-	    HV_X64_MSR_SINT0 + HV_VMBUS_MESSAGE_SINT,
-	    shared_sint.as_uint64_t);
-
-	shared_sint.as_uint64_t = rdmsr(
-	    HV_X64_MSR_SINT0 + HV_VMBUS_TIMER_SINT);
-
-	shared_sint.u.masked = 1;
+	orig = rdmsr(MSR_HV_SCONTROL);
+	wrmsr(MSR_HV_SCONTROL, (orig & MSR_HV_SCTRL_RSVD_MASK));
 
 	/*
-	 * Disable the interrupt 1
+	 * Mask message and event flags SINT.
 	 */
-	wrmsr(
-	    HV_X64_MSR_SINT0 + HV_VMBUS_TIMER_SINT,
-	    shared_sint.as_uint64_t);
-	simp.as_uint64_t = rdmsr(HV_X64_MSR_SIMP);
-	simp.u.simp_enabled = 0;
-	simp.u.base_simp_gpa = 0;
+	sint = MSR_HV_SINT0 + HV_VMBUS_MESSAGE_SINT;
+	orig = rdmsr(sint);
+	wrmsr(sint, orig | MSR_HV_SINT_MASKED);
 
-	wrmsr(HV_X64_MSR_SIMP, simp.as_uint64_t);
+	/*
+	 * Mask timer SINT.
+	 */
+	sint = MSR_HV_SINT0 + HV_VMBUS_TIMER_SINT;
+	orig = rdmsr(sint);
+	wrmsr(sint, orig | MSR_HV_SINT_MASKED);
 
-	siefp.as_uint64_t = rdmsr(HV_X64_MSR_SIEFP);
-	siefp.u.siefp_enabled = 0;
-	siefp.u.base_siefp_gpa = 0;
+	/*
+	 * Teardown SynIC message.
+	 */
+	orig = rdmsr(MSR_HV_SIMP);
+	wrmsr(MSR_HV_SIMP, (orig & MSR_HV_SIMP_RSVD_MASK));
 
-	wrmsr(HV_X64_MSR_SIEFP, siefp.as_uint64_t);
+	/*
+	 * Teardown SynIC event flags.
+	 */
+	orig = rdmsr(MSR_HV_SIEFP);
+	wrmsr(MSR_HV_SIEFP, (orig & MSR_HV_SIEFP_RSVD_MASK));
 }
 
-static void
+static int
 vmbus_dma_alloc(struct vmbus_softc *sc)
 {
 	int cpu;
 
 	CPU_FOREACH(cpu) {
+		void *ptr;
+
 		/*
 		 * Per-cpu messages and event flags.
 		 */
-		VMBUS_PCPU_GET(sc, message, cpu) = hyperv_dmamem_alloc(
-		    bus_get_dma_tag(sc->vmbus_dev), PAGE_SIZE, 0, PAGE_SIZE,
+		ptr = hyperv_dmamem_alloc(bus_get_dma_tag(sc->vmbus_dev),
+		    PAGE_SIZE, 0, PAGE_SIZE,
 		    VMBUS_PCPU_PTR(sc, message_dma, cpu),
 		    BUS_DMA_WAITOK | BUS_DMA_ZERO);
-		VMBUS_PCPU_GET(sc, event_flag, cpu) = hyperv_dmamem_alloc(
-		    bus_get_dma_tag(sc->vmbus_dev), PAGE_SIZE, 0, PAGE_SIZE,
+		if (ptr == NULL)
+			return ENOMEM;
+		VMBUS_PCPU_GET(sc, message, cpu) = ptr;
+
+		ptr = hyperv_dmamem_alloc(bus_get_dma_tag(sc->vmbus_dev),
+		    PAGE_SIZE, 0, PAGE_SIZE,
 		    VMBUS_PCPU_PTR(sc, event_flag_dma, cpu),
 		    BUS_DMA_WAITOK | BUS_DMA_ZERO);
+		if (ptr == NULL)
+			return ENOMEM;
+		VMBUS_PCPU_GET(sc, event_flag, cpu) = ptr;
 	}
+	return 0;
 }
 
 static void
@@ -367,8 +372,43 @@ vmbus_intr_setup(struct vmbus_softc *sc)
 {
 	int cpu;
 
+	CPU_FOREACH(cpu) {
+		char buf[MAXCOMLEN + 1];
+		cpuset_t cpu_mask;
+
+		/* Allocate an interrupt counter for Hyper-V interrupt */
+		snprintf(buf, sizeof(buf), "cpu%d:hyperv", cpu);
+		intrcnt_add(buf, VMBUS_PCPU_PTR(sc, intr_cnt, cpu));
+
+		/*
+		 * Setup taskqueue to handle events.  Task will be per-
+		 * channel.
+		 */
+		VMBUS_PCPU_GET(sc, event_tq, cpu) = taskqueue_create_fast(
+		    "hyperv event", M_WAITOK, taskqueue_thread_enqueue,
+		    VMBUS_PCPU_PTR(sc, event_tq, cpu));
+		CPU_SETOF(cpu, &cpu_mask);
+		taskqueue_start_threads_cpuset(
+		    VMBUS_PCPU_PTR(sc, event_tq, cpu), 1, PI_NET, &cpu_mask,
+		    "hvevent%d", cpu);
+
+		/*
+		 * Setup tasks and taskqueues to handle messages.
+		 */
+		VMBUS_PCPU_GET(sc, message_tq, cpu) = taskqueue_create_fast(
+		    "hyperv msg", M_WAITOK, taskqueue_thread_enqueue,
+		    VMBUS_PCPU_PTR(sc, message_tq, cpu));
+		CPU_SETOF(cpu, &cpu_mask);
+		taskqueue_start_threads_cpuset(
+		    VMBUS_PCPU_PTR(sc, message_tq, cpu), 1, PI_NET, &cpu_mask,
+		    "hvmsg%d", cpu);
+		TASK_INIT(VMBUS_PCPU_PTR(sc, message_task, cpu), 0,
+		    vmbus_msg_task, sc);
+	}
+
 	/*
-	 * Find a free IDT vector for vmbus messages/events.
+	 * All Hyper-V ISR required resources are setup, now let's find a
+	 * free IDT vector for Hyper-V ISR and set it up.
 	 */
 	sc->vmbus_idtvec = lapic_ipi_alloc(IDTVEC(hv_vmbus_callback));
 	if (sc->vmbus_idtvec < 0) {
@@ -379,45 +419,6 @@ vmbus_intr_setup(struct vmbus_softc *sc)
 		device_printf(sc->vmbus_dev, "vmbus IDT vector %d\n",
 		    sc->vmbus_idtvec);
 	}
-
-	CPU_FOREACH(cpu) {
-		char buf[MAXCOMLEN + 1];
-
-		snprintf(buf, sizeof(buf), "cpu%d:hyperv", cpu);
-		intrcnt_add(buf, VMBUS_PCPU_PTR(sc, intr_cnt, cpu));
-	}
-
-	/*
-	 * Per cpu setup.
-	 */
-	CPU_FOREACH(cpu) {
-		cpuset_t cpu_mask;
-
-		/*
-		 * Setup taskqueue to handle events
-		 */
-		hv_vmbus_g_context.hv_event_queue[cpu] =
-		    taskqueue_create_fast("hyperv event", M_WAITOK,
-		    taskqueue_thread_enqueue,
-		    &hv_vmbus_g_context.hv_event_queue[cpu]);
-		CPU_SETOF(cpu, &cpu_mask);
-		taskqueue_start_threads_cpuset(
-		    &hv_vmbus_g_context.hv_event_queue[cpu], 1, PI_NET,
-		    &cpu_mask, "hvevent%d", cpu);
-
-		/*
-		 * Setup per-cpu tasks and taskqueues to handle msg.
-		 */
-		hv_vmbus_g_context.hv_msg_tq[cpu] = taskqueue_create_fast(
-		    "hyperv msg", M_WAITOK, taskqueue_thread_enqueue,
-		    &hv_vmbus_g_context.hv_msg_tq[cpu]);
-		CPU_SETOF(cpu, &cpu_mask);
-		taskqueue_start_threads_cpuset(
-		    &hv_vmbus_g_context.hv_msg_tq[cpu], 1, PI_NET,
-		    &cpu_mask, "hvmsg%d", cpu);
-		TASK_INIT(&hv_vmbus_g_context.hv_msg_task[cpu], 0,
-		    vmbus_msg_task, sc);
-	}
 	return 0;
 }
 
@@ -426,35 +427,31 @@ vmbus_intr_teardown(struct vmbus_softc *sc)
 {
 	int cpu;
 
-	CPU_FOREACH(cpu) {
-		if (hv_vmbus_g_context.hv_event_queue[cpu] != NULL) {
-			taskqueue_free(hv_vmbus_g_context.hv_event_queue[cpu]);
-			hv_vmbus_g_context.hv_event_queue[cpu] = NULL;
-		}
-		if (hv_vmbus_g_context.hv_msg_tq[cpu] != NULL) {
-			taskqueue_drain(hv_vmbus_g_context.hv_msg_tq[cpu],
-			    &hv_vmbus_g_context.hv_msg_task[cpu]);
-			taskqueue_free(hv_vmbus_g_context.hv_msg_tq[cpu]);
-			hv_vmbus_g_context.hv_msg_tq[cpu] = NULL;
-		}
-	}
 	if (sc->vmbus_idtvec >= 0) {
 		lapic_ipi_free(sc->vmbus_idtvec);
 		sc->vmbus_idtvec = -1;
 	}
+
+	CPU_FOREACH(cpu) {
+		if (VMBUS_PCPU_GET(sc, event_tq, cpu) != NULL) {
+			taskqueue_free(VMBUS_PCPU_GET(sc, event_tq, cpu));
+			VMBUS_PCPU_GET(sc, event_tq, cpu) = NULL;
+		}
+		if (VMBUS_PCPU_GET(sc, message_tq, cpu) != NULL) {
+			taskqueue_drain(VMBUS_PCPU_GET(sc, message_tq, cpu),
+			    VMBUS_PCPU_PTR(sc, message_task, cpu));
+			taskqueue_free(VMBUS_PCPU_GET(sc, message_tq, cpu));
+			VMBUS_PCPU_GET(sc, message_tq, cpu) = NULL;
+		}
+	}
 }
 
 static int
-vmbus_read_ivar(
-	device_t	dev,
-	device_t	child,
-	int		index,
-	uintptr_t*	result)
+vmbus_read_ivar(device_t dev, device_t child, int index, uintptr_t *result)
 {
 	struct hv_device *child_dev_ctx = device_get_ivars(child);
 
 	switch (index) {
-
 	case HV_VMBUS_IVAR_TYPE:
 		*result = (uintptr_t) &child_dev_ctx->class_id;
 		return (0);
@@ -472,14 +469,9 @@ vmbus_read_ivar(
 }
 
 static int
-vmbus_write_ivar(
-	device_t	dev,
-	device_t	child,
-	int		index,
-	uintptr_t	value)
+vmbus_write_ivar(device_t dev, device_t child, int index, uintptr_t value)
 {
 	switch (index) {
-
 	case HV_VMBUS_IVAR_TYPE:
 	case HV_VMBUS_IVAR_INSTANCE:
 	case HV_VMBUS_IVAR_DEVCTX:
@@ -510,19 +502,16 @@ vmbus_child_pnpinfo_str(device_t dev, device_t child, char *buf, size_t buflen)
 	return (0);
 }
 
-struct hv_device*
-hv_vmbus_child_device_create(
-	hv_guid		type,
-	hv_guid		instance,
-	hv_vmbus_channel*	channel)
+struct hv_device *
+hv_vmbus_child_device_create(hv_guid type, hv_guid instance,
+    hv_vmbus_channel *channel)
 {
-	hv_device* child_dev;
+	hv_device *child_dev;
 
 	/*
 	 * Allocate the new child device
 	 */
-	child_dev = malloc(sizeof(hv_device), M_DEVBUF,
-			M_WAITOK |  M_ZERO);
+	child_dev = malloc(sizeof(hv_device), M_DEVBUF, M_WAITOK | M_ZERO);
 
 	child_dev->channel = channel;
 	memcpy(&child_dev->class_id, &type, sizeof(hv_guid));
@@ -580,7 +569,8 @@ static int
 vmbus_probe(device_t dev)
 {
 	if (ACPI_ID_PROBE(device_get_parent(dev), dev, vmbus_ids) == NULL ||
-	    device_get_unit(dev) != 0 || vm_guest != VM_GUEST_HV)
+	    device_get_unit(dev) != 0 || vm_guest != VM_GUEST_HV ||
+	    (hyperv_features & CPUID_HV_MSR_SYNIC) == 0)
 		return (ENXIO);
 
 	device_set_desc(dev, "Hyper-V Vmbus");
@@ -603,14 +593,19 @@ vmbus_probe(device_t dev)
 static int
 vmbus_bus_init(void)
 {
-	struct vmbus_softc *sc;
+	struct vmbus_softc *sc = vmbus_get_softc();
 	int ret;
 
-	if (vmbus_inited)
+	if (sc->vmbus_flags & VMBUS_FLAG_ATTACHED)
 		return (0);
+	sc->vmbus_flags |= VMBUS_FLAG_ATTACHED;
 
-	vmbus_inited = 1;
-	sc = vmbus_get_softc();
+	/*
+	 * Allocate DMA stuffs.
+	 */
+	ret = vmbus_dma_alloc(sc);
+	if (ret != 0)
+		goto cleanup;
 
 	/*
 	 * Setup interrupt.
@@ -620,14 +615,12 @@ vmbus_bus_init(void)
 		goto cleanup;
 
 	/*
-	 * Allocate DMA stuffs.
+	 * Setup SynIC.
 	 */
-	vmbus_dma_alloc(sc);
-
 	if (bootverbose)
-		printf("VMBUS: Calling smp_rendezvous, smp_started = %d\n",
-		    smp_started);
-	smp_rendezvous(NULL, vmbus_synic_setup, NULL, NULL);
+		device_printf(sc->vmbus_dev, "smp_started = %d\n", smp_started);
+	smp_rendezvous(NULL, vmbus_synic_setup, NULL, sc);
+	sc->vmbus_flags |= VMBUS_FLAG_SYNIC;
 
 	/*
 	 * Connect to VMBus in the root partition
@@ -652,8 +645,8 @@ vmbus_bus_init(void)
 	return (ret);
 
 cleanup:
-	vmbus_dma_free(sc);
 	vmbus_intr_teardown(sc);
+	vmbus_dma_free(sc);
 
 	return (ret);
 }
@@ -718,10 +711,13 @@ vmbus_detach(device_t dev)
 	hv_vmbus_release_unattached_channels();
 	hv_vmbus_disconnect();
 
-	smp_rendezvous(NULL, vmbus_synic_teardown, NULL, NULL);
+	if (sc->vmbus_flags & VMBUS_FLAG_SYNIC) {
+		sc->vmbus_flags &= ~VMBUS_FLAG_SYNIC;
+		smp_rendezvous(NULL, vmbus_synic_teardown, NULL, NULL);
+	}
 
-	vmbus_dma_free(sc);
 	vmbus_intr_teardown(sc);
+	vmbus_dma_free(sc);
 
 	return (0);
 }
