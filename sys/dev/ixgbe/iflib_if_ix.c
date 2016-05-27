@@ -96,12 +96,6 @@ static pci_vendor_info_t ixgbe_vendor_info_array[] =
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_KX4,  "Intel(R) PRO/10GbE PCI-Express Network Driver"),
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_10G_T,  "Intel(R) PRO/10GbE PCI-Express Network Driver"),
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_SFP, "Intel(R) PRO/10GbE PCI-Express Network Driver"),
-  PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_KR,  "Intel(R) PRO/10GbE PCI-Express Network Driver"),
-  PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_KR_L,  "Intel(R) PRO/10GbE PCI-Express Network Driver"),
-  PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SFP,  "Intel(R) PRO/10GbE PCI-Express Network Driver"),
-  PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SFP_N,  "Intel(R) PRO/10GbE PCI-Express Network Driver"),
-  PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SGMII,  "Intel(R) PRO/10GbE PCI-Express Network Driver"),
-  PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SGMII_L,  "Intel(R) PRO/10GbE PCI-Express Network Driver"),
 
 	/* required last entry */
   PVID_END
@@ -639,7 +633,6 @@ ixgbe_initialize_rss_mapping(struct adapter *adapter)
 		index_mult = 0x11;
 		break;
 	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		table_size = 512;
 		break;
@@ -1086,7 +1079,6 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	iflib_set_mac(ctx, hw->mac.addr);
 	switch (adapter->hw.mac.type) {
 	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		scctx->isc_rss_table_size = 512;
 		break;
@@ -1924,7 +1916,6 @@ ixgbe_get_slot_info(struct adapter *adapter)
 		ixgbe_get_bus_info(hw);
 		/* These devices don't use PCI-E */
 		switch (hw->mac.type) {
-		case ixgbe_mac_X550EM_a:
 		case ixgbe_mac_X550EM_x:
 			return;
 		default:
@@ -3260,7 +3251,6 @@ ixgbe_set_ivar(struct adapter *adapter, u8 entry, u8 vector, s8 type)
 	case ixgbe_mac_82599EB:
 	case ixgbe_mac_X540:
 	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		if (type == -1) { /* MISC IVAR */
 			index = (entry & 1) * 8;
@@ -3374,7 +3364,6 @@ ixgbe_config_delay_values(struct adapter *adapter)
 	switch (hw->mac.type) {
 	case ixgbe_mac_X540:
 	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		tmp = IXGBE_DV_X540(frame, frame);
 		break;
@@ -3390,7 +3379,6 @@ ixgbe_config_delay_values(struct adapter *adapter)
 	switch (hw->mac.type) {
 	case ixgbe_mac_X540:
 	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		tmp = IXGBE_LOW_DV_X540(frame);
 		break;
@@ -3848,15 +3836,12 @@ ixgbe_if_enable_intr(if_ctx_t ctx)
 #endif
 		break;
 	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		/* MAC thermal sensor is automatically enabled */
 		mask |= IXGBE_EIMS_TS;
 		/* Some devices use SDP0 for important information */
 		if (hw->device_id == IXGBE_DEV_ID_X550EM_X_SFP ||
-		    hw->device_id == IXGBE_DEV_ID_X550EM_A_SFP ||
-		    hw->device_id == IXGBE_DEV_ID_X550EM_A_SFP_N ||
-		    hw->device_id == IXGBE_DEV_ID_X550EM_X_10G_T)
+			hw->device_id == IXGBE_DEV_ID_X550EM_X_10G_T)
 			mask |= IXGBE_EIMS_GPI_SDP0_BY_MAC(hw);
 		mask |= IXGBE_EIMS_ECC;
 #ifdef IXGBE_FDIR
@@ -4495,7 +4480,6 @@ ixgbe_sysctl_print_rss_config(SYSCTL_HANDLER_ARGS)
 	/* Set multiplier for RETA setup and table size based on MAC */
 	switch (adapter->hw.mac.type) {
 	case ixgbe_mac_X550:
-	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_X550EM_x:
 		reta_size = 128;
 		break;
@@ -4890,7 +4874,7 @@ ixgbe_vf_set_vlan(struct adapter *adapter, struct ixgbe_vf *vf, uint32_t *msg)
 		return;
 	}
 	
-	ixgbe_set_vfta(hw, tag, vf->pool, enable, TRUE);
+	ixgbe_set_vfta(hw, tag, vf->pool, enable);
 	ixgbe_send_vf_ack(adapter, vf, msg[0]);
 }
 

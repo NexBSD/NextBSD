@@ -61,7 +61,6 @@ static ixgbe_vendor_info_t ixv_vendor_info_array[] =
 	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X540_VF, 0, 0, 0},
 	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550_VF, 0, 0, 0},
 	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_VF, 0, 0, 0},
-	{IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_VF, 0, 0, 0},
 	/* required last entry */
 	{0, 0, 0, 0, 0}
 };
@@ -1801,7 +1800,7 @@ ixv_setup_vlan_support(struct adapter *adapter)
 				continue;
 			vid = (i * 32) + j;
 			/* Call the shared code mailbox routine */
-			while (ixgbe_set_vfta(hw, vid, 0, TRUE, TRUE)) {
+			while (ixgbe_set_vfta(hw, vid, 0, TRUE)) {
 				if (++retry > 5)
 					break;
 			}
