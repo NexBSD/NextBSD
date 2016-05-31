@@ -458,7 +458,7 @@ struct iwm_softc {
 
 	/*
 	 * So why do we need a separate stopped flag and a generation?
-	 * the former protects the device from issueing commands when it's
+	 * the former protects the device from issuing commands when it's
 	 * stopped (duh).  The latter protects against race from a very
 	 * fast stop/unstop cycle where threads waiting for responses do
 	 * not have a chance to run in between.  Notably: we want to stop
@@ -484,8 +484,6 @@ struct iwm_softc {
 	size_t			sc_scan_cmd_len;
 	int			sc_scan_last_antenna;
 	int			sc_scanband;
-
-	int			sc_auth_prot;
 
 	int			sc_fixed_ridx;
 

@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2010-2015 Solarflare Communications Inc.
+ * Copyright (c) 2010-2016 Solarflare Communications Inc.
  * All rights reserved.
  *
  * This software was developed in part by Philip Paeps under contract for
@@ -207,7 +207,7 @@ sfxge_tx_qcomplete(struct sfxge_txq *txq, struct sfxge_evq *evq)
 static unsigned int
 sfxge_is_mbuf_non_tcp(struct mbuf *mbuf)
 {
-	/* Absense of TCP checksum flags does not mean that it is non-TCP
+	/* Absence of TCP checksum flags does not mean that it is non-TCP
 	 * but it should be true if user wants to achieve high throughput.
 	 */
 	return (!(mbuf->m_pkthdr.csum_flags & (CSUM_IP_TCP | CSUM_IP6_TCP)));

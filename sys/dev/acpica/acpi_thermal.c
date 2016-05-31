@@ -53,7 +53,7 @@ __FBSDID("$FreeBSD$");
 #define _COMPONENT	ACPI_THERMAL
 ACPI_MODULE_NAME("THERMAL")
 
-#define TZ_ZEROC	2732
+#define TZ_ZEROC	2731
 #define TZ_KELVTOC(x)	(((x) - TZ_ZEROC) / 10), abs(((x) - TZ_ZEROC) % 10)
 
 #define TZ_NOTIFY_TEMPERATURE	0x80 /* Temperature changed. */
@@ -785,7 +785,7 @@ acpi_tz_temp_sysctl(SYSCTL_HANDLER_ARGS)
     int		 		error;
 
     sc = oidp->oid_arg1;
-    temp_ptr = (int *)((uintptr_t)sc + oidp->oid_arg2);
+    temp_ptr = (int *)(void *)(uintptr_t)((uintptr_t)sc + oidp->oid_arg2);
     temp = *temp_ptr;
     error = sysctl_handle_int(oidp, &temp, 0, req);
 
@@ -814,7 +814,7 @@ acpi_tz_passive_sysctl(SYSCTL_HANDLER_ARGS)
     int				error;
 
     sc = oidp->oid_arg1;
-    val_ptr = (int *)((uintptr_t)sc + oidp->oid_arg2);
+    val_ptr = (int *)(void *)(uintptr_t)((uintptr_t)sc + oidp->oid_arg2);
     val = *val_ptr;
     error = sysctl_handle_int(oidp, &val, 0, req);
 

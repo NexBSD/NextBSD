@@ -34,6 +34,9 @@ __FBSDID("$FreeBSD$");
  * The Broadcom Wireless LAN controller driver.
  */
 
+#include "opt_bwn.h"
+#include "opt_wlan.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -75,8 +78,13 @@ __FBSDID("$FreeBSD$");
 #include <dev/bwn/if_bwnreg.h>
 #include <dev/bwn/if_bwnvar.h>
 
+#include <dev/bwn/if_bwn_debug.h>
 #include <dev/bwn/if_bwn_misc.h>
+#include <dev/bwn/if_bwn_util.h>
+#include <dev/bwn/if_bwn_phy_common.h>
+#include <dev/bwn/if_bwn_phy_g.h>
 #include <dev/bwn/if_bwn_phy_lp.h>
+#include <dev/bwn/if_bwn_phy_n.h>
 
 static SYSCTL_NODE(_hw, OID_AUTO, bwn, CTLFLAG_RD, 0,
     "Broadcom driver parameters");
@@ -89,33 +97,6 @@ static SYSCTL_NODE(_hw, OID_AUTO, bwn, CTLFLAG_RD, 0,
 static	int bwn_debug = 0;
 SYSCTL_INT(_hw_bwn, OID_AUTO, debug, CTLFLAG_RWTUN, &bwn_debug, 0,
     "Broadcom debugging printfs");
-enum {
-	BWN_DEBUG_XMIT		= 0x00000001,	/* basic xmit operation */
-	BWN_DEBUG_RECV		= 0x00000002,	/* basic recv operation */
-	BWN_DEBUG_STATE		= 0x00000004,	/* 802.11 state transitions */
-	BWN_DEBUG_TXPOW		= 0x00000008,	/* tx power processing */
-	BWN_DEBUG_RESET		= 0x00000010,	/* reset processing */
-	BWN_DEBUG_OPS		= 0x00000020,	/* bwn_ops processing */
-	BWN_DEBUG_BEACON	= 0x00000040,	/* beacon handling */
-	BWN_DEBUG_WATCHDOG	= 0x00000080,	/* watchdog timeout */
-	BWN_DEBUG_INTR		= 0x00000100,	/* ISR */
-	BWN_DEBUG_CALIBRATE	= 0x00000200,	/* periodic calibration */
-	BWN_DEBUG_NODE		= 0x00000400,	/* node management */
-	BWN_DEBUG_LED		= 0x00000800,	/* led management */
-	BWN_DEBUG_CMD		= 0x00001000,	/* cmd submission */
-	BWN_DEBUG_LO		= 0x00002000,	/* LO */
-	BWN_DEBUG_FW		= 0x00004000,	/* firmware */
-	BWN_DEBUG_WME		= 0x00008000,	/* WME */
-	BWN_DEBUG_RF		= 0x00010000,	/* RF */
-	BWN_DEBUG_FATAL		= 0x80000000,	/* fatal errors */
-	BWN_DEBUG_ANY		= 0xffffffff
-};
-#define	DPRINTF(sc, m, fmt, ...) do {			\
-	if (sc->sc_debug & (m))				\
-		printf(fmt, __VA_ARGS__);		\
-} while (0)
-#else
-#define	DPRINTF(sc, m, fmt, ...) do { (void) sc; } while (0)
 #endif
 
 static int	bwn_bfp = 0;		/* use "Bad Frames Preemption" */
@@ -145,44 +126,13 @@ static void	bwn_parent(struct ieee80211com *);
 static void	bwn_start(struct bwn_softc *);
 static int	bwn_transmit(struct ieee80211com *, struct mbuf *);
 static int	bwn_attach_core(struct bwn_mac *);
-static void	bwn_reset_core(struct bwn_mac *, uint32_t);
 static int	bwn_phy_getinfo(struct bwn_mac *, int);
 static int	bwn_chiptest(struct bwn_mac *);
 static int	bwn_setup_channels(struct bwn_mac *, int, int);
-static int	bwn_phy_g_attach(struct bwn_mac *);
-static void	bwn_phy_g_detach(struct bwn_mac *);
-static void	bwn_phy_g_init_pre(struct bwn_mac *);
-static int	bwn_phy_g_prepare_hw(struct bwn_mac *);
-static int	bwn_phy_g_init(struct bwn_mac *);
-static void	bwn_phy_g_exit(struct bwn_mac *);
-static uint16_t	bwn_phy_g_read(struct bwn_mac *, uint16_t);
-static void	bwn_phy_g_write(struct bwn_mac *, uint16_t,
-		    uint16_t);
-static uint16_t	bwn_phy_g_rf_read(struct bwn_mac *, uint16_t);
-static void	bwn_phy_g_rf_write(struct bwn_mac *, uint16_t,
-		    uint16_t);
-static int	bwn_phy_g_hwpctl(struct bwn_mac *);
-static void	bwn_phy_g_rf_onoff(struct bwn_mac *, int);
-static int	bwn_phy_g_switch_channel(struct bwn_mac *, uint32_t);
-static uint32_t	bwn_phy_g_get_default_chan(struct bwn_mac *);
-static void	bwn_phy_g_set_antenna(struct bwn_mac *, int);
-static int	bwn_phy_g_im(struct bwn_mac *, int);
-static int	bwn_phy_g_recalc_txpwr(struct bwn_mac *, int);
-static void	bwn_phy_g_set_txpwr(struct bwn_mac *);
-static void	bwn_phy_g_task_15s(struct bwn_mac *);
-static void	bwn_phy_g_task_60s(struct bwn_mac *);
-static uint16_t	bwn_phy_g_txctl(struct bwn_mac *);
-static void	bwn_phy_switch_analog(struct bwn_mac *, int);
-static uint16_t	bwn_shm_read_2(struct bwn_mac *, uint16_t, uint16_t);
-static void	bwn_shm_write_2(struct bwn_mac *, uint16_t, uint16_t,
-		    uint16_t);
-static uint32_t	bwn_shm_read_4(struct bwn_mac *, uint16_t, uint16_t);
-static void	bwn_shm_write_4(struct bwn_mac *, uint16_t, uint16_t,
-		    uint32_t);
 static void	bwn_shm_ctlword(struct bwn_mac *, uint16_t,
 		    uint16_t);
 static void	bwn_addchannels(struct ieee80211_channel [], int, int *,
-		    const struct bwn_channelinfo *, int);
+		    const struct bwn_channelinfo *, const uint8_t []);
 static int	bwn_raw_xmit(struct ieee80211_node *, struct mbuf *,
 		    const struct ieee80211_bpf_params *);
 static void	bwn_updateslot(struct ieee80211com *);
@@ -321,47 +271,6 @@ static struct bwn_dma_ring *bwn_dma_ringsetup(struct bwn_mac *,
 static struct bwn_dma_ring *bwn_dma_parse_cookie(struct bwn_mac *,
 		    const struct bwn_txstatus *, uint16_t, int *);
 static void	bwn_dma_free(struct bwn_mac *);
-static void	bwn_phy_g_init_sub(struct bwn_mac *);
-static uint8_t	bwn_has_hwpctl(struct bwn_mac *);
-static void	bwn_phy_init_b5(struct bwn_mac *);
-static void	bwn_phy_init_b6(struct bwn_mac *);
-static void	bwn_phy_init_a(struct bwn_mac *);
-static void	bwn_loopback_calcgain(struct bwn_mac *);
-static uint16_t	bwn_rf_init_bcm2050(struct bwn_mac *);
-static void	bwn_lo_g_init(struct bwn_mac *);
-static void	bwn_lo_g_adjust(struct bwn_mac *);
-static void	bwn_lo_get_powervector(struct bwn_mac *);
-static struct bwn_lo_calib *bwn_lo_calibset(struct bwn_mac *,
-		    const struct bwn_bbatt *, const struct bwn_rfatt *);
-static void	bwn_lo_write(struct bwn_mac *, struct bwn_loctl *);
-static void	bwn_phy_hwpctl_init(struct bwn_mac *);
-static void	bwn_phy_g_switch_chan(struct bwn_mac *, int, uint8_t);
-static void	bwn_phy_g_set_txpwr_sub(struct bwn_mac *,
-		    const struct bwn_bbatt *, const struct bwn_rfatt *,
-		    uint8_t);
-static void	bwn_phy_g_set_bbatt(struct bwn_mac *, uint16_t);
-static uint16_t	bwn_rf_2050_rfoverval(struct bwn_mac *, uint16_t, uint32_t);
-static void	bwn_spu_workaround(struct bwn_mac *, uint8_t);
-static void	bwn_wa_init(struct bwn_mac *);
-static void	bwn_ofdmtab_write_2(struct bwn_mac *, uint16_t, uint16_t,
-		    uint16_t);
-static void	bwn_dummy_transmission(struct bwn_mac *, int, int);
-static void	bwn_ofdmtab_write_4(struct bwn_mac *, uint16_t, uint16_t,
-		    uint32_t);
-static void	bwn_gtab_write(struct bwn_mac *, uint16_t, uint16_t,
-		    uint16_t);
-static void	bwn_ram_write(struct bwn_mac *, uint16_t, uint32_t);
-static void	bwn_psctl(struct bwn_mac *, uint32_t);
-static int16_t	bwn_nrssi_read(struct bwn_mac *, uint16_t);
-static void	bwn_nrssi_offset(struct bwn_mac *);
-static void	bwn_nrssi_threshold(struct bwn_mac *);
-static void	bwn_nrssi_slope_11g(struct bwn_mac *);
-static void	bwn_set_all_gains(struct bwn_mac *, int16_t, int16_t,
-		    int16_t);
-static void	bwn_set_original_gains(struct bwn_mac *);
-static void	bwn_hwpctl_early_init(struct bwn_mac *);
-static void	bwn_hwpctl_init_gphy(struct bwn_mac *);
-static uint16_t	bwn_phy_g_chan2freq(uint8_t);
 static int	bwn_fw_gets(struct bwn_mac *, enum bwn_fwtype);
 static int	bwn_fw_get(struct bwn_mac *, enum bwn_fwtype,
 		    const char *, struct bwn_fwfile *);
@@ -370,7 +279,6 @@ static void	bwn_do_release_fw(struct bwn_fwfile *);
 static uint16_t	bwn_fwcaps_read(struct bwn_mac *);
 static int	bwn_fwinitvals_write(struct bwn_mac *,
 		    const struct bwn_fwinitvals *, size_t, size_t);
-static int	bwn_switch_channel(struct bwn_mac *, int);
 static uint16_t	bwn_ant2phy(int);
 static void	bwn_mac_write_bssid(struct bwn_mac *);
 static void	bwn_mac_setfilter(struct bwn_mac *, uint16_t,
@@ -418,12 +326,6 @@ static void	bwn_plcp_genhdr(struct bwn_plcp4 *, const uint16_t,
 		    const uint8_t);
 static uint8_t	bwn_antenna_sanitize(struct bwn_mac *, uint8_t);
 static uint8_t	bwn_get_fbrate(uint8_t);
-static int	bwn_phy_shm_tssi_read(struct bwn_mac *, uint16_t);
-static void	bwn_phy_g_setatt(struct bwn_mac *, int *, int *);
-static void	bwn_phy_lock(struct bwn_mac *);
-static void	bwn_phy_unlock(struct bwn_mac *);
-static void	bwn_rf_lock(struct bwn_mac *);
-static void	bwn_rf_unlock(struct bwn_mac *);
 static void	bwn_txpwr(void *, int);
 static void	bwn_tasks(void *);
 static void	bwn_task_15s(struct bwn_mac *);
@@ -436,7 +338,6 @@ static void	bwn_rx_radiotap(struct bwn_mac *, struct mbuf *,
 		    const struct bwn_rxhdr4 *, struct bwn_plcp6 *, int,
 		    int, int);
 static void	bwn_tsf_read(struct bwn_mac *, uint64_t *);
-static void	bwn_phy_g_dc_lookup_init(struct bwn_mac *, uint8_t);
 static void	bwn_set_slot_time(struct bwn_mac *, uint16_t);
 static void	bwn_watchdog(void *);
 static void	bwn_dma_stop(struct bwn_mac *);
@@ -491,6 +392,7 @@ static const struct bwn_channelinfo bwn_chantable_a = {
 	.nchannels = 37
 };
 
+#if 0
 static const struct bwn_channelinfo bwn_chantable_n = {
 	.channels = {
 		{ 5160,  32, 30 }, { 5170,  34, 30 }, { 5180,  36, 30 },
@@ -532,13 +434,7 @@ static const struct bwn_channelinfo bwn_chantable_n = {
 		{ 6130, 226, 30 }, { 6140, 228, 30 } },
 	.nchannels = 110
 };
-
-static const uint16_t bwn_tab_noise_g1[] = BWN_TAB_NOISE_G1;
-static const uint16_t bwn_tab_noise_g2[] = BWN_TAB_NOISE_G2;
-static const uint16_t bwn_tab_noisescale_g1[] = BWN_TAB_NOISESCALE_G1;
-static const uint16_t bwn_tab_noisescale_g2[] = BWN_TAB_NOISESCALE_G2;
-static const uint16_t bwn_tab_noisescale_g3[] = BWN_TAB_NOISESCALE_G3;
-const uint8_t bwn_bitrev_table[256] = BWN_BITREV_TABLE;
+#endif
 
 #define	VENDOR_LED_ACT(vendor)				\
 {							\
@@ -592,6 +488,7 @@ static const struct siba_devid bwn_devs[] = {
 	SIBA_DEV(BROADCOM, 80211, 9, "Revision 9"),
 	SIBA_DEV(BROADCOM, 80211, 10, "Revision 10"),
 	SIBA_DEV(BROADCOM, 80211, 11, "Revision 11"),
+	SIBA_DEV(BROADCOM, 80211, 12, "Revision 12"),
 	SIBA_DEV(BROADCOM, 80211, 13, "Revision 13"),
 	SIBA_DEV(BROADCOM, 80211, 15, "Revision 15"),
 	SIBA_DEV(BROADCOM, 80211, 16, "Revision 16")
@@ -666,6 +563,11 @@ bwn_attach(device_t dev)
 		    mac->mac_method.dma.dmatype);
 	else
 		device_printf(sc->sc_dev, "PIO\n");
+
+#ifdef	BWN_GPL_PHY
+	device_printf(sc->sc_dev,
+	    "Note: compiled with BWN_GPL_PHY; includes GPLv2 code\n");
+#endif
 
 	/*
 	 * setup PCI resources and interrupt.
@@ -758,7 +660,9 @@ bwn_attach_post(struct bwn_softc *sc)
 		| IEEE80211_C_SHSLOT		/* short slot time supported */
 		| IEEE80211_C_WME		/* WME/WMM supported */
 		| IEEE80211_C_WPA		/* capable of WPA1+WPA2 */
+#if 0
 		| IEEE80211_C_BGSCAN		/* capable of bg scanning */
+#endif
 		| IEEE80211_C_TXPMGT		/* capable of txpow mgt */
 		;
 
@@ -1244,25 +1148,57 @@ bwn_attach_core(struct bwn_mac *mac)
 {
 	struct bwn_softc *sc = mac->mac_sc;
 	int error, have_bg = 0, have_a = 0;
-	uint32_t high;
 
 	KASSERT(siba_get_revid(sc->sc_dev) >= 5,
 	    ("unsupported revision %d", siba_get_revid(sc->sc_dev)));
 
-	siba_powerup(sc->sc_dev, 0);
+	if (bwn_is_bus_siba(mac)) {
+		uint32_t high;
 
-	high = siba_read_4(sc->sc_dev, SIBA_TGSHIGH);
-	bwn_reset_core(mac,
-	    (high & BWN_TGSHIGH_HAVE_2GHZ) ? BWN_TGSLOW_SUPPORT_G : 0);
-	error = bwn_phy_getinfo(mac, high);
+		siba_powerup(sc->sc_dev, 0);
+		high = siba_read_4(sc->sc_dev, SIBA_TGSHIGH);
+		have_a = (high & BWN_TGSHIGH_HAVE_5GHZ) ? 1 : 0;
+		have_bg = (high & BWN_TGSHIGH_HAVE_2GHZ) ? 1 : 0;
+		if (high & BWN_TGSHIGH_DUALPHY) {
+			have_bg = 1;
+			have_a = 1;
+		}
+	} else {
+		device_printf(sc->sc_dev, "%s: not siba; bailing\n", __func__);
+		error = ENXIO;
+		goto fail;
+	}
+
+	/*
+	 * Guess at whether it has A-PHY or G-PHY.
+	 * This is just used for resetting the core to probe things;
+	 * we will re-guess once it's all up and working.
+	 */
+	bwn_reset_core(mac, have_bg);
+
+	/*
+	 * Get the PHY version.
+	 */
+	error = bwn_phy_getinfo(mac, have_bg);
 	if (error)
 		goto fail;
 
-	have_a = (high & BWN_TGSHIGH_HAVE_5GHZ) ? 1 : 0;
-	have_bg = (high & BWN_TGSHIGH_HAVE_2GHZ) ? 1 : 0;
+#if 0
+	device_printf(sc->sc_dev, "%s: high=0x%08x, have_a=%d, have_bg=%d,"
+	    " deviceid=0x%04x, siba_deviceid=0x%04x\n",
+	    __func__,
+	    high,
+	    have_a,
+	    have_bg,
+	    siba_get_pci_device(sc->sc_dev),
+	    siba_get_chipid(sc->sc_dev));
+#endif
+
 	if (siba_get_pci_device(sc->sc_dev) != 0x4312 &&
 	    siba_get_pci_device(sc->sc_dev) != 0x4319 &&
-	    siba_get_pci_device(sc->sc_dev) != 0x4324) {
+	    siba_get_pci_device(sc->sc_dev) != 0x4324 &&
+	    siba_get_pci_device(sc->sc_dev) != 0x4328 &&
+	    siba_get_pci_device(sc->sc_dev) != 0x432b) {
 		have_a = have_bg = 0;
 		if (mac->mac_phy.type == BWN_PHYTYPE_A)
 			have_a = 1;
@@ -1274,12 +1210,20 @@ bwn_attach_core(struct bwn_mac *mac)
 			KASSERT(0 == 1, ("%s: unknown phy type (%d)", __func__,
 			    mac->mac_phy.type));
 	}
-	/* XXX turns off PHY A because it's not supported */
+
+	/*
+	 * XXX The PHY-G support doesn't do 5GHz operation.
+	 */
 	if (mac->mac_phy.type != BWN_PHYTYPE_LP &&
 	    mac->mac_phy.type != BWN_PHYTYPE_N) {
+		device_printf(sc->sc_dev,
+		    "%s: forcing 2GHz only; no dual-band support for PHY\n",
+		    __func__);
 		have_a = 0;
 		have_bg = 1;
 	}
+
+	mac->mac_phy.phy_n = NULL;
 
 	if (mac->mac_phy.type == BWN_PHYTYPE_G) {
 		mac->mac_phy.attach = bwn_phy_g_attach;
@@ -1317,6 +1261,28 @@ bwn_attach_core(struct bwn_mac *mac)
 		mac->mac_phy.get_default_chan = bwn_phy_lp_get_default_chan;
 		mac->mac_phy.set_antenna = bwn_phy_lp_set_antenna;
 		mac->mac_phy.task_60s = bwn_phy_lp_task_60s;
+	} else if (mac->mac_phy.type == BWN_PHYTYPE_N) {
+		mac->mac_phy.attach = bwn_phy_n_attach;
+		mac->mac_phy.detach = bwn_phy_n_detach;
+		mac->mac_phy.prepare_hw = bwn_phy_n_prepare_hw;
+		mac->mac_phy.init_pre = bwn_phy_n_init_pre;
+		mac->mac_phy.init = bwn_phy_n_init;
+		mac->mac_phy.exit = bwn_phy_n_exit;
+		mac->mac_phy.phy_read = bwn_phy_n_read;
+		mac->mac_phy.phy_write = bwn_phy_n_write;
+		mac->mac_phy.rf_read = bwn_phy_n_rf_read;
+		mac->mac_phy.rf_write = bwn_phy_n_rf_write;
+		mac->mac_phy.use_hwpctl = bwn_phy_n_hwpctl;
+		mac->mac_phy.rf_onoff = bwn_phy_n_rf_onoff;
+		mac->mac_phy.switch_analog = bwn_phy_n_switch_analog;
+		mac->mac_phy.switch_channel = bwn_phy_n_switch_channel;
+		mac->mac_phy.get_default_chan = bwn_phy_n_get_default_chan;
+		mac->mac_phy.set_antenna = bwn_phy_n_set_antenna;
+		mac->mac_phy.set_im = bwn_phy_n_im;
+		mac->mac_phy.recalc_txpwr = bwn_phy_n_recalc_txpwr;
+		mac->mac_phy.set_txpwr = bwn_phy_n_set_txpwr;
+		mac->mac_phy.task_15s = bwn_phy_n_task_15s;
+		mac->mac_phy.task_60s = bwn_phy_n_task_60s;
 	} else {
 		device_printf(sc->sc_dev, "unsupported PHY type (%d)\n",
 		    mac->mac_phy.type);
@@ -1333,7 +1299,7 @@ bwn_attach_core(struct bwn_mac *mac)
 		}
 	}
 
-	bwn_reset_core(mac, have_bg ? BWN_TGSLOW_SUPPORT_G : 0);
+	bwn_reset_core(mac, have_bg);
 
 	error = bwn_chiptest(mac);
 	if (error)
@@ -1361,37 +1327,54 @@ fail:
 	return (error);
 }
 
-static void
-bwn_reset_core(struct bwn_mac *mac, uint32_t flags)
+/*
+ * Reset - SIBA.
+ *
+ * XXX TODO: implement BCMA version!
+ */
+void
+bwn_reset_core(struct bwn_mac *mac, int g_mode)
 {
 	struct bwn_softc *sc = mac->mac_sc;
 	uint32_t low, ctl;
+	uint32_t flags = 0;
+
+	DPRINTF(sc, BWN_DEBUG_RESET, "%s: g_mode=%d\n", __func__, g_mode);
 
 	flags |= (BWN_TGSLOW_PHYCLOCK_ENABLE | BWN_TGSLOW_PHYRESET);
+	if (g_mode)
+		flags |= BWN_TGSLOW_SUPPORT_G;
+
+	/* XXX N-PHY only; and hard-code to 20MHz for now */
+	if (mac->mac_phy.type == BWN_PHYTYPE_N)
+		flags |= BWN_TGSLOW_PHY_BANDWIDTH_20MHZ;
 
 	siba_dev_up(sc->sc_dev, flags);
 	DELAY(2000);
 
+	/* Take PHY out of reset */
 	low = (siba_read_4(sc->sc_dev, SIBA_TGSLOW) | SIBA_TGSLOW_FGC) &
-	    ~BWN_TGSLOW_PHYRESET;
+	    ~(BWN_TGSLOW_PHYRESET | BWN_TGSLOW_PHYCLOCK_ENABLE);
 	siba_write_4(sc->sc_dev, SIBA_TGSLOW, low);
 	siba_read_4(sc->sc_dev, SIBA_TGSLOW);
-	DELAY(1000);
-	siba_write_4(sc->sc_dev, SIBA_TGSLOW, low & ~SIBA_TGSLOW_FGC);
+	DELAY(2000);
+	low &= ~SIBA_TGSLOW_FGC;
+	low |= BWN_TGSLOW_PHYCLOCK_ENABLE;
+	siba_write_4(sc->sc_dev, SIBA_TGSLOW, low);
 	siba_read_4(sc->sc_dev, SIBA_TGSLOW);
-	DELAY(1000);
+	DELAY(2000);
 
 	if (mac->mac_phy.switch_analog != NULL)
 		mac->mac_phy.switch_analog(mac, 1);
 
 	ctl = BWN_READ_4(mac, BWN_MACCTL) & ~BWN_MACCTL_GMODE;
-	if (flags & BWN_TGSLOW_SUPPORT_G)
+	if (g_mode)
 		ctl |= BWN_MACCTL_GMODE;
 	BWN_WRITE_4(mac, BWN_MACCTL, ctl | BWN_MACCTL_IHR_ON);
 }
 
 static int
-bwn_phy_getinfo(struct bwn_mac *mac, int tgshigh)
+bwn_phy_getinfo(struct bwn_mac *mac, int gmode)
 {
 	struct bwn_phy *phy = &mac->mac_phy;
 	struct bwn_softc *sc = mac->mac_sc;
@@ -1399,7 +1382,7 @@ bwn_phy_getinfo(struct bwn_mac *mac, int tgshigh)
 
 	/* PHY */
 	tmp = BWN_READ_2(mac, BWN_PHYVER);
-	phy->gmode = (tgshigh & BWN_TGSHIGH_HAVE_2GHZ) ? 1 : 0;
+	phy->gmode = gmode;
 	phy->rf_on = 1;
 	phy->analog = (tmp & BWN_PHYVER_ANALOG) >> 12;
 	phy->type = (tmp & BWN_PHYVER_TYPE) >> 8;
@@ -1429,6 +1412,13 @@ bwn_phy_getinfo(struct bwn_mac *mac, int tgshigh)
 	phy->rf_rev = (tmp & 0xf0000000) >> 28;
 	phy->rf_ver = (tmp & 0x0ffff000) >> 12;
 	phy->rf_manuf = (tmp & 0x00000fff);
+
+	/*
+	 * For now, just always do full init (ie, what bwn has traditionally
+	 * done)
+	 */
+	phy->phy_do_full_init = 1;
+
 	if (phy->rf_manuf != 0x17f)	/* 0x17f is broadcom */
 		goto unsupradio;
 	if ((phy->type == BWN_PHYTYPE_A && (phy->rf_ver != 0x2060 ||
@@ -1498,31 +1488,34 @@ error:
 	return (ENODEV);
 }
 
-#define	IEEE80211_CHAN_HTG	(IEEE80211_CHAN_HT | IEEE80211_CHAN_G)
-#define	IEEE80211_CHAN_HTA	(IEEE80211_CHAN_HT | IEEE80211_CHAN_A)
-
 static int
 bwn_setup_channels(struct bwn_mac *mac, int have_bg, int have_a)
 {
 	struct bwn_softc *sc = mac->mac_sc;
 	struct ieee80211com *ic = &sc->sc_ic;
+	uint8_t bands[IEEE80211_MODE_BYTES];
 
 	memset(ic->ic_channels, 0, sizeof(ic->ic_channels));
 	ic->ic_nchans = 0;
 
-	if (have_bg)
+	DPRINTF(sc, BWN_DEBUG_EEPROM, "%s: called; bg=%d, a=%d\n",
+	    __func__,
+	    have_bg,
+	    have_a);
+
+	if (have_bg) {
+		memset(bands, 0, sizeof(bands));
+		setbit(bands, IEEE80211_MODE_11B);
+		setbit(bands, IEEE80211_MODE_11G);
 		bwn_addchannels(ic->ic_channels, IEEE80211_CHAN_MAX,
-		    &ic->ic_nchans, &bwn_chantable_bg, IEEE80211_CHAN_G);
-	if (mac->mac_phy.type == BWN_PHYTYPE_N) {
-		if (have_a)
-			bwn_addchannels(ic->ic_channels, IEEE80211_CHAN_MAX,
-			    &ic->ic_nchans, &bwn_chantable_n,
-			    IEEE80211_CHAN_HTA);
-	} else {
-		if (have_a)
-			bwn_addchannels(ic->ic_channels, IEEE80211_CHAN_MAX,
-			    &ic->ic_nchans, &bwn_chantable_a,
-			    IEEE80211_CHAN_A);
+		    &ic->ic_nchans, &bwn_chantable_bg, bands);
+	}
+
+	if (have_a) {
+		memset(bands, 0, sizeof(bands));
+		setbit(bands, IEEE80211_MODE_11A);
+		bwn_addchannels(ic->ic_channels, IEEE80211_CHAN_MAX,
+		    &ic->ic_nchans, &bwn_chantable_a, bands);
 	}
 
 	mac->mac_phy.supports_2ghz = have_bg;
@@ -1531,7 +1524,7 @@ bwn_setup_channels(struct bwn_mac *mac, int have_bg, int have_a)
 	return (ic->ic_nchans == 0 ? ENXIO : 0);
 }
 
-static uint32_t
+uint32_t
 bwn_shm_read_4(struct bwn_mac *mac, uint16_t way, uint16_t offset)
 {
 	uint32_t ret;
@@ -1557,7 +1550,7 @@ out:
 	return (ret);
 }
 
-static uint16_t
+uint16_t
 bwn_shm_read_2(struct bwn_mac *mac, uint16_t way, uint16_t offset)
 {
 	uint16_t ret;
@@ -1593,7 +1586,7 @@ bwn_shm_ctlword(struct bwn_mac *mac, uint16_t way,
 	BWN_WRITE_4(mac, BWN_SHM_CONTROL, control);
 }
 
-static void
+void
 bwn_shm_write_4(struct bwn_mac *mac, uint16_t way, uint16_t offset,
     uint32_t value)
 {
@@ -1616,7 +1609,7 @@ bwn_shm_write_4(struct bwn_mac *mac, uint16_t way, uint16_t offset,
 	BWN_WRITE_4(mac, BWN_SHM_DATA, value);
 }
 
-static void
+void
 bwn_shm_write_2(struct bwn_mac *mac, uint16_t way, uint16_t offset,
     uint16_t value)
 {
@@ -1637,741 +1630,17 @@ bwn_shm_write_2(struct bwn_mac *mac, uint16_t way, uint16_t offset,
 }
 
 static void
-bwn_addchan(struct ieee80211_channel *c, int freq, int flags, int ieee,
-    int txpow)
-{
-
-	c->ic_freq = freq;
-	c->ic_flags = flags;
-	c->ic_ieee = ieee;
-	c->ic_minpower = 0;
-	c->ic_maxpower = 2 * txpow;
-	c->ic_maxregpower = txpow;
-}
-
-static void
 bwn_addchannels(struct ieee80211_channel chans[], int maxchans, int *nchans,
-    const struct bwn_channelinfo *ci, int flags)
+    const struct bwn_channelinfo *ci, const uint8_t bands[])
 {
-	struct ieee80211_channel *c;
-	int i;
+	int i, error;
 
-	c = &chans[*nchans];
+	for (i = 0, error = 0; i < ci->nchannels && error == 0; i++) {
+		const struct bwn_channel *hc = &ci->channels[i];
 
-	for (i = 0; i < ci->nchannels; i++) {
-		const struct bwn_channel *hc;
-
-		hc = &ci->channels[i];
-		if (*nchans >= maxchans)
-			break;
-		bwn_addchan(c, hc->freq, flags, hc->ieee, hc->maxTxPow);
-		c++, (*nchans)++;
-		if (flags == IEEE80211_CHAN_G || flags == IEEE80211_CHAN_HTG) {
-			/* g channel have a separate b-only entry */
-			if (*nchans >= maxchans)
-				break;
-			c[0] = c[-1];
-			c[-1].ic_flags = IEEE80211_CHAN_B;
-			c++, (*nchans)++;
-		}
-		if (flags == IEEE80211_CHAN_HTG) {
-			/* HT g channel have a separate g-only entry */
-			if (*nchans >= maxchans)
-				break;
-			c[-1].ic_flags = IEEE80211_CHAN_G;
-			c[0] = c[-1];
-			c[0].ic_flags &= ~IEEE80211_CHAN_HT;
-			c[0].ic_flags |= IEEE80211_CHAN_HT20;	/* HT20 */
-			c++, (*nchans)++;
-		}
-		if (flags == IEEE80211_CHAN_HTA) {
-			/* HT a channel have a separate a-only entry */
-			if (*nchans >= maxchans)
-				break;
-			c[-1].ic_flags = IEEE80211_CHAN_A;
-			c[0] = c[-1];
-			c[0].ic_flags &= ~IEEE80211_CHAN_HT;
-			c[0].ic_flags |= IEEE80211_CHAN_HT20;	/* HT20 */
-			c++, (*nchans)++;
-		}
+		error = ieee80211_add_channel(chans, maxchans, nchans,
+		    hc->ieee, hc->freq, hc->maxTxPow, 0, bands);
 	}
-}
-
-static int
-bwn_phy_g_attach(struct bwn_mac *mac)
-{
-	struct bwn_softc *sc = mac->mac_sc;
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	unsigned int i;
-	int16_t pab0, pab1, pab2;
-	static int8_t bwn_phy_g_tssi2dbm_table[] = BWN_PHY_G_TSSI2DBM_TABLE;
-	int8_t bg;
-
-	bg = (int8_t)siba_sprom_get_tssi_bg(sc->sc_dev);
-	pab0 = (int16_t)siba_sprom_get_pa0b0(sc->sc_dev);
-	pab1 = (int16_t)siba_sprom_get_pa0b1(sc->sc_dev);
-	pab2 = (int16_t)siba_sprom_get_pa0b2(sc->sc_dev);
-
-	if ((siba_get_chipid(sc->sc_dev) == 0x4301) && (phy->rf_ver != 0x2050))
-		device_printf(sc->sc_dev, "not supported anymore\n");
-
-	pg->pg_flags = 0;
-	if (pab0 == 0 || pab1 == 0 || pab2 == 0 || pab0 == -1 || pab1 == -1 ||
-	    pab2 == -1) {
-		pg->pg_idletssi = 52;
-		pg->pg_tssi2dbm = bwn_phy_g_tssi2dbm_table;
-		return (0);
-	}
-
-	pg->pg_idletssi = (bg == 0 || bg == -1) ? 62 : bg;
-	pg->pg_tssi2dbm = (uint8_t *)malloc(64, M_DEVBUF, M_NOWAIT | M_ZERO);
-	if (pg->pg_tssi2dbm == NULL) {
-		device_printf(sc->sc_dev, "failed to allocate buffer\n");
-		return (ENOMEM);
-	}
-	for (i = 0; i < 64; i++) {
-		int32_t m1, m2, f, q, delta;
-		int8_t j = 0;
-
-		m1 = BWN_TSSI2DBM(16 * pab0 + i * pab1, 32);
-		m2 = MAX(BWN_TSSI2DBM(32768 + i * pab2, 256), 1);
-		f = 256;
-
-		do {
-			if (j > 15) {
-				device_printf(sc->sc_dev,
-				    "failed to generate tssi2dBm\n");
-				free(pg->pg_tssi2dbm, M_DEVBUF);
-				return (ENOMEM);
-			}
-			q = BWN_TSSI2DBM(f * 4096 - BWN_TSSI2DBM(m2 * f, 16) *
-			    f, 2048);
-			delta = abs(q - f);
-			f = q;
-			j++;
-		} while (delta >= 2);
-
-		pg->pg_tssi2dbm[i] = MIN(MAX(BWN_TSSI2DBM(m1 * f, 8192), -127),
-		    128);
-	}
-
-	pg->pg_flags |= BWN_PHY_G_FLAG_TSSITABLE_ALLOC;
-	return (0);
-}
-
-static void
-bwn_phy_g_detach(struct bwn_mac *mac)
-{
-	struct bwn_phy_g *pg = &mac->mac_phy.phy_g;
-
-	if (pg->pg_flags & BWN_PHY_G_FLAG_TSSITABLE_ALLOC) {
-		free(pg->pg_tssi2dbm, M_DEVBUF);
-		pg->pg_tssi2dbm = NULL;
-	}
-	pg->pg_flags = 0;
-}
-
-static void
-bwn_phy_g_init_pre(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	void *tssi2dbm;
-	int idletssi;
-	unsigned int i;
-
-	tssi2dbm = pg->pg_tssi2dbm;
-	idletssi = pg->pg_idletssi;
-
-	memset(pg, 0, sizeof(*pg));
-
-	pg->pg_tssi2dbm = tssi2dbm;
-	pg->pg_idletssi = idletssi;
-
-	memset(pg->pg_minlowsig, 0xff, sizeof(pg->pg_minlowsig));
-
-	for (i = 0; i < N(pg->pg_nrssi); i++)
-		pg->pg_nrssi[i] = -1000;
-	for (i = 0; i < N(pg->pg_nrssi_lt); i++)
-		pg->pg_nrssi_lt[i] = i;
-	pg->pg_lofcal = 0xffff;
-	pg->pg_initval = 0xffff;
-	pg->pg_immode = BWN_IMMODE_NONE;
-	pg->pg_ofdmtab_dir = BWN_OFDMTAB_DIR_UNKNOWN;
-	pg->pg_avgtssi = 0xff;
-
-	pg->pg_loctl.tx_bias = 0xff;
-	TAILQ_INIT(&pg->pg_loctl.calib_list);
-}
-
-static int
-bwn_phy_g_prepare_hw(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	struct bwn_txpwr_loctl *lo = &pg->pg_loctl;
-	static const struct bwn_rfatt rfatt0[] = {
-		{ 3, 0 }, { 1, 0 }, { 5, 0 }, { 7, 0 },	{ 9, 0 }, { 2, 0 },
-		{ 0, 0 }, { 4, 0 }, { 6, 0 }, { 8, 0 }, { 1, 1 }, { 2, 1 },
-		{ 3, 1 }, { 4, 1 }
-	};
-	static const struct bwn_rfatt rfatt1[] = {
-		{ 2, 1 }, { 4, 1 }, { 6, 1 }, { 8, 1 }, { 10, 1 }, { 12, 1 },
-		{ 14, 1 }
-	};
-	static const struct bwn_rfatt rfatt2[] = {
-		{ 0, 1 }, { 2, 1 }, { 4, 1 }, { 6, 1 }, { 8, 1 }, { 9, 1 },
-		{ 9, 1 }
-	};
-	static const struct bwn_bbatt bbatt_0[] = {
-		{ 0 }, { 1 }, { 2 }, { 3 }, { 4 }, { 5 }, { 6 }, { 7 }, { 8 }
-	};
-
-	KASSERT(phy->type == BWN_PHYTYPE_G, ("%s fail", __func__));
-
-	if (phy->rf_ver == 0x2050 && phy->rf_rev < 6)
-		pg->pg_bbatt.att = 0;
-	else
-		pg->pg_bbatt.att = 2;
-
-	/* prepare Radio Attenuation */
-	pg->pg_rfatt.padmix = 0;
-
-	if (siba_get_pci_subvendor(sc->sc_dev) == SIBA_BOARDVENDOR_BCM &&
-	    siba_get_pci_subdevice(sc->sc_dev) == SIBA_BOARD_BCM4309G) {
-		if (siba_get_pci_revid(sc->sc_dev) < 0x43) {
-			pg->pg_rfatt.att = 2;
-			goto done;
-		} else if (siba_get_pci_revid(sc->sc_dev) < 0x51) {
-			pg->pg_rfatt.att = 3;
-			goto done;
-		}
-	}
-
-	if (phy->type == BWN_PHYTYPE_A) {
-		pg->pg_rfatt.att = 0x60;
-		goto done;
-	}
-
-	switch (phy->rf_ver) {
-	case 0x2050:
-		switch (phy->rf_rev) {
-		case 0:
-			pg->pg_rfatt.att = 5;
-			goto done;
-		case 1:
-			if (phy->type == BWN_PHYTYPE_G) {
-				if (siba_get_pci_subvendor(sc->sc_dev) ==
-				    SIBA_BOARDVENDOR_BCM &&
-				    siba_get_pci_subdevice(sc->sc_dev) ==
-				    SIBA_BOARD_BCM4309G &&
-				    siba_get_pci_revid(sc->sc_dev) >= 30)
-					pg->pg_rfatt.att = 3;
-				else if (siba_get_pci_subvendor(sc->sc_dev) ==
-				    SIBA_BOARDVENDOR_BCM &&
-				    siba_get_pci_subdevice(sc->sc_dev) ==
-				    SIBA_BOARD_BU4306)
-					pg->pg_rfatt.att = 3;
-				else
-					pg->pg_rfatt.att = 1;
-			} else {
-				if (siba_get_pci_subvendor(sc->sc_dev) ==
-				    SIBA_BOARDVENDOR_BCM &&
-				    siba_get_pci_subdevice(sc->sc_dev) ==
-				    SIBA_BOARD_BCM4309G &&
-				    siba_get_pci_revid(sc->sc_dev) >= 30)
-					pg->pg_rfatt.att = 7;
-				else
-					pg->pg_rfatt.att = 6;
-			}
-			goto done;
-		case 2:
-			if (phy->type == BWN_PHYTYPE_G) {
-				if (siba_get_pci_subvendor(sc->sc_dev) ==
-				    SIBA_BOARDVENDOR_BCM &&
-				    siba_get_pci_subdevice(sc->sc_dev) ==
-				    SIBA_BOARD_BCM4309G &&
-				    siba_get_pci_revid(sc->sc_dev) >= 30)
-					pg->pg_rfatt.att = 3;
-				else if (siba_get_pci_subvendor(sc->sc_dev) ==
-				    SIBA_BOARDVENDOR_BCM &&
-				    siba_get_pci_subdevice(sc->sc_dev) ==
-				    SIBA_BOARD_BU4306)
-					pg->pg_rfatt.att = 5;
-				else if (siba_get_chipid(sc->sc_dev) == 0x4320)
-					pg->pg_rfatt.att = 4;
-				else
-					pg->pg_rfatt.att = 3;
-			} else
-				pg->pg_rfatt.att = 6;
-			goto done;
-		case 3:
-			pg->pg_rfatt.att = 5;
-			goto done;
-		case 4:
-		case 5:
-			pg->pg_rfatt.att = 1;
-			goto done;
-		case 6:
-		case 7:
-			pg->pg_rfatt.att = 5;
-			goto done;
-		case 8:
-			pg->pg_rfatt.att = 0xa;
-			pg->pg_rfatt.padmix = 1;
-			goto done;
-		case 9:
-		default:
-			pg->pg_rfatt.att = 5;
-			goto done;
-		}
-		break;
-	case 0x2053:
-		switch (phy->rf_rev) {
-		case 1:
-			pg->pg_rfatt.att = 6;
-			goto done;
-		}
-		break;
-	}
-	pg->pg_rfatt.att = 5;
-done:
-	pg->pg_txctl = (bwn_phy_g_txctl(mac) << 4);
-
-	if (!bwn_has_hwpctl(mac)) {
-		lo->rfatt.array = rfatt0;
-		lo->rfatt.len = N(rfatt0);
-		lo->rfatt.min = 0;
-		lo->rfatt.max = 9;
-		goto genbbatt;
-	}
-	if (phy->rf_ver == 0x2050 && phy->rf_rev == 8) {
-		lo->rfatt.array = rfatt1;
-		lo->rfatt.len = N(rfatt1);
-		lo->rfatt.min = 0;
-		lo->rfatt.max = 14;
-		goto genbbatt;
-	}
-	lo->rfatt.array = rfatt2;
-	lo->rfatt.len = N(rfatt2);
-	lo->rfatt.min = 0;
-	lo->rfatt.max = 9;
-genbbatt:
-	lo->bbatt.array = bbatt_0;
-	lo->bbatt.len = N(bbatt_0);
-	lo->bbatt.min = 0;
-	lo->bbatt.max = 8;
-
-	BWN_READ_4(mac, BWN_MACCTL);
-	if (phy->rev == 1) {
-		phy->gmode = 0;
-		bwn_reset_core(mac, 0);
-		bwn_phy_g_init_sub(mac);
-		phy->gmode = 1;
-		bwn_reset_core(mac, BWN_TGSLOW_SUPPORT_G);
-	}
-	return (0);
-}
-
-static uint16_t
-bwn_phy_g_txctl(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-
-	if (phy->rf_ver != 0x2050)
-		return (0);
-	if (phy->rf_rev == 1)
-		return (BWN_TXCTL_PA2DB | BWN_TXCTL_TXMIX);
-	if (phy->rf_rev < 6)
-		return (BWN_TXCTL_PA2DB);
-	if (phy->rf_rev == 8)
-		return (BWN_TXCTL_TXMIX);
-	return (0);
-}
-
-static int
-bwn_phy_g_init(struct bwn_mac *mac)
-{
-
-	bwn_phy_g_init_sub(mac);
-	return (0);
-}
-
-static void
-bwn_phy_g_exit(struct bwn_mac *mac)
-{
-	struct bwn_txpwr_loctl *lo = &mac->mac_phy.phy_g.pg_loctl;
-	struct bwn_lo_calib *cal, *tmp;
-
-	if (lo == NULL)
-		return;
-	TAILQ_FOREACH_SAFE(cal, &lo->calib_list, list, tmp) {
-		TAILQ_REMOVE(&lo->calib_list, cal, list);
-		free(cal, M_DEVBUF);
-	}
-}
-
-static uint16_t
-bwn_phy_g_read(struct bwn_mac *mac, uint16_t reg)
-{
-
-	BWN_WRITE_2(mac, BWN_PHYCTL, reg);
-	return (BWN_READ_2(mac, BWN_PHYDATA));
-}
-
-static void
-bwn_phy_g_write(struct bwn_mac *mac, uint16_t reg, uint16_t value)
-{
-
-	BWN_WRITE_2(mac, BWN_PHYCTL, reg);
-	BWN_WRITE_2(mac, BWN_PHYDATA, value);
-}
-
-static uint16_t
-bwn_phy_g_rf_read(struct bwn_mac *mac, uint16_t reg)
-{
-
-	KASSERT(reg != 1, ("%s:%d: fail", __func__, __LINE__));
-	BWN_WRITE_2(mac, BWN_RFCTL, reg | 0x80);
-	return (BWN_READ_2(mac, BWN_RFDATALO));
-}
-
-static void
-bwn_phy_g_rf_write(struct bwn_mac *mac, uint16_t reg, uint16_t value)
-{
-
-	KASSERT(reg != 1, ("%s:%d: fail", __func__, __LINE__));
-	BWN_WRITE_2(mac, BWN_RFCTL, reg);
-	BWN_WRITE_2(mac, BWN_RFDATALO, value);
-}
-
-static int
-bwn_phy_g_hwpctl(struct bwn_mac *mac)
-{
-
-	return (mac->mac_phy.rev >= 6);
-}
-
-static void
-bwn_phy_g_rf_onoff(struct bwn_mac *mac, int on)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	unsigned int channel;
-	uint16_t rfover, rfoverval;
-
-	if (on) {
-		if (phy->rf_on)
-			return;
-
-		BWN_PHY_WRITE(mac, 0x15, 0x8000);
-		BWN_PHY_WRITE(mac, 0x15, 0xcc00);
-		BWN_PHY_WRITE(mac, 0x15, (phy->gmode ? 0xc0 : 0x0));
-		if (pg->pg_flags & BWN_PHY_G_FLAG_RADIOCTX_VALID) {
-			BWN_PHY_WRITE(mac, BWN_PHY_RFOVER,
-			    pg->pg_radioctx_over);
-			BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-			    pg->pg_radioctx_overval);
-			pg->pg_flags &= ~BWN_PHY_G_FLAG_RADIOCTX_VALID;
-		}
-		channel = phy->chan;
-		bwn_phy_g_switch_chan(mac, 6, 1);
-		bwn_phy_g_switch_chan(mac, channel, 0);
-		return;
-	}
-
-	rfover = BWN_PHY_READ(mac, BWN_PHY_RFOVER);
-	rfoverval = BWN_PHY_READ(mac, BWN_PHY_RFOVERVAL);
-	pg->pg_radioctx_over = rfover;
-	pg->pg_radioctx_overval = rfoverval;
-	pg->pg_flags |= BWN_PHY_G_FLAG_RADIOCTX_VALID;
-	BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, rfover | 0x008c);
-	BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, rfoverval & 0xff73);
-}
-
-static int
-bwn_phy_g_switch_channel(struct bwn_mac *mac, uint32_t newchan)
-{
-
-	if ((newchan < 1) || (newchan > 14))
-		return (EINVAL);
-	bwn_phy_g_switch_chan(mac, newchan, 0);
-
-	return (0);
-}
-
-static uint32_t
-bwn_phy_g_get_default_chan(struct bwn_mac *mac)
-{
-
-	return (1);
-}
-
-static void
-bwn_phy_g_set_antenna(struct bwn_mac *mac, int antenna)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	uint64_t hf;
-	int autodiv = 0;
-	uint16_t tmp;
-
-	if (antenna == BWN_ANTAUTO0 || antenna == BWN_ANTAUTO1)
-		autodiv = 1;
-
-	hf = bwn_hf_read(mac) & ~BWN_HF_UCODE_ANTDIV_HELPER;
-	bwn_hf_write(mac, hf);
-
-	BWN_PHY_WRITE(mac, BWN_PHY_BBANDCFG,
-	    (BWN_PHY_READ(mac, BWN_PHY_BBANDCFG) & ~BWN_PHY_BBANDCFG_RXANT) |
-	    ((autodiv ? BWN_ANTAUTO1 : antenna)
-		<< BWN_PHY_BBANDCFG_RXANT_SHIFT));
-
-	if (autodiv) {
-		tmp = BWN_PHY_READ(mac, BWN_PHY_ANTDWELL);
-		if (antenna == BWN_ANTAUTO1)
-			tmp &= ~BWN_PHY_ANTDWELL_AUTODIV1;
-		else
-			tmp |= BWN_PHY_ANTDWELL_AUTODIV1;
-		BWN_PHY_WRITE(mac, BWN_PHY_ANTDWELL, tmp);
-	}
-	tmp = BWN_PHY_READ(mac, BWN_PHY_ANTWRSETT);
-	if (autodiv)
-		tmp |= BWN_PHY_ANTWRSETT_ARXDIV;
-	else
-		tmp &= ~BWN_PHY_ANTWRSETT_ARXDIV;
-	BWN_PHY_WRITE(mac, BWN_PHY_ANTWRSETT, tmp);
-	if (phy->rev >= 2) {
-		BWN_PHY_WRITE(mac, BWN_PHY_OFDM61,
-		    BWN_PHY_READ(mac, BWN_PHY_OFDM61) | BWN_PHY_OFDM61_10);
-		BWN_PHY_WRITE(mac, BWN_PHY_DIVSRCHGAINBACK,
-		    (BWN_PHY_READ(mac, BWN_PHY_DIVSRCHGAINBACK) & 0xff00) |
-		    0x15);
-		if (phy->rev == 2)
-			BWN_PHY_WRITE(mac, BWN_PHY_ADIVRELATED, 8);
-		else
-			BWN_PHY_WRITE(mac, BWN_PHY_ADIVRELATED,
-			    (BWN_PHY_READ(mac, BWN_PHY_ADIVRELATED) & 0xff00) |
-			    8);
-	}
-	if (phy->rev >= 6)
-		BWN_PHY_WRITE(mac, BWN_PHY_OFDM9B, 0xdc);
-
-	hf |= BWN_HF_UCODE_ANTDIV_HELPER;
-	bwn_hf_write(mac, hf);
-}
-
-static int
-bwn_phy_g_im(struct bwn_mac *mac, int mode)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-
-	KASSERT(phy->type == BWN_PHYTYPE_G, ("%s: fail", __func__));
-	KASSERT(mode == BWN_IMMODE_NONE, ("%s: fail", __func__));
-
-	if (phy->rev == 0 || !phy->gmode)
-		return (ENODEV);
-
-	pg->pg_aci_wlan_automatic = 0;
-	return (0);
-}
-
-static int
-bwn_phy_g_recalc_txpwr(struct bwn_mac *mac, int ignore_tssi)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	unsigned int tssi;
-	int cck, ofdm;
-	int power;
-	int rfatt, bbatt;
-	unsigned int max;
-
-	KASSERT(phy->type == BWN_PHYTYPE_G, ("%s: fail", __func__));
-
-	cck = bwn_phy_shm_tssi_read(mac, BWN_SHARED_TSSI_CCK);
-	ofdm = bwn_phy_shm_tssi_read(mac, BWN_SHARED_TSSI_OFDM_G);
-	if (cck < 0 && ofdm < 0) {
-		if (ignore_tssi == 0)
-			return (BWN_TXPWR_RES_DONE);
-		cck = 0;
-		ofdm = 0;
-	}
-	tssi = (cck < 0) ? ofdm : ((ofdm < 0) ? cck : (cck + ofdm) / 2);
-	if (pg->pg_avgtssi != 0xff)
-		tssi = (tssi + pg->pg_avgtssi) / 2;
-	pg->pg_avgtssi = tssi;
-	KASSERT(tssi < BWN_TSSI_MAX, ("%s:%d: fail", __func__, __LINE__));
-
-	max = siba_sprom_get_maxpwr_bg(sc->sc_dev);
-	if (siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_PACTRL)
-		max -= 3;
-	if (max >= 120) {
-		device_printf(sc->sc_dev, "invalid max TX-power value\n");
-		max = 80;
-		siba_sprom_set_maxpwr_bg(sc->sc_dev, max);
-	}
-
-	power = MIN(MAX((phy->txpower < 0) ? 0 : (phy->txpower << 2), 0), max) -
-	    (pg->pg_tssi2dbm[MIN(MAX(pg->pg_idletssi - pg->pg_curtssi +
-	     tssi, 0x00), 0x3f)]);
-	if (power == 0)
-		return (BWN_TXPWR_RES_DONE);
-
-	rfatt = -((power + 7) / 8);
-	bbatt = (-(power / 2)) - (4 * rfatt);
-	if ((rfatt == 0) && (bbatt == 0))
-		return (BWN_TXPWR_RES_DONE);
-	pg->pg_bbatt_delta = bbatt;
-	pg->pg_rfatt_delta = rfatt;
-	return (BWN_TXPWR_RES_NEED_ADJUST);
-}
-
-static void
-bwn_phy_g_set_txpwr(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	int rfatt, bbatt;
-	uint8_t txctl;
-
-	bwn_mac_suspend(mac);
-
-	BWN_ASSERT_LOCKED(sc);
-
-	bbatt = pg->pg_bbatt.att;
-	bbatt += pg->pg_bbatt_delta;
-	rfatt = pg->pg_rfatt.att;
-	rfatt += pg->pg_rfatt_delta;
-
-	bwn_phy_g_setatt(mac, &bbatt, &rfatt);
-	txctl = pg->pg_txctl;
-	if ((phy->rf_ver == 0x2050) && (phy->rf_rev == 2)) {
-		if (rfatt <= 1) {
-			if (txctl == 0) {
-				txctl = BWN_TXCTL_PA2DB | BWN_TXCTL_TXMIX;
-				rfatt += 2;
-				bbatt += 2;
-			} else if (siba_sprom_get_bf_lo(sc->sc_dev) &
-			    BWN_BFL_PACTRL) {
-				bbatt += 4 * (rfatt - 2);
-				rfatt = 2;
-			}
-		} else if (rfatt > 4 && txctl) {
-			txctl = 0;
-			if (bbatt < 3) {
-				rfatt -= 3;
-				bbatt += 2;
-			} else {
-				rfatt -= 2;
-				bbatt -= 2;
-			}
-		}
-	}
-	pg->pg_txctl = txctl;
-	bwn_phy_g_setatt(mac, &bbatt, &rfatt);
-	pg->pg_rfatt.att = rfatt;
-	pg->pg_bbatt.att = bbatt;
-
-	DPRINTF(sc, BWN_DEBUG_TXPOW, "%s: adjust TX power\n", __func__);
-
-	bwn_phy_lock(mac);
-	bwn_rf_lock(mac);
-	bwn_phy_g_set_txpwr_sub(mac, &pg->pg_bbatt, &pg->pg_rfatt,
-	    pg->pg_txctl);
-	bwn_rf_unlock(mac);
-	bwn_phy_unlock(mac);
-
-	bwn_mac_enable(mac);
-}
-
-static void
-bwn_phy_g_task_15s(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	struct bwn_txpwr_loctl *lo = &pg->pg_loctl;
-	unsigned long expire, now;
-	struct bwn_lo_calib *cal, *tmp;
-	uint8_t expired = 0;
-
-	bwn_mac_suspend(mac);
-
-	if (lo == NULL)
-		goto fail;
-
-	BWN_GETTIME(now);
-	if (bwn_has_hwpctl(mac)) {
-		expire = now - BWN_LO_PWRVEC_EXPIRE;
-		if (ieee80211_time_before(lo->pwr_vec_read_time, expire)) {
-			bwn_lo_get_powervector(mac);
-			bwn_phy_g_dc_lookup_init(mac, 0);
-		}
-		goto fail;
-	}
-
-	expire = now - BWN_LO_CALIB_EXPIRE;
-	TAILQ_FOREACH_SAFE(cal, &lo->calib_list, list, tmp) {
-		if (!ieee80211_time_before(cal->calib_time, expire))
-			continue;
-		if (BWN_BBATTCMP(&cal->bbatt, &pg->pg_bbatt) &&
-		    BWN_RFATTCMP(&cal->rfatt, &pg->pg_rfatt)) {
-			KASSERT(!expired, ("%s:%d: fail", __func__, __LINE__));
-			expired = 1;
-		}
-
-		DPRINTF(sc, BWN_DEBUG_LO, "expired BB %u RF %u %u I %d Q %d\n",
-		    cal->bbatt.att, cal->rfatt.att, cal->rfatt.padmix,
-		    cal->ctl.i, cal->ctl.q);
-
-		TAILQ_REMOVE(&lo->calib_list, cal, list);
-		free(cal, M_DEVBUF);
-	}
-	if (expired || TAILQ_EMPTY(&lo->calib_list)) {
-		cal = bwn_lo_calibset(mac, &pg->pg_bbatt,
-		    &pg->pg_rfatt);
-		if (cal == NULL) {
-			device_printf(sc->sc_dev,
-			    "failed to recalibrate LO\n");
-			goto fail;
-		}
-		TAILQ_INSERT_TAIL(&lo->calib_list, cal, list);
-		bwn_lo_write(mac, &cal->ctl);
-	}
-
-fail:
-	bwn_mac_enable(mac);
-}
-
-static void
-bwn_phy_g_task_60s(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_softc *sc = mac->mac_sc;
-	uint8_t old = phy->chan;
-
-	if (!(siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_RSSI))
-		return;
-
-	bwn_mac_suspend(mac);
-	bwn_nrssi_slope_11g(mac);
-	if ((phy->rf_ver == 0x2050) && (phy->rf_rev == 8)) {
-		bwn_switch_channel(mac, (old >= 8) ? 1 : 13);
-		bwn_switch_channel(mac, old);
-	}
-	bwn_mac_enable(mac);
-}
-
-static void
-bwn_phy_switch_analog(struct bwn_mac *mac, int on)
-{
-
-	BWN_WRITE_2(mac, BWN_PHY0, on ? 0 : 0xf4);
 }
 
 static int
@@ -2619,6 +1888,8 @@ bwn_init(struct bwn_softc *sc)
 
 	BWN_ASSERT_LOCKED(sc);
 
+	DPRINTF(sc, BWN_DEBUG_RESET, "%s: called\n", __func__);
+
 	bzero(sc->sc_bssid, IEEE80211_ADDR_LEN);
 	sc->sc_flags |= BWN_FLAG_NEED_BEACON_TP;
 	sc->sc_filters = 0;
@@ -2653,6 +1924,8 @@ bwn_stop(struct bwn_softc *sc)
 	struct bwn_mac *mac = sc->sc_curmac;
 
 	BWN_ASSERT_LOCKED(sc);
+
+	DPRINTF(sc, BWN_DEBUG_RESET, "%s: called\n", __func__);
 
 	if (mac->mac_status >= BWN_MAC_STATUS_INITED) {
 		/* XXX FIXME opmode not based on VAP */
@@ -2730,10 +2003,11 @@ bwn_core_init(struct bwn_mac *mac)
 	KASSERT(mac->mac_status == BWN_MAC_STATUS_UNINIT,
 	    ("%s:%d: fail", __func__, __LINE__));
 
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: called\n", __func__);
+
 	siba_powerup(sc->sc_dev, 0);
 	if (!siba_dev_isup(sc->sc_dev))
-		bwn_reset_core(mac,
-		    mac->mac_phy.gmode ? BWN_TGSLOW_SUPPORT_G : 0);
+		bwn_reset_core(mac, mac->mac_phy.gmode);
 
 	mac->mac_flags &= ~BWN_MAC_FLAG_DFQVALID;
 	mac->mac_flags |= BWN_MAC_FLAG_RADIO_ON;
@@ -2764,6 +2038,7 @@ bwn_core_init(struct bwn_mac *mac)
 		if (error)
 			goto fail0;
 	}
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: chip_init\n", __func__);
 	error = bwn_chip_init(mac);
 	if (error)
 		goto fail0;
@@ -2791,6 +2066,19 @@ bwn_core_init(struct bwn_mac *mac)
 	hf &= ~BWN_HF_SKIP_CFP_UPDATE;
 	bwn_hf_write(mac, hf);
 
+	/* Tell the firmware about the MAC capabilities */
+	if (siba_get_revid(sc->sc_dev) >= 13) {
+		uint32_t cap;
+		cap = BWN_READ_4(mac, BWN_MAC_HW_CAP);
+		DPRINTF(sc, BWN_DEBUG_RESET,
+		    "%s: hw capabilities: 0x%08x\n",
+		    __func__, cap);
+		bwn_shm_write_2(mac, BWN_SHARED, BWN_SHARED_MACHW_L,
+		    cap & 0xffff);
+		bwn_shm_write_2(mac, BWN_SHARED, BWN_SHARED_MACHW_H,
+		    (cap >> 16) & 0xffff);
+	}
+
 	bwn_set_txretry(mac, BWN_RETRY_SHORT, BWN_RETRY_LONG);
 	bwn_shm_write_2(mac, BWN_SHARED, BWN_SHARED_SHORT_RETRY_FALLBACK, 3);
 	bwn_shm_write_2(mac, BWN_SHARED, BWN_SHARED_LONG_RETRY_FALLBACK, 2);
@@ -2811,6 +2099,7 @@ bwn_core_init(struct bwn_mac *mac)
 	bwn_spu_setdelay(mac, 1);
 	bwn_bt_enable(mac);
 
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: powerup\n", __func__);
 	siba_powerup(sc->sc_dev,
 	    !(siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_CRYSTAL_NOSLOW));
 	bwn_set_macaddr(mac);
@@ -2820,12 +2109,14 @@ bwn_core_init(struct bwn_mac *mac)
 
 	mac->mac_status = BWN_MAC_STATUS_INITED;
 
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: done\n", __func__);
 	return (error);
 
 fail0:
 	siba_powerdown(sc->sc_dev);
 	KASSERT(mac->mac_status == BWN_MAC_STATUS_UNINIT,
 	    ("%s:%d: fail", __func__, __LINE__));
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: fail\n", __func__);
 	return (error);
 }
 
@@ -2962,8 +2253,11 @@ bwn_chip_init(struct bwn_mac *mac)
 	BWN_WRITE_4(mac, BWN_DMA3_INTR_MASK, 0x0001dc00);
 	BWN_WRITE_4(mac, BWN_DMA4_INTR_MASK, 0x0000dc00);
 	BWN_WRITE_4(mac, BWN_DMA5_INTR_MASK, 0x0000dc00);
-	siba_write_4(sc->sc_dev, SIBA_TGSLOW,
-	    siba_read_4(sc->sc_dev, SIBA_TGSLOW) | 0x00100000);
+
+	bwn_mac_phy_clock_set(mac, true);
+
+	/* SIBA powerup */
+	/* XXX TODO: BCMA powerup */
 	BWN_WRITE_2(mac, BWN_POWERUP_DELAY, siba_get_cc_powerdelay(sc->sc_dev));
 	return (error);
 }
@@ -3382,8 +2676,21 @@ bwn_dma_ringsetup(struct bwn_mac *mac, int controller_index,
 		dr->dr_curslot = -1;
 	} else {
 		if (dr->dr_index == 0) {
-			dr->dr_rx_bufsize = BWN_DMA0_RX_BUFFERSIZE;
-			dr->dr_frameoffset = BWN_DMA0_RX_FRAMEOFFSET;
+			switch (mac->mac_fw.fw_hdr_format) {
+			case BWN_FW_HDR_351:
+			case BWN_FW_HDR_410:
+				dr->dr_rx_bufsize =
+				    BWN_DMA0_RX_BUFFERSIZE_FW351;
+				dr->dr_frameoffset =
+				    BWN_DMA0_RX_FRAMEOFFSET_FW351;
+				break;
+			case BWN_FW_HDR_598:
+				dr->dr_rx_bufsize =
+				    BWN_DMA0_RX_BUFFERSIZE_FW598;
+				dr->dr_frameoffset =
+				    BWN_DMA0_RX_FRAMEOFFSET_FW598;
+				break;
+			}
 		} else
 			KASSERT(0 == 1, ("%s:%d: fail", __func__, __LINE__));
 	}
@@ -3400,11 +2707,15 @@ bwn_dma_ringsetup(struct bwn_mac *mac, int controller_index,
 		KASSERT(BWN_TXRING_SLOTS % BWN_TX_SLOTS_PER_FRAME == 0,
 		    ("%s:%d: fail", __func__, __LINE__));
 
-		dr->dr_txhdr_cache =
-		    malloc((dr->dr_numslots / BWN_TX_SLOTS_PER_FRAME) *
-			BWN_HDRSIZE(mac), M_DEVBUF, M_NOWAIT | M_ZERO);
-		KASSERT(dr->dr_txhdr_cache != NULL,
-		    ("%s:%d: fail", __func__, __LINE__));
+		dr->dr_txhdr_cache = contigmalloc(
+		    (dr->dr_numslots / BWN_TX_SLOTS_PER_FRAME) *
+		    BWN_MAXTXHDRSIZE, M_DEVBUF, M_ZERO,
+		    0, BUS_SPACE_MAXADDR, 8, 0);
+		if (dr->dr_txhdr_cache == NULL) {
+			device_printf(sc->sc_dev,
+			    "can't allocate TX header DMA memory\n");
+			goto fail1;
+		}
 
 		/*
 		 * Create TX ring DMA stuffs
@@ -3423,7 +2734,7 @@ bwn_dma_ringsetup(struct bwn_mac *mac, int controller_index,
 		if (error) {
 			device_printf(sc->sc_dev,
 			    "can't create TX ring DMA tag: TODO frees\n");
-			goto fail1;
+			goto fail2;
 		}
 
 		for (i = 0; i < dr->dr_numslots; i += 2) {
@@ -3438,7 +2749,7 @@ bwn_dma_ringsetup(struct bwn_mac *mac, int controller_index,
 			if (error) {
 				device_printf(sc->sc_dev,
 				     "can't create RX buf DMA map\n");
-				goto fail1;
+				goto fail2;
 			}
 
 			dr->getdesc(dr, i + 1, &desc, &mt);
@@ -3452,7 +2763,7 @@ bwn_dma_ringsetup(struct bwn_mac *mac, int controller_index,
 			if (error) {
 				device_printf(sc->sc_dev,
 				     "can't create RX buf DMA map\n");
-				goto fail1;
+				goto fail2;
 			}
 		}
 	} else {
@@ -3492,7 +2803,11 @@ bwn_dma_ringsetup(struct bwn_mac *mac, int controller_index,
 	return (dr);
 
 fail2:
-	free(dr->dr_txhdr_cache, M_DEVBUF);
+	if (dr->dr_txhdr_cache != NULL) {
+		contigfree(dr->dr_txhdr_cache,
+		    (dr->dr_numslots / BWN_TX_SLOTS_PER_FRAME) *
+		    BWN_MAXTXHDRSIZE, M_DEVBUF);
+	}
 fail1:
 	free(dr->dr_meta, M_DEVBUF);
 fail0:
@@ -3510,7 +2825,11 @@ bwn_dma_ringfree(struct bwn_dma_ring **dr)
 	bwn_dma_free_descbufs(*dr);
 	bwn_dma_free_ringmemory(*dr);
 
-	free((*dr)->dr_txhdr_cache, M_DEVBUF);
+	if ((*dr)->dr_txhdr_cache != NULL) {
+		contigfree((*dr)->dr_txhdr_cache,
+		    ((*dr)->dr_numslots / BWN_TX_SLOTS_PER_FRAME) *
+		    BWN_MAXTXHDRSIZE, M_DEVBUF);
+	}
 	free((*dr)->dr_meta, M_DEVBUF);
 	free(*dr, M_DEVBUF);
 
@@ -4302,1085 +3621,7 @@ bwn_dma_ring_addr(void *arg, bus_dma_segment_t *seg, int nseg, int error)
 	}
 }
 
-static void
-bwn_phy_g_init_sub(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	uint16_t i, tmp;
-
-	if (phy->rev == 1)
-		bwn_phy_init_b5(mac);
-	else
-		bwn_phy_init_b6(mac);
-
-	if (phy->rev >= 2 || phy->gmode)
-		bwn_phy_init_a(mac);
-
-	if (phy->rev >= 2) {
-		BWN_PHY_WRITE(mac, BWN_PHY_ANALOGOVER, 0);
-		BWN_PHY_WRITE(mac, BWN_PHY_ANALOGOVERVAL, 0);
-	}
-	if (phy->rev == 2) {
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, 0);
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xc0);
-	}
-	if (phy->rev > 5) {
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, 0x400);
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xc0);
-	}
-	if (phy->gmode || phy->rev >= 2) {
-		tmp = BWN_PHY_READ(mac, BWN_PHY_VERSION_OFDM);
-		tmp &= BWN_PHYVER_VERSION;
-		if (tmp == 3 || tmp == 5) {
-			BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0xc2), 0x1816);
-			BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0xc3), 0x8006);
-		}
-		if (tmp == 5) {
-			BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0xcc), 0x00ff,
-			    0x1f00);
-		}
-	}
-	if ((phy->rev <= 2 && phy->gmode) || phy->rev >= 2)
-		BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0x7e), 0x78);
-	if (phy->rf_rev == 8) {
-		BWN_PHY_SET(mac, BWN_PHY_EXTG(0x01), 0x80);
-		BWN_PHY_SET(mac, BWN_PHY_OFDM(0x3e), 0x4);
-	}
-	if (BWN_HAS_LOOPBACK(phy))
-		bwn_loopback_calcgain(mac);
-
-	if (phy->rf_rev != 8) {
-		if (pg->pg_initval == 0xffff)
-			pg->pg_initval = bwn_rf_init_bcm2050(mac);
-		else
-			BWN_RF_WRITE(mac, 0x0078, pg->pg_initval);
-	}
-	bwn_lo_g_init(mac);
-	if (BWN_HAS_TXMAG(phy)) {
-		BWN_RF_WRITE(mac, 0x52,
-		    (BWN_RF_READ(mac, 0x52) & 0xff00)
-		    | pg->pg_loctl.tx_bias |
-		    pg->pg_loctl.tx_magn);
-	} else {
-		BWN_RF_SETMASK(mac, 0x52, 0xfff0, pg->pg_loctl.tx_bias);
-	}
-	if (phy->rev >= 6) {
-		BWN_PHY_SETMASK(mac, BWN_PHY_CCK(0x36), 0x0fff,
-		    (pg->pg_loctl.tx_bias << 12));
-	}
-	if (siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_PACTRL)
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2e), 0x8075);
-	else
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2e), 0x807f);
-	if (phy->rev < 2)
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2f), 0x101);
-	else
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2f), 0x202);
-	if (phy->gmode || phy->rev >= 2) {
-		bwn_lo_g_adjust(mac);
-		BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, 0x8078);
-	}
-
-	if (!(siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_RSSI)) {
-		for (i = 0; i < 64; i++) {
-			BWN_PHY_WRITE(mac, BWN_PHY_NRSSI_CTRL, i);
-			BWN_PHY_WRITE(mac, BWN_PHY_NRSSI_DATA,
-			    (uint16_t)MIN(MAX(bwn_nrssi_read(mac, i) - 0xffff,
-			    -32), 31));
-		}
-		bwn_nrssi_threshold(mac);
-	} else if (phy->gmode || phy->rev >= 2) {
-		if (pg->pg_nrssi[0] == -1000) {
-			KASSERT(pg->pg_nrssi[1] == -1000,
-			    ("%s:%d: fail", __func__, __LINE__));
-			bwn_nrssi_slope_11g(mac);
-		} else
-			bwn_nrssi_threshold(mac);
-	}
-	if (phy->rf_rev == 8)
-		BWN_PHY_WRITE(mac, BWN_PHY_EXTG(0x05), 0x3230);
-	bwn_phy_hwpctl_init(mac);
-	if ((siba_get_chipid(sc->sc_dev) == 0x4306
-	     && siba_get_chippkg(sc->sc_dev) == 2) || 0) {
-		BWN_PHY_MASK(mac, BWN_PHY_CRS0, 0xbfff);
-		BWN_PHY_MASK(mac, BWN_PHY_OFDM(0xc3), 0x7fff);
-	}
-}
-
-static uint8_t
-bwn_has_hwpctl(struct bwn_mac *mac)
-{
-
-	if (mac->mac_phy.hwpctl == 0 || mac->mac_phy.use_hwpctl == NULL)
-		return (0);
-	return (mac->mac_phy.use_hwpctl(mac));
-}
-
-static void
-bwn_phy_init_b5(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	uint16_t offset, value;
-	uint8_t old_channel;
-
-	if (phy->analog == 1)
-		BWN_RF_SET(mac, 0x007a, 0x0050);
-	if ((siba_get_pci_subvendor(sc->sc_dev) != SIBA_BOARDVENDOR_BCM) &&
-	    (siba_get_pci_subdevice(sc->sc_dev) != SIBA_BOARD_BU4306)) {
-		value = 0x2120;
-		for (offset = 0x00a8; offset < 0x00c7; offset++) {
-			BWN_PHY_WRITE(mac, offset, value);
-			value += 0x202;
-		}
-	}
-	BWN_PHY_SETMASK(mac, 0x0035, 0xf0ff, 0x0700);
-	if (phy->rf_ver == 0x2050)
-		BWN_PHY_WRITE(mac, 0x0038, 0x0667);
-
-	if (phy->gmode || phy->rev >= 2) {
-		if (phy->rf_ver == 0x2050) {
-			BWN_RF_SET(mac, 0x007a, 0x0020);
-			BWN_RF_SET(mac, 0x0051, 0x0004);
-		}
-		BWN_WRITE_2(mac, BWN_PHY_RADIO, 0x0000);
-
-		BWN_PHY_SET(mac, 0x0802, 0x0100);
-		BWN_PHY_SET(mac, 0x042b, 0x2000);
-
-		BWN_PHY_WRITE(mac, 0x001c, 0x186a);
-
-		BWN_PHY_SETMASK(mac, 0x0013, 0x00ff, 0x1900);
-		BWN_PHY_SETMASK(mac, 0x0035, 0xffc0, 0x0064);
-		BWN_PHY_SETMASK(mac, 0x005d, 0xff80, 0x000a);
-	}
-
-	if (mac->mac_flags & BWN_MAC_FLAG_BADFRAME_PREEMP)
-		BWN_PHY_SET(mac, BWN_PHY_RADIO_BITFIELD, (1 << 11));
-
-	if (phy->analog == 1) {
-		BWN_PHY_WRITE(mac, 0x0026, 0xce00);
-		BWN_PHY_WRITE(mac, 0x0021, 0x3763);
-		BWN_PHY_WRITE(mac, 0x0022, 0x1bc3);
-		BWN_PHY_WRITE(mac, 0x0023, 0x06f9);
-		BWN_PHY_WRITE(mac, 0x0024, 0x037e);
-	} else
-		BWN_PHY_WRITE(mac, 0x0026, 0xcc00);
-	BWN_PHY_WRITE(mac, 0x0030, 0x00c6);
-	BWN_WRITE_2(mac, 0x03ec, 0x3f22);
-
-	if (phy->analog == 1)
-		BWN_PHY_WRITE(mac, 0x0020, 0x3e1c);
-	else
-		BWN_PHY_WRITE(mac, 0x0020, 0x301c);
-
-	if (phy->analog == 0)
-		BWN_WRITE_2(mac, 0x03e4, 0x3000);
-
-	old_channel = phy->chan;
-	bwn_phy_g_switch_chan(mac, 7, 0);
-
-	if (phy->rf_ver != 0x2050) {
-		BWN_RF_WRITE(mac, 0x0075, 0x0080);
-		BWN_RF_WRITE(mac, 0x0079, 0x0081);
-	}
-
-	BWN_RF_WRITE(mac, 0x0050, 0x0020);
-	BWN_RF_WRITE(mac, 0x0050, 0x0023);
-
-	if (phy->rf_ver == 0x2050) {
-		BWN_RF_WRITE(mac, 0x0050, 0x0020);
-		BWN_RF_WRITE(mac, 0x005a, 0x0070);
-	}
-
-	BWN_RF_WRITE(mac, 0x005b, 0x007b);
-	BWN_RF_WRITE(mac, 0x005c, 0x00b0);
-	BWN_RF_SET(mac, 0x007a, 0x0007);
-
-	bwn_phy_g_switch_chan(mac, old_channel, 0);
-	BWN_PHY_WRITE(mac, 0x0014, 0x0080);
-	BWN_PHY_WRITE(mac, 0x0032, 0x00ca);
-	BWN_PHY_WRITE(mac, 0x002a, 0x88a3);
-
-	bwn_phy_g_set_txpwr_sub(mac, &pg->pg_bbatt, &pg->pg_rfatt,
-	    pg->pg_txctl);
-
-	if (phy->rf_ver == 0x2050)
-		BWN_RF_WRITE(mac, 0x005d, 0x000d);
-
-	BWN_WRITE_2(mac, 0x03e4, (BWN_READ_2(mac, 0x03e4) & 0xffc0) | 0x0004);
-}
-
-static void
-bwn_loopback_calcgain(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	uint16_t backup_phy[16] = { 0 };
-	uint16_t backup_radio[3];
-	uint16_t backup_bband;
-	uint16_t i, j, loop_i_max;
-	uint16_t trsw_rx;
-	uint16_t loop1_outer_done, loop1_inner_done;
-
-	backup_phy[0] = BWN_PHY_READ(mac, BWN_PHY_CRS0);
-	backup_phy[1] = BWN_PHY_READ(mac, BWN_PHY_CCKBBANDCFG);
-	backup_phy[2] = BWN_PHY_READ(mac, BWN_PHY_RFOVER);
-	backup_phy[3] = BWN_PHY_READ(mac, BWN_PHY_RFOVERVAL);
-	if (phy->rev != 1) {
-		backup_phy[4] = BWN_PHY_READ(mac, BWN_PHY_ANALOGOVER);
-		backup_phy[5] = BWN_PHY_READ(mac, BWN_PHY_ANALOGOVERVAL);
-	}
-	backup_phy[6] = BWN_PHY_READ(mac, BWN_PHY_CCK(0x5a));
-	backup_phy[7] = BWN_PHY_READ(mac, BWN_PHY_CCK(0x59));
-	backup_phy[8] = BWN_PHY_READ(mac, BWN_PHY_CCK(0x58));
-	backup_phy[9] = BWN_PHY_READ(mac, BWN_PHY_CCK(0x0a));
-	backup_phy[10] = BWN_PHY_READ(mac, BWN_PHY_CCK(0x03));
-	backup_phy[11] = BWN_PHY_READ(mac, BWN_PHY_LO_MASK);
-	backup_phy[12] = BWN_PHY_READ(mac, BWN_PHY_LO_CTL);
-	backup_phy[13] = BWN_PHY_READ(mac, BWN_PHY_CCK(0x2b));
-	backup_phy[14] = BWN_PHY_READ(mac, BWN_PHY_PGACTL);
-	backup_phy[15] = BWN_PHY_READ(mac, BWN_PHY_LO_LEAKAGE);
-	backup_bband = pg->pg_bbatt.att;
-	backup_radio[0] = BWN_RF_READ(mac, 0x52);
-	backup_radio[1] = BWN_RF_READ(mac, 0x43);
-	backup_radio[2] = BWN_RF_READ(mac, 0x7a);
-
-	BWN_PHY_MASK(mac, BWN_PHY_CRS0, 0x3fff);
-	BWN_PHY_SET(mac, BWN_PHY_CCKBBANDCFG, 0x8000);
-	BWN_PHY_SET(mac, BWN_PHY_RFOVER, 0x0002);
-	BWN_PHY_MASK(mac, BWN_PHY_RFOVERVAL, 0xfffd);
-	BWN_PHY_SET(mac, BWN_PHY_RFOVER, 0x0001);
-	BWN_PHY_MASK(mac, BWN_PHY_RFOVERVAL, 0xfffe);
-	if (phy->rev != 1) {
-		BWN_PHY_SET(mac, BWN_PHY_ANALOGOVER, 0x0001);
-		BWN_PHY_MASK(mac, BWN_PHY_ANALOGOVERVAL, 0xfffe);
-		BWN_PHY_SET(mac, BWN_PHY_ANALOGOVER, 0x0002);
-		BWN_PHY_MASK(mac, BWN_PHY_ANALOGOVERVAL, 0xfffd);
-	}
-	BWN_PHY_SET(mac, BWN_PHY_RFOVER, 0x000c);
-	BWN_PHY_SET(mac, BWN_PHY_RFOVERVAL, 0x000c);
-	BWN_PHY_SET(mac, BWN_PHY_RFOVER, 0x0030);
-	BWN_PHY_SETMASK(mac, BWN_PHY_RFOVERVAL, 0xffcf, 0x10);
-
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x5a), 0x0780);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x59), 0xc810);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x58), 0x000d);
-
-	BWN_PHY_SET(mac, BWN_PHY_CCK(0x0a), 0x2000);
-	if (phy->rev != 1) {
-		BWN_PHY_SET(mac, BWN_PHY_ANALOGOVER, 0x0004);
-		BWN_PHY_MASK(mac, BWN_PHY_ANALOGOVERVAL, 0xfffb);
-	}
-	BWN_PHY_SETMASK(mac, BWN_PHY_CCK(0x03), 0xff9f, 0x40);
-
-	if (phy->rf_rev == 8)
-		BWN_RF_WRITE(mac, 0x43, 0x000f);
-	else {
-		BWN_RF_WRITE(mac, 0x52, 0);
-		BWN_RF_SETMASK(mac, 0x43, 0xfff0, 0x9);
-	}
-	bwn_phy_g_set_bbatt(mac, 11);
-
-	if (phy->rev >= 3)
-		BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, 0xc020);
-	else
-		BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, 0x8020);
-	BWN_PHY_WRITE(mac, BWN_PHY_LO_CTL, 0);
-
-	BWN_PHY_SETMASK(mac, BWN_PHY_CCK(0x2b), 0xffc0, 0x01);
-	BWN_PHY_SETMASK(mac, BWN_PHY_CCK(0x2b), 0xc0ff, 0x800);
-
-	BWN_PHY_SET(mac, BWN_PHY_RFOVER, 0x0100);
-	BWN_PHY_MASK(mac, BWN_PHY_RFOVERVAL, 0xcfff);
-
-	if (siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_EXTLNA) {
-		if (phy->rev >= 7) {
-			BWN_PHY_SET(mac, BWN_PHY_RFOVER, 0x0800);
-			BWN_PHY_SET(mac, BWN_PHY_RFOVERVAL, 0x8000);
-		}
-	}
-	BWN_RF_MASK(mac, 0x7a, 0x00f7);
-
-	j = 0;
-	loop_i_max = (phy->rf_rev == 8) ? 15 : 9;
-	for (i = 0; i < loop_i_max; i++) {
-		for (j = 0; j < 16; j++) {
-			BWN_RF_WRITE(mac, 0x43, i);
-			BWN_PHY_SETMASK(mac, BWN_PHY_RFOVERVAL, 0xf0ff,
-			    (j << 8));
-			BWN_PHY_SETMASK(mac, BWN_PHY_PGACTL, 0x0fff, 0xa000);
-			BWN_PHY_SET(mac, BWN_PHY_PGACTL, 0xf000);
-			DELAY(20);
-			if (BWN_PHY_READ(mac, BWN_PHY_LO_LEAKAGE) >= 0xdfc)
-				goto done0;
-		}
-	}
-done0:
-	loop1_outer_done = i;
-	loop1_inner_done = j;
-	if (j >= 8) {
-		BWN_PHY_SET(mac, BWN_PHY_RFOVERVAL, 0x30);
-		trsw_rx = 0x1b;
-		for (j = j - 8; j < 16; j++) {
-			BWN_PHY_SETMASK(mac, BWN_PHY_RFOVERVAL, 0xf0ff, j << 8);
-			BWN_PHY_SETMASK(mac, BWN_PHY_PGACTL, 0x0fff, 0xa000);
-			BWN_PHY_SET(mac, BWN_PHY_PGACTL, 0xf000);
-			DELAY(20);
-			trsw_rx -= 3;
-			if (BWN_PHY_READ(mac, BWN_PHY_LO_LEAKAGE) >= 0xdfc)
-				goto done1;
-		}
-	} else
-		trsw_rx = 0x18;
-done1:
-
-	if (phy->rev != 1) {
-		BWN_PHY_WRITE(mac, BWN_PHY_ANALOGOVER, backup_phy[4]);
-		BWN_PHY_WRITE(mac, BWN_PHY_ANALOGOVERVAL, backup_phy[5]);
-	}
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x5a), backup_phy[6]);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x59), backup_phy[7]);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x58), backup_phy[8]);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x0a), backup_phy[9]);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x03), backup_phy[10]);
-	BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, backup_phy[11]);
-	BWN_PHY_WRITE(mac, BWN_PHY_LO_CTL, backup_phy[12]);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2b), backup_phy[13]);
-	BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, backup_phy[14]);
-
-	bwn_phy_g_set_bbatt(mac, backup_bband);
-
-	BWN_RF_WRITE(mac, 0x52, backup_radio[0]);
-	BWN_RF_WRITE(mac, 0x43, backup_radio[1]);
-	BWN_RF_WRITE(mac, 0x7a, backup_radio[2]);
-
-	BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, backup_phy[2] | 0x0003);
-	DELAY(10);
-	BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, backup_phy[2]);
-	BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, backup_phy[3]);
-	BWN_PHY_WRITE(mac, BWN_PHY_CRS0, backup_phy[0]);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCKBBANDCFG, backup_phy[1]);
-
-	pg->pg_max_lb_gain =
-	    ((loop1_inner_done * 6) - (loop1_outer_done * 4)) - 11;
-	pg->pg_trsw_rx_gain = trsw_rx * 2;
-}
-
-static uint16_t
-bwn_rf_init_bcm2050(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	uint32_t tmp1 = 0, tmp2 = 0;
-	uint16_t rcc, i, j, pgactl, cck0, cck1, cck2, cck3, rfover, rfoverval,
-	    analogover, analogoverval, crs0, classctl, lomask, loctl, syncctl,
-	    radio0, radio1, radio2, reg0, reg1, reg2, radio78, reg, index;
-	static const uint8_t rcc_table[] = {
-		0x02, 0x03, 0x01, 0x0f,
-		0x06, 0x07, 0x05, 0x0f,
-		0x0a, 0x0b, 0x09, 0x0f,
-		0x0e, 0x0f, 0x0d, 0x0f,
-	};
-
-	loctl = lomask = reg0 = classctl = crs0 = analogoverval = analogover =
-	    rfoverval = rfover = cck3 = 0;
-	radio0 = BWN_RF_READ(mac, 0x43);
-	radio1 = BWN_RF_READ(mac, 0x51);
-	radio2 = BWN_RF_READ(mac, 0x52);
-	pgactl = BWN_PHY_READ(mac, BWN_PHY_PGACTL);
-	cck0 = BWN_PHY_READ(mac, BWN_PHY_CCK(0x5a));
-	cck1 = BWN_PHY_READ(mac, BWN_PHY_CCK(0x59));
-	cck2 = BWN_PHY_READ(mac, BWN_PHY_CCK(0x58));
-
-	if (phy->type == BWN_PHYTYPE_B) {
-		cck3 = BWN_PHY_READ(mac, BWN_PHY_CCK(0x30));
-		reg0 = BWN_READ_2(mac, 0x3ec);
-
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x30), 0xff);
-		BWN_WRITE_2(mac, 0x3ec, 0x3f3f);
-	} else if (phy->gmode || phy->rev >= 2) {
-		rfover = BWN_PHY_READ(mac, BWN_PHY_RFOVER);
-		rfoverval = BWN_PHY_READ(mac, BWN_PHY_RFOVERVAL);
-		analogover = BWN_PHY_READ(mac, BWN_PHY_ANALOGOVER);
-		analogoverval = BWN_PHY_READ(mac, BWN_PHY_ANALOGOVERVAL);
-		crs0 = BWN_PHY_READ(mac, BWN_PHY_CRS0);
-		classctl = BWN_PHY_READ(mac, BWN_PHY_CLASSCTL);
-
-		BWN_PHY_SET(mac, BWN_PHY_ANALOGOVER, 0x0003);
-		BWN_PHY_MASK(mac, BWN_PHY_ANALOGOVERVAL, 0xfffc);
-		BWN_PHY_MASK(mac, BWN_PHY_CRS0, 0x7fff);
-		BWN_PHY_MASK(mac, BWN_PHY_CLASSCTL, 0xfffc);
-		if (BWN_HAS_LOOPBACK(phy)) {
-			lomask = BWN_PHY_READ(mac, BWN_PHY_LO_MASK);
-			loctl = BWN_PHY_READ(mac, BWN_PHY_LO_CTL);
-			if (phy->rev >= 3)
-				BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, 0xc020);
-			else
-				BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, 0x8020);
-			BWN_PHY_WRITE(mac, BWN_PHY_LO_CTL, 0);
-		}
-
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-		    bwn_rf_2050_rfoverval(mac, BWN_PHY_RFOVERVAL,
-			BWN_LPD(0, 1, 1)));
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVER,
-		    bwn_rf_2050_rfoverval(mac, BWN_PHY_RFOVER, 0));
-	}
-	BWN_WRITE_2(mac, 0x3e2, BWN_READ_2(mac, 0x3e2) | 0x8000);
-
-	syncctl = BWN_PHY_READ(mac, BWN_PHY_SYNCCTL);
-	BWN_PHY_MASK(mac, BWN_PHY_SYNCCTL, 0xff7f);
-	reg1 = BWN_READ_2(mac, 0x3e6);
-	reg2 = BWN_READ_2(mac, 0x3f4);
-
-	if (phy->analog == 0)
-		BWN_WRITE_2(mac, 0x03e6, 0x0122);
-	else {
-		if (phy->analog >= 2)
-			BWN_PHY_SETMASK(mac, BWN_PHY_CCK(0x03), 0xffbf, 0x40);
-		BWN_WRITE_2(mac, BWN_CHANNEL_EXT,
-		    (BWN_READ_2(mac, BWN_CHANNEL_EXT) | 0x2000));
-	}
-
-	reg = BWN_RF_READ(mac, 0x60);
-	index = (reg & 0x001e) >> 1;
-	rcc = (((rcc_table[index] << 1) | (reg & 0x0001)) | 0x0020);
-
-	if (phy->type == BWN_PHYTYPE_B)
-		BWN_RF_WRITE(mac, 0x78, 0x26);
-	if (phy->gmode || phy->rev >= 2) {
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-		    bwn_rf_2050_rfoverval(mac, BWN_PHY_RFOVERVAL,
-			BWN_LPD(0, 1, 1)));
-	}
-	BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xbfaf);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2b), 0x1403);
-	if (phy->gmode || phy->rev >= 2) {
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-		    bwn_rf_2050_rfoverval(mac, BWN_PHY_RFOVERVAL,
-			BWN_LPD(0, 0, 1)));
-	}
-	BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xbfa0);
-	BWN_RF_SET(mac, 0x51, 0x0004);
-	if (phy->rf_rev == 8)
-		BWN_RF_WRITE(mac, 0x43, 0x1f);
-	else {
-		BWN_RF_WRITE(mac, 0x52, 0);
-		BWN_RF_SETMASK(mac, 0x43, 0xfff0, 0x0009);
-	}
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x58), 0);
-
-	for (i = 0; i < 16; i++) {
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x5a), 0x0480);
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x59), 0xc810);
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x58), 0x000d);
-		if (phy->gmode || phy->rev >= 2) {
-			BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-			    bwn_rf_2050_rfoverval(mac,
-				BWN_PHY_RFOVERVAL, BWN_LPD(1, 0, 1)));
-		}
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xafb0);
-		DELAY(10);
-		if (phy->gmode || phy->rev >= 2) {
-			BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-			    bwn_rf_2050_rfoverval(mac,
-				BWN_PHY_RFOVERVAL, BWN_LPD(1, 0, 1)));
-		}
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xefb0);
-		DELAY(10);
-		if (phy->gmode || phy->rev >= 2) {
-			BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-			    bwn_rf_2050_rfoverval(mac,
-				BWN_PHY_RFOVERVAL, BWN_LPD(1, 0, 0)));
-		}
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xfff0);
-		DELAY(20);
-		tmp1 += BWN_PHY_READ(mac, BWN_PHY_LO_LEAKAGE);
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x58), 0);
-		if (phy->gmode || phy->rev >= 2) {
-			BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-			    bwn_rf_2050_rfoverval(mac,
-				BWN_PHY_RFOVERVAL, BWN_LPD(1, 0, 1)));
-		}
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xafb0);
-	}
-	DELAY(10);
-
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x58), 0);
-	tmp1++;
-	tmp1 >>= 9;
-
-	for (i = 0; i < 16; i++) {
-		radio78 = (BWN_BITREV4(i) << 1) | 0x0020;
-		BWN_RF_WRITE(mac, 0x78, radio78);
-		DELAY(10);
-		for (j = 0; j < 16; j++) {
-			BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x5a), 0x0d80);
-			BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x59), 0xc810);
-			BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x58), 0x000d);
-			if (phy->gmode || phy->rev >= 2) {
-				BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-				    bwn_rf_2050_rfoverval(mac,
-					BWN_PHY_RFOVERVAL, BWN_LPD(1, 0, 1)));
-			}
-			BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xafb0);
-			DELAY(10);
-			if (phy->gmode || phy->rev >= 2) {
-				BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-				    bwn_rf_2050_rfoverval(mac,
-					BWN_PHY_RFOVERVAL, BWN_LPD(1, 0, 1)));
-			}
-			BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xefb0);
-			DELAY(10);
-			if (phy->gmode || phy->rev >= 2) {
-				BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-				    bwn_rf_2050_rfoverval(mac,
-					BWN_PHY_RFOVERVAL, BWN_LPD(1, 0, 0)));
-			}
-			BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xfff0);
-			DELAY(10);
-			tmp2 += BWN_PHY_READ(mac, BWN_PHY_LO_LEAKAGE);
-			BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x58), 0);
-			if (phy->gmode || phy->rev >= 2) {
-				BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL,
-				    bwn_rf_2050_rfoverval(mac,
-					BWN_PHY_RFOVERVAL, BWN_LPD(1, 0, 1)));
-			}
-			BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xafb0);
-		}
-		tmp2++;
-		tmp2 >>= 8;
-		if (tmp1 < tmp2)
-			break;
-	}
-
-	BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, pgactl);
-	BWN_RF_WRITE(mac, 0x51, radio1);
-	BWN_RF_WRITE(mac, 0x52, radio2);
-	BWN_RF_WRITE(mac, 0x43, radio0);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x5a), cck0);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x59), cck1);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x58), cck2);
-	BWN_WRITE_2(mac, 0x3e6, reg1);
-	if (phy->analog != 0)
-		BWN_WRITE_2(mac, 0x3f4, reg2);
-	BWN_PHY_WRITE(mac, BWN_PHY_SYNCCTL, syncctl);
-	bwn_spu_workaround(mac, phy->chan);
-	if (phy->type == BWN_PHYTYPE_B) {
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x30), cck3);
-		BWN_WRITE_2(mac, 0x3ec, reg0);
-	} else if (phy->gmode) {
-		BWN_WRITE_2(mac, BWN_PHY_RADIO,
-			    BWN_READ_2(mac, BWN_PHY_RADIO)
-			    & 0x7fff);
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, rfover);
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, rfoverval);
-		BWN_PHY_WRITE(mac, BWN_PHY_ANALOGOVER, analogover);
-		BWN_PHY_WRITE(mac, BWN_PHY_ANALOGOVERVAL,
-			      analogoverval);
-		BWN_PHY_WRITE(mac, BWN_PHY_CRS0, crs0);
-		BWN_PHY_WRITE(mac, BWN_PHY_CLASSCTL, classctl);
-		if (BWN_HAS_LOOPBACK(phy)) {
-			BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, lomask);
-			BWN_PHY_WRITE(mac, BWN_PHY_LO_CTL, loctl);
-		}
-	}
-
-	return ((i > 15) ? radio78 : rcc);
-}
-
-static void
-bwn_phy_init_b6(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	uint16_t offset, val;
-	uint8_t old_channel;
-
-	KASSERT(!(phy->rf_rev == 6 || phy->rf_rev == 7),
-	    ("%s:%d: fail", __func__, __LINE__));
-
-	BWN_PHY_WRITE(mac, 0x003e, 0x817a);
-	BWN_RF_WRITE(mac, 0x007a, BWN_RF_READ(mac, 0x007a) | 0x0058);
-	if (phy->rf_rev == 4 || phy->rf_rev == 5) {
-		BWN_RF_WRITE(mac, 0x51, 0x37);
-		BWN_RF_WRITE(mac, 0x52, 0x70);
-		BWN_RF_WRITE(mac, 0x53, 0xb3);
-		BWN_RF_WRITE(mac, 0x54, 0x9b);
-		BWN_RF_WRITE(mac, 0x5a, 0x88);
-		BWN_RF_WRITE(mac, 0x5b, 0x88);
-		BWN_RF_WRITE(mac, 0x5d, 0x88);
-		BWN_RF_WRITE(mac, 0x5e, 0x88);
-		BWN_RF_WRITE(mac, 0x7d, 0x88);
-		bwn_hf_write(mac,
-		    bwn_hf_read(mac) | BWN_HF_TSSI_RESET_PSM_WORKAROUN);
-	}
-	if (phy->rf_rev == 8) {
-		BWN_RF_WRITE(mac, 0x51, 0);
-		BWN_RF_WRITE(mac, 0x52, 0x40);
-		BWN_RF_WRITE(mac, 0x53, 0xb7);
-		BWN_RF_WRITE(mac, 0x54, 0x98);
-		BWN_RF_WRITE(mac, 0x5a, 0x88);
-		BWN_RF_WRITE(mac, 0x5b, 0x6b);
-		BWN_RF_WRITE(mac, 0x5c, 0x0f);
-		if (siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_ALTIQ) {
-			BWN_RF_WRITE(mac, 0x5d, 0xfa);
-			BWN_RF_WRITE(mac, 0x5e, 0xd8);
-		} else {
-			BWN_RF_WRITE(mac, 0x5d, 0xf5);
-			BWN_RF_WRITE(mac, 0x5e, 0xb8);
-		}
-		BWN_RF_WRITE(mac, 0x0073, 0x0003);
-		BWN_RF_WRITE(mac, 0x007d, 0x00a8);
-		BWN_RF_WRITE(mac, 0x007c, 0x0001);
-		BWN_RF_WRITE(mac, 0x007e, 0x0008);
-	}
-	for (val = 0x1e1f, offset = 0x0088; offset < 0x0098; offset++) {
-		BWN_PHY_WRITE(mac, offset, val);
-		val -= 0x0202;
-	}
-	for (val = 0x3e3f, offset = 0x0098; offset < 0x00a8; offset++) {
-		BWN_PHY_WRITE(mac, offset, val);
-		val -= 0x0202;
-	}
-	for (val = 0x2120, offset = 0x00a8; offset < 0x00c8; offset++) {
-		BWN_PHY_WRITE(mac, offset, (val & 0x3f3f));
-		val += 0x0202;
-	}
-	if (phy->type == BWN_PHYTYPE_G) {
-		BWN_RF_SET(mac, 0x007a, 0x0020);
-		BWN_RF_SET(mac, 0x0051, 0x0004);
-		BWN_PHY_SET(mac, 0x0802, 0x0100);
-		BWN_PHY_SET(mac, 0x042b, 0x2000);
-		BWN_PHY_WRITE(mac, 0x5b, 0);
-		BWN_PHY_WRITE(mac, 0x5c, 0);
-	}
-
-	old_channel = phy->chan;
-	bwn_phy_g_switch_chan(mac, (old_channel >= 8) ? 1 : 13, 0);
-
-	BWN_RF_WRITE(mac, 0x0050, 0x0020);
-	BWN_RF_WRITE(mac, 0x0050, 0x0023);
-	DELAY(40);
-	if (phy->rf_rev < 6 || phy->rf_rev == 8) {
-		BWN_RF_WRITE(mac, 0x7c, BWN_RF_READ(mac, 0x7c) | 0x0002);
-		BWN_RF_WRITE(mac, 0x50, 0x20);
-	}
-	if (phy->rf_rev <= 2) {
-		BWN_RF_WRITE(mac, 0x7c, 0x20);
-		BWN_RF_WRITE(mac, 0x5a, 0x70);
-		BWN_RF_WRITE(mac, 0x5b, 0x7b);
-		BWN_RF_WRITE(mac, 0x5c, 0xb0);
-	}
-	BWN_RF_SETMASK(mac, 0x007a, 0x00f8, 0x0007);
-
-	bwn_phy_g_switch_chan(mac, old_channel, 0);
-
-	BWN_PHY_WRITE(mac, 0x0014, 0x0200);
-	if (phy->rf_rev >= 6)
-		BWN_PHY_WRITE(mac, 0x2a, 0x88c2);
-	else
-		BWN_PHY_WRITE(mac, 0x2a, 0x8ac0);
-	BWN_PHY_WRITE(mac, 0x0038, 0x0668);
-	bwn_phy_g_set_txpwr_sub(mac, &pg->pg_bbatt, &pg->pg_rfatt,
-	    pg->pg_txctl);
-	if (phy->rf_rev <= 5)
-		BWN_PHY_SETMASK(mac, 0x5d, 0xff80, 0x0003);
-	if (phy->rf_rev <= 2)
-		BWN_RF_WRITE(mac, 0x005d, 0x000d);
-
-	if (phy->analog == 4) {
-		BWN_WRITE_2(mac, 0x3e4, 9);
-		BWN_PHY_MASK(mac, 0x61, 0x0fff);
-	} else
-		BWN_PHY_SETMASK(mac, 0x0002, 0xffc0, 0x0004);
-	if (phy->type == BWN_PHYTYPE_B)
-		KASSERT(0 == 1, ("%s:%d: fail", __func__, __LINE__));
-	else if (phy->type == BWN_PHYTYPE_G)
-		BWN_WRITE_2(mac, 0x03e6, 0x0);
-}
-
-static void
-bwn_phy_init_a(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_softc *sc = mac->mac_sc;
-
-	KASSERT(phy->type == BWN_PHYTYPE_A || phy->type == BWN_PHYTYPE_G,
-	    ("%s:%d: fail", __func__, __LINE__));
-
-	if (phy->rev >= 6) {
-		if (phy->type == BWN_PHYTYPE_A)
-			BWN_PHY_MASK(mac, BWN_PHY_OFDM(0x1b), ~0x1000);
-		if (BWN_PHY_READ(mac, BWN_PHY_ENCORE) & BWN_PHY_ENCORE_EN)
-			BWN_PHY_SET(mac, BWN_PHY_ENCORE, 0x0010);
-		else
-			BWN_PHY_MASK(mac, BWN_PHY_ENCORE, ~0x1010);
-	}
-
-	bwn_wa_init(mac);
-
-	if (phy->type == BWN_PHYTYPE_G &&
-	    (siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_PACTRL))
-		BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x6e), 0xe000, 0x3cf);
-}
-
-static void
-bwn_wa_write_noisescale(struct bwn_mac *mac, const uint16_t *nst)
-{
-	int i;
-
-	for (i = 0; i < BWN_TAB_NOISESCALE_SIZE; i++)
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_NOISESCALE, i, nst[i]);
-}
-
-static void
-bwn_wa_agc(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-
-	if (phy->rev == 1) {
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC1_R1, 0, 254);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC1_R1, 1, 13);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC1_R1, 2, 19);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC1_R1, 3, 25);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC2, 0, 0x2710);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC2, 1, 0x9b83);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC2, 2, 0x9b83);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC2, 3, 0x0f8d);
-		BWN_PHY_WRITE(mac, BWN_PHY_LMS, 4);
-	} else {
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC1, 0, 254);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC1, 1, 13);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC1, 2, 19);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC1, 3, 25);
-	}
-
-	BWN_PHY_SETMASK(mac, BWN_PHY_CCKSHIFTBITS_WA, (uint16_t)~0xff00,
-	    0x5700);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x1a), ~0x007f, 0x000f);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x1a), ~0x3f80, 0x2b80);
-	BWN_PHY_SETMASK(mac, BWN_PHY_ANTWRSETT, 0xf0ff, 0x0300);
-	BWN_RF_SET(mac, 0x7a, 0x0008);
-	BWN_PHY_SETMASK(mac, BWN_PHY_N1P1GAIN, ~0x000f, 0x0008);
-	BWN_PHY_SETMASK(mac, BWN_PHY_P1P2GAIN, ~0x0f00, 0x0600);
-	BWN_PHY_SETMASK(mac, BWN_PHY_N1N2GAIN, ~0x0f00, 0x0700);
-	BWN_PHY_SETMASK(mac, BWN_PHY_N1P1GAIN, ~0x0f00, 0x0100);
-	if (phy->rev == 1)
-		BWN_PHY_SETMASK(mac, BWN_PHY_N1N2GAIN, ~0x000f, 0x0007);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x88), ~0x00ff, 0x001c);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x88), ~0x3f00, 0x0200);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x96), ~0x00ff, 0x001c);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x89), ~0x00ff, 0x0020);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x89), ~0x3f00, 0x0200);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x82), ~0x00ff, 0x002e);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x96), (uint16_t)~0xff00, 0x1a00);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x81), ~0x00ff, 0x0028);
-	BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x81), (uint16_t)~0xff00, 0x2c00);
-	if (phy->rev == 1) {
-		BWN_PHY_WRITE(mac, BWN_PHY_PEAK_COUNT, 0x092b);
-		BWN_PHY_SETMASK(mac, BWN_PHY_OFDM(0x1b), ~0x001e, 0x0002);
-	} else {
-		BWN_PHY_MASK(mac, BWN_PHY_OFDM(0x1b), ~0x001e);
-		BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0x1f), 0x287a);
-		BWN_PHY_SETMASK(mac, BWN_PHY_LPFGAINCTL, ~0x000f, 0x0004);
-		if (phy->rev >= 6) {
-			BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0x22), 0x287a);
-			BWN_PHY_SETMASK(mac, BWN_PHY_LPFGAINCTL,
-			    (uint16_t)~0xf000, 0x3000);
-		}
-	}
-	BWN_PHY_SETMASK(mac, BWN_PHY_DIVSRCHIDX, 0x8080, 0x7874);
-	BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0x8e), 0x1c00);
-	if (phy->rev == 1) {
-		BWN_PHY_SETMASK(mac, BWN_PHY_DIVP1P2GAIN, ~0x0f00, 0x0600);
-		BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0x8b), 0x005e);
-		BWN_PHY_SETMASK(mac, BWN_PHY_ANTWRSETT, ~0x00ff, 0x001e);
-		BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0x8d), 0x0002);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC3_R1, 0, 0);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC3_R1, 1, 7);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC3_R1, 2, 16);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC3_R1, 3, 28);
-	} else {
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC3, 0, 0);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC3, 1, 7);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC3, 2, 16);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC3, 3, 28);
-	}
-	if (phy->rev >= 6) {
-		BWN_PHY_MASK(mac, BWN_PHY_OFDM(0x26), ~0x0003);
-		BWN_PHY_MASK(mac, BWN_PHY_OFDM(0x26), ~0x1000);
-	}
-	BWN_PHY_READ(mac, BWN_PHY_VERSION_OFDM);
-}
-
-static void
-bwn_wa_grev1(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	int i;
-	static const uint16_t bwn_tab_finefreqg[] = BWN_TAB_FINEFREQ_G;
-	static const uint32_t bwn_tab_retard[] = BWN_TAB_RETARD;
-	static const uint32_t bwn_tab_rotor[] = BWN_TAB_ROTOR;
-
-	KASSERT(phy->type == BWN_PHYTYPE_G, ("%s fail", __func__));
-
-	/* init CRSTHRES and ANTDWELL */
-	if (phy->rev == 1) {
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES1_R1, 0x4f19);
-	} else if (phy->rev == 2) {
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES1, 0x1861);
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES2, 0x0271);
-		BWN_PHY_SET(mac, BWN_PHY_ANTDWELL, 0x0800);
-	} else {
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES1, 0x0098);
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES2, 0x0070);
-		BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0xc9), 0x0080);
-		BWN_PHY_SET(mac, BWN_PHY_ANTDWELL, 0x0800);
-	}
-	BWN_PHY_SETMASK(mac, BWN_PHY_CRS0, ~0x03c0, 0xd000);
-	BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0x2c), 0x005a);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCKSHIFTBITS, 0x0026);
-
-	/* XXX support PHY-A??? */
-	for (i = 0; i < N(bwn_tab_finefreqg); i++)
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_DACRFPABB, i,
-		    bwn_tab_finefreqg[i]);
-
-	/* XXX support PHY-A??? */
-	if (phy->rev == 1)
-		for (i = 0; i < N(bwn_tab_noise_g1); i++)
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC2, i,
-			    bwn_tab_noise_g1[i]);
-	else
-		for (i = 0; i < N(bwn_tab_noise_g2); i++)
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC2, i,
-			    bwn_tab_noise_g2[i]);
-
-
-	for (i = 0; i < N(bwn_tab_rotor); i++)
-		bwn_ofdmtab_write_4(mac, BWN_OFDMTAB_ROTOR, i,
-		    bwn_tab_rotor[i]);
-
-	/* XXX support PHY-A??? */
-	if (phy->rev >= 6) {
-		if (BWN_PHY_READ(mac, BWN_PHY_ENCORE) &
-		    BWN_PHY_ENCORE_EN)
-			bwn_wa_write_noisescale(mac, bwn_tab_noisescale_g3);
-		else
-			bwn_wa_write_noisescale(mac, bwn_tab_noisescale_g2);
-	} else
-		bwn_wa_write_noisescale(mac, bwn_tab_noisescale_g1);
-
-	for (i = 0; i < N(bwn_tab_retard); i++)
-		bwn_ofdmtab_write_4(mac, BWN_OFDMTAB_ADVRETARD, i,
-		    bwn_tab_retard[i]);
-
-	if (phy->rev == 1) {
-		for (i = 0; i < 16; i++)
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_WRSSI_R1,
-			    i, 0x0020);
-	} else {
-		for (i = 0; i < 32; i++)
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_WRSSI, i, 0x0820);
-	}
-
-	bwn_wa_agc(mac);
-}
-
-static void
-bwn_wa_grev26789(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	int i;
-	static const uint16_t bwn_tab_sigmasqr2[] = BWN_TAB_SIGMASQR2;
-	uint16_t ofdmrev;
-
-	KASSERT(phy->type == BWN_PHYTYPE_G, ("%s fail", __func__));
-
-	bwn_gtab_write(mac, BWN_GTAB_ORIGTR, 0, 0xc480);
-
-	/* init CRSTHRES and ANTDWELL */
-	if (phy->rev == 1)
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES1_R1, 0x4f19);
-	else if (phy->rev == 2) {
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES1, 0x1861);
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES2, 0x0271);
-		BWN_PHY_SET(mac, BWN_PHY_ANTDWELL, 0x0800);
-	} else {
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES1, 0x0098);
-		BWN_PHY_WRITE(mac, BWN_PHY_CRSTHRES2, 0x0070);
-		BWN_PHY_WRITE(mac, BWN_PHY_OFDM(0xc9), 0x0080);
-		BWN_PHY_SET(mac, BWN_PHY_ANTDWELL, 0x0800);
-	}
-
-	for (i = 0; i < 64; i++)
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_RSSI, i, i);
-
-	/* XXX support PHY-A??? */
-	if (phy->rev == 1)
-		for (i = 0; i < N(bwn_tab_noise_g1); i++)
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC2, i,
-			    bwn_tab_noise_g1[i]);
-	else
-		for (i = 0; i < N(bwn_tab_noise_g2); i++)
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_AGC2, i,
-			    bwn_tab_noise_g2[i]);
-
-	/* XXX support PHY-A??? */
-	if (phy->rev >= 6) {
-		if (BWN_PHY_READ(mac, BWN_PHY_ENCORE) &
-		    BWN_PHY_ENCORE_EN)
-			bwn_wa_write_noisescale(mac, bwn_tab_noisescale_g3);
-		else
-			bwn_wa_write_noisescale(mac, bwn_tab_noisescale_g2);
-	} else
-		bwn_wa_write_noisescale(mac, bwn_tab_noisescale_g1);
-
-	for (i = 0; i < N(bwn_tab_sigmasqr2); i++)
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_MINSIGSQ, i,
-		    bwn_tab_sigmasqr2[i]);
-
-	if (phy->rev == 1) {
-		for (i = 0; i < 16; i++)
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_WRSSI_R1, i,
-			    0x0020);
-	} else {
-		for (i = 0; i < 32; i++)
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_WRSSI, i, 0x0820);
-	}
-
-	bwn_wa_agc(mac);
-
-	ofdmrev = BWN_PHY_READ(mac, BWN_PHY_VERSION_OFDM) & BWN_PHYVER_VERSION;
-	if (ofdmrev > 2) {
-		if (phy->type == BWN_PHYTYPE_A)
-			BWN_PHY_WRITE(mac, BWN_PHY_PWRDOWN, 0x1808);
-		else
-			BWN_PHY_WRITE(mac, BWN_PHY_PWRDOWN, 0x1000);
-	} else {
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_DAC, 3, 0x1044);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_DAC, 4, 0x7201);
-		bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_DAC, 6, 0x0040);
-	}
-
-	bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_UNKNOWN_0F, 2, 15);
-	bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_UNKNOWN_0F, 3, 20);
-}
-
-static void
-bwn_wa_init(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_softc *sc = mac->mac_sc;
-
-	KASSERT(phy->type == BWN_PHYTYPE_G, ("%s fail", __func__));
-
-	switch (phy->rev) {
-	case 1:
-		bwn_wa_grev1(mac);
-		break;
-	case 2:
-	case 6:
-	case 7:
-	case 8:
-	case 9:
-		bwn_wa_grev26789(mac);
-		break;
-	default:
-		KASSERT(0 == 1, ("%s:%d: fail", __func__, __LINE__));
-	}
-
-	if (siba_get_pci_subvendor(sc->sc_dev) != SIBA_BOARDVENDOR_BCM ||
-	    siba_get_pci_subdevice(sc->sc_dev) != SIBA_BOARD_BU4306 ||
-	    siba_get_pci_revid(sc->sc_dev) != 0x17) {
-		if (phy->rev < 2) {
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX_R1, 1,
-			    0x0002);
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX_R1, 2,
-			    0x0001);
-		} else {
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX, 1, 0x0002);
-			bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX, 2, 0x0001);
-			if ((siba_sprom_get_bf_lo(sc->sc_dev) &
-			     BWN_BFL_EXTLNA) &&
-			    (phy->rev >= 7)) {
-				BWN_PHY_MASK(mac, BWN_PHY_EXTG(0x11), 0xf7ff);
-				bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX,
-				    0x0020, 0x0001);
-				bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX,
-				    0x0021, 0x0001);
-				bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX,
-				    0x0022, 0x0001);
-				bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX,
-				    0x0023, 0x0000);
-				bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX,
-				    0x0000, 0x0000);
-				bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_GAINX,
-				    0x0003, 0x0002);
-			}
-		}
-	}
-	if (siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_FEM) {
-		BWN_PHY_WRITE(mac, BWN_PHY_GTABCTL, 0x3120);
-		BWN_PHY_WRITE(mac, BWN_PHY_GTABDATA, 0xc480);
-	}
-
-	bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_UNKNOWN_11, 0, 0);
-	bwn_ofdmtab_write_2(mac, BWN_OFDMTAB_UNKNOWN_11, 1, 0);
-}
-
-static void
-bwn_ofdmtab_write_2(struct bwn_mac *mac, uint16_t table, uint16_t offset,
-    uint16_t value)
-{
-	struct bwn_phy_g *pg = &mac->mac_phy.phy_g;
-	uint16_t addr;
-
-	addr = table + offset;
-	if ((pg->pg_ofdmtab_dir != BWN_OFDMTAB_DIR_WRITE) ||
-	    (addr - 1 != pg->pg_ofdmtab_addr)) {
-		BWN_PHY_WRITE(mac, BWN_PHY_OTABLECTL, addr);
-		pg->pg_ofdmtab_dir = BWN_OFDMTAB_DIR_WRITE;
-	}
-	pg->pg_ofdmtab_addr = addr;
-	BWN_PHY_WRITE(mac, BWN_PHY_OTABLEI, value);
-}
-
-static void
-bwn_ofdmtab_write_4(struct bwn_mac *mac, uint16_t table, uint16_t offset,
-    uint32_t value)
-{
-	struct bwn_phy_g *pg = &mac->mac_phy.phy_g;
-	uint16_t addr;
-
-	addr = table + offset;
-	if ((pg->pg_ofdmtab_dir != BWN_OFDMTAB_DIR_WRITE) ||
-	    (addr - 1 != pg->pg_ofdmtab_addr)) {
-		BWN_PHY_WRITE(mac, BWN_PHY_OTABLECTL, addr);
-		pg->pg_ofdmtab_dir = BWN_OFDMTAB_DIR_WRITE;
-	}
-	pg->pg_ofdmtab_addr = addr;
-
-	BWN_PHY_WRITE(mac, BWN_PHY_OTABLEI, value);
-	BWN_PHY_WRITE(mac, BWN_PHY_OTABLEQ, (value >> 16));
-}
-
-static void
-bwn_gtab_write(struct bwn_mac *mac, uint16_t table, uint16_t offset,
-    uint16_t value)
-{
-
-	BWN_PHY_WRITE(mac, BWN_PHY_GTABCTL, table + offset);
-	BWN_PHY_WRITE(mac, BWN_PHY_GTABDATA, value);
-}
-
-static void
+void
 bwn_dummy_transmission(struct bwn_mac *mac, int ofdm, int paon)
 {
 	struct bwn_phy *phy = &mac->mac_phy;
@@ -5407,9 +3648,12 @@ bwn_dummy_transmission(struct bwn_mac *mac, int ofdm, int paon)
 	BWN_WRITE_2(mac, 0x0568, 0x0000);
 	BWN_WRITE_2(mac, 0x07c0,
 	    (siba_get_revid(sc->sc_dev) < 11) ? 0x0000 : 0x0100);
-	value = ((phy->type == BWN_PHYTYPE_A) ? 0x41 : 0x40);
+
+	value = (ofdm ? 0x41 : 0x40);
 	BWN_WRITE_2(mac, 0x050c, value);
-	if (phy->type == BWN_PHYTYPE_LP)
+
+	if (phy->type == BWN_PHYTYPE_N || phy->type == BWN_PHYTYPE_LP ||
+	    phy->type == BWN_PHYTYPE_LCN)
 		BWN_WRITE_2(mac, 0x0514, 0x1a02);
 	BWN_WRITE_2(mac, 0x0508, 0x0000);
 	BWN_WRITE_2(mac, 0x050a, 0x0000);
@@ -5417,10 +3661,24 @@ bwn_dummy_transmission(struct bwn_mac *mac, int ofdm, int paon)
 	BWN_WRITE_2(mac, 0x056a, 0x0014);
 	BWN_WRITE_2(mac, 0x0568, 0x0826);
 	BWN_WRITE_2(mac, 0x0500, 0x0000);
-	if (phy->type == BWN_PHYTYPE_LP)
+
+	/* XXX TODO: n phy pa override? */
+
+	switch (phy->type) {
+	case BWN_PHYTYPE_N:
+	case BWN_PHYTYPE_LCN:
+		BWN_WRITE_2(mac, 0x0502, 0x00d0);
+		break;
+	case BWN_PHYTYPE_LP:
 		BWN_WRITE_2(mac, 0x0502, 0x0050);
-	else
+		break;
+	default:
 		BWN_WRITE_2(mac, 0x0502, 0x0030);
+		break;
+	}
+
+	/* flush */
+	BWN_READ_2(mac, 0x0502);
 
 	if (phy->rf_ver == 0x2050 && phy->rf_rev <= 0x5)
 		BWN_RF_WRITE(mac, 0x0051, 0x0017);
@@ -5446,7 +3704,7 @@ bwn_dummy_transmission(struct bwn_mac *mac, int ofdm, int paon)
 		BWN_RF_WRITE(mac, 0x0051, 0x0037);
 }
 
-static void
+void
 bwn_ram_write(struct bwn_mac *mac, uint16_t offset, uint32_t val)
 {
 	uint32_t macctl;
@@ -5462,768 +3720,6 @@ bwn_ram_write(struct bwn_mac *mac, uint16_t offset, uint32_t val)
 	BWN_WRITE_4(mac, BWN_RAM_DATA, val);
 }
 
-static void
-bwn_lo_write(struct bwn_mac *mac, struct bwn_loctl *ctl)
-{
-	uint16_t value;
-
-	KASSERT(mac->mac_phy.type == BWN_PHYTYPE_G,
-	    ("%s:%d: fail", __func__, __LINE__));
-
-	value = (uint8_t) (ctl->q);
-	value |= ((uint8_t) (ctl->i)) << 8;
-	BWN_PHY_WRITE(mac, BWN_PHY_LO_CTL, value);
-}
-
-static uint16_t
-bwn_lo_calcfeed(struct bwn_mac *mac,
-    uint16_t lna, uint16_t pga, uint16_t trsw_rx)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_softc *sc = mac->mac_sc;
-	uint16_t rfover;
-	uint16_t feedthrough;
-
-	if (phy->gmode) {
-		lna <<= BWN_PHY_RFOVERVAL_LNA_SHIFT;
-		pga <<= BWN_PHY_RFOVERVAL_PGA_SHIFT;
-
-		KASSERT((lna & ~BWN_PHY_RFOVERVAL_LNA) == 0,
-		    ("%s:%d: fail", __func__, __LINE__));
-		KASSERT((pga & ~BWN_PHY_RFOVERVAL_PGA) == 0,
-		    ("%s:%d: fail", __func__, __LINE__));
-
-		trsw_rx &= (BWN_PHY_RFOVERVAL_TRSWRX | BWN_PHY_RFOVERVAL_BW);
-
-		rfover = BWN_PHY_RFOVERVAL_UNK | pga | lna | trsw_rx;
-		if ((siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_EXTLNA) &&
-		    phy->rev > 6)
-			rfover |= BWN_PHY_RFOVERVAL_EXTLNA;
-
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xe300);
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, rfover);
-		DELAY(10);
-		rfover |= BWN_PHY_RFOVERVAL_BW_LBW;
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, rfover);
-		DELAY(10);
-		rfover |= BWN_PHY_RFOVERVAL_BW_LPF;
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, rfover);
-		DELAY(10);
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xf300);
-	} else {
-		pga |= BWN_PHY_PGACTL_UNKNOWN;
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, pga);
-		DELAY(10);
-		pga |= BWN_PHY_PGACTL_LOWBANDW;
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, pga);
-		DELAY(10);
-		pga |= BWN_PHY_PGACTL_LPF;
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, pga);
-	}
-	DELAY(21);
-	feedthrough = BWN_PHY_READ(mac, BWN_PHY_LO_LEAKAGE);
-
-	return (feedthrough);
-}
-
-static uint16_t
-bwn_lo_txctl_regtable(struct bwn_mac *mac,
-    uint16_t *value, uint16_t *pad_mix_gain)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	uint16_t reg, v, padmix;
-
-	if (phy->type == BWN_PHYTYPE_B) {
-		v = 0x30;
-		if (phy->rf_rev <= 5) {
-			reg = 0x43;
-			padmix = 0;
-		} else {
-			reg = 0x52;
-			padmix = 5;
-		}
-	} else {
-		if (phy->rev >= 2 && phy->rf_rev == 8) {
-			reg = 0x43;
-			v = 0x10;
-			padmix = 2;
-		} else {
-			reg = 0x52;
-			v = 0x30;
-			padmix = 5;
-		}
-	}
-	if (value)
-		*value = v;
-	if (pad_mix_gain)
-		*pad_mix_gain = padmix;
-
-	return (reg);
-}
-
-static void
-bwn_lo_measure_txctl_values(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_txpwr_loctl *lo = &pg->pg_loctl;
-	uint16_t reg, mask;
-	uint16_t trsw_rx, pga;
-	uint16_t rf_pctl_reg;
-
-	static const uint8_t tx_bias_values[] = {
-		0x09, 0x08, 0x0a, 0x01, 0x00,
-		0x02, 0x05, 0x04, 0x06,
-	};
-	static const uint8_t tx_magn_values[] = {
-		0x70, 0x40,
-	};
-
-	if (!BWN_HAS_LOOPBACK(phy)) {
-		rf_pctl_reg = 6;
-		trsw_rx = 2;
-		pga = 0;
-	} else {
-		int lb_gain;
-
-		trsw_rx = 0;
-		lb_gain = pg->pg_max_lb_gain / 2;
-		if (lb_gain > 10) {
-			rf_pctl_reg = 0;
-			pga = abs(10 - lb_gain) / 6;
-			pga = MIN(MAX(pga, 0), 15);
-		} else {
-			int cmp_val;
-			int tmp;
-
-			pga = 0;
-			cmp_val = 0x24;
-			if ((phy->rev >= 2) &&
-			    (phy->rf_ver == 0x2050) && (phy->rf_rev == 8))
-				cmp_val = 0x3c;
-			tmp = lb_gain;
-			if ((10 - lb_gain) < cmp_val)
-				tmp = (10 - lb_gain);
-			if (tmp < 0)
-				tmp += 6;
-			else
-				tmp += 3;
-			cmp_val /= 4;
-			tmp /= 4;
-			if (tmp >= cmp_val)
-				rf_pctl_reg = cmp_val;
-			else
-				rf_pctl_reg = tmp;
-		}
-	}
-	BWN_RF_SETMASK(mac, 0x43, 0xfff0, rf_pctl_reg);
-	bwn_phy_g_set_bbatt(mac, 2);
-
-	reg = bwn_lo_txctl_regtable(mac, &mask, NULL);
-	mask = ~mask;
-	BWN_RF_MASK(mac, reg, mask);
-
-	if (BWN_HAS_TXMAG(phy)) {
-		int i, j;
-		int feedthrough;
-		int min_feedth = 0xffff;
-		uint8_t tx_magn, tx_bias;
-
-		for (i = 0; i < N(tx_magn_values); i++) {
-			tx_magn = tx_magn_values[i];
-			BWN_RF_SETMASK(mac, 0x52, 0xff0f, tx_magn);
-			for (j = 0; j < N(tx_bias_values); j++) {
-				tx_bias = tx_bias_values[j];
-				BWN_RF_SETMASK(mac, 0x52, 0xfff0, tx_bias);
-				feedthrough = bwn_lo_calcfeed(mac, 0, pga,
-				    trsw_rx);
-				if (feedthrough < min_feedth) {
-					lo->tx_bias = tx_bias;
-					lo->tx_magn = tx_magn;
-					min_feedth = feedthrough;
-				}
-				if (lo->tx_bias == 0)
-					break;
-			}
-			BWN_RF_WRITE(mac, 0x52,
-					  (BWN_RF_READ(mac, 0x52)
-					   & 0xff00) | lo->tx_bias | lo->
-					  tx_magn);
-		}
-	} else {
-		lo->tx_magn = 0;
-		lo->tx_bias = 0;
-		BWN_RF_MASK(mac, 0x52, 0xfff0);
-	}
-
-	BWN_GETTIME(lo->txctl_measured_time);
-}
-
-static void
-bwn_lo_get_powervector(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_txpwr_loctl *lo = &pg->pg_loctl;
-	int i;
-	uint64_t tmp;
-	uint64_t power_vector = 0;
-
-	for (i = 0; i < 8; i += 2) {
-		tmp = bwn_shm_read_2(mac, BWN_SHARED, 0x310 + i);
-		power_vector |= (tmp << (i * 8));
-		bwn_shm_write_2(mac, BWN_SHARED, 0x310 + i, 0);
-	}
-	if (power_vector)
-		lo->power_vector = power_vector;
-
-	BWN_GETTIME(lo->pwr_vec_read_time);
-}
-
-static void
-bwn_lo_measure_gain_values(struct bwn_mac *mac, int16_t max_rx_gain,
-    int use_trsw_rx)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	uint16_t tmp;
-
-	if (max_rx_gain < 0)
-		max_rx_gain = 0;
-
-	if (BWN_HAS_LOOPBACK(phy)) {
-		int trsw_rx = 0;
-		int trsw_rx_gain;
-
-		if (use_trsw_rx) {
-			trsw_rx_gain = pg->pg_trsw_rx_gain / 2;
-			if (max_rx_gain >= trsw_rx_gain) {
-				trsw_rx_gain = max_rx_gain - trsw_rx_gain;
-				trsw_rx = 0x20;
-			}
-		} else
-			trsw_rx_gain = max_rx_gain;
-		if (trsw_rx_gain < 9) {
-			pg->pg_lna_lod_gain = 0;
-		} else {
-			pg->pg_lna_lod_gain = 1;
-			trsw_rx_gain -= 8;
-		}
-		trsw_rx_gain = MIN(MAX(trsw_rx_gain, 0), 0x2d);
-		pg->pg_pga_gain = trsw_rx_gain / 3;
-		if (pg->pg_pga_gain >= 5) {
-			pg->pg_pga_gain -= 5;
-			pg->pg_lna_gain = 2;
-		} else
-			pg->pg_lna_gain = 0;
-	} else {
-		pg->pg_lna_gain = 0;
-		pg->pg_trsw_rx_gain = 0x20;
-		if (max_rx_gain >= 0x14) {
-			pg->pg_lna_lod_gain = 1;
-			pg->pg_pga_gain = 2;
-		} else if (max_rx_gain >= 0x12) {
-			pg->pg_lna_lod_gain = 1;
-			pg->pg_pga_gain = 1;
-		} else if (max_rx_gain >= 0xf) {
-			pg->pg_lna_lod_gain = 1;
-			pg->pg_pga_gain = 0;
-		} else {
-			pg->pg_lna_lod_gain = 0;
-			pg->pg_pga_gain = 0;
-		}
-	}
-
-	tmp = BWN_RF_READ(mac, 0x7a);
-	if (pg->pg_lna_lod_gain == 0)
-		tmp &= ~0x0008;
-	else
-		tmp |= 0x0008;
-	BWN_RF_WRITE(mac, 0x7a, tmp);
-}
-
-static void
-bwn_lo_save(struct bwn_mac *mac, struct bwn_lo_g_value *sav)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	struct bwn_txpwr_loctl *lo = &pg->pg_loctl;
-	struct timespec ts;
-	uint16_t tmp;
-
-	if (bwn_has_hwpctl(mac)) {
-		sav->phy_lomask = BWN_PHY_READ(mac, BWN_PHY_LO_MASK);
-		sav->phy_extg = BWN_PHY_READ(mac, BWN_PHY_EXTG(0x01));
-		sav->phy_dacctl_hwpctl = BWN_PHY_READ(mac, BWN_PHY_DACCTL);
-		sav->phy_cck4 = BWN_PHY_READ(mac, BWN_PHY_CCK(0x14));
-		sav->phy_hpwr_tssictl = BWN_PHY_READ(mac, BWN_PHY_HPWR_TSSICTL);
-
-		BWN_PHY_SET(mac, BWN_PHY_HPWR_TSSICTL, 0x100);
-		BWN_PHY_SET(mac, BWN_PHY_EXTG(0x01), 0x40);
-		BWN_PHY_SET(mac, BWN_PHY_DACCTL, 0x40);
-		BWN_PHY_SET(mac, BWN_PHY_CCK(0x14), 0x200);
-	}
-	if (phy->type == BWN_PHYTYPE_B &&
-	    phy->rf_ver == 0x2050 && phy->rf_rev < 6) {
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x16), 0x410);
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x17), 0x820);
-	}
-	if (phy->rev >= 2) {
-		sav->phy_analogover = BWN_PHY_READ(mac, BWN_PHY_ANALOGOVER);
-		sav->phy_analogoverval =
-		    BWN_PHY_READ(mac, BWN_PHY_ANALOGOVERVAL);
-		sav->phy_rfover = BWN_PHY_READ(mac, BWN_PHY_RFOVER);
-		sav->phy_rfoverval = BWN_PHY_READ(mac, BWN_PHY_RFOVERVAL);
-		sav->phy_classctl = BWN_PHY_READ(mac, BWN_PHY_CLASSCTL);
-		sav->phy_cck3 = BWN_PHY_READ(mac, BWN_PHY_CCK(0x3e));
-		sav->phy_crs0 = BWN_PHY_READ(mac, BWN_PHY_CRS0);
-
-		BWN_PHY_MASK(mac, BWN_PHY_CLASSCTL, 0xfffc);
-		BWN_PHY_MASK(mac, BWN_PHY_CRS0, 0x7fff);
-		BWN_PHY_SET(mac, BWN_PHY_ANALOGOVER, 0x0003);
-		BWN_PHY_MASK(mac, BWN_PHY_ANALOGOVERVAL, 0xfffc);
-		if (phy->type == BWN_PHYTYPE_G) {
-			if ((phy->rev >= 7) &&
-			    (siba_sprom_get_bf_lo(sc->sc_dev) &
-			     BWN_BFL_EXTLNA)) {
-				BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, 0x933);
-			} else {
-				BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, 0x133);
-			}
-		} else {
-			BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, 0);
-		}
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x3e), 0);
-	}
-	sav->reg0 = BWN_READ_2(mac, 0x3f4);
-	sav->reg1 = BWN_READ_2(mac, 0x3e2);
-	sav->rf0 = BWN_RF_READ(mac, 0x43);
-	sav->rf1 = BWN_RF_READ(mac, 0x7a);
-	sav->phy_pgactl = BWN_PHY_READ(mac, BWN_PHY_PGACTL);
-	sav->phy_cck2 = BWN_PHY_READ(mac, BWN_PHY_CCK(0x2a));
-	sav->phy_syncctl = BWN_PHY_READ(mac, BWN_PHY_SYNCCTL);
-	sav->phy_dacctl = BWN_PHY_READ(mac, BWN_PHY_DACCTL);
-
-	if (!BWN_HAS_TXMAG(phy)) {
-		sav->rf2 = BWN_RF_READ(mac, 0x52);
-		sav->rf2 &= 0x00f0;
-	}
-	if (phy->type == BWN_PHYTYPE_B) {
-		sav->phy_cck0 = BWN_PHY_READ(mac, BWN_PHY_CCK(0x30));
-		sav->phy_cck1 = BWN_PHY_READ(mac, BWN_PHY_CCK(0x06));
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x30), 0x00ff);
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x06), 0x3f3f);
-	} else {
-		BWN_WRITE_2(mac, 0x3e2, BWN_READ_2(mac, 0x3e2)
-			    | 0x8000);
-	}
-	BWN_WRITE_2(mac, 0x3f4, BWN_READ_2(mac, 0x3f4)
-		    & 0xf000);
-
-	tmp =
-	    (phy->type == BWN_PHYTYPE_G) ? BWN_PHY_LO_MASK : BWN_PHY_CCK(0x2e);
-	BWN_PHY_WRITE(mac, tmp, 0x007f);
-
-	tmp = sav->phy_syncctl;
-	BWN_PHY_WRITE(mac, BWN_PHY_SYNCCTL, tmp & 0xff7f);
-	tmp = sav->rf1;
-	BWN_RF_WRITE(mac, 0x007a, tmp & 0xfff0);
-
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2a), 0x8a3);
-	if (phy->type == BWN_PHYTYPE_G ||
-	    (phy->type == BWN_PHYTYPE_B &&
-	     phy->rf_ver == 0x2050 && phy->rf_rev >= 6)) {
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2b), 0x1003);
-	} else
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2b), 0x0802);
-	if (phy->rev >= 2)
-		bwn_dummy_transmission(mac, 0, 1);
-	bwn_phy_g_switch_chan(mac, 6, 0);
-	BWN_RF_READ(mac, 0x51);
-	if (phy->type == BWN_PHYTYPE_G)
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2f), 0);
-
-	nanouptime(&ts);
-	if (ieee80211_time_before(lo->txctl_measured_time,
-	    (ts.tv_nsec / 1000000 + ts.tv_sec * 1000) - BWN_LO_TXCTL_EXPIRE))
-		bwn_lo_measure_txctl_values(mac);
-
-	if (phy->type == BWN_PHYTYPE_G && phy->rev >= 3)
-		BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, 0xc078);
-	else {
-		if (phy->type == BWN_PHYTYPE_B)
-			BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2e), 0x8078);
-		else
-			BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, 0x8078);
-	}
-}
-
-static void
-bwn_lo_restore(struct bwn_mac *mac, struct bwn_lo_g_value *sav)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	uint16_t tmp;
-
-	if (phy->rev >= 2) {
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, 0xe300);
-		tmp = (pg->pg_pga_gain << 8);
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, tmp | 0xa0);
-		DELAY(5);
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, tmp | 0xa2);
-		DELAY(2);
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, tmp | 0xa3);
-	} else {
-		tmp = (pg->pg_pga_gain | 0xefa0);
-		BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, tmp);
-	}
-	if (phy->type == BWN_PHYTYPE_G) {
-		if (phy->rev >= 3)
-			BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2e), 0xc078);
-		else
-			BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2e), 0x8078);
-		if (phy->rev >= 2)
-			BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2f), 0x0202);
-		else
-			BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2f), 0x0101);
-	}
-	BWN_WRITE_2(mac, 0x3f4, sav->reg0);
-	BWN_PHY_WRITE(mac, BWN_PHY_PGACTL, sav->phy_pgactl);
-	BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x2a), sav->phy_cck2);
-	BWN_PHY_WRITE(mac, BWN_PHY_SYNCCTL, sav->phy_syncctl);
-	BWN_PHY_WRITE(mac, BWN_PHY_DACCTL, sav->phy_dacctl);
-	BWN_RF_WRITE(mac, 0x43, sav->rf0);
-	BWN_RF_WRITE(mac, 0x7a, sav->rf1);
-	if (!BWN_HAS_TXMAG(phy)) {
-		tmp = sav->rf2;
-		BWN_RF_SETMASK(mac, 0x52, 0xff0f, tmp);
-	}
-	BWN_WRITE_2(mac, 0x3e2, sav->reg1);
-	if (phy->type == BWN_PHYTYPE_B &&
-	    phy->rf_ver == 0x2050 && phy->rf_rev <= 5) {
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x30), sav->phy_cck0);
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x06), sav->phy_cck1);
-	}
-	if (phy->rev >= 2) {
-		BWN_PHY_WRITE(mac, BWN_PHY_ANALOGOVER, sav->phy_analogover);
-		BWN_PHY_WRITE(mac, BWN_PHY_ANALOGOVERVAL,
-			      sav->phy_analogoverval);
-		BWN_PHY_WRITE(mac, BWN_PHY_CLASSCTL, sav->phy_classctl);
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVER, sav->phy_rfover);
-		BWN_PHY_WRITE(mac, BWN_PHY_RFOVERVAL, sav->phy_rfoverval);
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x3e), sav->phy_cck3);
-		BWN_PHY_WRITE(mac, BWN_PHY_CRS0, sav->phy_crs0);
-	}
-	if (bwn_has_hwpctl(mac)) {
-		tmp = (sav->phy_lomask & 0xbfff);
-		BWN_PHY_WRITE(mac, BWN_PHY_LO_MASK, tmp);
-		BWN_PHY_WRITE(mac, BWN_PHY_EXTG(0x01), sav->phy_extg);
-		BWN_PHY_WRITE(mac, BWN_PHY_DACCTL, sav->phy_dacctl_hwpctl);
-		BWN_PHY_WRITE(mac, BWN_PHY_CCK(0x14), sav->phy_cck4);
-		BWN_PHY_WRITE(mac, BWN_PHY_HPWR_TSSICTL, sav->phy_hpwr_tssictl);
-	}
-	bwn_phy_g_switch_chan(mac, sav->old_channel, 1);
-}
-
-static int
-bwn_lo_probe_loctl(struct bwn_mac *mac,
-    struct bwn_loctl *probe, struct bwn_lo_g_sm *d)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_loctl orig, test;
-	struct bwn_loctl prev = { -100, -100 };
-	static const struct bwn_loctl modifiers[] = {
-		{  1,  1,}, {  1,  0,}, {  1, -1,}, {  0, -1,},
-		{ -1, -1,}, { -1,  0,}, { -1,  1,}, {  0,  1,}
-	};
-	int begin, end, lower = 0, i;
-	uint16_t feedth;
-
-	if (d->curstate == 0) {
-		begin = 1;
-		end = 8;
-	} else if (d->curstate % 2 == 0) {
-		begin = d->curstate - 1;
-		end = d->curstate + 1;
-	} else {
-		begin = d->curstate - 2;
-		end = d->curstate + 2;
-	}
-	if (begin < 1)
-		begin += 8;
-	if (end > 8)
-		end -= 8;
-
-	memcpy(&orig, probe, sizeof(struct bwn_loctl));
-	i = begin;
-	d->curstate = i;
-	while (1) {
-		KASSERT(i >= 1 && i <= 8, ("%s:%d: fail", __func__, __LINE__));
-		memcpy(&test, &orig, sizeof(struct bwn_loctl));
-		test.i += modifiers[i - 1].i * d->multipler;
-		test.q += modifiers[i - 1].q * d->multipler;
-		if ((test.i != prev.i || test.q != prev.q) &&
-		    (abs(test.i) <= 16 && abs(test.q) <= 16)) {
-			bwn_lo_write(mac, &test);
-			feedth = bwn_lo_calcfeed(mac, pg->pg_lna_gain,
-			    pg->pg_pga_gain, pg->pg_trsw_rx_gain);
-			if (feedth < d->feedth) {
-				memcpy(probe, &test,
-				    sizeof(struct bwn_loctl));
-				lower = 1;
-				d->feedth = feedth;
-				if (d->nmeasure < 2 && !BWN_HAS_LOOPBACK(phy))
-					break;
-			}
-		}
-		memcpy(&prev, &test, sizeof(prev));
-		if (i == end)
-			break;
-		if (i == 8)
-			i = 1;
-		else
-			i++;
-		d->curstate = i;
-	}
-
-	return (lower);
-}
-
-static void
-bwn_lo_probe_sm(struct bwn_mac *mac, struct bwn_loctl *loctl, int *rxgain)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_lo_g_sm d;
-	struct bwn_loctl probe;
-	int lower, repeat, cnt = 0;
-	uint16_t feedth;
-
-	d.nmeasure = 0;
-	d.multipler = 1;
-	if (BWN_HAS_LOOPBACK(phy))
-		d.multipler = 3;
-
-	memcpy(&d.loctl, loctl, sizeof(struct bwn_loctl));
-	repeat = (BWN_HAS_LOOPBACK(phy)) ? 4 : 1;
-
-	do {
-		bwn_lo_write(mac, &d.loctl);
-		feedth = bwn_lo_calcfeed(mac, pg->pg_lna_gain,
-		    pg->pg_pga_gain, pg->pg_trsw_rx_gain);
-		if (feedth < 0x258) {
-			if (feedth >= 0x12c)
-				*rxgain += 6;
-			else
-				*rxgain += 3;
-			feedth = bwn_lo_calcfeed(mac, pg->pg_lna_gain,
-			    pg->pg_pga_gain, pg->pg_trsw_rx_gain);
-		}
-		d.feedth = feedth;
-		d.curstate = 0;
-		do {
-			KASSERT(d.curstate >= 0 && d.curstate <= 8,
-			    ("%s:%d: fail", __func__, __LINE__));
-			memcpy(&probe, &d.loctl,
-			       sizeof(struct bwn_loctl));
-			lower = bwn_lo_probe_loctl(mac, &probe, &d);
-			if (!lower)
-				break;
-			if ((probe.i == d.loctl.i) && (probe.q == d.loctl.q))
-				break;
-			memcpy(&d.loctl, &probe, sizeof(struct bwn_loctl));
-			d.nmeasure++;
-		} while (d.nmeasure < 24);
-		memcpy(loctl, &d.loctl, sizeof(struct bwn_loctl));
-
-		if (BWN_HAS_LOOPBACK(phy)) {
-			if (d.feedth > 0x1194)
-				*rxgain -= 6;
-			else if (d.feedth < 0x5dc)
-				*rxgain += 3;
-			if (cnt == 0) {
-				if (d.feedth <= 0x5dc) {
-					d.multipler = 1;
-					cnt++;
-				} else
-					d.multipler = 2;
-			} else if (cnt == 2)
-				d.multipler = 1;
-		}
-		bwn_lo_measure_gain_values(mac, *rxgain, BWN_HAS_LOOPBACK(phy));
-	} while (++cnt < repeat);
-}
-
-static struct bwn_lo_calib *
-bwn_lo_calibset(struct bwn_mac *mac,
-    const struct bwn_bbatt *bbatt, const struct bwn_rfatt *rfatt)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_loctl loctl = { 0, 0 };
-	struct bwn_lo_calib *cal;
-	struct bwn_lo_g_value sval = { 0 };
-	int rxgain;
-	uint16_t pad, reg, value;
-
-	sval.old_channel = phy->chan;
-	bwn_mac_suspend(mac);
-	bwn_lo_save(mac, &sval);
-
-	reg = bwn_lo_txctl_regtable(mac, &value, &pad);
-	BWN_RF_SETMASK(mac, 0x43, 0xfff0, rfatt->att);
-	BWN_RF_SETMASK(mac, reg, ~value, (rfatt->padmix ? value :0));
-
-	rxgain = (rfatt->att * 2) + (bbatt->att / 2);
-	if (rfatt->padmix)
-		rxgain -= pad;
-	if (BWN_HAS_LOOPBACK(phy))
-		rxgain += pg->pg_max_lb_gain;
-	bwn_lo_measure_gain_values(mac, rxgain, BWN_HAS_LOOPBACK(phy));
-	bwn_phy_g_set_bbatt(mac, bbatt->att);
-	bwn_lo_probe_sm(mac, &loctl, &rxgain);
-
-	bwn_lo_restore(mac, &sval);
-	bwn_mac_enable(mac);
-
-	cal = malloc(sizeof(*cal), M_DEVBUF, M_NOWAIT | M_ZERO);
-	if (!cal) {
-		device_printf(mac->mac_sc->sc_dev, "out of memory\n");
-		return (NULL);
-	}
-	memcpy(&cal->bbatt, bbatt, sizeof(*bbatt));
-	memcpy(&cal->rfatt, rfatt, sizeof(*rfatt));
-	memcpy(&cal->ctl, &loctl, sizeof(loctl));
-
-	BWN_GETTIME(cal->calib_time);
-
-	return (cal);
-}
-
-static struct bwn_lo_calib *
-bwn_lo_get_calib(struct bwn_mac *mac, const struct bwn_bbatt *bbatt,
-    const struct bwn_rfatt *rfatt)
-{
-	struct bwn_txpwr_loctl *lo = &mac->mac_phy.phy_g.pg_loctl;
-	struct bwn_lo_calib *c;
-
-	TAILQ_FOREACH(c, &lo->calib_list, list) {
-		if (!BWN_BBATTCMP(&c->bbatt, bbatt))
-			continue;
-		if (!BWN_RFATTCMP(&c->rfatt, rfatt))
-			continue;
-		return (c);
-	}
-
-	c = bwn_lo_calibset(mac, bbatt, rfatt);
-	if (!c)
-		return (NULL);
-	TAILQ_INSERT_TAIL(&lo->calib_list, c, list);
-
-	return (c);
-}
-
-static void
-bwn_phy_g_dc_lookup_init(struct bwn_mac *mac, uint8_t update)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	struct bwn_txpwr_loctl *lo = &pg->pg_loctl;
-	const struct bwn_rfatt *rfatt;
-	const struct bwn_bbatt *bbatt;
-	uint64_t pvector;
-	int i;
-	int rf_offset, bb_offset;
-	uint8_t changed = 0;
-
-	KASSERT(BWN_DC_LT_SIZE == 32, ("%s:%d: fail", __func__, __LINE__));
-	KASSERT(lo->rfatt.len * lo->bbatt.len <= 64,
-	    ("%s:%d: fail", __func__, __LINE__));
-
-	pvector = lo->power_vector;
-	if (!update && !pvector)
-		return;
-
-	bwn_mac_suspend(mac);
-
-	for (i = 0; i < BWN_DC_LT_SIZE * 2; i++) {
-		struct bwn_lo_calib *cal;
-		int idx;
-		uint16_t val;
-
-		if (!update && !(pvector & (((uint64_t)1ULL) << i)))
-			continue;
-		bb_offset = i / lo->rfatt.len;
-		rf_offset = i % lo->rfatt.len;
-		bbatt = &(lo->bbatt.array[bb_offset]);
-		rfatt = &(lo->rfatt.array[rf_offset]);
-
-		cal = bwn_lo_calibset(mac, bbatt, rfatt);
-		if (!cal) {
-			device_printf(sc->sc_dev, "LO: Could not "
-			    "calibrate DC table entry\n");
-			continue;
-		}
-		val = (uint8_t)(cal->ctl.q);
-		val |= ((uint8_t)(cal->ctl.i)) << 4;
-		free(cal, M_DEVBUF);
-
-		idx = i / 2;
-		if (i % 2)
-			lo->dc_lt[idx] = (lo->dc_lt[idx] & 0x00ff)
-			    | ((val & 0x00ff) << 8);
-		else
-			lo->dc_lt[idx] = (lo->dc_lt[idx] & 0xff00)
-			    | (val & 0x00ff);
-		changed = 1;
-	}
-	if (changed) {
-		for (i = 0; i < BWN_DC_LT_SIZE; i++)
-			BWN_PHY_WRITE(mac, 0x3a0 + i, lo->dc_lt[i]);
-	}
-	bwn_mac_enable(mac);
-}
-
-static void
-bwn_lo_fixup_rfatt(struct bwn_rfatt *rf)
-{
-
-	if (!rf->padmix)
-		return;
-	if ((rf->att != 1) && (rf->att != 2) && (rf->att != 3))
-		rf->att = 4;
-}
-
-static void
-bwn_lo_g_adjust(struct bwn_mac *mac)
-{
-	struct bwn_phy_g *pg = &mac->mac_phy.phy_g;
-	struct bwn_lo_calib *cal;
-	struct bwn_rfatt rf;
-
-	memcpy(&rf, &pg->pg_rfatt, sizeof(rf));
-	bwn_lo_fixup_rfatt(&rf);
-
-	cal = bwn_lo_get_calib(mac, &pg->pg_bbatt, &rf);
-	if (!cal)
-		return;
-	bwn_lo_write(mac, &cal->ctl);
-}
-
-static void
-bwn_lo_g_init(struct bwn_mac *mac)
-{
-
-	if (!bwn_has_hwpctl(mac))
-		return;
-
-	bwn_lo_get_powervector(mac);
-	bwn_phy_g_dc_lookup_init(mac, 1);
-}
-
 void
 bwn_mac_suspend(struct bwn_mac *mac)
 {
@@ -6233,6 +3729,9 @@ bwn_mac_suspend(struct bwn_mac *mac)
 
 	KASSERT(mac->mac_suspended >= 0,
 	    ("%s:%d: fail", __func__, __LINE__));
+
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: suspended=%d\n",
+	    __func__, mac->mac_suspended);
 
 	if (mac->mac_suspended == 0) {
 		bwn_psctl(mac, BWN_PS_AWAKE);
@@ -6264,11 +3763,17 @@ bwn_mac_enable(struct bwn_mac *mac)
 	struct bwn_softc *sc = mac->mac_sc;
 	uint16_t state;
 
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: suspended=%d\n",
+	    __func__, mac->mac_suspended);
+
 	state = bwn_shm_read_2(mac, BWN_SHARED,
 	    BWN_SHARED_UCODESTAT);
 	if (state != BWN_SHARED_UCODESTAT_SUSPEND &&
-	    state != BWN_SHARED_UCODESTAT_SLEEP)
-		device_printf(sc->sc_dev, "warn: firmware state (%d)\n", state);
+	    state != BWN_SHARED_UCODESTAT_SLEEP) {
+		DPRINTF(sc, BWN_DEBUG_FW,
+		    "%s: warn: firmware state (%d)\n",
+		    __func__, state);
+	}
 
 	mac->mac_suspended--;
 	KASSERT(mac->mac_suspended >= 0,
@@ -6283,7 +3788,7 @@ bwn_mac_enable(struct bwn_mac *mac)
 	}
 }
 
-static void
+void
 bwn_psctl(struct bwn_mac *mac, uint32_t flags)
 {
 	struct bwn_softc *sc = mac->mac_sc;
@@ -6310,828 +3815,8 @@ bwn_psctl(struct bwn_mac *mac, uint32_t flags)
 			DELAY(10);
 		}
 	}
-}
-
-static int16_t
-bwn_nrssi_read(struct bwn_mac *mac, uint16_t offset)
-{
-
-	BWN_PHY_WRITE(mac, BWN_PHY_NRSSI_CTRL, offset);
-	return ((int16_t)BWN_PHY_READ(mac, BWN_PHY_NRSSI_DATA));
-}
-
-static void
-bwn_nrssi_threshold(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	int32_t a, b;
-	int16_t tmp16;
-	uint16_t tmpu16;
-
-	KASSERT(phy->type == BWN_PHYTYPE_G, ("%s: fail", __func__));
-
-	if (phy->gmode && (siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_RSSI)) {
-		if (!pg->pg_aci_wlan_automatic && pg->pg_aci_enable) {
-			a = 0x13;
-			b = 0x12;
-		} else {
-			a = 0xe;
-			b = 0x11;
-		}
-
-		a = a * (pg->pg_nrssi[1] - pg->pg_nrssi[0]);
-		a += (pg->pg_nrssi[0] << 6);
-		a += (a < 32) ? 31 : 32;
-		a = a >> 6;
-		a = MIN(MAX(a, -31), 31);
-
-		b = b * (pg->pg_nrssi[1] - pg->pg_nrssi[0]);
-		b += (pg->pg_nrssi[0] << 6);
-		if (b < 32)
-			b += 31;
-		else
-			b += 32;
-		b = b >> 6;
-		b = MIN(MAX(b, -31), 31);
-
-		tmpu16 = BWN_PHY_READ(mac, 0x048a) & 0xf000;
-		tmpu16 |= ((uint32_t)b & 0x0000003f);
-		tmpu16 |= (((uint32_t)a & 0x0000003f) << 6);
-		BWN_PHY_WRITE(mac, 0x048a, tmpu16);
-		return;
-	}
-
-	tmp16 = bwn_nrssi_read(mac, 0x20);
-	if (tmp16 >= 0x20)
-		tmp16 -= 0x40;
-	BWN_PHY_SETMASK(mac, 0x048a, 0xf000, (tmp16 < 3) ? 0x09eb : 0x0aed);
-}
-
-static void
-bwn_nrssi_slope_11g(struct bwn_mac *mac)
-{
-#define	SAVE_RF_MAX		3
-#define	SAVE_PHY_COMM_MAX	4
-#define	SAVE_PHY3_MAX		8
-	static const uint16_t save_rf_regs[SAVE_RF_MAX] =
-		{ 0x7a, 0x52, 0x43 };
-	static const uint16_t save_phy_comm_regs[SAVE_PHY_COMM_MAX] =
-		{ 0x15, 0x5a, 0x59, 0x58 };
-	static const uint16_t save_phy3_regs[SAVE_PHY3_MAX] = {
-		0x002e, 0x002f, 0x080f, BWN_PHY_G_LOCTL,
-		0x0801, 0x0060, 0x0014, 0x0478
-	};
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	int32_t i, tmp32, phy3_idx = 0;
-	uint16_t delta, tmp;
-	uint16_t save_rf[SAVE_RF_MAX];
-	uint16_t save_phy_comm[SAVE_PHY_COMM_MAX];
-	uint16_t save_phy3[SAVE_PHY3_MAX];
-	uint16_t ant_div, phy0, chan_ex;
-	int16_t nrssi0, nrssi1;
-
-	KASSERT(phy->type == BWN_PHYTYPE_G,
-	    ("%s:%d: fail", __func__, __LINE__));
-
-	if (phy->rf_rev >= 9)
-		return;
-	if (phy->rf_rev == 8)
-		bwn_nrssi_offset(mac);
-
-	BWN_PHY_MASK(mac, BWN_PHY_G_CRS, 0x7fff);
-	BWN_PHY_MASK(mac, 0x0802, 0xfffc);
-
-	/*
-	 * Save RF/PHY registers for later restoration
-	 */
-	ant_div = BWN_READ_2(mac, 0x03e2);
-	BWN_WRITE_2(mac, 0x03e2, BWN_READ_2(mac, 0x03e2) | 0x8000);
-	for (i = 0; i < SAVE_RF_MAX; ++i)
-		save_rf[i] = BWN_RF_READ(mac, save_rf_regs[i]);
-	for (i = 0; i < SAVE_PHY_COMM_MAX; ++i)
-		save_phy_comm[i] = BWN_PHY_READ(mac, save_phy_comm_regs[i]);
-
-	phy0 = BWN_READ_2(mac, BWN_PHY0);
-	chan_ex = BWN_READ_2(mac, BWN_CHANNEL_EXT);
-	if (phy->rev >= 3) {
-		for (i = 0; i < SAVE_PHY3_MAX; ++i)
-			save_phy3[i] = BWN_PHY_READ(mac, save_phy3_regs[i]);
-		BWN_PHY_WRITE(mac, 0x002e, 0);
-		BWN_PHY_WRITE(mac, BWN_PHY_G_LOCTL, 0);
-		switch (phy->rev) {
-		case 4:
-		case 6:
-		case 7:
-			BWN_PHY_SET(mac, 0x0478, 0x0100);
-			BWN_PHY_SET(mac, 0x0801, 0x0040);
-			break;
-		case 3:
-		case 5:
-			BWN_PHY_MASK(mac, 0x0801, 0xffbf);
-			break;
-		}
-		BWN_PHY_SET(mac, 0x0060, 0x0040);
-		BWN_PHY_SET(mac, 0x0014, 0x0200);
-	}
-	/*
-	 * Calculate nrssi0
-	 */
-	BWN_RF_SET(mac, 0x007a, 0x0070);
-	bwn_set_all_gains(mac, 0, 8, 0);
-	BWN_RF_MASK(mac, 0x007a, 0x00f7);
-	if (phy->rev >= 2) {
-		BWN_PHY_SETMASK(mac, 0x0811, 0xffcf, 0x0030);
-		BWN_PHY_SETMASK(mac, 0x0812, 0xffcf, 0x0010);
-	}
-	BWN_RF_SET(mac, 0x007a, 0x0080);
-	DELAY(20);
-
-	nrssi0 = (int16_t) ((BWN_PHY_READ(mac, 0x047f) >> 8) & 0x003f);
-	if (nrssi0 >= 0x0020)
-		nrssi0 -= 0x0040;
-
-	/*
-	 * Calculate nrssi1
-	 */
-	BWN_RF_MASK(mac, 0x007a, 0x007f);
-	if (phy->rev >= 2)
-		BWN_PHY_SETMASK(mac, 0x0003, 0xff9f, 0x0040);
-
-	BWN_WRITE_2(mac, BWN_CHANNEL_EXT,
-	    BWN_READ_2(mac, BWN_CHANNEL_EXT) | 0x2000);
-	BWN_RF_SET(mac, 0x007a, 0x000f);
-	BWN_PHY_WRITE(mac, 0x0015, 0xf330);
-	if (phy->rev >= 2) {
-		BWN_PHY_SETMASK(mac, 0x0812, 0xffcf, 0x0020);
-		BWN_PHY_SETMASK(mac, 0x0811, 0xffcf, 0x0020);
-	}
-
-	bwn_set_all_gains(mac, 3, 0, 1);
-	if (phy->rf_rev == 8) {
-		BWN_RF_WRITE(mac, 0x0043, 0x001f);
-	} else {
-		tmp = BWN_RF_READ(mac, 0x0052) & 0xff0f;
-		BWN_RF_WRITE(mac, 0x0052, tmp | 0x0060);
-		tmp = BWN_RF_READ(mac, 0x0043) & 0xfff0;
-		BWN_RF_WRITE(mac, 0x0043, tmp | 0x0009);
-	}
-	BWN_PHY_WRITE(mac, 0x005a, 0x0480);
-	BWN_PHY_WRITE(mac, 0x0059, 0x0810);
-	BWN_PHY_WRITE(mac, 0x0058, 0x000d);
-	DELAY(20);
-	nrssi1 = (int16_t) ((BWN_PHY_READ(mac, 0x047f) >> 8) & 0x003f);
-
-	/*
-	 * Install calculated narrow RSSI values
-	 */
-	if (nrssi1 >= 0x0020)
-		nrssi1 -= 0x0040;
-	if (nrssi0 == nrssi1)
-		pg->pg_nrssi_slope = 0x00010000;
-	else
-		pg->pg_nrssi_slope = 0x00400000 / (nrssi0 - nrssi1);
-	if (nrssi0 >= -4) {
-		pg->pg_nrssi[0] = nrssi1;
-		pg->pg_nrssi[1] = nrssi0;
-	}
-
-	/*
-	 * Restore saved RF/PHY registers
-	 */
-	if (phy->rev >= 3) {
-		for (phy3_idx = 0; phy3_idx < 4; ++phy3_idx) {
-			BWN_PHY_WRITE(mac, save_phy3_regs[phy3_idx],
-			    save_phy3[phy3_idx]);
-		}
-	}
-	if (phy->rev >= 2) {
-		BWN_PHY_MASK(mac, 0x0812, 0xffcf);
-		BWN_PHY_MASK(mac, 0x0811, 0xffcf);
-	}
-
-	for (i = 0; i < SAVE_RF_MAX; ++i)
-		BWN_RF_WRITE(mac, save_rf_regs[i], save_rf[i]);
-
-	BWN_WRITE_2(mac, 0x03e2, ant_div);
-	BWN_WRITE_2(mac, 0x03e6, phy0);
-	BWN_WRITE_2(mac, BWN_CHANNEL_EXT, chan_ex);
-
-	for (i = 0; i < SAVE_PHY_COMM_MAX; ++i)
-		BWN_PHY_WRITE(mac, save_phy_comm_regs[i], save_phy_comm[i]);
-
-	bwn_spu_workaround(mac, phy->chan);
-	BWN_PHY_SET(mac, 0x0802, (0x0001 | 0x0002));
-	bwn_set_original_gains(mac);
-	BWN_PHY_SET(mac, BWN_PHY_G_CRS, 0x8000);
-	if (phy->rev >= 3) {
-		for (; phy3_idx < SAVE_PHY3_MAX; ++phy3_idx) {
-			BWN_PHY_WRITE(mac, save_phy3_regs[phy3_idx],
-			    save_phy3[phy3_idx]);
-		}
-	}
-
-	delta = 0x1f - pg->pg_nrssi[0];
-	for (i = 0; i < 64; i++) {
-		tmp32 = (((i - delta) * pg->pg_nrssi_slope) / 0x10000) + 0x3a;
-		tmp32 = MIN(MAX(tmp32, 0), 0x3f);
-		pg->pg_nrssi_lt[i] = tmp32;
-	}
-
-	bwn_nrssi_threshold(mac);
-#undef SAVE_RF_MAX
-#undef SAVE_PHY_COMM_MAX
-#undef SAVE_PHY3_MAX
-}
-
-static void
-bwn_nrssi_offset(struct bwn_mac *mac)
-{
-#define	SAVE_RF_MAX		2
-#define	SAVE_PHY_COMM_MAX	10
-#define	SAVE_PHY6_MAX		8
-	static const uint16_t save_rf_regs[SAVE_RF_MAX] =
-		{ 0x7a, 0x43 };
-	static const uint16_t save_phy_comm_regs[SAVE_PHY_COMM_MAX] = {
-		0x0001, 0x0811, 0x0812, 0x0814,
-		0x0815, 0x005a, 0x0059, 0x0058,
-		0x000a, 0x0003
-	};
-	static const uint16_t save_phy6_regs[SAVE_PHY6_MAX] = {
-		0x002e, 0x002f, 0x080f, 0x0810,
-		0x0801, 0x0060, 0x0014, 0x0478
-	};
-	struct bwn_phy *phy = &mac->mac_phy;
-	int i, phy6_idx = 0;
-	uint16_t save_rf[SAVE_RF_MAX];
-	uint16_t save_phy_comm[SAVE_PHY_COMM_MAX];
-	uint16_t save_phy6[SAVE_PHY6_MAX];
-	int16_t nrssi;
-	uint16_t saved = 0xffff;
-
-	for (i = 0; i < SAVE_PHY_COMM_MAX; ++i)
-		save_phy_comm[i] = BWN_PHY_READ(mac, save_phy_comm_regs[i]);
-	for (i = 0; i < SAVE_RF_MAX; ++i)
-		save_rf[i] = BWN_RF_READ(mac, save_rf_regs[i]);
-
-	BWN_PHY_MASK(mac, 0x0429, 0x7fff);
-	BWN_PHY_SETMASK(mac, 0x0001, 0x3fff, 0x4000);
-	BWN_PHY_SET(mac, 0x0811, 0x000c);
-	BWN_PHY_SETMASK(mac, 0x0812, 0xfff3, 0x0004);
-	BWN_PHY_MASK(mac, 0x0802, ~(0x1 | 0x2));
-	if (phy->rev >= 6) {
-		for (i = 0; i < SAVE_PHY6_MAX; ++i)
-			save_phy6[i] = BWN_PHY_READ(mac, save_phy6_regs[i]);
-
-		BWN_PHY_WRITE(mac, 0x002e, 0);
-		BWN_PHY_WRITE(mac, 0x002f, 0);
-		BWN_PHY_WRITE(mac, 0x080f, 0);
-		BWN_PHY_WRITE(mac, 0x0810, 0);
-		BWN_PHY_SET(mac, 0x0478, 0x0100);
-		BWN_PHY_SET(mac, 0x0801, 0x0040);
-		BWN_PHY_SET(mac, 0x0060, 0x0040);
-		BWN_PHY_SET(mac, 0x0014, 0x0200);
-	}
-	BWN_RF_SET(mac, 0x007a, 0x0070);
-	BWN_RF_SET(mac, 0x007a, 0x0080);
-	DELAY(30);
-
-	nrssi = (int16_t) ((BWN_PHY_READ(mac, 0x047f) >> 8) & 0x003f);
-	if (nrssi >= 0x20)
-		nrssi -= 0x40;
-	if (nrssi == 31) {
-		for (i = 7; i >= 4; i--) {
-			BWN_RF_WRITE(mac, 0x007b, i);
-			DELAY(20);
-			nrssi = (int16_t) ((BWN_PHY_READ(mac, 0x047f) >> 8) &
-			    0x003f);
-			if (nrssi >= 0x20)
-				nrssi -= 0x40;
-			if (nrssi < 31 && saved == 0xffff)
-				saved = i;
-		}
-		if (saved == 0xffff)
-			saved = 4;
-	} else {
-		BWN_RF_MASK(mac, 0x007a, 0x007f);
-		if (phy->rev != 1) {
-			BWN_PHY_SET(mac, 0x0814, 0x0001);
-			BWN_PHY_MASK(mac, 0x0815, 0xfffe);
-		}
-		BWN_PHY_SET(mac, 0x0811, 0x000c);
-		BWN_PHY_SET(mac, 0x0812, 0x000c);
-		BWN_PHY_SET(mac, 0x0811, 0x0030);
-		BWN_PHY_SET(mac, 0x0812, 0x0030);
-		BWN_PHY_WRITE(mac, 0x005a, 0x0480);
-		BWN_PHY_WRITE(mac, 0x0059, 0x0810);
-		BWN_PHY_WRITE(mac, 0x0058, 0x000d);
-		if (phy->rev == 0)
-			BWN_PHY_WRITE(mac, 0x0003, 0x0122);
-		else
-			BWN_PHY_SET(mac, 0x000a, 0x2000);
-		if (phy->rev != 1) {
-			BWN_PHY_SET(mac, 0x0814, 0x0004);
-			BWN_PHY_MASK(mac, 0x0815, 0xfffb);
-		}
-		BWN_PHY_SETMASK(mac, 0x0003, 0xff9f, 0x0040);
-		BWN_RF_SET(mac, 0x007a, 0x000f);
-		bwn_set_all_gains(mac, 3, 0, 1);
-		BWN_RF_SETMASK(mac, 0x0043, 0x00f0, 0x000f);
-		DELAY(30);
-		nrssi = (int16_t) ((BWN_PHY_READ(mac, 0x047f) >> 8) & 0x003f);
-		if (nrssi >= 0x20)
-			nrssi -= 0x40;
-		if (nrssi == -32) {
-			for (i = 0; i < 4; i++) {
-				BWN_RF_WRITE(mac, 0x007b, i);
-				DELAY(20);
-				nrssi = (int16_t)((BWN_PHY_READ(mac,
-				    0x047f) >> 8) & 0x003f);
-				if (nrssi >= 0x20)
-					nrssi -= 0x40;
-				if (nrssi > -31 && saved == 0xffff)
-					saved = i;
-			}
-			if (saved == 0xffff)
-				saved = 3;
-		} else
-			saved = 0;
-	}
-	BWN_RF_WRITE(mac, 0x007b, saved);
-
-	/*
-	 * Restore saved RF/PHY registers
-	 */
-	if (phy->rev >= 6) {
-		for (phy6_idx = 0; phy6_idx < 4; ++phy6_idx) {
-			BWN_PHY_WRITE(mac, save_phy6_regs[phy6_idx],
-			    save_phy6[phy6_idx]);
-		}
-	}
-	if (phy->rev != 1) {
-		for (i = 3; i < 5; i++)
-			BWN_PHY_WRITE(mac, save_phy_comm_regs[i],
-			    save_phy_comm[i]);
-	}
-	for (i = 5; i < SAVE_PHY_COMM_MAX; i++)
-		BWN_PHY_WRITE(mac, save_phy_comm_regs[i], save_phy_comm[i]);
-
-	for (i = SAVE_RF_MAX - 1; i >= 0; --i)
-		BWN_RF_WRITE(mac, save_rf_regs[i], save_rf[i]);
-
-	BWN_PHY_WRITE(mac, 0x0802, BWN_PHY_READ(mac, 0x0802) | 0x1 | 0x2);
-	BWN_PHY_SET(mac, 0x0429, 0x8000);
-	bwn_set_original_gains(mac);
-	if (phy->rev >= 6) {
-		for (; phy6_idx < SAVE_PHY6_MAX; ++phy6_idx) {
-			BWN_PHY_WRITE(mac, save_phy6_regs[phy6_idx],
-			    save_phy6[phy6_idx]);
-		}
-	}
-
-	BWN_PHY_WRITE(mac, save_phy_comm_regs[0], save_phy_comm[0]);
-	BWN_PHY_WRITE(mac, save_phy_comm_regs[2], save_phy_comm[2]);
-	BWN_PHY_WRITE(mac, save_phy_comm_regs[1], save_phy_comm[1]);
-}
-
-static void
-bwn_set_all_gains(struct bwn_mac *mac, int16_t first, int16_t second,
-    int16_t third)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	uint16_t i;
-	uint16_t start = 0x08, end = 0x18;
-	uint16_t tmp;
-	uint16_t table;
-
-	if (phy->rev <= 1) {
-		start = 0x10;
-		end = 0x20;
-	}
-
-	table = BWN_OFDMTAB_GAINX;
-	if (phy->rev <= 1)
-		table = BWN_OFDMTAB_GAINX_R1;
-	for (i = 0; i < 4; i++)
-		bwn_ofdmtab_write_2(mac, table, i, first);
-
-	for (i = start; i < end; i++)
-		bwn_ofdmtab_write_2(mac, table, i, second);
-
-	if (third != -1) {
-		tmp = ((uint16_t) third << 14) | ((uint16_t) third << 6);
-		BWN_PHY_SETMASK(mac, 0x04a0, 0xbfbf, tmp);
-		BWN_PHY_SETMASK(mac, 0x04a1, 0xbfbf, tmp);
-		BWN_PHY_SETMASK(mac, 0x04a2, 0xbfbf, tmp);
-	}
-	bwn_dummy_transmission(mac, 0, 1);
-}
-
-static void
-bwn_set_original_gains(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	uint16_t i, tmp;
-	uint16_t table;
-	uint16_t start = 0x0008, end = 0x0018;
-
-	if (phy->rev <= 1) {
-		start = 0x0010;
-		end = 0x0020;
-	}
-
-	table = BWN_OFDMTAB_GAINX;
-	if (phy->rev <= 1)
-		table = BWN_OFDMTAB_GAINX_R1;
-	for (i = 0; i < 4; i++) {
-		tmp = (i & 0xfffc);
-		tmp |= (i & 0x0001) << 1;
-		tmp |= (i & 0x0002) >> 1;
-
-		bwn_ofdmtab_write_2(mac, table, i, tmp);
-	}
-
-	for (i = start; i < end; i++)
-		bwn_ofdmtab_write_2(mac, table, i, i - start);
-
-	BWN_PHY_SETMASK(mac, 0x04a0, 0xbfbf, 0x4040);
-	BWN_PHY_SETMASK(mac, 0x04a1, 0xbfbf, 0x4040);
-	BWN_PHY_SETMASK(mac, 0x04a2, 0xbfbf, 0x4000);
-	bwn_dummy_transmission(mac, 0, 1);
-}
-
-static void
-bwn_phy_hwpctl_init(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_rfatt old_rfatt, rfatt;
-	struct bwn_bbatt old_bbatt, bbatt;
-	struct bwn_softc *sc = mac->mac_sc;
-	uint8_t old_txctl = 0;
-
-	KASSERT(phy->type == BWN_PHYTYPE_G,
-	    ("%s:%d: fail", __func__, __LINE__));
-
-	if ((siba_get_pci_subvendor(sc->sc_dev) == SIBA_BOARDVENDOR_BCM) &&
-	    (siba_get_pci_subdevice(sc->sc_dev) == SIBA_BOARD_BU4306))
-		return;
-
-	BWN_PHY_WRITE(mac, 0x0028, 0x8018);
-
-	BWN_WRITE_2(mac, BWN_PHY0, BWN_READ_2(mac, BWN_PHY0) & 0xffdf);
-
-	if (!phy->gmode)
-		return;
-	bwn_hwpctl_early_init(mac);
-	if (pg->pg_curtssi == 0) {
-		if (phy->rf_ver == 0x2050 && phy->analog == 0) {
-			BWN_RF_SETMASK(mac, 0x0076, 0x00f7, 0x0084);
-		} else {
-			memcpy(&old_rfatt, &pg->pg_rfatt, sizeof(old_rfatt));
-			memcpy(&old_bbatt, &pg->pg_bbatt, sizeof(old_bbatt));
-			old_txctl = pg->pg_txctl;
-
-			bbatt.att = 11;
-			if (phy->rf_rev == 8) {
-				rfatt.att = 15;
-				rfatt.padmix = 1;
-			} else {
-				rfatt.att = 9;
-				rfatt.padmix = 0;
-			}
-			bwn_phy_g_set_txpwr_sub(mac, &bbatt, &rfatt, 0);
-		}
-		bwn_dummy_transmission(mac, 0, 1);
-		pg->pg_curtssi = BWN_PHY_READ(mac, BWN_PHY_TSSI);
-		if (phy->rf_ver == 0x2050 && phy->analog == 0)
-			BWN_RF_MASK(mac, 0x0076, 0xff7b);
-		else
-			bwn_phy_g_set_txpwr_sub(mac, &old_bbatt,
-			    &old_rfatt, old_txctl);
-	}
-	bwn_hwpctl_init_gphy(mac);
-
-	/* clear TSSI */
-	bwn_shm_write_2(mac, BWN_SHARED, 0x0058, 0x7f7f);
-	bwn_shm_write_2(mac, BWN_SHARED, 0x005a, 0x7f7f);
-	bwn_shm_write_2(mac, BWN_SHARED, 0x0070, 0x7f7f);
-	bwn_shm_write_2(mac, BWN_SHARED, 0x0072, 0x7f7f);
-}
-
-static void
-bwn_hwpctl_early_init(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-
-	if (!bwn_has_hwpctl(mac)) {
-		BWN_PHY_WRITE(mac, 0x047a, 0xc111);
-		return;
-	}
-
-	BWN_PHY_MASK(mac, 0x0036, 0xfeff);
-	BWN_PHY_WRITE(mac, 0x002f, 0x0202);
-	BWN_PHY_SET(mac, 0x047c, 0x0002);
-	BWN_PHY_SET(mac, 0x047a, 0xf000);
-	if (phy->rf_ver == 0x2050 && phy->rf_rev == 8) {
-		BWN_PHY_SETMASK(mac, 0x047a, 0xff0f, 0x0010);
-		BWN_PHY_SET(mac, 0x005d, 0x8000);
-		BWN_PHY_SETMASK(mac, 0x004e, 0xffc0, 0x0010);
-		BWN_PHY_WRITE(mac, 0x002e, 0xc07f);
-		BWN_PHY_SET(mac, 0x0036, 0x0400);
-	} else {
-		BWN_PHY_SET(mac, 0x0036, 0x0200);
-		BWN_PHY_SET(mac, 0x0036, 0x0400);
-		BWN_PHY_MASK(mac, 0x005d, 0x7fff);
-		BWN_PHY_MASK(mac, 0x004f, 0xfffe);
-		BWN_PHY_SETMASK(mac, 0x004e, 0xffc0, 0x0010);
-		BWN_PHY_WRITE(mac, 0x002e, 0xc07f);
-		BWN_PHY_SETMASK(mac, 0x047a, 0xff0f, 0x0010);
-	}
-}
-
-static void
-bwn_hwpctl_init_gphy(struct bwn_mac *mac)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_txpwr_loctl *lo = &pg->pg_loctl;
-	int i;
-	uint16_t nr_written = 0, tmp, value;
-	uint8_t rf, bb;
-
-	if (!bwn_has_hwpctl(mac)) {
-		bwn_hf_write(mac, bwn_hf_read(mac) & ~BWN_HF_HW_POWERCTL);
-		return;
-	}
-
-	BWN_PHY_SETMASK(mac, 0x0036, 0xffc0,
-	    (pg->pg_idletssi - pg->pg_curtssi));
-	BWN_PHY_SETMASK(mac, 0x0478, 0xff00,
-	    (pg->pg_idletssi - pg->pg_curtssi));
-
-	for (i = 0; i < 32; i++)
-		bwn_ofdmtab_write_2(mac, 0x3c20, i, pg->pg_tssi2dbm[i]);
-	for (i = 32; i < 64; i++)
-		bwn_ofdmtab_write_2(mac, 0x3c00, i - 32, pg->pg_tssi2dbm[i]);
-	for (i = 0; i < 64; i += 2) {
-		value = (uint16_t) pg->pg_tssi2dbm[i];
-		value |= ((uint16_t) pg->pg_tssi2dbm[i + 1]) << 8;
-		BWN_PHY_WRITE(mac, 0x380 + (i / 2), value);
-	}
-
-	for (rf = 0; rf < lo->rfatt.len; rf++) {
-		for (bb = 0; bb < lo->bbatt.len; bb++) {
-			if (nr_written >= 0x40)
-				return;
-			tmp = lo->bbatt.array[bb].att;
-			tmp <<= 8;
-			if (phy->rf_rev == 8)
-				tmp |= 0x50;
-			else
-				tmp |= 0x40;
-			tmp |= lo->rfatt.array[rf].att;
-			BWN_PHY_WRITE(mac, 0x3c0 + nr_written, tmp);
-			nr_written++;
-		}
-	}
-
-	BWN_PHY_MASK(mac, 0x0060, 0xffbf);
-	BWN_PHY_WRITE(mac, 0x0014, 0x0000);
-
-	KASSERT(phy->rev >= 6, ("%s:%d: fail", __func__, __LINE__));
-	BWN_PHY_SET(mac, 0x0478, 0x0800);
-	BWN_PHY_MASK(mac, 0x0478, 0xfeff);
-	BWN_PHY_MASK(mac, 0x0801, 0xffbf);
-
-	bwn_phy_g_dc_lookup_init(mac, 1);
-	bwn_hf_write(mac, bwn_hf_read(mac) | BWN_HF_HW_POWERCTL);
-}
-
-static void
-bwn_phy_g_switch_chan(struct bwn_mac *mac, int channel, uint8_t spu)
-{
-	struct bwn_softc *sc = mac->mac_sc;
-
-	if (spu != 0)
-		bwn_spu_workaround(mac, channel);
-
-	BWN_WRITE_2(mac, BWN_CHANNEL, bwn_phy_g_chan2freq(channel));
-
-	if (channel == 14) {
-		if (siba_sprom_get_ccode(sc->sc_dev) == SIBA_CCODE_JAPAN)
-			bwn_hf_write(mac,
-			    bwn_hf_read(mac) & ~BWN_HF_JAPAN_CHAN14_OFF);
-		else
-			bwn_hf_write(mac,
-			    bwn_hf_read(mac) | BWN_HF_JAPAN_CHAN14_OFF);
-		BWN_WRITE_2(mac, BWN_CHANNEL_EXT,
-		    BWN_READ_2(mac, BWN_CHANNEL_EXT) | (1 << 11));
-		return;
-	}
-
-	BWN_WRITE_2(mac, BWN_CHANNEL_EXT,
-	    BWN_READ_2(mac, BWN_CHANNEL_EXT) & 0xf7bf);
-}
-
-static uint16_t
-bwn_phy_g_chan2freq(uint8_t channel)
-{
-	static const uint8_t bwn_phy_g_rf_channels[] = BWN_PHY_G_RF_CHANNELS;
-
-	KASSERT(channel >= 1 && channel <= 14,
-	    ("%s:%d: fail", __func__, __LINE__));
-
-	return (bwn_phy_g_rf_channels[channel - 1]);
-}
-
-static void
-bwn_phy_g_set_txpwr_sub(struct bwn_mac *mac, const struct bwn_bbatt *bbatt,
-    const struct bwn_rfatt *rfatt, uint8_t txctl)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_txpwr_loctl *lo = &pg->pg_loctl;
-	uint16_t bb, rf;
-	uint16_t tx_bias, tx_magn;
-
-	bb = bbatt->att;
-	rf = rfatt->att;
-	tx_bias = lo->tx_bias;
-	tx_magn = lo->tx_magn;
-	if (tx_bias == 0xff)
-		tx_bias = 0;
-
-	pg->pg_txctl = txctl;
-	memmove(&pg->pg_rfatt, rfatt, sizeof(*rfatt));
-	pg->pg_rfatt.padmix = (txctl & BWN_TXCTL_TXMIX) ? 1 : 0;
-	memmove(&pg->pg_bbatt, bbatt, sizeof(*bbatt));
-	bwn_phy_g_set_bbatt(mac, bb);
-	bwn_shm_write_2(mac, BWN_SHARED, BWN_SHARED_RADIO_ATT, rf);
-	if (phy->rf_ver == 0x2050 && phy->rf_rev == 8)
-		BWN_RF_WRITE(mac, 0x43, (rf & 0x000f) | (txctl & 0x0070));
-	else {
-		BWN_RF_SETMASK(mac, 0x43, 0xfff0, (rf & 0x000f));
-		BWN_RF_SETMASK(mac, 0x52, ~0x0070, (txctl & 0x0070));
-	}
-	if (BWN_HAS_TXMAG(phy))
-		BWN_RF_WRITE(mac, 0x52, tx_magn | tx_bias);
-	else
-		BWN_RF_SETMASK(mac, 0x52, 0xfff0, (tx_bias & 0x000f));
-	bwn_lo_g_adjust(mac);
-}
-
-static void
-bwn_phy_g_set_bbatt(struct bwn_mac *mac,
-    uint16_t bbatt)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-
-	if (phy->analog == 0) {
-		BWN_WRITE_2(mac, BWN_PHY0,
-		    (BWN_READ_2(mac, BWN_PHY0) & 0xfff0) | bbatt);
-		return;
-	}
-	if (phy->analog > 1) {
-		BWN_PHY_SETMASK(mac, BWN_PHY_DACCTL, 0xffc3, bbatt << 2);
-		return;
-	}
-	BWN_PHY_SETMASK(mac, BWN_PHY_DACCTL, 0xff87, bbatt << 3);
-}
-
-static uint16_t
-bwn_rf_2050_rfoverval(struct bwn_mac *mac, uint16_t reg, uint32_t lpd)
-{
-	struct bwn_phy *phy = &mac->mac_phy;
-	struct bwn_phy_g *pg = &phy->phy_g;
-	struct bwn_softc *sc = mac->mac_sc;
-	int max_lb_gain;
-	uint16_t extlna;
-	uint16_t i;
-
-	if (phy->gmode == 0)
-		return (0);
-
-	if (BWN_HAS_LOOPBACK(phy)) {
-		max_lb_gain = pg->pg_max_lb_gain;
-		max_lb_gain += (phy->rf_rev == 8) ? 0x3e : 0x26;
-		if (max_lb_gain >= 0x46) {
-			extlna = 0x3000;
-			max_lb_gain -= 0x46;
-		} else if (max_lb_gain >= 0x3a) {
-			extlna = 0x1000;
-			max_lb_gain -= 0x3a;
-		} else if (max_lb_gain >= 0x2e) {
-			extlna = 0x2000;
-			max_lb_gain -= 0x2e;
-		} else {
-			extlna = 0;
-			max_lb_gain -= 0x10;
-		}
-
-		for (i = 0; i < 16; i++) {
-			max_lb_gain -= (i * 6);
-			if (max_lb_gain < 6)
-				break;
-		}
-
-		if ((phy->rev < 7) ||
-		    !(siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_EXTLNA)) {
-			if (reg == BWN_PHY_RFOVER) {
-				return (0x1b3);
-			} else if (reg == BWN_PHY_RFOVERVAL) {
-				extlna |= (i << 8);
-				switch (lpd) {
-				case BWN_LPD(0, 1, 1):
-					return (0x0f92);
-				case BWN_LPD(0, 0, 1):
-				case BWN_LPD(1, 0, 1):
-					return (0x0092 | extlna);
-				case BWN_LPD(1, 0, 0):
-					return (0x0093 | extlna);
-				}
-				KASSERT(0 == 1,
-				    ("%s:%d: fail", __func__, __LINE__));
-			}
-			KASSERT(0 == 1, ("%s:%d: fail", __func__, __LINE__));
-		} else {
-			if (reg == BWN_PHY_RFOVER)
-				return (0x9b3);
-			if (reg == BWN_PHY_RFOVERVAL) {
-				if (extlna)
-					extlna |= 0x8000;
-				extlna |= (i << 8);
-				switch (lpd) {
-				case BWN_LPD(0, 1, 1):
-					return (0x8f92);
-				case BWN_LPD(0, 0, 1):
-					return (0x8092 | extlna);
-				case BWN_LPD(1, 0, 1):
-					return (0x2092 | extlna);
-				case BWN_LPD(1, 0, 0):
-					return (0x2093 | extlna);
-				}
-				KASSERT(0 == 1,
-				    ("%s:%d: fail", __func__, __LINE__));
-			}
-			KASSERT(0 == 1, ("%s:%d: fail", __func__, __LINE__));
-		}
-		return (0);
-	}
-
-	if ((phy->rev < 7) ||
-	    !(siba_sprom_get_bf_lo(sc->sc_dev) & BWN_BFL_EXTLNA)) {
-		if (reg == BWN_PHY_RFOVER) {
-			return (0x1b3);
-		} else if (reg == BWN_PHY_RFOVERVAL) {
-			switch (lpd) {
-			case BWN_LPD(0, 1, 1):
-				return (0x0fb2);
-			case BWN_LPD(0, 0, 1):
-				return (0x00b2);
-			case BWN_LPD(1, 0, 1):
-				return (0x30b2);
-			case BWN_LPD(1, 0, 0):
-				return (0x30b3);
-			}
-			KASSERT(0 == 1,
-			    ("%s:%d: fail", __func__, __LINE__));
-		}
-		KASSERT(0 == 1, ("%s:%d: fail", __func__, __LINE__));
-	} else {
-		if (reg == BWN_PHY_RFOVER) {
-			return (0x9b3);
-		} else if (reg == BWN_PHY_RFOVERVAL) {
-			switch (lpd) {
-			case BWN_LPD(0, 1, 1):
-				return (0x8fb2);
-			case BWN_LPD(0, 0, 1):
-				return (0x80b2);
-			case BWN_LPD(1, 0, 1):
-				return (0x20b2);
-			case BWN_LPD(1, 0, 0):
-				return (0x20b3);
-			}
-			KASSERT(0 == 1,
-			    ("%s:%d: fail", __func__, __LINE__));
-		}
-		KASSERT(0 == 1, ("%s:%d: fail", __func__, __LINE__));
-	}
-	return (0);
-}
-
-static void
-bwn_spu_workaround(struct bwn_mac *mac, uint8_t channel)
-{
-
-	if (mac->mac_phy.rf_ver != 0x2050 || mac->mac_phy.rf_rev >= 6)
-		return;
-	BWN_WRITE_2(mac, BWN_CHANNEL, (channel <= 10) ?
-	    bwn_phy_g_chan2freq(channel + 4) : bwn_phy_g_chan2freq(1));
-	DELAY(1000);
-	BWN_WRITE_2(mac, BWN_CHANNEL, bwn_phy_g_chan2freq(channel));
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: ucstat=%d\n", __func__,
+	    ucstat);
 }
 
 static int
@@ -7145,21 +3830,84 @@ bwn_fw_gets(struct bwn_mac *mac, enum bwn_fwtype type)
 	int error;
 
 	/* microcode */
-	if (rev >= 5 && rev <= 10)
-		filename = "ucode5";
-	else if (rev >= 11 && rev <= 12)
-		filename = "ucode11";
-	else if (rev == 13)
-		filename = "ucode13";
-	else if (rev == 14)
-		filename = "ucode14";
-	else if (rev >= 15)
+	filename = NULL;
+	switch (rev) {
+	case 42:
+		if (mac->mac_phy.type == BWN_PHYTYPE_AC)
+			filename = "ucode42";
+		break;
+	case 40:
+		if (mac->mac_phy.type == BWN_PHYTYPE_AC)
+			filename = "ucode40";
+		break;
+	case 33:
+		if (mac->mac_phy.type == BWN_PHYTYPE_LCN40)
+			filename = "ucode33_lcn40";
+		break;
+	case 30:
+		if (mac->mac_phy.type == BWN_PHYTYPE_N)
+			filename = "ucode30_mimo";
+		break;
+	case 29:
+		if (mac->mac_phy.type == BWN_PHYTYPE_HT)
+			filename = "ucode29_mimo";
+		break;
+	case 26:
+		if (mac->mac_phy.type == BWN_PHYTYPE_HT)
+			filename = "ucode26_mimo";
+		break;
+	case 28:
+	case 25:
+		if (mac->mac_phy.type == BWN_PHYTYPE_N)
+			filename = "ucode25_mimo";
+		else if (mac->mac_phy.type == BWN_PHYTYPE_LCN)
+			filename = "ucode25_lcn";
+		break;
+	case 24:
+		if (mac->mac_phy.type == BWN_PHYTYPE_LCN)
+			filename = "ucode24_lcn";
+		break;
+	case 23:
+		if (mac->mac_phy.type == BWN_PHYTYPE_N)
+			filename = "ucode16_mimo";
+		break;
+	case 16:
+	case 17:
+	case 18:
+	case 19:
+		if (mac->mac_phy.type == BWN_PHYTYPE_N)
+			filename = "ucode16_mimo";
+		else if (mac->mac_phy.type == BWN_PHYTYPE_LP)
+			filename = "ucode16_lp";
+		break;
+	case 15:
 		filename = "ucode15";
-	else {
+		break;
+	case 14:
+		filename = "ucode14";
+		break;
+	case 13:
+		filename = "ucode13";
+		break;
+	case 12:
+	case 11:
+		filename = "ucode11";
+		break;
+	case 10:
+	case 9:
+	case 8:
+	case 7:
+	case 6:
+	case 5:
+		filename = "ucode5";
+		break;
+	default:
 		device_printf(sc->sc_dev, "no ucode for rev %d\n", rev);
 		bwn_release_firmware(mac);
 		return (EOPNOTSUPP);
 	}
+
+	device_printf(sc->sc_dev, "ucode fw: %s\n", filename);
 	error = bwn_fw_get(mac, type, filename, &fw->ucode);
 	if (error) {
 		bwn_release_firmware(mac);
@@ -7211,7 +3959,17 @@ bwn_fw_gets(struct bwn_mac *mac, enum bwn_fwtype type)
 			goto fail1;
 		break;
 	case BWN_PHYTYPE_N:
-		if (rev >= 11 && rev <= 12)
+		if (rev == 30)
+			filename = "n16initvals30";
+		else if (rev == 28 || rev == 25)
+			filename = "n0initvals25";
+		else if (rev == 24)
+			filename = "n0initvals24";
+		else if (rev == 23)
+			filename = "n0initvals16";
+		else if (rev >= 16 && rev <= 18)
+			filename = "n0initvals16";
+		else if (rev >= 11 && rev <= 12)
 			filename = "n0initvals11";
 		else
 			goto fail1;
@@ -7257,12 +4015,24 @@ bwn_fw_gets(struct bwn_mac *mac, enum bwn_fwtype type)
 			goto fail1;
 		break;
 	case BWN_PHYTYPE_N:
-		if (rev >= 11 && rev <= 12)
+		if (rev == 30)
+			filename = "n16bsinitvals30";
+		else if (rev == 28 || rev == 25)
+			filename = "n0bsinitvals25";
+		else if (rev == 24)
+			filename = "n0bsinitvals24";
+		else if (rev == 23)
+			filename = "n0bsinitvals16";
+		else if (rev >= 16 && rev <= 18)
+			filename = "n0bsinitvals16";
+		else if (rev >= 11 && rev <= 12)
 			filename = "n0bsinitvals11";
 		else
 			goto fail1;
 		break;
 	default:
+		device_printf(sc->sc_dev, "unknown phy (%d)\n",
+		    mac->mac_phy.type);
 		goto fail1;
 	}
 	error = bwn_fw_get(mac, type, filename, &fw->initvals_band);
@@ -7272,7 +4042,8 @@ bwn_fw_gets(struct bwn_mac *mac, enum bwn_fwtype type)
 	}
 	return (0);
 fail1:
-	device_printf(sc->sc_dev, "no INITVALS for rev %d\n", rev);
+	device_printf(sc->sc_dev, "no INITVALS for rev %d, phy.type %d\n",
+	    rev, mac->mac_phy.type);
 	bwn_release_firmware(mac);
 	return (EOPNOTSUPP);
 }
@@ -7421,6 +4192,35 @@ bwn_fw_loaducode(struct bwn_mac *mac)
 		error = EOPNOTSUPP;
 		goto error;
 	}
+
+	/*
+	 * Determine firmware header version; needed for TX/RX packet
+	 * handling.
+	 */
+	if (mac->mac_fw.rev >= 598)
+		mac->mac_fw.fw_hdr_format = BWN_FW_HDR_598;
+	else if (mac->mac_fw.rev >= 410)
+		mac->mac_fw.fw_hdr_format = BWN_FW_HDR_410;
+	else
+		mac->mac_fw.fw_hdr_format = BWN_FW_HDR_351;
+
+	/*
+	 * We don't support rev 598 or later; that requires
+	 * another round of changes to the TX/RX descriptor
+	 * and status layout.
+	 *
+	 * So, complain this is the case and exit out, rather
+	 * than attaching and then failing.
+	 */
+#if 0
+	if (mac->mac_fw.fw_hdr_format == BWN_FW_HDR_598) {
+		device_printf(sc->sc_dev,
+		    "firmware is too new (>=598); not supported\n");
+		error = EOPNOTSUPP;
+		goto error;
+	}
+#endif
+
 	mac->mac_fw.patch = bwn_shm_read_2(mac, BWN_SHARED,
 	    BWN_SHARED_UCODE_PATCH);
 	date = bwn_shm_read_2(mac, BWN_SHARED, BWN_SHARED_UCODE_DATE);
@@ -7530,7 +4330,7 @@ fail:
 #undef GET_NEXTIV32
 }
 
-static int
+int
 bwn_switch_channel(struct bwn_mac *mac, int chan)
 {
 	struct bwn_phy *phy = &(mac->mac_phy);
@@ -7846,7 +4646,8 @@ bwn_switch_band(struct bwn_softc *sc, struct ieee80211_channel *chan)
 	if (up_dev == sc->sc_curmac && sc->sc_curmac->mac_phy.gmode == gmode)
 		return (0);
 
-	device_printf(sc->sc_dev, "switching to %s-GHz band\n",
+	DPRINTF(sc, BWN_DEBUG_RF | BWN_DEBUG_PHY | BWN_DEBUG_RESET,
+	    "switching to %s-GHz band\n",
 	    IEEE80211_IS_CHAN_2GHZ(chan) ? "2" : "5");
 
 	down_dev = sc->sc_curmac;
@@ -7884,6 +4685,8 @@ static void
 bwn_rf_turnon(struct bwn_mac *mac)
 {
 
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: called\n", __func__);
+
 	bwn_mac_suspend(mac);
 	mac->mac_phy.rf_onoff(mac, 1);
 	mac->mac_phy.rf_on = 1;
@@ -7894,14 +4697,19 @@ static void
 bwn_rf_turnoff(struct bwn_mac *mac)
 {
 
+	DPRINTF(mac->mac_sc, BWN_DEBUG_RESET, "%s: called\n", __func__);
+
 	bwn_mac_suspend(mac);
 	mac->mac_phy.rf_onoff(mac, 0);
 	mac->mac_phy.rf_on = 0;
 	bwn_mac_enable(mac);
 }
 
+/*
+ * SSB PHY reset.
+ */
 static void
-bwn_phy_reset(struct bwn_mac *mac)
+bwn_phy_reset_siba(struct bwn_mac *mac)
 {
 	struct bwn_softc *sc = mac->mac_sc;
 
@@ -7910,9 +4718,19 @@ bwn_phy_reset(struct bwn_mac *mac)
 	     BWN_TGSLOW_PHYRESET) | SIBA_TGSLOW_FGC);
 	DELAY(1000);
 	siba_write_4(sc->sc_dev, SIBA_TGSLOW,
-	    (siba_read_4(sc->sc_dev, SIBA_TGSLOW) & ~SIBA_TGSLOW_FGC) |
-	    BWN_TGSLOW_PHYRESET);
+	    (siba_read_4(sc->sc_dev, SIBA_TGSLOW) & ~SIBA_TGSLOW_FGC));
 	DELAY(1000);
+}
+
+static void
+bwn_phy_reset(struct bwn_mac *mac)
+{
+
+	if (bwn_is_bus_siba(mac)) {
+		bwn_phy_reset_siba(mac);
+	} else {
+		BWN_ERRPRINTF(mac->mac_sc, "%s: unknown bus!\n", __func__);
+	}
 }
 
 static int
@@ -7997,12 +4815,15 @@ bwn_intr(void *arg)
 	    (sc->sc_flags & BWN_FLAG_INVALID))
 		return (FILTER_STRAY);
 
+	DPRINTF(sc, BWN_DEBUG_INTR, "%s: called\n", __func__);
+
 	reason = BWN_READ_4(mac, BWN_INTR_REASON);
 	if (reason == 0xffffffff)	/* shared IRQ */
 		return (FILTER_STRAY);
 	reason &= mac->mac_intr_mask;
 	if (reason == 0)
 		return (FILTER_HANDLED);
+	DPRINTF(sc, BWN_DEBUG_INTR, "%s: reason=0x%08x\n", __func__, reason);
 
 	mac->mac_reason[0] = BWN_READ_4(mac, BWN_DMA0_REASON) & 0x0001dc00;
 	mac->mac_reason[1] = BWN_READ_4(mac, BWN_DMA1_REASON) & 0x0000dc00;
@@ -8376,6 +5197,12 @@ bwn_intr_txeof(struct bwn_mac *mac)
 			break;
 		stat1 = BWN_READ_4(mac, BWN_XMITSTAT_1);
 
+		DPRINTF(mac->mac_sc, BWN_DEBUG_XMIT,
+		    "%s: stat0=0x%08x, stat1=0x%08x\n",
+		    __func__,
+		    stat0,
+		    stat1);
+
 		stat.cookie = (stat0 >> 16);
 		stat.seq = (stat1 & 0x0000ffff);
 		stat.phy_stat = ((stat1 & 0x00ff0000) >> 16);
@@ -8387,6 +5214,21 @@ bwn_intr_txeof(struct bwn_mac *mac)
 		stat.im = (tmp & 0x0040) ? 1 : 0;
 		stat.ampdu = (tmp & 0x0020) ? 1 : 0;
 		stat.ack = (tmp & 0x0002) ? 1 : 0;
+
+		DPRINTF(mac->mac_sc, BWN_DEBUG_XMIT,
+		    "%s: cookie=%d, seq=%d, phystat=0x%02x, framecnt=%d, "
+		    "rtscnt=%d, sreason=%d, pm=%d, im=%d, ampdu=%d, ack=%d\n",
+		    __func__,
+		    stat.cookie,
+		    stat.seq,
+		    stat.phy_stat,
+		    stat.framecnt,
+		    stat.rtscnt,
+		    stat.sreason,
+		    stat.pm,
+		    stat.im,
+		    stat.ampdu,
+		    stat.ack);
 
 		bwn_handle_txeof(mac, &stat);
 	}
@@ -8549,7 +5391,17 @@ bwn_dma_rxeof(struct bwn_dma_ring *dr, int *slot)
 		       len, dr->dr_rx_bufsize, cnt);
 		return;
 	}
-	macstat = le32toh(rxhdr->mac_status);
+
+	switch (mac->mac_fw.fw_hdr_format) {
+	case BWN_FW_HDR_351:
+	case BWN_FW_HDR_410:
+		macstat = le32toh(rxhdr->ps4.r351.mac_status);
+		break;
+	case BWN_FW_HDR_598:
+		macstat = le32toh(rxhdr->ps4.r598.mac_status);
+		break;
+	}
+
 	if (macstat & BWN_RX_MAC_FCSERR) {
 		if (!(mac->mac_sc->sc_filters & BWN_MACCTL_PASS_BADFCS)) {
 			device_printf(sc->sc_dev, "RX drop\n");
@@ -8566,16 +5418,8 @@ bwn_dma_rxeof(struct bwn_dma_ring *dr, int *slot)
 static void
 bwn_handle_txeof(struct bwn_mac *mac, const struct bwn_txstatus *status)
 {
-	struct bwn_dma_ring *dr;
-	struct bwn_dmadesc_generic *desc;
-	struct bwn_dmadesc_meta *meta;
-	struct bwn_pio_txqueue *tq;
-	struct bwn_pio_txpkt *tp = NULL;
 	struct bwn_softc *sc = mac->mac_sc;
 	struct bwn_stats *stats = &mac->mac_stats;
-	struct ieee80211_node *ni;
-	struct ieee80211vap *vap;
-	int retrycnt = 0, slot;
 
 	BWN_ASSERT_LOCKED(mac->mac_sc);
 
@@ -8591,46 +5435,8 @@ bwn_handle_txeof(struct bwn_mac *mac, const struct bwn_txstatus *status)
 	}
 
 	if (mac->mac_flags & BWN_MAC_FLAG_DMA) {
-		if (status->ack) {
-			dr = bwn_dma_parse_cookie(mac, status,
-			    status->cookie, &slot);
-			if (dr == NULL) {
-				device_printf(sc->sc_dev,
-				    "failed to parse cookie\n");
-				return;
-			}
-			while (1) {
-				dr->getdesc(dr, slot, &desc, &meta);
-				if (meta->mt_islast) {
-					ni = meta->mt_ni;
-					vap = ni->ni_vap;
-					ieee80211_ratectl_tx_complete(vap, ni,
-					    status->ack ?
-					      IEEE80211_RATECTL_TX_SUCCESS :
-					      IEEE80211_RATECTL_TX_FAILURE,
-					    &retrycnt, 0);
-					break;
-				}
-				slot = bwn_dma_nextslot(dr, slot);
-			}
-		}
 		bwn_dma_handle_txeof(mac, status);
 	} else {
-		if (status->ack) {
-			tq = bwn_pio_parse_cookie(mac, status->cookie, &tp);
-			if (tq == NULL) {
-				device_printf(sc->sc_dev,
-				    "failed to parse cookie\n");
-				return;
-			}
-			ni = tp->tp_ni;
-			vap = ni->ni_vap;
-			ieee80211_ratectl_tx_complete(vap, ni,
-			    status->ack ?
-			      IEEE80211_RATECTL_TX_SUCCESS :
-			      IEEE80211_RATECTL_TX_FAILURE,
-			    &retrycnt, 0);
-		}
 		bwn_pio_handle_txeof(mac, status);
 	}
 
@@ -8696,7 +5502,16 @@ ready:
 		goto error;
 	}
 
-	macstat = le32toh(rxhdr.mac_status);
+	switch (mac->mac_fw.fw_hdr_format) {
+	case BWN_FW_HDR_351:
+	case BWN_FW_HDR_410:
+		macstat = le32toh(rxhdr.ps4.r351.mac_status);
+		break;
+	case BWN_FW_HDR_598:
+		macstat = le32toh(rxhdr.ps4.r598.mac_status);
+		break;
+	}
+
 	if (macstat & BWN_RX_MAC_FCSERR) {
 		if (!(mac->mac_sc->sc_filters & BWN_MACCTL_PASS_BADFCS)) {
 			device_printf(sc->sc_dev, "%s: FCS error", __func__);
@@ -8875,6 +5690,63 @@ bwn_hwrate2ieeerate(int rate)
 	}
 }
 
+/*
+ * Post process the RX provided RSSI.
+ *
+ * Valid for A, B, G, LP PHYs.
+ */
+static int8_t
+bwn_rx_rssi_calc(struct bwn_mac *mac, uint8_t in_rssi,
+    int ofdm, int adjust_2053, int adjust_2050)
+{
+	struct bwn_phy *phy = &mac->mac_phy;
+	struct bwn_phy_g *gphy = &phy->phy_g;
+	int tmp;
+
+	switch (phy->rf_ver) {
+	case 0x2050:
+		if (ofdm) {
+			tmp = in_rssi;
+			if (tmp > 127)
+				tmp -= 256;
+			tmp = tmp * 73 / 64;
+			if (adjust_2050)
+				tmp += 25;
+			else
+				tmp -= 3;
+		} else {
+			if (siba_sprom_get_bf_lo(mac->mac_sc->sc_dev)
+			    & BWN_BFL_RSSI) {
+				if (in_rssi > 63)
+					in_rssi = 63;
+				tmp = gphy->pg_nrssi_lt[in_rssi];
+				tmp = (31 - tmp) * -131 / 128 - 57;
+			} else {
+				tmp = in_rssi;
+				tmp = (31 - tmp) * -149 / 128 - 68;
+			}
+			if (phy->type == BWN_PHYTYPE_G && adjust_2050)
+				tmp += 25;
+		}
+		break;
+	case 0x2060:
+		if (in_rssi > 127)
+			tmp = in_rssi - 256;
+		else
+			tmp = in_rssi;
+		break;
+	default:
+		tmp = in_rssi;
+		tmp = (tmp - 11) * 103 / 64;
+		if (adjust_2053)
+			tmp -= 109;
+		else
+			tmp -= 83;
+	}
+
+	return (tmp);
+}
+
 static void
 bwn_rxeof(struct bwn_mac *mac, struct mbuf *m, const void *_rxhdr)
 {
@@ -8893,9 +5765,26 @@ bwn_rxeof(struct bwn_mac *mac, struct mbuf *m, const void *_rxhdr)
 	BWN_ASSERT_LOCKED(sc);
 
 	phystat0 = le16toh(rxhdr->phy_status0);
-	phystat3 = le16toh(rxhdr->phy_status3);
-	macstat = le32toh(rxhdr->mac_status);
-	chanstat = le16toh(rxhdr->channel);
+
+	/*
+	 * XXX Note: phy_status3 doesn't exist for HT-PHY; it's only
+	 * used for LP-PHY.
+	 */
+	phystat3 = le16toh(rxhdr->ps3.lp.phy_status3);
+
+	switch (mac->mac_fw.fw_hdr_format) {
+	case BWN_FW_HDR_351:
+	case BWN_FW_HDR_410:
+		macstat = le32toh(rxhdr->ps4.r351.mac_status);
+		chanstat = le16toh(rxhdr->ps4.r351.channel);
+		break;
+	case BWN_FW_HDR_598:
+		macstat = le32toh(rxhdr->ps4.r598.mac_status);
+		chanstat = le16toh(rxhdr->ps4.r598.channel);
+		break;
+	}
+
+
 	phytype = chanstat & BWN_RX_CHAN_PHYTYPE;
 
 	if (macstat & BWN_RX_MAC_FCSERR)
@@ -8926,8 +5815,6 @@ bwn_rxeof(struct bwn_mac *mac, struct mbuf *m, const void *_rxhdr)
 		    BWN_ISOLDFMT(mac),
 		    (macstat & BWN_RX_MAC_KEYIDX) >> BWN_RX_MAC_KEYIDX_SHIFT);
 
-	/* XXX calculating RSSI & noise & antenna */
-
 	if (phystat0 & BWN_RX_PHYST0_OFDM)
 		rate = bwn_plcp_get_ofdmrate(mac, plcp,
 		    phytype == BWN_PHYTYPE_A);
@@ -8939,13 +5826,47 @@ bwn_rxeof(struct bwn_mac *mac, struct mbuf *m, const void *_rxhdr)
 	}
 	sc->sc_rx_rate = bwn_hwrate2ieeerate(rate);
 
+	/* rssi/noise */
+	switch (phytype) {
+	case BWN_PHYTYPE_A:
+	case BWN_PHYTYPE_B:
+	case BWN_PHYTYPE_G:
+	case BWN_PHYTYPE_LP:
+		rssi = bwn_rx_rssi_calc(mac, rxhdr->phy.abg.rssi,
+		    !! (phystat0 & BWN_RX_PHYST0_OFDM),
+		    !! (phystat0 & BWN_RX_PHYST0_GAINCTL),
+		    !! (phystat3 & BWN_RX_PHYST3_TRSTATE));
+		break;
+	case BWN_PHYTYPE_N:
+		/* Broadcom has code for min/avg, but always used max */
+		if (rxhdr->phy.n.power0 == 16 || rxhdr->phy.n.power0 == 32)
+			rssi = max(rxhdr->phy.n.power1, rxhdr->ps2.n.power2);
+		else
+			rssi = max(rxhdr->phy.n.power0, rxhdr->phy.n.power1);
+#if 0
+		DPRINTF(mac->mac_sc, BWN_DEBUG_RECV,
+		    "%s: power0=%d, power1=%d, power2=%d\n",
+		    __func__,
+		    rxhdr->phy.n.power0,
+		    rxhdr->phy.n.power1,
+		    rxhdr->ps2.n.power2);
+#endif
+		break;
+	default:
+		/* XXX TODO: implement rssi for other PHYs */
+		break;
+	}
+
+	/*
+	 * RSSI here is absolute, not relative to the noise floor.
+	 */
+	noise = mac->mac_stats.link_noise;
+	rssi = rssi - noise;
+
 	/* RX radio tap */
 	if (ieee80211_radiotap_active(ic))
 		bwn_rx_radiotap(mac, m, rxhdr, plcp, rate, rssi, noise);
 	m_adj(m, -IEEE80211_CRC_LEN);
-
-	rssi = rxhdr->phy.abg.rssi;	/* XXX incorrect RSSI calculation? */
-	noise = mac->mac_stats.link_noise;
 
 	BWN_UNLOCK(sc);
 
@@ -8972,6 +5893,7 @@ bwn_dma_handle_txeof(struct bwn_mac *mac,
 	struct bwn_dmadesc_meta *meta;
 	struct bwn_softc *sc = mac->mac_sc;
 	int slot;
+	int retrycnt = 0;
 
 	BWN_ASSERT_LOCKED(sc);
 
@@ -8996,6 +5918,24 @@ bwn_dma_handle_txeof(struct bwn_mac *mac,
 			KASSERT(meta->mt_m != NULL,
 			    ("%s:%d: fail", __func__, __LINE__));
 
+			/*
+			 * If we don't get an ACK, then we should log the
+			 * full framecnt.  That may be 0 if it's a PHY
+			 * failure, so ensure that gets logged as some
+			 * retry attempt.
+			 */
+			if (status->ack) {
+				retrycnt = status->framecnt - 1;
+			} else {
+				retrycnt = status->framecnt;
+				if (retrycnt == 0)
+					retrycnt = 1;
+			}
+			ieee80211_ratectl_tx_complete(meta->mt_ni->ni_vap, meta->mt_ni,
+			    status->ack ?
+			      IEEE80211_RATECTL_TX_SUCCESS :
+			      IEEE80211_RATECTL_TX_FAILURE,
+			    &retrycnt, 0);
 			ieee80211_tx_complete(meta->mt_ni, meta->mt_m, 0);
 			meta->mt_ni = NULL;
 			meta->mt_m = NULL;
@@ -9023,6 +5963,7 @@ bwn_pio_handle_txeof(struct bwn_mac *mac,
 	struct bwn_pio_txqueue *tq;
 	struct bwn_pio_txpkt *tp = NULL;
 	struct bwn_softc *sc = mac->mac_sc;
+	int retrycnt = 0;
 
 	BWN_ASSERT_LOCKED(sc);
 
@@ -9038,6 +5979,26 @@ bwn_pio_handle_txeof(struct bwn_mac *mac,
 		 * Do any tx complete callback.  Note this must
 		 * be done before releasing the node reference.
 		 */
+
+		/*
+		 * If we don't get an ACK, then we should log the
+		 * full framecnt.  That may be 0 if it's a PHY
+		 * failure, so ensure that gets logged as some
+		 * retry attempt.
+		 */
+		if (status->ack) {
+			retrycnt = status->framecnt - 1;
+		} else {
+			retrycnt = status->framecnt;
+			if (retrycnt == 0)
+				retrycnt = 1;
+		}
+		ieee80211_ratectl_tx_complete(tp->tp_ni->ni_vap, tp->tp_ni,
+		    status->ack ?
+		      IEEE80211_RATECTL_TX_SUCCESS :
+		      IEEE80211_RATECTL_TX_FAILURE,
+		    &retrycnt, 0);
+
 		if (tp->tp_m->m_flags & M_TXCB)
 			ieee80211_process_callback(tp->tp_ni, tp->tp_m, 0);
 		ieee80211_free_node(tp->tp_ni);
@@ -9057,7 +6018,7 @@ bwn_phy_txpower_check(struct bwn_mac *mac, uint32_t flags)
 	struct bwn_phy *phy = &mac->mac_phy;
 	struct ieee80211com *ic = &sc->sc_ic;
 	unsigned long now;
-	int result;
+	bwn_txpwr_result_t result;
 
 	BWN_GETTIME(now);
 
@@ -9147,6 +6108,77 @@ bwn_ieeerate2hwrate(struct bwn_softc *sc, int rate)
 	return (BWN_CCK_RATE_1MB);
 }
 
+static uint16_t
+bwn_set_txhdr_phyctl1(struct bwn_mac *mac, uint8_t bitrate)
+{
+	struct bwn_phy *phy = &mac->mac_phy;
+	uint16_t control = 0;
+	uint16_t bw;
+
+	/* XXX TODO: this is for LP phy, what about N-PHY, etc? */
+	bw = BWN_TXH_PHY1_BW_20;
+
+	if (BWN_ISCCKRATE(bitrate) && phy->type != BWN_PHYTYPE_LP) {
+		control = bw;
+	} else {
+		control = bw;
+		/* Figure out coding rate and modulation */
+		/* XXX TODO: table-ize, for MCS transmit */
+		/* Note: this is BWN_*_RATE values */
+		switch (bitrate) {
+		case BWN_CCK_RATE_1MB:
+			control |= 0;
+			break;
+		case BWN_CCK_RATE_2MB:
+			control |= 1;
+			break;
+		case BWN_CCK_RATE_5MB:
+			control |= 2;
+			break;
+		case BWN_CCK_RATE_11MB:
+			control |= 3;
+			break;
+		case BWN_OFDM_RATE_6MB:
+			control |= BWN_TXH_PHY1_CRATE_1_2;
+			control |= BWN_TXH_PHY1_MODUL_BPSK;
+			break;
+		case BWN_OFDM_RATE_9MB:
+			control |= BWN_TXH_PHY1_CRATE_3_4;
+			control |= BWN_TXH_PHY1_MODUL_BPSK;
+			break;
+		case BWN_OFDM_RATE_12MB:
+			control |= BWN_TXH_PHY1_CRATE_1_2;
+			control |= BWN_TXH_PHY1_MODUL_QPSK;
+			break;
+		case BWN_OFDM_RATE_18MB:
+			control |= BWN_TXH_PHY1_CRATE_3_4;
+			control |= BWN_TXH_PHY1_MODUL_QPSK;
+			break;
+		case BWN_OFDM_RATE_24MB:
+			control |= BWN_TXH_PHY1_CRATE_1_2;
+			control |= BWN_TXH_PHY1_MODUL_QAM16;
+			break;
+		case BWN_OFDM_RATE_36MB:
+			control |= BWN_TXH_PHY1_CRATE_3_4;
+			control |= BWN_TXH_PHY1_MODUL_QAM16;
+			break;
+		case BWN_OFDM_RATE_48MB:
+			control |= BWN_TXH_PHY1_CRATE_1_2;
+			control |= BWN_TXH_PHY1_MODUL_QAM64;
+			break;
+		case BWN_OFDM_RATE_54MB:
+			control |= BWN_TXH_PHY1_CRATE_3_4;
+			control |= BWN_TXH_PHY1_MODUL_QAM64;
+			break;
+		default:
+			break;
+		}
+		control |= BWN_TXH_PHY1_MODE_SISO;
+	}
+
+	return control;
+}
+
 static int
 bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
     struct mbuf *m, struct bwn_txhdr *txhdr, uint16_t cookie)
@@ -9166,6 +6198,7 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 	int protdur, rts_rate, rts_rate_fb, ismcast, isshort, rix, type;
 	uint16_t phyctl = 0;
 	uint8_t rate, rate_fb;
+	int fill_phy_ctl1 = 0;
 
 	wh = mtod(m, struct ieee80211_frame *);
 	memset(txhdr, 0, sizeof(*txhdr));
@@ -9173,6 +6206,10 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 	type = wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK;
 	ismcast = IEEE80211_IS_MULTICAST(wh->i_addr1);
 	isshort = (ic->ic_flags & IEEE80211_F_SHPREAMBLE) != 0;
+
+	if ((phy->type == BWN_PHYTYPE_N) || (phy->type == BWN_PHYTYPE_LP)
+	    || (phy->type == BWN_PHYTYPE_HT))
+		fill_phy_ctl1 = 1;
 
 	/*
 	 * Find TX rate
@@ -9185,6 +6222,7 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 	else if (tp->ucastrate != IEEE80211_FIXED_RATE_NONE)
 		rate = rate_fb = tp->ucastrate;
 	else {
+		/* XXX TODO: don't fall back to CCK rates for OFDM */
 		rix = ieee80211_ratectl_rate(ni, NULL, 0);
 		rate = ni->ni_txrate;
 
@@ -9197,6 +6235,7 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 
 	sc->sc_tx_rate = rate;
 
+	/* Note: this maps the select ieee80211 rate to hardware rate */
 	rate = bwn_ieeerate2hwrate(sc, rate);
 	rate_fb = bwn_ieeerate2hwrate(sc, rate_fb);
 
@@ -9205,6 +6244,7 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 	bcopy(wh->i_fc, txhdr->macfc, sizeof(txhdr->macfc));
 	bcopy(wh->i_addr1, txhdr->addr1, IEEE80211_ADDR_LEN);
 
+	/* XXX rate/rate_fb is the hardware rate */
 	if ((rate_fb == rate) ||
 	    (*(u_int16_t *)wh->i_dur & htole16(0x8000)) ||
 	    (*(u_int16_t *)wh->i_dur == htole16(0)))
@@ -9214,10 +6254,22 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 		    m->m_pkthdr.len, rate, isshort);
 
 	/* XXX TX encryption */
-	bwn_plcp_genhdr(BWN_ISOLDFMT(mac) ?
-	    (struct bwn_plcp4 *)(&txhdr->body.old.plcp) :
-	    (struct bwn_plcp4 *)(&txhdr->body.new.plcp),
-	    m->m_pkthdr.len + IEEE80211_CRC_LEN, rate);
+
+	switch (mac->mac_fw.fw_hdr_format) {
+	case BWN_FW_HDR_351:
+		bwn_plcp_genhdr((struct bwn_plcp4 *)(&txhdr->body.r351.plcp),
+		    m->m_pkthdr.len + IEEE80211_CRC_LEN, rate);
+		break;
+	case BWN_FW_HDR_410:
+		bwn_plcp_genhdr((struct bwn_plcp4 *)(&txhdr->body.r410.plcp),
+		    m->m_pkthdr.len + IEEE80211_CRC_LEN, rate);
+		break;
+	case BWN_FW_HDR_598:
+		bwn_plcp_genhdr((struct bwn_plcp4 *)(&txhdr->body.r598.plcp),
+		    m->m_pkthdr.len + IEEE80211_CRC_LEN, rate);
+		break;
+	}
+
 	bwn_plcp_genhdr((struct bwn_plcp4 *)(&txhdr->plcp_fb),
 	    m->m_pkthdr.len + IEEE80211_CRC_LEN, rate_fb);
 
@@ -9226,9 +6278,13 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 	txhdr->chan = phy->chan;
 	phyctl |= (BWN_ISOFDMRATE(rate)) ? BWN_TX_PHY_ENC_OFDM :
 	    BWN_TX_PHY_ENC_CCK;
+	/* XXX preamble? obey net80211 */
 	if (isshort && (rate == BWN_CCK_RATE_2MB || rate == BWN_CCK_RATE_5MB ||
 	     rate == BWN_CCK_RATE_11MB))
 		phyctl |= BWN_TX_PHY_SHORTPRMBL;
+
+	if (! phy->gmode)
+		macctl |= BWN_TX_MAC_5GHZ;
 
 	/* XXX TX antenna selection */
 
@@ -9262,17 +6318,32 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 
 	if (ic->ic_flags & IEEE80211_F_USEPROT) {
 		/* XXX RTS rate is always 1MB??? */
+		/* XXX TODO: don't fall back to CCK rates for OFDM */
 		rts_rate = BWN_CCK_RATE_1MB;
 		rts_rate_fb = bwn_get_fbrate(rts_rate);
 
+		/* XXX 'rate' here is hardware rate now, not the net80211 rate */
 		protdur = ieee80211_compute_duration(ic->ic_rt,
 		    m->m_pkthdr.len, rate, isshort) +
 		    + ieee80211_ack_duration(ic->ic_rt, rate, isshort);
 
 		if (ic->ic_protmode == IEEE80211_PROT_CTSONLY) {
-			cts = (struct ieee80211_frame_cts *)(BWN_ISOLDFMT(mac) ?
-			    (txhdr->body.old.rts_frame) :
-			    (txhdr->body.new.rts_frame));
+
+			switch (mac->mac_fw.fw_hdr_format) {
+			case BWN_FW_HDR_351:
+				cts = (struct ieee80211_frame_cts *)
+				    txhdr->body.r351.rts_frame;
+				break;
+			case BWN_FW_HDR_410:
+				cts = (struct ieee80211_frame_cts *)
+				    txhdr->body.r410.rts_frame;
+				break;
+			case BWN_FW_HDR_598:
+				cts = (struct ieee80211_frame_cts *)
+				    txhdr->body.r598.rts_frame;
+				break;
+			}
+
 			mprot = ieee80211_alloc_cts(ic, ni->ni_vap->iv_myaddr,
 			    protdur);
 			KASSERT(mprot != NULL, ("failed to alloc mbuf\n"));
@@ -9282,9 +6353,22 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 			macctl |= BWN_TX_MAC_SEND_CTSTOSELF;
 			len = sizeof(struct ieee80211_frame_cts);
 		} else {
-			rts = (struct ieee80211_frame_rts *)(BWN_ISOLDFMT(mac) ?
-			    (txhdr->body.old.rts_frame) :
-			    (txhdr->body.new.rts_frame));
+			switch (mac->mac_fw.fw_hdr_format) {
+			case BWN_FW_HDR_351:
+				rts = (struct ieee80211_frame_rts *)
+				    txhdr->body.r351.rts_frame;
+				break;
+			case BWN_FW_HDR_410:
+				rts = (struct ieee80211_frame_rts *)
+				    txhdr->body.r410.rts_frame;
+				break;
+			case BWN_FW_HDR_598:
+				rts = (struct ieee80211_frame_rts *)
+				    txhdr->body.r598.rts_frame;
+				break;
+			}
+
+			/* XXX rate/rate_fb is the hardware rate */
 			protdur += ieee80211_ack_duration(ic->ic_rt, rate,
 			    isshort);
 			mprot = ieee80211_alloc_rts(ic, wh->i_addr1,
@@ -9297,15 +6381,40 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 			len = sizeof(struct ieee80211_frame_rts);
 		}
 		len += IEEE80211_CRC_LEN;
-		bwn_plcp_genhdr((struct bwn_plcp4 *)((BWN_ISOLDFMT(mac)) ?
-		    &txhdr->body.old.rts_plcp :
-		    &txhdr->body.new.rts_plcp), len, rts_rate);
+
+		switch (mac->mac_fw.fw_hdr_format) {
+		case BWN_FW_HDR_351:
+			bwn_plcp_genhdr((struct bwn_plcp4 *)
+			    &txhdr->body.r351.rts_plcp, len, rts_rate);
+			break;
+		case BWN_FW_HDR_410:
+			bwn_plcp_genhdr((struct bwn_plcp4 *)
+			    &txhdr->body.r410.rts_plcp, len, rts_rate);
+			break;
+		case BWN_FW_HDR_598:
+			bwn_plcp_genhdr((struct bwn_plcp4 *)
+			    &txhdr->body.r598.rts_plcp, len, rts_rate);
+			break;
+		}
+
 		bwn_plcp_genhdr((struct bwn_plcp4 *)&txhdr->rts_plcp_fb, len,
 		    rts_rate_fb);
 
-		protwh = (struct ieee80211_frame *)(BWN_ISOLDFMT(mac) ?
-		    (&txhdr->body.old.rts_frame) :
-		    (&txhdr->body.new.rts_frame));
+		switch (mac->mac_fw.fw_hdr_format) {
+		case BWN_FW_HDR_351:
+			protwh = (struct ieee80211_frame *)
+			    &txhdr->body.r351.rts_frame;
+			break;
+		case BWN_FW_HDR_410:
+			protwh = (struct ieee80211_frame *)
+			    &txhdr->body.r410.rts_frame;
+			break;
+		case BWN_FW_HDR_598:
+			protwh = (struct ieee80211_frame *)
+			    &txhdr->body.r598.rts_frame;
+			break;
+		}
+
 		txhdr->rts_dur_fb = *(u_int16_t *)protwh->i_dur;
 
 		if (BWN_ISOFDMRATE(rts_rate)) {
@@ -9317,12 +6426,29 @@ bwn_set_txhdr(struct bwn_mac *mac, struct ieee80211_node *ni,
 		}
 		txhdr->eftypes |= (BWN_ISOFDMRATE(rts_rate_fb)) ?
 		    BWN_TX_EFT_RTS_FBOFDM : BWN_TX_EFT_RTS_FBCCK;
+
+		if (fill_phy_ctl1) {
+			txhdr->phyctl_1rts = htole16(bwn_set_txhdr_phyctl1(mac, rts_rate));
+			txhdr->phyctl_1rtsfb = htole16(bwn_set_txhdr_phyctl1(mac, rts_rate_fb));
+		}
 	}
 
-	if (BWN_ISOLDFMT(mac))
-		txhdr->body.old.cookie = htole16(cookie);
-	else
-		txhdr->body.new.cookie = htole16(cookie);
+	if (fill_phy_ctl1) {
+		txhdr->phyctl_1 = htole16(bwn_set_txhdr_phyctl1(mac, rate));
+		txhdr->phyctl_1fb = htole16(bwn_set_txhdr_phyctl1(mac, rate_fb));
+	}
+
+	switch (mac->mac_fw.fw_hdr_format) {
+	case BWN_FW_HDR_351:
+		txhdr->body.r351.cookie = htole16(cookie);
+		break;
+	case BWN_FW_HDR_410:
+		txhdr->body.r410.cookie = htole16(cookie);
+		break;
+	case BWN_FW_HDR_598:
+		txhdr->body.r598.cookie = htole16(cookie);
+		break;
+	}
 
 	txhdr->macctl = htole32(macctl);
 	txhdr->phyctl = htole16(phyctl);
@@ -9392,10 +6518,16 @@ bwn_antenna_sanitize(struct bwn_mac *mac, uint8_t n)
 	return (n);
 }
 
+/*
+ * Return a fallback rate for the given rate.
+ *
+ * Note: Don't fall back from OFDM to CCK.
+ */
 static uint8_t
 bwn_get_fbrate(uint8_t bitrate)
 {
 	switch (bitrate) {
+	/* CCK */
 	case BWN_CCK_RATE_1MB:
 		return (BWN_CCK_RATE_1MB);
 	case BWN_CCK_RATE_2MB:
@@ -9404,8 +6536,10 @@ bwn_get_fbrate(uint8_t bitrate)
 		return (BWN_CCK_RATE_2MB);
 	case BWN_CCK_RATE_11MB:
 		return (BWN_CCK_RATE_5MB);
+
+	/* OFDM */
 	case BWN_OFDM_RATE_6MB:
-		return (BWN_CCK_RATE_5MB);
+		return (BWN_OFDM_RATE_6MB);
 	case BWN_OFDM_RATE_9MB:
 		return (BWN_OFDM_RATE_6MB);
 	case BWN_OFDM_RATE_12MB:
@@ -9528,10 +6662,15 @@ static void
 bwn_set_slot_time(struct bwn_mac *mac, uint16_t time)
 {
 
+	/* XXX should exit if 5GHz band .. */
 	if (mac->mac_phy.type != BWN_PHYTYPE_G)
 		return;
+
 	BWN_WRITE_2(mac, 0x684, 510 + time);
+	/* Disabled in Linux b43, can adversely effect performance */
+#if 0
 	bwn_shm_write_2(mac, BWN_SHARED, 0x0010, time);
+#endif
 }
 
 static struct bwn_dma_ring *
@@ -9572,130 +6711,6 @@ bwn_dma_getslot(struct bwn_dma_ring *dr)
 	dr->dr_usedslot++;
 
 	return (slot);
-}
-
-static int
-bwn_phy_shm_tssi_read(struct bwn_mac *mac, uint16_t shm_offset)
-{
-	const uint8_t ofdm = (shm_offset != BWN_SHARED_TSSI_CCK);
-	unsigned int a, b, c, d;
-	unsigned int avg;
-	uint32_t tmp;
-
-	tmp = bwn_shm_read_4(mac, BWN_SHARED, shm_offset);
-	a = tmp & 0xff;
-	b = (tmp >> 8) & 0xff;
-	c = (tmp >> 16) & 0xff;
-	d = (tmp >> 24) & 0xff;
-	if (a == 0 || a == BWN_TSSI_MAX || b == 0 || b == BWN_TSSI_MAX ||
-	    c == 0 || c == BWN_TSSI_MAX || d == 0 || d == BWN_TSSI_MAX)
-		return (ENOENT);
-	bwn_shm_write_4(mac, BWN_SHARED, shm_offset,
-	    BWN_TSSI_MAX | (BWN_TSSI_MAX << 8) |
-	    (BWN_TSSI_MAX << 16) | (BWN_TSSI_MAX << 24));
-
-	if (ofdm) {
-		a = (a + 32) & 0x3f;
-		b = (b + 32) & 0x3f;
-		c = (c + 32) & 0x3f;
-		d = (d + 32) & 0x3f;
-	}
-
-	avg = (a + b + c + d + 2) / 4;
-	if (ofdm) {
-		if (bwn_shm_read_2(mac, BWN_SHARED, BWN_SHARED_HFLO)
-		    & BWN_HF_4DB_CCK_POWERBOOST)
-			avg = (avg >= 13) ? (avg - 13) : 0;
-	}
-	return (avg);
-}
-
-static void
-bwn_phy_g_setatt(struct bwn_mac *mac, int *bbattp, int *rfattp)
-{
-	struct bwn_txpwr_loctl *lo = &mac->mac_phy.phy_g.pg_loctl;
-	int rfatt = *rfattp;
-	int bbatt = *bbattp;
-
-	while (1) {
-		if (rfatt > lo->rfatt.max && bbatt > lo->bbatt.max - 4)
-			break;
-		if (rfatt < lo->rfatt.min && bbatt < lo->bbatt.min + 4)
-			break;
-		if (bbatt > lo->bbatt.max && rfatt > lo->rfatt.max - 1)
-			break;
-		if (bbatt < lo->bbatt.min && rfatt < lo->rfatt.min + 1)
-			break;
-		if (bbatt > lo->bbatt.max) {
-			bbatt -= 4;
-			rfatt += 1;
-			continue;
-		}
-		if (bbatt < lo->bbatt.min) {
-			bbatt += 4;
-			rfatt -= 1;
-			continue;
-		}
-		if (rfatt > lo->rfatt.max) {
-			rfatt -= 1;
-			bbatt += 4;
-			continue;
-		}
-		if (rfatt < lo->rfatt.min) {
-			rfatt += 1;
-			bbatt -= 4;
-			continue;
-		}
-		break;
-	}
-
-	*rfattp = MIN(MAX(rfatt, lo->rfatt.min), lo->rfatt.max);
-	*bbattp = MIN(MAX(bbatt, lo->bbatt.min), lo->bbatt.max);
-}
-
-static void
-bwn_phy_lock(struct bwn_mac *mac)
-{
-	struct bwn_softc *sc = mac->mac_sc;
-	struct ieee80211com *ic = &sc->sc_ic;
-
-	KASSERT(siba_get_revid(sc->sc_dev) >= 3,
-	    ("%s: unsupported rev %d", __func__, siba_get_revid(sc->sc_dev)));
-
-	if (ic->ic_opmode != IEEE80211_M_HOSTAP)
-		bwn_psctl(mac, BWN_PS_AWAKE);
-}
-
-static void
-bwn_phy_unlock(struct bwn_mac *mac)
-{
-	struct bwn_softc *sc = mac->mac_sc;
-	struct ieee80211com *ic = &sc->sc_ic;
-
-	KASSERT(siba_get_revid(sc->sc_dev) >= 3,
-	    ("%s: unsupported rev %d", __func__, siba_get_revid(sc->sc_dev)));
-
-	if (ic->ic_opmode != IEEE80211_M_HOSTAP)
-		bwn_psctl(mac, 0);
-}
-
-static void
-bwn_rf_lock(struct bwn_mac *mac)
-{
-
-	BWN_WRITE_4(mac, BWN_MACCTL,
-	    BWN_READ_4(mac, BWN_MACCTL) | BWN_MACCTL_RADIO_LOCK);
-	BWN_READ_4(mac, BWN_MACCTL);
-	DELAY(10);
-}
-
-static void
-bwn_rf_unlock(struct bwn_mac *mac)
-{
-
-	BWN_READ_2(mac, BWN_PHYVER);
-	BWN_WRITE_4(mac, BWN_MACCTL,
-	    BWN_READ_4(mac, BWN_MACCTL) & ~BWN_MACCTL_RADIO_LOCK);
 }
 
 static struct bwn_pio_txqueue *
@@ -9866,6 +6881,7 @@ bwn_rx_radiotap(struct bwn_mac *mac, struct mbuf *m,
 	const struct ieee80211_frame_min *wh;
 	uint64_t tsf;
 	uint16_t low_mactime_now;
+	uint16_t mt;
 
 	if (htole16(rxhdr->phy_status0) & BWN_RX_PHYST0_SHORTPRMBL)
 		sc->sc_rx_th.wr_flags |= IEEE80211_RADIOTAP_F_SHORTPRE;
@@ -9877,8 +6893,19 @@ bwn_rx_radiotap(struct bwn_mac *mac, struct mbuf *m,
 	bwn_tsf_read(mac, &tsf);
 	low_mactime_now = tsf;
 	tsf = tsf & ~0xffffULL;
-	tsf += le16toh(rxhdr->mac_time);
-	if (low_mactime_now < le16toh(rxhdr->mac_time))
+
+	switch (mac->mac_fw.fw_hdr_format) {
+	case BWN_FW_HDR_351:
+	case BWN_FW_HDR_410:
+		mt = le16toh(rxhdr->ps4.r351.mac_time);
+		break;
+	case BWN_FW_HDR_598:
+		mt = le16toh(rxhdr->ps4.r598.mac_time);
+		break;
+	}
+
+	tsf += mt;
+	if (low_mactime_now < mt)
 		tsf -= 0x10000;
 
 	sc->sc_rx_th.wr_tsf = tsf;
@@ -10361,7 +7388,8 @@ bwn_rfswitch(void *arg)
 	KASSERT(mac->mac_status >= BWN_MAC_STATUS_STARTED,
 	    ("%s: invalid MAC status %d", __func__, mac->mac_status));
 
-	if (mac->mac_phy.rev >= 3 || mac->mac_phy.type == BWN_PHYTYPE_LP) {
+	if (mac->mac_phy.rev >= 3 || mac->mac_phy.type == BWN_PHYTYPE_LP
+	    || mac->mac_phy.type == BWN_PHYTYPE_N) {
 		if (!(BWN_READ_4(mac, BWN_RF_HWENABLED_HI)
 			& BWN_RF_HWENABLED_HI_MASK))
 			cur = 1;
@@ -10373,6 +7401,9 @@ bwn_rfswitch(void *arg)
 
 	if (mac->mac_flags & BWN_MAC_FLAG_RADIO_ON)
 		prev = 1;
+
+	DPRINTF(sc, BWN_DEBUG_RESET, "%s: called; cur=%d, prev=%d\n",
+	    __func__, cur, prev);
 
 	if (cur != prev) {
 		if (cur)
@@ -10444,3 +7475,4 @@ MODULE_DEPEND(bwn, siba_bwn, 1, 1, 1);
 MODULE_DEPEND(bwn, wlan, 1, 1, 1);		/* 802.11 media layer */
 MODULE_DEPEND(bwn, firmware, 1, 1, 1);		/* firmware support */
 MODULE_DEPEND(bwn, wlan_amrr, 1, 1, 1);
+MODULE_VERSION(bwn, 1);

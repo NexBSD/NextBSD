@@ -235,6 +235,7 @@ static void	iwn_xmit_task(void *arg0, int pending);
 static int	iwn_raw_xmit(struct ieee80211_node *, struct mbuf *,
 		    const struct ieee80211_bpf_params *);
 static int	iwn_transmit(struct ieee80211com *, struct mbuf *);
+static void	iwn_scan_timeout(void *);
 static void	iwn_watchdog(void *);
 static int	iwn_ioctl(struct ieee80211com *, u_long , void *);
 static void	iwn_parent(struct ieee80211com *);
@@ -344,7 +345,6 @@ static void	iwn_scan_end(struct ieee80211com *);
 static void	iwn_set_channel(struct ieee80211com *);
 static void	iwn_scan_curchan(struct ieee80211_scan_state *, unsigned long);
 static void	iwn_scan_mindwell(struct ieee80211_scan_state *);
-static void	iwn_hw_reset(void *, int);
 #ifdef	IWN_DEBUG
 static char	*iwn_get_csr_string(int);
 static void	iwn_debug_register(struct iwn_softc *);
@@ -676,8 +676,8 @@ iwn_attach(device_t dev)
 	iwn_radiotap_attach(sc);
 
 	callout_init_mtx(&sc->calib_to, &sc->sc_mtx, 0);
+	callout_init_mtx(&sc->scan_timeout, &sc->sc_mtx, 0);
 	callout_init_mtx(&sc->watchdog_to, &sc->sc_mtx, 0);
-	TASK_INIT(&sc->sc_reinit_task, 0, iwn_hw_reset, sc);
 	TASK_INIT(&sc->sc_radioon_task, 0, iwn_radio_on, sc);
 	TASK_INIT(&sc->sc_radiooff_task, 0, iwn_radio_off, sc);
 	TASK_INIT(&sc->sc_panic_task, 0, iwn_panicked, sc);
@@ -1400,7 +1400,6 @@ iwn_detach(device_t dev)
 		iwn_xmit_queue_drain(sc);
 		IWN_UNLOCK(sc);
 
-		ieee80211_draintask(&sc->sc_ic, &sc->sc_reinit_task);
 		ieee80211_draintask(&sc->sc_ic, &sc->sc_radioon_task);
 		ieee80211_draintask(&sc->sc_ic, &sc->sc_radiooff_task);
 		iwn_stop(sc);
@@ -1409,6 +1408,7 @@ iwn_detach(device_t dev)
 		taskqueue_free(sc->sc_tq);
 
 		callout_drain(&sc->watchdog_to);
+		callout_drain(&sc->scan_timeout);
 		callout_drain(&sc->calib_to);
 		ieee80211_ifdetach(&sc->sc_ic);
 	}
@@ -2215,7 +2215,7 @@ iwn4965_read_eeprom(struct iwn_softc *sc)
 	/* Read regulatory domain (4 ASCII characters). */
 	iwn_read_prom_data(sc, IWN4965_EEPROM_DOMAIN, sc->eeprom_domain, 4);
 
-	/* Read the list of authorized channels (20MHz ones only). */
+	/* Read the list of authorized channels (20MHz & 40MHz). */
 	for (i = 0; i < IWN_NBANDS - 1; i++) {
 		addr = iwn4965_regulatory_bands[i];
 		iwn_read_eeprom_channels(sc, i, addr);
@@ -2306,7 +2306,7 @@ iwn5000_read_eeprom(struct iwn_softc *sc)
 	iwn_read_prom_data(sc, base + IWN5000_EEPROM_DOMAIN,
 	    sc->eeprom_domain, 4);
 
-	/* Read the list of authorized channels (20MHz ones only). */
+	/* Read the list of authorized channels (20MHz & 40MHz). */
 	for (i = 0; i < IWN_NBANDS - 1; i++) {
 		addr =  base + sc->base_params->regulatory_bands[i];
 		iwn_read_eeprom_channels(sc, i, addr);
@@ -3940,6 +3940,7 @@ iwn_notif_intr(struct iwn_softc *sc)
 			    scan->nchan, scan->status, scan->chan);
 #endif
 			sc->sc_is_scanning = 0;
+			callout_stop(&sc->scan_timeout);
 			IWN_UNLOCK(sc);
 			ieee80211_scan_next(vap);
 			IWN_LOCK(sc);
@@ -4958,6 +4959,16 @@ iwn_transmit(struct ieee80211com *ic, struct mbuf *m)
 }
 
 static void
+iwn_scan_timeout(void *arg)
+{
+	struct iwn_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_ic;
+
+	ic_printf(ic, "scan timeout\n");
+	ieee80211_restart_all(ic);
+}
+
+static void
 iwn_watchdog(void *arg)
 {
 	struct iwn_softc *sc = arg;
@@ -4972,7 +4983,7 @@ iwn_watchdog(void *arg)
 	if (sc->sc_tx_timer > 0) {
 		if (--sc->sc_tx_timer == 0) {
 			ic_printf(ic, "device timeout\n");
-			ieee80211_runtask(ic, &sc->sc_reinit_task);
+			ieee80211_restart_all(ic);
 			return;
 		}
 	}
@@ -5251,7 +5262,7 @@ iwn_set_link_quality(struct iwn_softc *sc, struct ieee80211_node *ni)
 		 * will not be using MIMO.
 		 *
 		 * Since we're filling linkq from 0..15 and we're filling
-		 * from the higest MCS rates to the lowest rates, if we
+		 * from the highest MCS rates to the lowest rates, if we
 		 * _are_ doing a dual-stream rate, set mimo to idx+1 (ie,
 		 * the next entry.)  That way if the next entry is a non-MIMO
 		 * entry, we're already pointing at it.
@@ -6975,6 +6986,8 @@ iwn_scan(struct iwn_softc *sc, struct ieee80211vap *vap,
 	    hdr->nchan);
 	error = iwn_cmd(sc, IWN_CMD_SCAN, buf, buflen, 1);
 	free(buf, M_DEVBUF);
+	if (error == 0)
+		callout_reset(&sc->scan_timeout, 5*hz, iwn_scan_timeout, sc);
 
 	DPRINTF(sc, IWN_DEBUG_TRACE, "->%s: end\n",__func__);
 
@@ -8906,19 +8919,6 @@ static void
 iwn_scan_mindwell(struct ieee80211_scan_state *ss)
 {
 	/* NB: don't try to abort scan; wait for firmware to finish */
-}
-
-static void
-iwn_hw_reset(void *arg0, int pending)
-{
-	struct iwn_softc *sc = arg0;
-	struct ieee80211com *ic = &sc->sc_ic;
-
-	DPRINTF(sc, IWN_DEBUG_TRACE, "->Doing %s\n", __func__);
-
-	iwn_stop(sc);
-	iwn_init(sc);
-	ieee80211_notify_radio(ic, 1);
 }
 #ifdef	IWN_DEBUG
 #define	IWN_DESC(x) case x:	return #x
