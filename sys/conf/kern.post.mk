@@ -12,7 +12,7 @@
 .if defined(DESTDIR)
 MKMODULESENV+=	DESTDIR="${DESTDIR}"
 .endif
-SYSDIR?= ${S:C;^[^/];${.CURDIR}/&;}
+SYSDIR?= ${S:C;^[^/];${.CURDIR}/&;:tA}
 MKMODULESENV+=	KERNBUILDDIR="${.CURDIR}" SYSDIR="${SYSDIR}"
 
 .if defined(CONF_CFLAGS)
@@ -285,7 +285,7 @@ ${_ILINKS}:
 		path=${S}/${.TARGET}/include ;; \
 	esac ; \
 	${ECHO} ${.TARGET} "->" $$path ; \
-	ln -s $$path ${.TARGET}
+	ln -fhs $$path ${.TARGET}
 
 # .depend needs include links so we remove them only together.
 kernel-cleandepend: .PHONY
