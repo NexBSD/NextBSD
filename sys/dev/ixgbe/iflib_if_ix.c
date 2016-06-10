@@ -206,9 +206,9 @@ static int ixgbe_sysctl_eee_tx_lpi_delay(SYSCTL_HANDLER_ARGS);
 static void	ixgbe_setup_optics(struct adapter *);
 
 /* Deferred interrupt tasklets */
-static void	ixgbe_handle_msf(void *, int);
-static void	ixgbe_handle_mod(void *, int);
-static void	ixgbe_handle_phy(void *, int);
+static void	ixgbe_handle_msf(void *);
+static void	ixgbe_handle_mod(void *);
+static void	ixgbe_handle_phy(void *);
 
 #ifdef IXGBE_FDIR
 static void	ixgbe_reinit_fdir(void *, int);
@@ -216,7 +216,7 @@ static void	ixgbe_reinit_fdir(void *, int);
 
 #ifdef PCI_IOV
 static void	ixgbe_ping_all_vfs(struct adapter *);
-static void	ixgbe_handle_mbx(void *, int);
+static void	ixgbe_handle_mbx(void *);
 static int	ixgbe_init_iov(device_t, u16, const nvlist_t *);
 static void	ixgbe_uninit_iov(device_t);
 static int	ixgbe_add_vf(device_t, u16, const nvlist_t *);
@@ -431,13 +431,7 @@ static struct if_shared_ctx ixgbe_sctx_init = {
 	.isc_rx_maxsize = PAGE_SIZE*4,
 	.isc_rx_nsegments = 1,
 	.isc_rx_maxsegsize = PAGE_SIZE*4,
-	.isc_ntxd = DEFAULT_TXD,
-	.isc_nrxd = DEFAULT_RXD,
 	.isc_nfl = 1,
-	.isc_txqsizes[0] = roundup2((DEFAULT_TXD * sizeof(union ixgbe_adv_tx_desc)) +
-							  sizeof(u32), DBA_ALIGN),
-	.isc_rxqsizes[0] = roundup2(DEFAULT_RXD *
-							  sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN),
 	.isc_ntxqs = 1,
 	.isc_nrxqs = 1,
 
@@ -454,6 +448,7 @@ static int
 ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxqs, int ntxqsets)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	struct ix_tx_queue *que;
 	int i, j, error;
 #ifdef PCI_IOV
@@ -482,7 +477,7 @@ ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nt
 	for (i = 0, que = adapter->tx_queues; i < ntxqsets; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
 
-		if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * ixgbe_sctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+		if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * scctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 			device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
 			error = ENOMEM;
 			goto fail;
@@ -502,7 +497,7 @@ ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nt
 		txr->tx_paddr = paddrs[i];
 
 		txr->que = que;
-		for (j = 0; j < ixgbe_sctx->isc_ntxd; j++) {
+		for (j = 0; j < scctx->isc_ntxd; j++) {
 			txr->tx_buffers[j].eop = -1;
 		}
 		txr->bytes = 0;
@@ -740,6 +735,7 @@ static void
 ixgbe_initialize_receive_units(if_ctx_t ctx)
 {
         struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	struct ixgbe_hw	*hw = &adapter->hw;
 	struct ifnet   *ifp = iflib_get_ifp(ctx);
 
@@ -792,7 +788,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 			       (rdba & 0x00000000ffffffffULL));
 		IXGBE_WRITE_REG(hw, IXGBE_RDBAH(j), (rdba >> 32));
 		IXGBE_WRITE_REG(hw, IXGBE_RDLEN(j),
-		     ixgbe_sctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc));
+		     scctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc));
 
 		/* Set up the SRRCTL register */
 		srrctl = IXGBE_READ_REG(hw, IXGBE_SRRCTL(j));
@@ -861,6 +857,7 @@ static void
 ixgbe_initialize_transmit_units(if_ctx_t ctx)
 {
   struct adapter *adapter = iflib_get_softc(ctx);
+  if_softc_ctx_t scctx = adapter->shared;
   struct ixgbe_hw	*hw = &adapter->hw;
   struct ix_tx_queue *que;
   int i;
@@ -876,7 +873,7 @@ ixgbe_initialize_transmit_units(if_ctx_t ctx)
 		       (tdba & 0x00000000ffffffffULL));
 		IXGBE_WRITE_REG(hw, IXGBE_TDBAH(j), (tdba >> 32));
 		IXGBE_WRITE_REG(hw, IXGBE_TDLEN(j),
-		    ixgbe_sctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc));
+		    scctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc));
 
 		/* Setup the HW Tx Head and Tail descriptor pointers */
 		IXGBE_WRITE_REG(hw, IXGBE_TDH(j), 0);
@@ -935,20 +932,6 @@ ixgbe_initialize_transmit_units(if_ctx_t ctx)
 static void *
 ixgbe_register(device_t dev)
 {
-	/* Do descriptor calc and sanity checks */
-	if (((ixgbe_txd * sizeof(union ixgbe_adv_tx_desc)) % DBA_ALIGN) != 0 ||
-		ixgbe_txd < MIN_TXD || ixgbe_txd > MAX_TXD) {
-		device_printf(dev, "TXD config issue, using default!\n");
-		ixgbe_sctx->isc_ntxd = DEFAULT_TXD;
-	} else {
-		ixgbe_sctx->isc_ntxd = ixgbe_txd;
-	}
-	ixgbe_tx_process_limit = min(ixgbe_sctx->isc_ntxd, ixgbe_txd);
-	ixgbe_sctx->isc_txqsizes[0] = roundup2((ixgbe_sctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc)) +
-										 sizeof(u32), DBA_ALIGN);
-	ixgbe_sctx->isc_rxqsizes[1] = roundup2(ixgbe_rxd *
-										 sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
-
 	return (ixgbe_sctx);
 }
 
@@ -967,6 +950,7 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 {
 	device_t dev;
 	struct adapter *adapter;
+	if_softc_ctx_t scctx;
 	struct ixgbe_hw *hw;
 	uint16_t csum;
 	int error = 0;
@@ -978,7 +962,7 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	adapter = iflib_get_softc(ctx);
 	adapter->ctx = ctx;
 	adapter->dev = dev;
-	adapter->shared = iflib_get_softc_ctx(ctx);
+	scctx = adapter->shared = iflib_get_softc_ctx(ctx);
 	adapter->media = iflib_get_media(ctx);
 	hw = &adapter->hw;
 
@@ -986,17 +970,36 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	ixgbe_identify_hardware(ctx);
 
 	if (adapter->hw.mac.type == ixgbe_mac_82598EB) {
-		adapter->shared->isc_tx_nsegments = IXGBE_82598_SCATTER;
-		adapter->shared->isc_msix_bar = PCIR_BAR(MSIX_82598_BAR);
+		scctx->isc_tx_nsegments = IXGBE_82598_SCATTER;
+		scctx->isc_msix_bar = PCIR_BAR(MSIX_82598_BAR);
 	} else {
 		hw->phy.smart_speed = ixgbe_smart_speed;
-		adapter->shared->isc_tx_nsegments = IXGBE_82599_SCATTER;
-		adapter->shared->isc_msix_bar = PCIR_BAR(MSIX_82599_BAR);
+		scctx->isc_tx_nsegments = IXGBE_82599_SCATTER;
+		scctx->isc_msix_bar = PCIR_BAR(MSIX_82599_BAR);
 	}
+	if (scctx->isc_ntxd == 0)
+		scctx->isc_ntxd = DEFAULT_TXD;
+	if (scctx->isc_nrxd == 0)
+		scctx->isc_nrxd = DEFAULT_RXD;
+	if (scctx->isc_nrxd < MIN_RXD || scctx->isc_nrxd > MAX_RXD) {
+		device_printf(dev, "nrxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_nrxd, MIN_RXD, MAX_RXD, DEFAULT_RXD);
+		scctx->isc_nrxd = DEFAULT_RXD;
+	}
+	if (scctx->isc_ntxd < MIN_TXD || scctx->isc_ntxd > MAX_TXD) {
+		device_printf(dev, "ntxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_ntxd, MIN_TXD, MAX_TXD, DEFAULT_TXD);
+		scctx->isc_ntxd = DEFAULT_TXD;
+	}
+	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc) + sizeof(u32), DBA_ALIGN),
+	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
 
-	adapter->shared->isc_tx_tso_segments_max = adapter->shared->isc_tx_nsegments;
-	adapter->shared->isc_tx_tso_size_max = IXGBE_TSO_SIZE;
-	adapter->shared->isc_tx_tso_segsize_max = PAGE_SIZE;
+	scctx->isc_tx_tso_segments_max = scctx->isc_tx_nsegments;
+	scctx->isc_tx_tso_size_max = IXGBE_TSO_SIZE;
+	scctx->isc_tx_tso_segsize_max = PAGE_SIZE;
+	/* XXX */
+	scctx->isc_max_txqsets = scctx->isc_max_rxqsets = 32;
+
 	/* Sysctls */
 	ixgbe_add_device_sysctls(ctx);
 
@@ -1014,14 +1017,6 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	ixgbe_set_sysctl_value(adapter, "tx_processing_limit",
 	    "max number of tx packets to process",
 	&adapter->tx_process_limit, ixgbe_tx_process_limit);
-
-	if (((ixgbe_rxd * sizeof(union ixgbe_adv_rx_desc)) % DBA_ALIGN) != 0 ||
-		ixgbe_rxd < MIN_RXD || ixgbe_rxd > MAX_RXD) {
-		device_printf(dev, "RXD config issue, using default!\n");
-		ixgbe_sctx->isc_nrxd = DEFAULT_RXD;
-	} else {
-		ixgbe_sctx->isc_nrxd = ixgbe_rxd;
-	}
 
 	/* Allocate multicast array memory. */
 	adapter->mta = malloc(sizeof(*adapter->mta) *
@@ -1085,10 +1080,10 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	switch (adapter->hw.mac.type) {
 	case ixgbe_mac_X550:
 	case ixgbe_mac_X550EM_x:
-		adapter->shared->isc_rss_table_size = 512;
+		scctx->isc_rss_table_size = 512;
 		break;
 	default:
-		adapter->shared->isc_rss_table_size = 128;
+		scctx->isc_rss_table_size = 128;
 	}
 	return (0);
 err_late:
@@ -1545,15 +1540,6 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 		queue_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, namebuf,
 					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
-
-		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "interrupt_rate",
-				CTLTYPE_UINT | CTLFLAG_RW, &adapter->rx_queues[i],
-				sizeof(&adapter->rx_queues[i]),
-				ixgbe_sysctl_interrupt_rate_handler, "IU",
-				"Interrupt Rate");
-		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "irqs",
-				CTLFLAG_RD, &(adapter->rx_queues[i].irqs),
-				"irqs on this queue");
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "txd_head", 
 				CTLTYPE_UINT | CTLFLAG_RD, txr, sizeof(txr),
 				ixgbe_sysctl_tdh_handler, "IU",
@@ -1582,6 +1568,14 @@ ixgbe_add_hw_stats(struct adapter *adapter)
 					    CTLFLAG_RD, NULL, "Queue Name");
 		queue_list = SYSCTL_CHILDREN(queue_node);
 
+		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "interrupt_rate",
+				CTLTYPE_UINT | CTLFLAG_RW, &adapter->rx_queues[i],
+				sizeof(&adapter->rx_queues[i]),
+				ixgbe_sysctl_interrupt_rate_handler, "IU",
+				"Interrupt Rate");
+		SYSCTL_ADD_UQUAD(ctx, queue_list, OID_AUTO, "irqs",
+				CTLFLAG_RD, &(adapter->rx_queues[i].irqs),
+				"irqs on this queue");
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "rxd_head", 
 				CTLTYPE_UINT | CTLFLAG_RD, rxr, sizeof(rxr),
 				ixgbe_sysctl_rdh_handler, "IU",
@@ -2068,6 +2062,7 @@ ixgbe_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	for (int i = 0; i < adapter->num_tx_queues; i++) {
 		snprintf(buf, sizeof(buf), "txq%d", i);
 		tx_que = &adapter->tx_queues[i];
+		tx_que->msix = i % adapter->num_rx_queues;
 		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, tx_que, tx_que->txr.me, buf);
 	}
 	rid = vector + 1;
@@ -2811,7 +2806,14 @@ ixgbe_if_detach(if_ctx_t ctx)
 		return (EBUSY);
 	}
 #endif /* PCI_IOV */
-  
+
+	iflib_config_gtask_deinit(&adapter->mod_task);
+	iflib_config_gtask_deinit(&adapter->msf_task);
+	iflib_config_gtask_deinit(&adapter->phy_task);
+#ifdef PCI_IOV
+	iflib_config_gtask_deinit(&adapter->mbx_task);
+#endif
+
 	ixgbe_setup_low_power_mode(ctx);
 
 	/* let hardware know driver is unloading */
@@ -3272,7 +3274,8 @@ ixgbe_set_ivar(struct adapter *adapter, u8 entry, u8 vector, s8 type)
 static void
 ixgbe_configure_ivars(struct adapter *adapter)
 {
-	struct  ix_rx_queue	*que = adapter->rx_queues;
+	struct  ix_rx_queue	*rx_que = adapter->rx_queues;
+	struct  ix_tx_queue	*tx_que = adapter->tx_queues;
 	u32			newitr;
 
 	if (ixgbe_max_interrupt_rate > 0)
@@ -3286,22 +3289,21 @@ ixgbe_configure_ivars(struct adapter *adapter)
 		newitr = 0;
 	}
 
-	for (int i = 0; i < adapter->num_rx_queues; i++, que++) {
-		struct rx_ring *rxr = &adapter->rx_queues[i].rxr;
-		struct tx_ring *txr;
+	for (int i = 0; i < adapter->num_rx_queues; i++, rx_que++) {
+		struct rx_ring *rxr = &rx_que->rxr;
+
 		/* First the RX queue entry */
-		ixgbe_set_ivar(adapter, rxr->me, que->msix, 0);
-		/* ... and the TX */
+		ixgbe_set_ivar(adapter, rxr->me, rx_que->msix, 0);
 
-		if (adapter->num_tx_queues == adapter->num_rx_queues) {
-			txr = &adapter->tx_queues[i].txr;
-			ixgbe_set_ivar(adapter, txr->me, que->msix, 1);
-		}
 		/* Set an Initial EITR value */
-		IXGBE_WRITE_REG(&adapter->hw,
-						IXGBE_EITR(que->msix), newitr);
-		}
+		IXGBE_WRITE_REG(&adapter->hw, IXGBE_EITR(rx_que->msix), newitr);
+	}
+	for (int i = 0; i < adapter->num_tx_queues; i++, tx_que++) {
+		struct tx_ring *txr = &tx_que->txr;
 
+		/* ... and the TX */
+		ixgbe_set_ivar(adapter, txr->me, tx_que->msix, 1);
+	}
 	/* For the Link interrupt */
 	ixgbe_set_ivar(adapter, 1, adapter->vector, -1);
 }
@@ -3551,7 +3553,7 @@ out:
 ** Tasklet for handling SFP module interrupts
 */
 static void
-ixgbe_handle_mod(void *context, int pending)
+ixgbe_handle_mod(void *context)
 {
 	if_ctx_t ctx = context;
 	struct adapter  *adapter = iflib_get_softc(ctx);
@@ -3618,7 +3620,7 @@ out:
 /* Tasklet for handling MSF (multispeed fiber) interrupts */
 
 static void
-ixgbe_handle_msf(void *context, int pending)
+ixgbe_handle_msf(void *context)
 {
 	if_ctx_t ctx = context;
 	struct adapter  *adapter = iflib_get_softc(ctx);
@@ -3643,7 +3645,7 @@ ixgbe_handle_msf(void *context, int pending)
 /* Tasklet for handling interrupts from an external PHY */
 
 static void
-ixgbe_handle_phy(void *context, int pending)
+ixgbe_handle_phy(void *context)
 {
 	if_ctx_t ctx = context;
 	struct adapter  *adapter = iflib_get_softc(ctx);
@@ -5039,7 +5041,7 @@ ixgbe_process_vf_msg(struct adapter *adapter, struct ixgbe_vf *vf)
  * Tasklet for handling VF -> PF mailbox messages.
  */
 static void
-ixgbe_handle_mbx(void *context, int pending)
+ixgbe_handle_mbx(void *context)
 {
 	struct adapter *adapter;
 	struct ixgbe_hw *hw;

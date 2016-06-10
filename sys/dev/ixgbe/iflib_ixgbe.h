@@ -75,7 +75,7 @@
 #include <sys/proc.h>
 #include <sys/sysctl.h>
 #include <sys/endian.h>
-#include <sys/taskqueue.h>
+#include <sys/gtaskqueue.h>
 #include <sys/pcpu.h>
 #include <sys/smp.h>
 #include <machine/smp.h>
@@ -387,6 +387,7 @@ struct ix_rx_queue {
 
 struct ix_tx_queue {
 	struct adapter		*adapter;
+	u32			msix;           /* This queue's MSIX vector */
 	struct tx_ring		txr;
 };
 

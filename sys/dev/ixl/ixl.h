@@ -1,5 +1,7 @@
 /* $FreeBSD */
+#ifndef IFLIB
 #include "opt_iflib.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/systm.h>

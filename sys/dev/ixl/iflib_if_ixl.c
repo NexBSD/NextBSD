@@ -377,13 +377,7 @@ static struct if_shared_ctx ixl_sctx_init = {
 	.isc_rx_maxsize = PAGE_SIZE*4,
 	.isc_rx_nsegments = 1,
 	.isc_rx_maxsegsize = PAGE_SIZE*4,
-	.isc_ntxd = DEFAULT_RING,
-	.isc_nrxd = DEFAULT_RING,
 	.isc_nfl = 1,
-	.isc_txqsizes[0] = roundup2((DEFAULT_RING * sizeof(struct i40e_tx_desc)) +
-							  sizeof(u32), DBA_ALIGN),
-	.isc_rxqsizes[0] = roundup2(DEFAULT_RING *
-							  sizeof(union i40e_rx_desc), DBA_ALIGN),
 	.isc_ntxqs = 1,
 	.isc_nrxqs = 1,
 	.isc_admin_intrcnt = 1,
@@ -402,14 +396,6 @@ static uint8_t ixl_bcast_addr[ETHER_ADDR_LEN] =
 static void *
 ixl_register(device_t dev)
 {
-	ixl_sctx->isc_ntxd = ixl_ringsz;
-	ixl_sctx->isc_nrxd = ixl_ringsz;
-	ixl_sctx->isc_txqsizes[0] = roundup2((ixl_ringsz * sizeof(struct i40e_tx_desc)) +
-									   sizeof(u32), DBA_ALIGN);
-	ixl_sctx->isc_rxqsizes[1] = roundup2(ixl_ringsz *
-									   sizeof(union i40e_rx_desc), DBA_ALIGN);
-
-
 	return (ixl_sctx);
 }
 
@@ -431,6 +417,7 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	struct ixl_pf	*pf;
 	struct i40e_hw	*hw;
 	struct ixl_vsi *vsi;
+	if_softc_ctx_t scctx;
 	int             error = 0;
 
 	INIT_DEBUGOUT("ixl_attach: begin");
@@ -445,7 +432,7 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	vsi->num_vlans = 0;
 	vsi->ctx = ctx;
 	vsi->media = iflib_get_media(ctx);
-	vsi->shared = iflib_get_softc_ctx(ctx);
+	scctx = vsi->shared = iflib_get_softc_ctx(ctx);
 	pf->dev = iflib_get_dev(ctx);
 
 	/*
@@ -457,13 +444,33 @@ ixl_if_attach_pre(if_ctx_t ctx)
 	vsi->shared->isc_tx_tso_segments_max = IXL_MAX_TSO_SEGS;
 	vsi->shared->isc_tx_tso_size_max = IXL_TSO_SIZE;
 	vsi->shared->isc_tx_tso_segsize_max = PAGE_SIZE;
+ 
+	if (scctx->isc_nrxd == 0)
+		scctx->isc_nrxd = DEFAULT_RXD;
+	if (scctx->isc_ntxd == 0)
+		scctx->isc_ntxd = DEFAULT_TXD;
+	if (scctx->isc_nrxd < MIN_RXD || scctx->isc_nrxd > MAX_RXD) {
+		device_printf(dev, "nrxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_nrxd, MIN_RXD, MAX_RXD, DEFAULT_RXD);
+		scctx->isc_nrxd = DEFAULT_RXD;
+	}
+	if (scctx->isc_ntxd < MIN_TXD || scctx->isc_ntxd > MAX_TXD) {
+		device_printf(dev, "ntxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_ntxd, MIN_TXD, MAX_TXD, DEFAULT_TXD);
+		scctx->isc_ntxd = DEFAULT_TXD;
+	}
+	scctx->isc_txqsizes[0] = roundup2((scctx->isc_ntxd * sizeof(struct i40e_tx_desc)) +
+                                                                          sizeof(u32), DBA_ALIGN);
+	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd *sizeof(union i40e_rx_desc), DBA_ALIGN);
+
+	/* XXX */
+	scctx->isc_max_txqsets = scctx->isc_max_rxqsets = 32;
 
 	/*
 	** Note this assumes we have a single embedded VSI,
 	** this could be enhanced later to allocate multiple
 	*/
 	vsi = &pf->vsi;
-
 
 	/* Save off the PCI information */
 	hw->vendor_id = pci_get_vendor(dev);
@@ -1257,8 +1264,8 @@ int
 ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 {
 	struct 		ixl_vsi *vsi = iflib_get_softc(ctx);
-	struct ixl_pf	*pf = vsi->back;
-	struct 		ixl_rx_queue *que = vsi->rx_queues;
+	struct		ixl_pf	*pf = vsi->back;
+	struct 		ixl_rx_queue *rx_que = vsi->rx_queues;
 	struct 		ixl_tx_queue *tx_que = vsi->tx_queues;
 	int 		err, i, rid, vector = 0;
 	char buf[16];
@@ -1278,32 +1285,36 @@ ixl_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_IOV, pf, 0, "ixl_iov");
 
 	/* Now set up the stations */
-	for (i = 0; i < vsi->num_rx_queues; i++, vector++, que++) {
+	for (i = 0; i < vsi->num_rx_queues; i++, vector++, rx_que++) {
 		rid = vector + 1;
 
 		snprintf(buf, sizeof(buf), "rxq%d", i);
-		err = iflib_irq_alloc_generic(ctx, &que->que_irq, rid, IFLIB_INTR_RX,
-									  ixl_msix_que, que, que->rxr.me, buf);
+		err = iflib_irq_alloc_generic(ctx, &rx_que->que_irq, rid, IFLIB_INTR_RX,
+									  ixl_msix_que, rx_que, rx_que->rxr.me, buf);
 		if (err) {
 			device_printf(iflib_get_dev(ctx), "Failed to allocate q int %d err: %d", i, err);
 			vsi->num_rx_queues = i + 1;
 			goto fail;
 		}
-		que->msix = vector;
+		rx_que->msix = vector;
 	}
 
-	for (i = 0, tx_que = vsi->tx_queues; i < vsi->num_tx_queues; i++, tx_que++) {
+	for (i = 0; i < vsi->num_tx_queues; i++, tx_que++) {
 		snprintf(buf, sizeof(buf), "txq%d", i);
-		rid = que->msix + 1;
+		vector = (i % vsi->num_rx_queues) + 1;
+		tx_que->msix = vector;
+		rid = vector + 1;
 		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, tx_que, tx_que->txr.me, buf);
 	}
 
 	return (0);
 fail:
 	iflib_irq_free(ctx, &vsi->irq);
-	que = vsi->rx_queues;
-	for (int i = 0; i < vsi->num_rx_queues; i++, que++)
-		iflib_irq_free(ctx, &que->que_irq);
+	rx_que = vsi->rx_queues;
+	for (int i = 0; i < vsi->num_rx_queues; i++, rx_que++)
+		iflib_irq_free(ctx, &rx_que->que_irq);
+
+	/* detaching tx queues ? */
 	return (err);
 }
 
@@ -1471,7 +1482,8 @@ void
 ixl_atr(struct ixl_tx_queue *que, int hflags, int etype)
 {
 	struct ixl_vsi			*vsi = que->vsi;
-	if_shared_ctx_t sctx = ixl_sctx;
+	if_shared_ctx_t			sctx = ixl_sctx;
+	if_softc_ctx_t			scctx = vsi->shared;
 	struct tx_ring			*txr = &que->txr;
 	struct i40e_filter_program_desc	*FDIR;
 	u32				ptype, dtype;
@@ -1493,7 +1505,7 @@ ixl_atr(struct ixl_tx_queue *que, int hflags, int etype)
 	/* Get a descriptor to use */
 	idx = txr->next_avail;
 	FDIR = (struct i40e_filter_program_desc *) &txr->base[idx];
-	if (++idx == sctx->isc_ntxd)
+	if (++idx == scctx->isc_ntxd)
 		idx = 0;
 
 	ptype = (que->txr.me << I40E_TXD_FLTR_QW0_QINDEX_SHIFT) &
@@ -1786,9 +1798,9 @@ ixl_configure_queue_intr_msix(struct ixl_pf *pf)
 	struct i40e_hw	*hw = &pf->hw;
 	struct ixl_vsi *vsi = &pf->vsi;
 	u32		reg;
-	u16		vector = 1;
+	u16		i, vector;
 
-	for (int i = 0; i < vsi->num_rx_queues; i++, vector++) {
+	for (vector = 1, i = 0; i < vsi->num_rx_queues; i++, vector++) {
 		wr32(hw, I40E_PFINT_DYN_CTLN(i), 0);
 		/* First queue type is RX / 0 */
 		wr32(hw, I40E_PFINT_LNKLSTN(i), i);
@@ -1799,7 +1811,9 @@ ixl_configure_queue_intr_msix(struct ixl_pf *pf)
 		(i << I40E_QINT_RQCTL_NEXTQ_INDX_SHIFT) |
 		(I40E_QUEUE_TYPE_TX << I40E_QINT_RQCTL_NEXTQ_TYPE_SHIFT);
 		wr32(hw, I40E_QINT_RQCTL(i), reg);
-
+	}
+	for (i = 0; i < vsi->num_tx_queues; i++) {
+		vector = (i % vsi->num_rx_queues) + 1;
 		reg = I40E_QINT_TQCTL_CAUSE_ENA_MASK |
 		(IXL_TX_ITR << I40E_QINT_TQCTL_ITR_INDX_SHIFT) |
 		(vector << I40E_QINT_TQCTL_MSIX_INDX_SHIFT) |
@@ -2179,7 +2193,7 @@ ixl_switch_config(struct ixl_pf *pf)
 static int
 ixl_initialize_vsi(struct ixl_vsi *vsi)
 {
-	if_shared_ctx_t sctx = ixl_sctx;
+	if_softc_ctx_t scctx = vsi->shared;
 	struct ixl_tx_queue	*tx_que = vsi->tx_queues;
 	struct ixl_rx_queue	*rx_que = vsi->rx_queues;
 	device_t		dev = iflib_get_dev(vsi->ctx);
@@ -2261,18 +2275,18 @@ ixl_initialize_vsi(struct ixl_vsi *vsi)
 		u16			size;
 
 		/* Setup the HMC TX Context  */
-		size = sctx->isc_ntxd * sizeof(struct i40e_tx_desc);
+		size = scctx->isc_ntxd * sizeof(struct i40e_tx_desc);
 		memset(&tctx, 0, sizeof(struct i40e_hmc_obj_txq));
 		tctx.new_context = 1;
 
 		tctx.base = (txr->tx_paddr/IXL_TX_CTX_BASE_UNITS);
-		tctx.qlen = sctx->isc_ntxd;
+		tctx.qlen = scctx->isc_ntxd;
 		tctx.fc_ena = 0;
 		tctx.rdylist = vsi->info.qs_handle[0]; /* index is TC */
 		/* Enable HEAD writeback */
 		tctx.head_wb_ena = 1;
 		tctx.head_wb_addr = txr->tx_paddr +
-		    (sctx->isc_ntxd * sizeof(struct i40e_tx_desc));
+		    (scctx->isc_ntxd * sizeof(struct i40e_tx_desc));
 		tctx.rdylist_act = 0;
 		err = i40e_clear_lan_tx_queue_context(hw, i);
 		if (err) {
@@ -2317,7 +2331,7 @@ ixl_initialize_vsi(struct ixl_vsi *vsi)
 		rctx.dsize = 1;	/* do 32byte descriptors */
 		rctx.hsplit_0 = 0;  /* no HDR split initially */
 		rctx.base = (rxr->rx_paddr/IXL_RX_CTX_BASE_UNITS);
-		rctx.qlen = sctx->isc_nrxd;
+		rctx.qlen = scctx->isc_nrxd;
 		rctx.tphrdesc_ena = 1;
 		rctx.tphwdesc_ena = 1;
 		rctx.tphdata_ena = 0;
@@ -6216,9 +6230,6 @@ ixl_if_iov_uninit(if_ctx_t ctx)
 		i40e_aq_delete_element(hw, pf->veb_seid, NULL);
 		pf->veb_seid = 0;
 	}
-
-	if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0)
-		ixl_if_intr_disable(ctx);
 
 	vfs = pf->vfs;
 	num_vfs = pf->num_vfs;

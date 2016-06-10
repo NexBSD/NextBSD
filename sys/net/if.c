@@ -115,7 +115,7 @@ SYSCTL_INT(_net_link, OID_AUTO, log_link_state_change, CTLFLAG_RW,
 /* Log promiscuous mode change events */
 static int log_promisc_mode_change = 1;
 
-SYSCTL_INT(_net_link, OID_AUTO, log_promisc_mode_change, CTLFLAG_RW,
+SYSCTL_INT(_net_link, OID_AUTO, log_promisc_mode_change, CTLFLAG_RDTUN,
 	&log_promisc_mode_change, 1,
 	"log promiscuous mode change events");
 
@@ -182,6 +182,9 @@ static int	if_getgroupmembers(struct ifgroupreq *);
 static void	if_delgroups(struct ifnet *);
 static void	if_attach_internal(struct ifnet *, int, struct if_clone *);
 static int	if_detach_internal(struct ifnet *, int, struct if_clone **);
+#ifdef VIMAGE
+static void	if_vmove(struct ifnet *, struct vnet *);
+#endif
 
 #ifdef INET6
 /*
@@ -392,6 +395,20 @@ vnet_if_uninit(const void *unused __unused)
 }
 VNET_SYSUNINIT(vnet_if_uninit, SI_SUB_INIT_IF, SI_ORDER_FIRST,
     vnet_if_uninit, NULL);
+
+static void
+vnet_if_return(const void *unused __unused)
+{
+	struct ifnet *ifp, *nifp;
+
+	/* Return all inherited interfaces to their parent vnets. */
+	TAILQ_FOREACH_SAFE(ifp, &V_ifnet, if_link, nifp) {
+		if (ifp->if_home_vnet != ifp->if_vnet)
+			if_vmove(ifp, ifp->if_home_vnet);
+	}
+}
+VNET_SYSUNINIT(vnet_if_return, SI_SUB_VNET_DONE, SI_ORDER_ANY,
+    vnet_if_return, NULL);
 #endif
 
 static void
@@ -1195,13 +1212,13 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 		}
 
 	if ((ifgl = (struct ifg_list *)malloc(sizeof(struct ifg_list), M_TEMP,
-	    M_NOWAIT)) == NULL) {
+	    M_NOWAIT|M_ZERO)) == NULL) {
 	    	IFNET_WUNLOCK();
 		return (ENOMEM);
 	}
 
 	if ((ifgm = (struct ifg_member *)malloc(sizeof(struct ifg_member),
-	    M_TEMP, M_NOWAIT)) == NULL) {
+	    M_TEMP, M_NOWAIT|M_ZERO)) == NULL) {
 		free(ifgl, M_TEMP);
 		IFNET_WUNLOCK();
 		return (ENOMEM);
@@ -1213,7 +1230,7 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 
 	if (ifg == NULL) {
 		if ((ifg = (struct ifg_group *)malloc(sizeof(struct ifg_group),
-		    M_TEMP, M_NOWAIT)) == NULL) {
+		    M_TEMP, M_NOWAIT|M_ZERO)) == NULL) {
 			free(ifgl, M_TEMP);
 			free(ifgm, M_TEMP);
 			IFNET_WUNLOCK();

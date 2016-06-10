@@ -184,11 +184,11 @@ static int	ixgbe_sysctl_print_rss_config(SYSCTL_HANDLER_ARGS);
 #endif
 static int	ixgbe_sysctl_wol_enable(SYSCTL_HANDLER_ARGS);
 static int	ixgbe_sysctl_wufc(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_enable(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_negotiated(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_rx_lpi_status(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_tx_lpi_status(SYSCTL_HANDLER_ARGS);
-static int	ixgbe_sysctl_eee_tx_lpi_delay(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_enable(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_negotiated(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_rx_lpi_status(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_tx_lpi_status(SYSCTL_HANDLER_ARGS);
+static int ixgbe_sysctl_eee_tx_lpi_delay(SYSCTL_HANDLER_ARGS);
 
 /* Support for pluggable optic modules */
 static bool	ixgbe_sfp_probe(struct adapter *);

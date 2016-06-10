@@ -253,13 +253,7 @@ static struct if_shared_ctx ixv_sctx_init = {
 	.isc_rx_maxsize = PAGE_SIZE*4,
 	.isc_rx_nsegments = 1,
 	.isc_rx_maxsegsize = PAGE_SIZE*4,
-	.isc_ntxd = DEFAULT_TXD,
-	.isc_nrxd = DEFAULT_RXD,
 	.isc_nfl = 1,
-	.isc_txqsizes[0] = roundup2((DEFAULT_TXD * sizeof(union ixgbe_adv_tx_desc)) +
-							  sizeof(u32), DBA_ALIGN),
-	.isc_rxqsizes[1] = roundup2(DEFAULT_RXD *
-							  sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN),
 	.isc_ntxqs = 1,
 	.isc_nrxqs = 1,
 	.isc_admin_intrcnt = 1,
@@ -274,19 +268,6 @@ if_shared_ctx_t ixv_sctx = &ixv_sctx_init;
 static void *
 ixv_register(device_t dev)
 {
-	/* Do descriptor calc and sanity checks */
-	if (((ixv_txd * sizeof(union ixgbe_adv_tx_desc)) % DBA_ALIGN) != 0 ||
-	    ixv_txd < MIN_TXD || ixv_txd > MAX_TXD) {
-		device_printf(dev, "TXD config issue, using default!\n");
-		ixv_sctx->isc_ntxd  = DEFAULT_TXD;
-	} else {
-		ixv_sctx->isc_ntxd  = ixv_txd;
-	}
-
-	ixv_sctx->isc_txqsizes[0] = roundup2((ixv_sctx->isc_ntxd *
-					    sizeof(union ixgbe_adv_tx_desc)) + sizeof(u32), DBA_ALIGN);
-	ixv_sctx->isc_rxqsizes[0] = roundup2(ixv_rxd *
-					    sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
 	
 	return (ixv_sctx);
 }
@@ -295,6 +276,7 @@ static int
 ixv_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxqs, int ntxqsets)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	struct ix_tx_queue *que;
 	int i, j, error;
 
@@ -322,7 +304,7 @@ ixv_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxq
 	for (i = 0, que = adapter->tx_queues; i < ntxqsets; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
 
-	    if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * ixv_sctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+	    if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * scctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 	        device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
 		error = ENOMEM;
 		goto fail;
@@ -340,7 +322,7 @@ ixv_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxq
 		txr->tx_base = (union ixgbe_adv_tx_desc *)vaddrs[i];
 		txr->tx_paddr = paddrs[i];
 		txr->que = que;
-		for (j = 0; j < ixv_sctx->isc_ntxd; j++)
+		for (j = 0; j < scctx->isc_ntxd; j++)
 			txr->tx_buffers->eop = -1;
 		txr->bytes = 0;
 		txr->total_packets = 0;
@@ -457,6 +439,7 @@ ixv_if_attach_pre(if_ctx_t ctx)
 {
 	device_t dev; 
 	struct adapter *adapter;
+	if_softc_ctx_t scctx;
 	struct ixgbe_hw *hw;
 	int             error = 0;
 
@@ -467,7 +450,7 @@ ixv_if_attach_pre(if_ctx_t ctx)
 	adapter = iflib_get_softc(ctx);
 	adapter->dev = dev; 
 	adapter->ctx = ctx;
-	adapter->shared = iflib_get_softc_ctx(ctx);
+	scctx = adapter->shared = iflib_get_softc_ctx(ctx);
 	adapter->media = iflib_get_media(ctx);
 	hw = &adapter->hw;
 
@@ -502,13 +485,23 @@ ixv_if_attach_pre(if_ctx_t ctx)
 	    "max number of tx packets to process",
 	    &adapter->tx_process_limit, ixv_tx_process_limit);
 
-	/* Do descriptor calc and sanity checks */
-	if (((ixv_rxd * sizeof(union ixgbe_adv_rx_desc)) % DBA_ALIGN) != 0 ||
-	    ixv_rxd < MIN_RXD || ixv_rxd > MAX_RXD) {
-		device_printf(dev, "RXD config issue, using default!\n");
-		ixv_sctx->isc_nrxd  = DEFAULT_RXD;
-	} else
-		ixv_sctx->isc_nrxd  = ixv_rxd;
+	if (scctx->isc_ntxd == 0)
+		scctx->isc_ntxd = DEFAULT_TXD;
+	if (scctx->isc_nrxd == 0)
+		scctx->isc_nrxd = DEFAULT_RXD;
+	if (scctx->isc_nrxd < MIN_RXD || scctx->isc_nrxd > MAX_RXD) {
+		device_printf(dev, "nrxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_nrxd, MIN_RXD, MAX_RXD, DEFAULT_RXD);
+		scctx->isc_nrxd = DEFAULT_RXD;
+	}
+	if (scctx->isc_ntxd < MIN_TXD || scctx->isc_ntxd > MAX_TXD) {
+		device_printf(dev, "ntxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_ntxd, MIN_TXD, MAX_TXD, DEFAULT_TXD);
+		scctx->isc_ntxd = DEFAULT_TXD;
+	}
+	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc) +
+							  sizeof(u32), DBA_ALIGN),
+	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
 
 	/*
 	** Initialize the shared code: its
@@ -1231,13 +1224,14 @@ static int
 ixv_setup_interface(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	struct ifnet   *ifp = iflib_get_ifp(ctx);
         uint64_t cap = 0; 
 	
 	INIT_DEBUGOUT("ixv_setup_interface: begin");
 
 	if_setbaudrate(ifp, 1000000000);
-	ifp->if_snd.ifq_maxlen = ixv_sctx->isc_ntxd - 2;
+	ifp->if_snd.ifq_maxlen = scctx->isc_ntxd - 2;
 
 	adapter->max_frame_size =
 	    ifp->if_mtu + IXGBE_MTU_HDR_VLAN;
@@ -1270,6 +1264,7 @@ static void
 ixv_initialize_transmit_units(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	struct ix_tx_queue *que = adapter->tx_queues;
 	struct ixgbe_hw	*hw = &adapter->hw;
 	int i;
@@ -1297,7 +1292,7 @@ ixv_initialize_transmit_units(if_ctx_t ctx)
 		       (tdba & 0x00000000ffffffffULL));
 		IXGBE_WRITE_REG(hw, IXGBE_VFTDBAH(j), (tdba >> 32));
 		IXGBE_WRITE_REG(hw, IXGBE_VFTDLEN(j),
-		    ixv_sctx->isc_ntxd *
+		    scctx->isc_ntxd *
 		    sizeof(struct ixgbe_legacy_tx_desc));
 		txctrl = IXGBE_READ_REG(hw, IXGBE_VFDCA_TXCTRL(j));
 		txctrl &= ~IXGBE_DCA_TXCTRL_DESC_WRO_EN;
@@ -1323,7 +1318,8 @@ ixv_initialize_transmit_units(if_ctx_t ctx)
 static void
 ixv_initialize_receive_units(if_ctx_t ctx)
 {
-	struct adapter *adapter = iflib_get_softc(ctx); 
+	struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx;
 	struct ixgbe_hw	*hw = &adapter->hw;
 	struct ifnet	*ifp = adapter->ifp;
 	struct ix_rx_queue *que = adapter->rx_queues; 
@@ -1342,6 +1338,7 @@ ixv_initialize_receive_units(if_ctx_t ctx)
 
 	/* Tell PF our max_frame size */
 	ixgbevf_rlpml_set_vf(hw, adapter->max_frame_size);
+	scctx = adapter->shared;
 
 	for (int i = 0; i < adapter->num_rx_queues; i++, que++) {
 		struct rx_ring *rxr = &que->rxr; 
@@ -1367,7 +1364,7 @@ ixv_initialize_receive_units(if_ctx_t ctx)
 		IXGBE_WRITE_REG(hw, IXGBE_VFRDBAH(j),
 		    (rdba >> 32));
 		IXGBE_WRITE_REG(hw, IXGBE_VFRDLEN(j),
-		    	ixv_sctx->isc_nrxd  * sizeof(union ixgbe_adv_rx_desc));
+				scctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc));
 
 		/* Reset the ring indices */
 		IXGBE_WRITE_REG(hw, IXGBE_VFRDH(rxr->me), 0);
@@ -1423,7 +1420,7 @@ ixv_initialize_receive_units(if_ctx_t ctx)
 		} else
 #endif /* DEV_NETMAP */
 			IXGBE_WRITE_REG(hw, IXGBE_VFRDT(rxr->me),
-			    	ixv_sctx->isc_nrxd  - 1);
+					scctx->isc_nrxd  - 1);
 	}
 
 	rxcsum = IXGBE_READ_REG(hw, IXGBE_RXCSUM);

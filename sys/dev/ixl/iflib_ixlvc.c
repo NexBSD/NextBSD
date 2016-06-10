@@ -373,7 +373,7 @@ ixlv_configure_queues(struct ixlv_sc *sc)
 	struct ixl_rx_queue	*rx_que = vsi->rx_queues;
 	struct tx_ring		*txr;
 	struct rx_ring		*rxr;
-	if_shared_ctx_t		sctx;
+	if_softc_ctx_t		scctx;
 	int			len, pairs;
 
 	struct i40e_virtchnl_vsi_queue_config_info *vqci;
@@ -389,7 +389,7 @@ ixlv_configure_queues(struct ixlv_sc *sc)
 		ixl_vc_schedule_retry(&sc->vc_mgr);
 		return;
 	}
-	sctx = iflib_get_sctx(sc->vsi.ctx);
+	scctx = iflib_get_softc_ctx(sc->vsi.ctx);
 	vqci->vsi_id = sc->vsi_res->vsi_id;
 	vqci->num_queue_pairs = pairs;
 	vqpi = vqci->qpair;
@@ -401,16 +401,16 @@ ixlv_configure_queues(struct ixlv_sc *sc)
 		rxr = &rx_que->rxr;
 		vqpi->txq.vsi_id = vqci->vsi_id;
 		vqpi->txq.queue_id = i;
-		vqpi->txq.ring_len = sctx->isc_ntxd;
+		vqpi->txq.ring_len = scctx->isc_ntxd;
 		vqpi->txq.dma_ring_addr = txr->tx_paddr;
 		/* Enable Head writeback */
 		vqpi->txq.headwb_enabled = 1;
 		vqpi->txq.dma_headwb_addr = txr->tx_paddr +
-		    (sctx->isc_ntxd * sizeof(struct i40e_tx_desc));
+		    (scctx->isc_ntxd * sizeof(struct i40e_tx_desc));
 
 		vqpi->rxq.vsi_id = vqci->vsi_id;
 		vqpi->rxq.queue_id = i;
-		vqpi->rxq.ring_len = sctx->isc_ntxd;
+		vqpi->rxq.ring_len = scctx->isc_ntxd;
 		vqpi->rxq.dma_ring_addr = rxr->rx_paddr;
 		vqpi->rxq.max_pkt_size = vsi->if_max_frame_size;
 		vqpi->rxq.databuffer_size = rxr->mbuf_sz;

@@ -262,13 +262,7 @@ static struct if_shared_ctx ixlv_sctx_init = {
 	.isc_rx_maxsize = PAGE_SIZE*4,
 	.isc_rx_nsegments = 1,
 	.isc_rx_maxsegsize = PAGE_SIZE*4,
-	.isc_ntxd = DEFAULT_RING,
-	.isc_nrxd = DEFAULT_RING,
 	.isc_nfl = 1,
-	.isc_txqsizes[0] = roundup2((DEFAULT_RING * sizeof(struct i40e_tx_desc)) +
-							  sizeof(u32), DBA_ALIGN),
-	.isc_rxqsizes[0] = roundup2(DEFAULT_RING *
-							  sizeof(union i40e_rx_desc), DBA_ALIGN),
 	.isc_ntxqs = 1,
 	.isc_nrxqs = 1,
 	.isc_admin_intrcnt = 1,
@@ -283,14 +277,6 @@ if_shared_ctx_t ixlv_sctx = &ixlv_sctx_init;
 static void *
 ixlv_register(device_t dev)
 {
-	ixlv_sctx->isc_ntxd = ixlv_ringsz;
-	ixlv_sctx->isc_nrxd = ixlv_ringsz;
-	ixlv_sctx->isc_txqsizes[0] = roundup2((ixlv_ringsz * sizeof(struct i40e_tx_desc)) +
-									   sizeof(u32), DBA_ALIGN);
-	ixlv_sctx->isc_rxqsizes[0] = roundup2(ixlv_ringsz *
-									   sizeof(union i40e_rx_desc), DBA_ALIGN);
-
-
 	return (ixlv_sctx);
 }
 
