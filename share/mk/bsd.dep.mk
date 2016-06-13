@@ -107,6 +107,7 @@ SRCS:=	${SRCS:S/${_YSRC}/${_YC}/}
 CLEANFILES+= ${_YC}
 .if !empty(YFLAGS:M-d) && !empty(SRCS:My.tab.h)
 .ORDER: ${_YC} y.tab.h
+y.tab.h: .NOMETA
 ${_YC} y.tab.h: ${_YSRC}
 	${YACC} ${YFLAGS} ${.ALLSRC}
 	cp y.tab.c ${_YC}
@@ -114,6 +115,7 @@ CLEANFILES+= y.tab.c y.tab.h
 .elif !empty(YFLAGS:M-d)
 .for _YH in ${_YC:R}.h
 .ORDER: ${_YC} ${_YH}
+${_YH}: .NOMETA
 ${_YC} ${_YH}: ${_YSRC}
 	${YACC} ${YFLAGS} -o ${_YC} ${.ALLSRC}
 SRCS+=	${_YH}
@@ -244,7 +246,9 @@ DPSRCS+= ${SRCS}
 # beforedepend/_EXTRADEPEND/afterdepend.  The target is kept
 # to allow 'make depend' to generate files.
 ${DEPENDFILE}: ${DPSRCS}
-.if !empty(.MAKE.MODE:Mmeta) || exists(${.OBJDIR}/${DEPENDFILE})
+.if exists(${.OBJDIR}/${DEPENDFILE}) || \
+    ((commands(beforedepend) || commands(_EXTRADEPEND) || \
+    commands(afterdepend)) && !empty(.MAKE.MODE:Mmeta))
 	rm -f ${DEPENDFILE}
 .endif
 .if target(_EXTRADEPEND)
