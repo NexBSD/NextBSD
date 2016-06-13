@@ -143,8 +143,8 @@ static void	em_init_manageability(struct adapter *);
 static void	em_release_manageability(struct adapter *);
 static void     em_get_hw_control(struct adapter *);
 static void     em_release_hw_control(struct adapter *);
-static void	em_get_wakeup(device_t);
-static void     em_enable_wakeup(device_t);
+static void	em_get_wakeup(if_ctx_t ctx);
+static void     em_enable_wakeup(if_ctx_t ctx);
 static int	em_enable_phy_wakeup(struct adapter *);
 static void	em_disable_aspm(struct adapter *);
 
@@ -154,7 +154,7 @@ static void     em_disable_promisc(if_ctx_t ctx);
 /* MSIX handlers */
 static int      em_if_msix_intr_assign(if_ctx_t, int);
 static int	em_msix_link(void *);
-static void	em_handle_link(void *context, int pending);
+static void	em_handle_link(void *context);
 
 #ifdef EM_MULTIQUEUE
 static void	em_enable_vectors_82574(struct adapter *);
@@ -316,11 +316,7 @@ static struct if_shared_ctx em_sctx_init = {
 	.isc_rx_maxsize = PAGE_SIZE * 4, 
 	.isc_rx_nsegments = 1,
 	.isc_rx_maxsegsize = PAGE_SIZE * 4,
-	.isc_ntxd = EM_DEFAULT_TXD,
-	.isc_nrxd = EM_DEFAULT_RXD,
 	.isc_nfl = 1,
-	.isc_txqsizes[0] = roundup2((EM_DEFAULT_TXD * sizeof(struct e1000_tx_desc) + sizeof(u32)), EM_DBA_ALIGN),
-        .isc_rxqsizes[0] = roundup2(EM_DEFAULT_RXD * sizeof(union e1000_rx_desc_extended), EM_DBA_ALIGN),
 	.isc_nrxqs = 1,
 	.isc_ntxqs = 1,
 	.isc_admin_intrcnt = 1,
@@ -351,7 +347,17 @@ em_read_reg(struct e1000_hw *hw, u32 reg)
 static int em_get_regs(SYSCTL_HANDLER_ARGS)
 {
 	struct adapter *adapter = (struct adapter *)arg1;
+	if_softc_ctx_t scctx = adapter->shared;
 	struct e1000_hw *hw = &adapter->hw;
+
+	struct em_tx_queue *tx_que = &adapter->tx_queues[0];
+	struct em_rx_queue *rx_que = &adapter->rx_queues[0];
+	struct rx_ring *rxr = &rx_que->rxr;
+	struct tx_ring *txr = &tx_que->txr;
+	int ntxd = scctx->isc_ntxd;
+	int nrxd = scctx->isc_nrxd;
+	int j;
+
 	struct sbuf *sb;
 	u32 *regs_buff = (u32 *)malloc(sizeof(u32) * IGB_REGS_LEN, M_DEVBUF, M_NOWAIT);
 	int rc;
@@ -421,6 +427,22 @@ static int em_get_regs(SYSCTL_HANDLER_ARGS)
 	sbuf_printf(sb, "\tTDFT\t %08x\n", regs_buff[19]);
 	sbuf_printf(sb, "\tTDFHS\t %08x\n", regs_buff[20]);
 	sbuf_printf(sb, "\tTDFPC\t %08x\n\n", regs_buff[21]); 
+
+	for (j = 0; j < nrxd; j++) {
+		u32 staterr = le32toh(rxr->rx_base[j].wb.upper.status_error);
+		u32 length =  le32toh(rxr->rx_base[j].wb.upper.length);
+		sbuf_printf(sb, "\tReceive Descriptor Address %d: %08lx  Error:%d  Length:%d\n", j, rxr->rx_base[j].read.buffer_addr, staterr, length);
+	}
+
+	for (j = 0; j < min(ntxd, 256); j++) {
+		struct em_txbuffer *buf = &txr->tx_buffers[j];
+		unsigned int *ptr = (unsigned int *)&txr->tx_base[j];
+
+		sbuf_printf(sb, "\tTXD[%03d] [0]: %08x [1]: %08x [2]: %08x [3]: %08x  eop: %d DD=%d\n",
+			    j, ptr[0], ptr[1], ptr[2], ptr[3], buf->eop,
+			    buf->eop != -1 ? txr->tx_base[buf->eop].upper.fields.status & E1000_TXD_STAT_DD : 0);
+
+	}
 	
         rc = sbuf_finish(sb);
 	sbuf_delete(sb);
@@ -431,39 +453,19 @@ static void *
 em_register(device_t dev)
 {
 	
-  	/* Do descriptor calc and sanity checks */
-	if (((em_txd * sizeof(struct e1000_tx_desc)) % EM_DBA_ALIGN) != 0 ||
-		em_txd < EM_MIN_TXD || em_txd > EM_MAX_TXD) {
-		device_printf(dev, "TXD config issue, using default!\n");
-		em_sctx->isc_ntxd = EM_DEFAULT_TXD;
-	} else {
-		em_sctx->isc_ntxd = em_txd;
-	}
-
-	if (((em_rxd * sizeof(union e1000_rx_desc_extended)) % EM_DBA_ALIGN) != 0 ||
-	    (em_rxd > EM_MAX_RXD) || (em_rxd < EM_MIN_RXD)) {
-	  device_printf(dev, "Using %d RX descriptors instead of %d!\n",
-			EM_DEFAULT_RXD, em_rxd);
-	  em_sctx->isc_nrxd = EM_DEFAULT_RXD;
-	} else
-	  em_sctx->isc_nrxd = em_rxd;
-	
-	em_sctx->isc_txqsizes[0] = roundup2(em_sctx->isc_ntxd *
-	    sizeof(struct e1000_tx_desc), EM_DBA_ALIGN);
-        em_sctx->isc_rxqsizes[0] = roundup2(em_sctx->isc_nrxd *
-	    sizeof(union e1000_rx_desc_extended), EM_DBA_ALIGN);
-	
 	return (em_sctx); 
 }
 
 static void
 em_init_tx_ring(struct em_tx_queue *que)
 {
+	struct adapter *sc = que->adapter;
+	if_softc_ctx_t scctx = sc->shared;
 	struct tx_ring *txr = &que->txr;
 	struct em_txbuffer *tx_buffer;
 
 	tx_buffer = txr->tx_buffers;
-	for (int i = 0; i < em_sctx->isc_ntxd; i++, tx_buffer++) {
+	for (int i = 0; i < scctx->isc_ntxd; i++, tx_buffer++) {
 		tx_buffer->eop = -1;
 	}
 }
@@ -482,7 +484,8 @@ static int
 em_if_attach_pre(if_ctx_t ctx) 
 {
         struct adapter	*adapter = iflib_get_softc(ctx);
-        device_t        dev = iflib_get_dev(ctx); 
+        device_t        dev = iflib_get_dev(ctx);
+	if_softc_ctx_t scctx;
 	struct e1000_hw	*hw;
 	int		error = 0;
 
@@ -496,11 +499,32 @@ em_if_attach_pre(if_ctx_t ctx)
 
 	adapter->ctx = ctx;
 	adapter->dev = adapter->osdep.dev = dev;
-	adapter->shared = iflib_get_softc_ctx(ctx);
+	scctx = adapter->shared = iflib_get_softc_ctx(ctx); 
 	adapter->media = iflib_get_media(ctx);
-	adapter->num_rx_desc = em_sctx->isc_nrxd;
-	adapter->tx_process_limit = min(em_sctx->isc_ntxd, em_txd);
-	hw = &adapter->hw;
+        hw = &adapter->hw; 
+
+	if (scctx->isc_ntxd == 0)
+		scctx->isc_ntxd = EM_DEFAULT_TXD;
+	if (scctx->isc_nrxd == 0)
+		scctx->isc_nrxd = EM_DEFAULT_RXD;
+
+	if (scctx->isc_nrxd < EM_MIN_RXD || scctx->isc_nrxd > EM_MAX_RXD) {
+		device_printf(dev, "nrxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_nrxd, EM_MIN_RXD, EM_MAX_RXD, EM_DEFAULT_RXD);
+		scctx->isc_nrxd = EM_DEFAULT_RXD;
+	}
+
+	if (scctx->isc_ntxd < EM_MIN_TXD || scctx->isc_ntxd > EM_MAX_TXD) {
+		device_printf(dev, "ntxd: %d not within permitted range of %d-%d setting to default value: %d\n",
+			      scctx->isc_ntxd, EM_MIN_TXD, EM_MAX_TXD, EM_DEFAULT_TXD);
+		scctx->isc_ntxd = EM_DEFAULT_TXD;
+	}
+
+	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd * sizeof(struct e1000_tx_desc) + sizeof(u32), EM_DBA_ALIGN),
+	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd * sizeof(union e1000_rx_desc_extended), EM_DBA_ALIGN);
+
+	adapter->num_rx_desc = scctx->isc_nrxd;
+	adapter->tx_process_limit = min(scctx->isc_ntxd, em_txd);
 
 	/* SYSCTL stuff */
 	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
@@ -527,11 +551,11 @@ em_if_attach_pre(if_ctx_t ctx)
 	em_identify_hardware(ctx);
 
         /* Set isc_msix_bar */
-	adapter->shared->isc_msix_bar = PCIR_BAR(EM_MSIX_BAR);
-	adapter->shared->isc_tx_nsegments = EM_MAX_SCATTER;
-	adapter->shared->isc_tx_tso_segments_max = adapter->shared->isc_tx_nsegments;
-	adapter->shared->isc_tx_tso_size_max = EM_TSO_SIZE;
-	adapter->shared->isc_tx_tso_segsize_max = EM_TSO_SEG_SIZE;
+	scctx->isc_msix_bar = PCIR_BAR(EM_MSIX_BAR);
+	scctx->isc_tx_nsegments = EM_MAX_SCATTER;
+	scctx->isc_tx_tso_segments_max = scctx->isc_tx_nsegments;
+	scctx->isc_tx_tso_size_max = EM_TSO_SIZE;
+	scctx->isc_tx_tso_segsize_max = EM_TSO_SEG_SIZE;
 	
 	/* Setup PCI resources */
 	if (em_allocate_pci_resources(ctx)) {
@@ -708,7 +732,7 @@ em_if_attach_pre(if_ctx_t ctx)
         /*
 	 * Get Wake-on-Lan and Management info for later use
 	 */
-	em_get_wakeup(dev);
+	em_get_wakeup(ctx);
 
 	iflib_set_mac(ctx, hw->mac.addr);
 
@@ -718,7 +742,7 @@ err_late:
 	em_release_hw_control(adapter);
 err_pci:
 	em_free_pci_resources(ctx);
-	em_if_queues_free(ctx); 
+	em_if_queues_free(ctx);
 	free(adapter->mta, M_DEVBUF);
 
 	return (error);
@@ -758,7 +782,7 @@ em_if_attach_post(if_ctx_t ctx)
 err_late:
 	em_release_hw_control(adapter);
 	em_free_pci_resources(ctx);
-	em_if_queues_free(ctx); 
+	em_if_queues_free(ctx);
 	free(adapter->mta, M_DEVBUF);
 
 	return (error);
@@ -777,23 +801,24 @@ err_late:
 static int
 em_if_detach(if_ctx_t ctx)
 {
-  struct adapter	*adapter = iflib_get_softc(ctx);
-    
-  INIT_DEBUGOUT("em_detach: begin");
+	struct adapter	*adapter = iflib_get_softc(ctx);
+
+	INIT_DEBUGOUT("em_detach: begin");
 
 #ifdef DEVICE_POLLING
 	if (if_getcapenable(ifp) & IFCAP_POLLING)
 		ether_poll_deregister(ifp);
 #endif
 
-	e1000_phy_hw_reset(&adapter->hw);
 	em_release_manageability(adapter);
-	em_free_pci_resources(ctx);
 	em_release_hw_control(adapter);
-	em_if_queues_free(ctx); 
+	em_free_pci_resources(ctx);
+
+	em_if_queues_free(ctx);
+	e1000_phy_hw_reset(&adapter->hw);
 
 	if (adapter->mta != NULL) {
-	  free(adapter->mta, M_DEVBUF);
+		free(adapter->mta, M_DEVBUF);
 	}
 	
 	return (0);
@@ -818,12 +843,10 @@ static int
 em_if_suspend(if_ctx_t ctx)
 {
 	struct adapter *adapter = iflib_get_softc(ctx);
-	device_t	dev = iflib_get_dev(ctx); 
 
         em_release_manageability(adapter);
 	em_release_hw_control(adapter);
-	em_enable_wakeup(dev);
-
+	em_enable_wakeup(ctx);
 	return (0);
 }
 
@@ -1074,7 +1097,7 @@ em_msix_link(void *arg)
 	if (reg_icr & (E1000_ICR_RXSEQ | E1000_ICR_LSC)) {
 		adapter->hw.mac.get_link_status = 1;
 		iflib_admin_intr_deferred(adapter->ctx); 
-		em_handle_link(adapter->ctx, 0);
+		em_handle_link(adapter->ctx);
 	} else
 		E1000_WRITE_REG(&adapter->hw, E1000_IMS,
 		    EM_MSIX_LINK | E1000_IMS_LSC);
@@ -1093,7 +1116,7 @@ em_msix_link(void *arg)
 }
 
 static void
-em_handle_link(void *context, int pending)
+em_handle_link(void *context)
 {
         if_ctx_t ctx = context; 
 	struct adapter	*adapter = iflib_get_softc(ctx);
@@ -1597,20 +1620,23 @@ em_free_pci_resources(if_ctx_t ctx)
 
 	if (adapter->intr_type == IFLIB_INTR_MSIX) {
 		iflib_irq_free(ctx, &adapter->irq); 
+		for (int i = 0; i < adapter->num_rx_queues; i++, que++) {
+			iflib_irq_free(ctx, &que->que_irq);
+		}
 	}
 
 	/* First release all the interrupt resources */
-	for (int i = 0; i < adapter->num_rx_queues; i++, que++) {
-		iflib_irq_free(ctx, &que->que_irq);
+	if (adapter->memory != NULL) {
+		bus_release_resource(dev, SYS_RES_MEMORY,
+				     PCIR_BAR(0), adapter->memory);
+		adapter->memory = NULL;
 	}
 
-	if (adapter->memory != NULL)
+	if (adapter->flash != NULL) {
 		bus_release_resource(dev, SYS_RES_MEMORY,
-		    PCIR_BAR(0), adapter->memory);
-
-	if (adapter->flash != NULL)
-		bus_release_resource(dev, SYS_RES_MEMORY,
-		    EM_FLASH, adapter->flash);
+				     EM_FLASH, adapter->flash);
+		adapter->flash = NULL;
+	}
 }
 
 /*********************************************************************
@@ -1856,7 +1882,8 @@ em_setup_interface(if_ctx_t ctx)
 static int
 em_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxqs, int ntxqsets)
 {
-       struct adapter *adapter = iflib_get_softc(ctx); 
+	struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	int error = E1000_SUCCESS;
 	struct em_tx_queue *que; 
         int i;
@@ -1881,7 +1908,7 @@ em_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxqs
 	     que->me = txr->me =  i;
 
 	     /* Allocate transmit buffer memory */
-	  if (!(txr->tx_buffers = (struct em_txbuffer *) malloc(sizeof(struct em_txbuffer) * em_sctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+	  if (!(txr->tx_buffers = (struct em_txbuffer *) malloc(sizeof(struct em_txbuffer) * scctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
 	       device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
 	       error = ENOMEM;
 	       goto fail; 
@@ -1977,6 +2004,7 @@ static void
 em_initialize_transmit_unit(if_ctx_t ctx)
 {
         struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	struct em_tx_queue *que; 
 	struct tx_ring	*txr;
 	struct e1000_hw	*hw = &adapter->hw;
@@ -1990,7 +2018,7 @@ em_initialize_transmit_unit(if_ctx_t ctx)
 		u64 bus_addr = txr->tx_paddr;
 		/* Base and Len of TX Ring */
 		E1000_WRITE_REG(hw, E1000_TDLEN(i),
-	    	    em_sctx->isc_ntxd * sizeof(struct e1000_tx_desc));
+		    scctx->isc_ntxd * sizeof(struct e1000_tx_desc));
 		E1000_WRITE_REG(hw, E1000_TDBAH(i),
 	    	    (u32)(bus_addr >> 32));
 		E1000_WRITE_REG(hw, E1000_TDBAL(i),
@@ -2107,6 +2135,7 @@ static void
 em_initialize_receive_unit(if_ctx_t ctx)
 {
         struct adapter *adapter = iflib_get_softc(ctx);
+	if_softc_ctx_t scctx = adapter->shared;
 	struct ifnet *ifp = iflib_get_ifp(ctx); 
 	struct e1000_hw	*hw = &adapter->hw;
 	struct em_rx_queue *que;
@@ -2240,7 +2269,7 @@ em_initialize_receive_unit(if_ctx_t ctx)
 		u64 bus_addr = rxr->rx_paddr;
 
 		E1000_WRITE_REG(hw, E1000_RDLEN(i),
-		    em_sctx->isc_nrxd * sizeof(union e1000_rx_desc_extended));
+		    scctx->isc_nrxd * sizeof(union e1000_rx_desc_extended));
 		E1000_WRITE_REG(hw, E1000_RDBAH(i), (u32)(bus_addr >> 32));
 		E1000_WRITE_REG(hw, E1000_RDBAL(i), (u32)bus_addr);
 		/* Setup the Head and Tail Descriptor Pointers */
@@ -2496,9 +2525,10 @@ em_is_valid_ether_addr(u8 *addr)
 ** later use.
 */
 static void
-em_get_wakeup(device_t dev)
+em_get_wakeup(if_ctx_t ctx)
 {
-	struct adapter	*adapter = device_get_softc(dev);
+	struct adapter	*adapter = iflib_get_softc(ctx);
+	device_t dev = iflib_get_dev(ctx);
 	u16		eeprom_data = 0, device_id, apme_mask;
 
 	adapter->has_manage = e1000_enable_mng_pass_thru(&adapter->hw);
@@ -2569,10 +2599,11 @@ em_get_wakeup(device_t dev)
  * Enable PCI Wake On Lan capability
  */
 static void
-em_enable_wakeup(device_t dev)
+em_enable_wakeup(if_ctx_t ctx)
 {
-	struct adapter	*adapter = device_get_softc(dev);
-	if_t ifp = adapter->ifp;
+	struct adapter	*adapter = iflib_get_softc(ctx);
+	device_t dev = iflib_get_dev(ctx);
+	if_t ifp = iflib_get_ifp(ctx);
 	u32		pmc, ctrl, ctrl_ext, rctl;
 	u16     	status;
 
