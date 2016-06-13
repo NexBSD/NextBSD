@@ -66,7 +66,7 @@ em_tso_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_upper, u32 *txd
 	 * End offset for header checksum calculation.
 	 * Offset of place put the checksum.
 	 */
-	 TXD->lower_setup.ip_fields.ipcss = pi->ipi_ehdrlen; 
+	TXD->lower_setup.ip_fields.ipcss = pi->ipi_ehdrlen;
 	TXD->lower_setup.ip_fields.ipcse =
 	    htole16(pi->ipi_ehdrlen + pi->ipi_ip_hlen - 1);
 	TXD->lower_setup.ip_fields.ipcso = pi->ipi_ehdrlen + offsetof(struct ip, ip_sum);
@@ -242,6 +242,7 @@ static int
 em_isc_txd_encap(void *arg, if_pkt_info_t pi)
 {
         struct adapter *sc       = arg;
+	if_softc_ctx_t scctx     = sc->shared;
 	struct em_tx_queue *que  = &sc->tx_queues[pi->ipi_qsidx];
 	struct tx_ring *txr      = &que->txr;
 	bus_dma_segment_t *segs  = pi->ipi_segs;
@@ -272,10 +273,10 @@ em_isc_txd_encap(void *arg, if_pkt_info_t pi)
 
 	/* Do hardware assists */
 	if (do_tso) {
-	  em_tso_setup(sc, pi, &txd_upper, &txd_lower);
-	  tso_desc = TRUE; 
+		em_tso_setup(sc, pi, &txd_upper, &txd_lower);
+		tso_desc = TRUE;
 	} else if (csum_flags & CSUM_OFFLOAD) {
-          em_transmit_checksum_setup(sc, pi, &txd_upper, &txd_lower);
+		em_transmit_checksum_setup(sc, pi, &txd_upper, &txd_lower);
 	}
 
 	if (do_tso || (csum_flags & CSUM_OFFLOAD)) {
@@ -291,44 +292,53 @@ em_isc_txd_encap(void *arg, if_pkt_info_t pi)
 
 	/* Set up our transmit descriptors */
 	for (j = 0; j < nsegs; j++) {
-	  bus_size_t seg_len;
-	  bus_addr_t seg_addr;
-	  
-	  ctxd = &txr->tx_base[i];
-	  tx_buffer = &txr->tx_buffers[i];
-	  seg_addr = segs[j].ds_addr;
-	  seg_len = segs[j].ds_len;
+		bus_size_t seg_len;
+		bus_addr_t seg_addr;
 
-	  /*
-	  ** TSO Workaround:
-	  ** If this is the last descriptor, we want to
-	  ** split it so we have a small final sentinel
-	  */
-	  if (tso_desc && (j == (nsegs - 1)) && (seg_len > 8)) {
-		  /*  seg_len -= TSO_WORKAROUND;  */
-	    ctxd->buffer_addr = htole64(seg_addr);
-	    ctxd->lower.data = htole32(sc->txd_cmd | txd_lower | seg_len);
-	    ctxd->upper.data = htole32(txd_upper);
+		ctxd = &txr->tx_base[i];
+		tx_buffer = &txr->tx_buffers[i];
+		seg_addr = segs[j].ds_addr;
+		seg_len = segs[j].ds_len;
 
-	    /* Now make the sentinel */	
-	    ctxd = &txr->tx_base[i];
-	    tx_buffer = &txr->tx_buffers[i];
-	    ctxd->buffer_addr = htole64(seg_addr + seg_len);
-	    /*    ctxd->lower.data = htole32(adapter->txd_cmd | txd_lower | TSO_WORKAROUND); */
-	    ctxd->upper.data = htole32(txd_upper);
-	  } else {
-	    ctxd->buffer_addr = htole64(seg_addr);
-	    ctxd->lower.data = htole32(sc->txd_cmd | txd_lower | seg_len);
-	    ctxd->upper.data = htole32(txd_upper);
-	  }
-          cidx_last = i;
-	   if (++i == em_sctx->isc_ntxd)
-	      i = 0;
-	  
-	  tx_buffer = &txr->tx_buffers[first];
-	  tx_buffer->eop = cidx_last;
-	  pi->ipi_new_pidx = i; 
+		/*
+		** TSO Workaround:
+		** If this is the last descriptor, we want to
+		** split it so we have a small final sentinel
+		*/
+		if (tso_desc && (j == (nsegs - 1)) && (seg_len > 8)) {
+			/*  seg_len -= TSO_WORKAROUND;  */
+			ctxd->buffer_addr = htole64(seg_addr);
+			ctxd->lower.data = htole32(sc->txd_cmd | txd_lower | seg_len);
+			ctxd->upper.data = htole32(txd_upper);
+
+			/* Now make the sentinel */
+			ctxd = &txr->tx_base[i];
+			tx_buffer = &txr->tx_buffers[i];
+			ctxd->buffer_addr = htole64(seg_addr + seg_len);
+			/*    ctxd->lower.data = htole32(adapter->txd_cmd | txd_lower | TSO_WORKAROUND); */
+			ctxd->upper.data = htole32(txd_upper);
+		} else {
+			ctxd->buffer_addr = htole64(seg_addr);
+			ctxd->lower.data = htole32(sc->txd_cmd | txd_lower | seg_len);
+			ctxd->upper.data = htole32(txd_upper);
+		}
+		cidx_last = i;
+		if (++i == scctx->isc_ntxd)
+			i = 0;
 	}
+
+	/*
+         * Last Descriptor of Packet
+	 * needs End Of Packet (EOP)
+	 * and Report Status (RS)
+         */
+        ctxd->lower.data |=
+		htole32(E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS);
+
+	tx_buffer = &txr->tx_buffers[first];
+	tx_buffer->eop = cidx_last;
+	pi->ipi_new_pidx = i;
+
 	return (0); 
 }
 
@@ -346,6 +356,7 @@ static int
 em_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool clear)
 {
   struct adapter *adapter = arg;
+  if_softc_ctx_t scctx = adapter->shared;
   struct em_tx_queue *que = &adapter->tx_queues[txqid];
   struct tx_ring *txr = &que->txr;
 
@@ -383,7 +394,7 @@ em_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool cl
 		  processed++;
 		  
 		  /* wrap the ring ? */
-		  if (cidx == em_sctx->isc_ntxd) {
+		  if (cidx == scctx->isc_ntxd) {
 			  buf = txr->tx_buffers;
 			  tx_desc = txr->tx_base;
 			  cidx = 0;
@@ -401,6 +412,7 @@ em_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count)
 {
   struct adapter *sc = arg;
+  if_softc_ctx_t scctx = sc->shared;
   struct em_rx_queue *que = &sc->rx_queues[rxqid];
   struct rx_ring *rxr = &que->rxr;
   union e1000_rx_desc_extended *rxd; 
@@ -412,7 +424,7 @@ em_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
         rxd->read.buffer_addr = htole64(paddrs[i]); 
         rxd->wb.upper.status_error = 0; 
 	
-	if (++next_pidx == em_sctx->isc_nrxd)
+	if (++next_pidx == scctx->isc_nrxd)
 	  next_pidx = 0;
   }  
 }
@@ -431,27 +443,28 @@ static int
 em_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 {
        	struct adapter *sc         = arg;
+	if_softc_ctx_t scctx = sc->shared;
 	struct em_rx_queue *que   = &sc->rx_queues[rxqid];
 	struct rx_ring *rxr        = &que->rxr;
 	union e1000_rx_desc_extended *rxd;
 	u32                      staterr = 0;
 	int                      cnt, i;
-  
-	for (cnt = 0, i = idx; cnt < em_sctx->isc_nrxd;) {
+
+	for (cnt = 0, i = idx; cnt < scctx->isc_nrxd;) {
 		rxd = &rxr->rx_base[i];
 		staterr = le32toh(rxd->wb.upper.status_error);
 
-		if ((staterr & E1000_RXD_STAT_DD) == 0)
+		if ((staterr & E1000_RXD_STAT_DD) == 0) {
 			break;
+		}
 		
-		if (++i == em_sctx->isc_nrxd) {
+		if (++i == scctx->isc_nrxd) {
 			i = 0;
 		}
 
 		if (staterr & E1000_RXD_STAT_EOP)
 			cnt++; 
 	}
-
 	return (cnt);
 }
 
@@ -459,6 +472,7 @@ static int
 em_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 {
       	struct adapter           *adapter = arg;
+	if_softc_ctx_t scctx = adapter->shared;
 	struct em_rx_queue       *que = &adapter->rx_queues[ri->iri_qsidx];
 	struct rx_ring           *rxr = &que->rxr;
 	union e1000_rx_desc_extended *rxd;
@@ -492,7 +506,7 @@ em_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 
 		ri->iri_frags[i].irf_flid = 0;
 		ri->iri_frags[i].irf_idx = cidx;
-		if (++cidx == em_sctx->isc_nrxd)
+		if (++cidx == scctx->isc_nrxd)
 			cidx = 0;
 		i++;
 	} while (!eop);
