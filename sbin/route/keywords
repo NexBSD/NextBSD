@@ -7,9 +7,11 @@ add
 blackhole
 change
 cloning
+dctcp
 del
 delete
 dst
+ecn
 expire
 fib
 flush
@@ -51,6 +53,7 @@ show
 ssthresh
 static
 sticky
+ulp
 weight
 x25
 xns
