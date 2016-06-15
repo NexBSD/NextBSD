@@ -365,6 +365,8 @@ struct tcpcb {
 #define	TF2_PLPMTU_BLACKHOLE	0x00000001 /* Possible PLPMTUD Black Hole. */
 #define	TF2_PLPMTU_PMTUD	0x00000002 /* Allowed to attempt PLPMTUD. */
 #define	TF2_PLPMTU_MAXSEGSNT	0x00000004 /* Last seg sent was full seg. */
+#define	TF2_ECN_ATTEMPT		0x00000008 /* Try ECN */
+#define	TF2_ECN_DCTCP		0x00000010 /* Mark ECT for _all_ DCTCP */
 
 /*
  * Structure to hold TCP options that are only used during segment
@@ -856,6 +858,7 @@ void	 tcp_free_sackholes(struct tcpcb *tp);
 int	 tcp_newreno(struct tcpcb *, struct tcphdr *);
 u_long	 tcp_seq_subtract(u_long, u_long );
 int	 tcp_compute_pipe(struct tcpcb *);
+int	 tcp_cc_algo_set(struct tcpcb *tcp, char *name);
 
 static inline void
 tcp_fields_to_host(struct tcphdr *th)

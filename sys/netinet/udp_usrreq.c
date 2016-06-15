@@ -288,6 +288,23 @@ VNET_SYSUNINIT(udplite, SI_SUB_PROTO_DOMAIN, SI_ORDER_FOURTH, udplite_destroy,
 #endif
 
 #ifdef INET
+
+/*
+ * Set / get subnet state (ECN etc)
+ */
+int
+udp_osd_set(struct osd *osd, u_long flags)
+{
+	return (0);;
+}
+
+u_long
+udp_osd_get(struct osd *osd)
+{
+
+	return (0);
+}
+
 /*
  * Subroutine of udp_input(), which appends the provided mbuf chain to the
  * passed pcb/socket.  The caller must provide a sockaddr_in via udp_in that

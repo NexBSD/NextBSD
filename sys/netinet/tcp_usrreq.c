@@ -1481,7 +1481,6 @@ tcp_default_ctloutput(struct socket *so, struct sockopt *sopt, struct inpcb *inp
 	int	error, opt, optval;
 	u_int	ui;
 	struct	tcp_info ti;
-	struct cc_algo *algo;
 	char	*pbuf, buf[TCP_CA_NAME_MAX];
 	size_t	len;
 
@@ -1609,39 +1608,8 @@ unlock_and_done:
 				break;
 			buf[sopt->sopt_valsize] = '\0';
 			INP_WLOCK_RECHECK(inp);
-			CC_LIST_RLOCK();
-			STAILQ_FOREACH(algo, &cc_list, entries)
-				if (strncmp(buf, algo->name,
-				    TCP_CA_NAME_MAX) == 0)
-					break;
-			CC_LIST_RUNLOCK();
-			if (algo == NULL) {
-				INP_WUNLOCK(inp);
-				error = EINVAL;
-				break;
-			}
-			/*
-			 * We hold a write lock over the tcb so it's safe to
-			 * do these things without ordering concerns.
-			 */
-			if (CC_ALGO(tp)->cb_destroy != NULL)
-				CC_ALGO(tp)->cb_destroy(tp->ccv);
-			CC_ALGO(tp) = algo;
-			/*
-			 * If something goes pear shaped initialising the new
-			 * algo, fall back to newreno (which does not
-			 * require initialisation).
-			 */
-			if (algo->cb_init != NULL &&
-			    algo->cb_init(tp->ccv) != 0) {
-				CC_ALGO(tp) = &newreno_cc_algo;
-				/*
-				 * The only reason init should fail is
-				 * because of malloc.
-				 */
-				error = ENOMEM;
-			}
-			INP_WUNLOCK(inp);
+			error = tcp_cc_algo_set(tp, buf);
+			goto unlock_and_done;
 			break;
 
 		case TCP_KEEPIDLE:

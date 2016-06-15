@@ -35,6 +35,8 @@
 
 #include <sys/counter.h>
 #include <net/vnet.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
 
 /*
  * Kernel resident routing tables.
@@ -49,12 +51,12 @@
  * with its length.
  */
 struct route {
-	struct	rtentry *ro_rt;
-	struct	llentry *ro_lle;
-	/*
-	 * ro_prepend and ro_plen are only used for bpf to pass in a
-	 * preformed header.  They are not cacheable.
-	 */
+	struct	rtentry	*ro_rt;
+	struct	llentry	*ro_lle;
+         /*
+        * ro_prepend and ro_plen are only used for bpf to pass in a
+        * preformed header.  They are not cacheable.
+        */
 	char		*ro_prepend;
 	uint16_t	ro_plen;
 	uint16_t	ro_flags;
@@ -77,6 +79,7 @@ struct route {
 #define	RT_BLACKHOLE		0x0040		/* Destination is blackhole */
 #define	RT_HAS_GW		0x0080		/* Destination has GW  */
 #define	RT_LLE_CACHE		0x0100		/* Cache link layer  */
+
 
 struct rt_metrics {
 	u_long	rmx_locks;	/* Kernel must leave these values alone */
@@ -157,6 +160,7 @@ struct rtentry {
 #define	rt_endzero	rt_pksent
 	counter_u64_t	rt_pksent;	/* packets sent using this route */
 	struct mtx	rt_mtx;		/* mutex for routing entry */
+	struct osd	*rt_osd;	/* object specific data for ULPs */
 	struct rtentry	*rt_chain;	/* pointer to next rtentry to delete */
 };
 #endif /* _KERNEL || _WANT_RTENTRY */
@@ -198,6 +202,14 @@ struct rtentry {
 #define RTF_FMASK	\
 	(RTF_PROTO1 | RTF_PROTO2 | RTF_PROTO3 | RTF_BLACKHOLE | \
 	 RTF_REJECT | RTF_STATIC | RTF_STICKY)
+
+
+/*
+ * ULP state flags
+ */
+#define	TSS_IP_ECN		0x1
+#define	TSS_TCP_DCTCP		0x1
+
 
 /*
  * fib_ nexthop API flags.
@@ -297,6 +309,10 @@ struct rt_msghdr {
 #define RTV_RTT		0x40	/* init or lock _rtt */
 #define RTV_RTTVAR	0x80	/* init or lock _rttvar */
 #define RTV_WEIGHT	0x100	/* init or lock _weight */
+#define	RTV_IP		0x200	/* init IP		*/
+#define	RTV_TCP		0x400	/* init TCP		*/
+#define	RTV_UDP		0x800	/* init UDP		*/
+
 
 /*
  * Bitmask values for rtm_addrs.
@@ -360,8 +376,9 @@ struct rt_addrinfo {
 				 || (ifp)->if_link_state == LINK_STATE_UP)
 
 #define	RT_LOCK_INIT(_rt) \
-	mtx_init(&(_rt)->rt_mtx, "rtentry", NULL, MTX_DEF | MTX_DUPOK)
+	mtx_init(&(_rt)->rt_mtx, "rtentry", NULL, MTX_DEF | MTX_DUPOK | MTX_RECURSE)
 #define	RT_LOCK(_rt)		mtx_lock(&(_rt)->rt_mtx)
+#define	RT_LOCKED(_rt)		mtx_owned(&(_rt)->rt_mtx)
 #define	RT_UNLOCK(_rt)		mtx_unlock(&(_rt)->rt_mtx)
 #define	RT_LOCK_DESTROY(_rt)	mtx_destroy(&(_rt)->rt_mtx)
 #define	RT_LOCK_ASSERT(_rt)	mtx_assert(&(_rt)->rt_mtx, MA_OWNED)
@@ -418,17 +435,6 @@ struct rt_addrinfo {
  * out-of-date cache, simply free it.  Update the generation number
  * for the new allocation
  */
-#define RT_VALIDATE(ro, cookiep, fibnum) do {				\
-	rt_gen_t cookie = RT_GEN(fibnum, (ro)->ro_dst.sa_family);	\
-	if (*(cookiep) != cookie) {					\
-		if ((ro)->ro_rt != NULL) {				\
-			RTFREE((ro)->ro_rt);				\
-			(ro)->ro_rt = NULL;				\
-		}							\
-		*(cookiep) = cookie;					\
-	}								\
-} while (0)
-
 struct ifmultiaddr;
 struct rib_head;
 
@@ -468,8 +474,9 @@ typedef int rt_walktree_f_t(struct rtentry *, void *);
 typedef void rt_setwarg_t(struct rib_head *, uint32_t, int, void *);
 void	rt_foreach_fib_walk(int af, rt_setwarg_t *, rt_walktree_f_t *, void *);
 void	rt_foreach_fib_walk_del(int af, rt_filter_f_t *filter_f, void *arg);
-void	rt_flushifroutes_af(struct ifnet *, int);
 void	rt_flushifroutes(struct ifnet *ifp);
+void	rt_flushifroutes_af(struct ifnet *, int);
+
 
 /* XXX MRT COMPAT VERSIONS THAT SET UNIVERSE to 0 */
 /* Thes are used by old code not yet converted to use multiple FIBS */
@@ -493,6 +500,30 @@ int	rib_lookup_info(uint32_t, const struct sockaddr *, uint32_t, uint32_t,
 	    struct rt_addrinfo *);
 void	rib_free_info(struct rt_addrinfo *info);
 
+int	ip_osd_set(struct osd *osd, u_long flags);
+u_long	ip_osd_get(struct osd *osd);
+int	tcp_osd_set(struct osd *osd, u_long flags);
+u_long	tcp_osd_get(struct osd *osd);
+int	udp_osd_set(struct osd *osd, u_long flags);
+u_long	udp_osd_get(struct osd *osd);
+void	rt_osd_change(struct inpcb *inp, struct rtentry *rt);
+void	tcp_osd_change(struct inpcb *inp, struct osd *osd);
+
+static inline void 
+RT_VALIDATE(struct route *ro, rt_gen_t *cookiep, int fibnum)
+{
+	rt_gen_t cookie = RT_GEN(fibnum, (ro)->ro_dst.sa_family);
+
+	if (*(cookiep) != cookie && (ro)->ro_rt != NULL) {
+		RTFREE((ro)->ro_rt);
+		ro->ro_rt = NULL;	
+		*cookiep = cookie;
+	}
+}
+
+
+
+#include <sys/eventhandler.h>
 #endif
 
 #endif

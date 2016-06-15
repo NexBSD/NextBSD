@@ -135,6 +135,14 @@ VNET_DEFINE(int, tcp_v6mssdflt) = TCP6_MSS;
 
 struct rwlock tcp_function_lock;
 
+static void tcp_osd_del(void *osd);
+
+static int tcp_osd_id;
+
+struct tcp_subnet_state {
+	int tss_flags;
+};
+
 static int
 sysctl_net_inet_tcp_mss_check(SYSCTL_HANDLER_ARGS)
 {
@@ -725,6 +733,7 @@ tcp_init(void)
 #ifdef TCP_RFC7413
 	tcp_fastopen_init();
 #endif
+	tcp_osd_id = osd_register(OSD_ROUTE, tcp_osd_del, NULL);
 }
 
 #ifdef VIMAGE
@@ -3004,4 +3013,161 @@ tcp_state_change(struct tcpcb *tp, int newstate)
 	TCPSTATES_INC(newstate);
 	tp->t_state = newstate;
 	TCP_PROBE6(state__change, NULL, tp, NULL, tp, NULL, pstate);
+}
+
+int
+tcp_cc_algo_set(struct tcpcb *tp, char *name)
+{
+	int error = EINVAL;
+	struct cc_algo *algo;
+
+	CC_LIST_RLOCK();
+	STAILQ_FOREACH(algo, &cc_list, entries) {
+		if (strncmp(name, algo->name, TCP_CA_NAME_MAX) == 0) {
+			/* We've found the requested algo. */
+			error = 0;
+			/*
+			 * We hold a write lock over the tcb
+			 * so it's safe to do these things
+			 * without ordering concerns.
+			 */
+			if (CC_ALGO(tp)->cb_destroy != NULL)
+				CC_ALGO(tp)->cb_destroy(tp->ccv);
+			CC_ALGO(tp) = algo;
+			/*
+			 * If something goes pear shaped
+			 * initialising the new algo,
+			 * fall back to newreno (which
+			 * does not require initialisation).
+			 */
+			if (algo->cb_init != NULL)
+				if (algo->cb_init(tp->ccv) > 0) {
+					CC_ALGO(tp) = &newreno_cc_algo;
+					/*
+					 * The only reason init
+					 * should fail is
+					 * because of malloc.
+					 */
+					error = ENOMEM;
+				}
+			break; /* Break the STAILQ_FOREACH. */
+		}
+	}
+	/* special case dctcp */
+	if (algo != NULL && strncmp(algo->name, "dctcp", TCP_CA_NAME_MAX) == 0) {
+		tp->t_flags2 |= (TF2_ECN_DCTCP|TF2_ECN_ATTEMPT);
+	}
+
+	CC_LIST_RUNLOCK();
+	return (error);
+}
+
+int
+tcp_osd_set(struct osd *osd, u_long flags)
+{
+	u_long clear, set;
+	struct tcp_subnet_state *tss;
+
+	clear = ((flags >> 16) & 0xffff);
+	set = (flags & 0xffff);
+
+	tss = osd_get(OSD_ROUTE, osd, tcp_osd_id);
+
+	if (tss == NULL)
+		tss = malloc(sizeof(*tss), M_DEVBUF, M_ZERO|M_NOWAIT);
+
+	if (tss == NULL)
+		return (ENOMEM);
+	tss->tss_flags &= ~clear;
+	tss->tss_flags |= set;
+
+	osd_set(OSD_ROUTE, osd, tcp_osd_id, tss);
+	return (0);
+}
+
+u_long
+tcp_osd_get(struct osd *osd)
+{
+	struct tcp_subnet_state *tss;
+
+	tss = osd_get(OSD_ROUTE, osd, tcp_osd_id);
+
+	if (tss == NULL)
+		return (0);
+
+	return (tss->tss_flags & 0xffff);
+}
+
+static void
+tcp_osd_del(void *tss)
+{
+
+	free(tss, M_DEVBUF);
+}
+
+static u_long
+tcp_osd_flags_get(struct inpcb *inp)
+{
+	struct cc_algo *algo;
+	u_long flags;
+
+	flags = 0;
+	algo = CC_ALGO((struct tcpcb *)inp->inp_ppcb);
+	if (strcmp(algo->name, "dctcp") == 0)
+		flags |= TSS_TCP_DCTCP;
+
+	return (flags);
+}
+
+static u_long
+ip_osd_flags_get(struct inpcb *inp)
+{
+	struct tcpcb *tp;
+	u_long flags;
+
+	flags = 0;
+	tp = inp->inp_ppcb;
+	if (tp->t_flags & TF2_ECN_ATTEMPT)
+		flags |= TSS_IP_ECN;
+	return (flags);
+}
+
+
+void
+tcp_osd_change(struct inpcb *inp, struct osd *osd)
+{
+	u_long new_tcp_flags, old_tcp_flags;
+	u_long new_ip_flags, old_ip_flags;
+	struct tcpcb *tp;
+
+	if (inp->inp_ip_p != IPPROTO_TCP)
+		return;
+
+	old_tcp_flags = tcp_osd_flags_get(inp);
+	old_ip_flags = ip_osd_flags_get(inp);
+
+	new_tcp_flags = tcp_osd_get(osd);
+	new_ip_flags = ip_osd_get(osd);
+	tp = inp->inp_ppcb;
+
+
+#ifdef INVARIANTS	
+	printf("%s: old_tcp_flags: %08lx new_tcp_flags: %08lx\n",
+	       __FUNCTION__, old_tcp_flags, new_tcp_flags);
+#endif	
+	/*
+	 * enable
+	 */
+	if ((new_tcp_flags & ~old_tcp_flags) & TSS_TCP_DCTCP)
+		tcp_cc_algo_set(tp, "dctcp");
+	if ((new_ip_flags & ~old_ip_flags) & TSS_IP_ECN)
+		tp->t_flags |= TF2_ECN_ATTEMPT;
+	/*
+	 * clear
+	 */
+	if ((old_tcp_flags & ~new_tcp_flags) & TSS_TCP_DCTCP)
+		tcp_cc_algo_set(tp, "newreno");
+	if ((old_ip_flags & ~new_ip_flags) & TSS_IP_ECN)
+		tp->t_flags &= ~(TF2_ECN_ATTEMPT|TF_ECN_PERMIT);
+
 }

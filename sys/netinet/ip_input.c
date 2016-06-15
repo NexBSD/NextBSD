@@ -100,6 +100,12 @@ extern void ipreass_slowtimo(void);
 extern void ipreass_destroy(void);
 #endif
 
+static int ip_osd_id;
+static void ip_osd_del(void *iss);
+struct ip_subnet_state {
+	int iss_flags;
+};
+
 struct rmlock in_ifaddr_lock;
 RM_SYSINIT(in_ifaddr_lock, &in_ifaddr_lock, "in_ifaddr_lock");
 
@@ -364,6 +370,7 @@ ip_init(void)
 #ifdef	RSS
 	netisr_register(&ip_direct_nh);
 #endif
+	ip_osd_id = osd_register(OSD_ROUTE, ip_osd_del, NULL);
 }
 
 #ifdef VIMAGE
@@ -424,6 +431,53 @@ ip_direct_input(struct mbuf *m)
 	return;
 }
 #endif
+
+/*
+ * Set / get subnet state (ECN etc)
+ */
+
+int
+ip_osd_set(struct osd *osd, u_long flags)
+{
+	u_long clear, set;
+	struct ip_subnet_state *iss;
+
+	clear = ((flags >> 16) & 0xffff);
+	set = (flags & 0xffff);
+
+	iss = osd_get(OSD_ROUTE, osd, ip_osd_id);
+
+	if (iss == NULL)
+		iss = malloc(sizeof(*iss), M_DEVBUF, M_ZERO|M_NOWAIT);
+
+	if (iss == NULL)
+		return (ENOMEM);
+	iss->iss_flags &= ~clear;
+	iss->iss_flags |= set;
+
+	osd_set(OSD_ROUTE, osd, ip_osd_id, iss);
+	return (0);
+}
+
+u_long
+ip_osd_get(struct osd *osd)
+{
+	struct ip_subnet_state *iss;
+
+	iss = osd_get(OSD_ROUTE, osd, ip_osd_id);
+
+	if (iss == NULL)
+		return (0);
+
+	return (iss->iss_flags & 0xffff);
+}
+
+static void
+ip_osd_del(void *iss)
+{
+
+	free(iss, M_DEVBUF);
+}
 
 /*
  * Ip input routine.  Checksum and byte swap header.  If fragmented

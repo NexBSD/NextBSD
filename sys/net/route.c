@@ -139,7 +139,7 @@ static VNET_DEFINE(uma_zone_t, rtzone);		/* Routing table UMA zone. */
 
 static int rtrequest1_fib_change(struct rib_head *, struct rt_addrinfo *,
     struct rtentry **, u_int);
-static void rt_setmetrics(const struct rt_addrinfo *, struct rtentry *);
+static void rt_setmetrics(const struct rt_addrinfo *, struct rtentry *, struct rib_head *rnh);
 static int rt_ifdelroute(const struct rtentry *rt, void *arg);
 static struct rtentry *rt_unlinkrte(struct rib_head *rnh,
     struct rt_addrinfo *info, int *perror);
@@ -238,6 +238,11 @@ rtentry_zinit(void *mem, int size, int how)
 	if (rt->rt_pksent == NULL)
 		return (ENOMEM);
 
+	if ((rt->rt_osd = malloc(sizeof(struct osd), M_DEVBUF, how|M_ZERO)) == NULL) {
+		counter_u64_free(rt->rt_pksent);
+		return (ENOMEM);
+       }
+	
 	RT_LOCK_INIT(rt);
 
 	return (0);
@@ -250,6 +255,8 @@ rtentry_zfini(void *mem, int size)
 
 	RT_LOCK_DESTROY(rt);
 	counter_u64_free(rt->rt_pksent);
+	osd_exit(OSD_ROUTE, rt->rt_osd);
+	free(rt->rt_osd, M_DEVBUF);
 }
 
 static int
@@ -418,8 +425,9 @@ rtalloc_ign_fib(struct route *ro, u_long ignore, u_int fibnum)
 		ro->ro_rt = NULL;
 	}
 	ro->ro_rt = rtalloc1_fib(&ro->ro_dst, 1, ignore, fibnum);
-	if (ro->ro_rt)
+	if (ro->ro_rt) {
 		RT_UNLOCK(ro->ro_rt);
+	}
 }
 
 /*
@@ -1687,7 +1695,7 @@ rtrequest1_fib(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt,
 		rt->rt_ifp = ifa->ifa_ifp;
 		rt->rt_weight = 1;
 
-		rt_setmetrics(info, rt);
+		rt_setmetrics(info, rt, rnh);
 
 		RIB_WLOCK(rnh);
 		RT_LOCK(rt);
@@ -1827,7 +1835,7 @@ rtrequest1_fib_change(struct rib_head *rnh, struct rt_addrinfo *info,
 
 	RT_LOCK(rt);
 
-	rt_setmetrics(info, rt);
+	rt_setmetrics(info, rt, rnh);
 
 	/*
 	 * New gateway could require new ifaddr, ifp;
@@ -1903,7 +1911,7 @@ bad:
 }
 
 static void
-rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt)
+rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt, struct rib_head *rnh)
 {
 
 	if (info->rti_mflags & RTV_MTU) {
@@ -1930,6 +1938,19 @@ rt_setmetrics(const struct rt_addrinfo *info, struct rtentry *rt)
 	if (info->rti_mflags & RTV_EXPIRE)
 		rt->rt_expire = info->rti_rmx->rmx_expire ?
 		    info->rti_rmx->rmx_expire - time_second + time_uptime : 0;
+
+#if defined(INET) || defined(INET6)
+	if (info->rti_mflags & RTV_IP)
+		ip_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[0]);
+	if (info->rti_mflags & RTV_TCP)
+		tcp_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[1]);
+	if (info->rti_mflags & RTV_UDP)
+		udp_osd_set(rt->rt_osd, info->rti_rmx->rmx_filler[2]);
+
+	if (info->rti_mflags & (RTV_IP|RTV_TCP|RTV_UDP))
+		atomic_add_int(&rnh->rnh_gen, 1);
+#endif
+
 }
 
 int
@@ -2313,3 +2334,13 @@ rt_newaddrmsg_fib(int cmd, struct ifaddr *ifa, int error, struct rtentry *rt,
 	}
 }
 
+void
+rt_osd_change(struct inpcb *inp, struct rtentry *rt)
+{
+	struct osd *osd = rt->rt_osd;
+
+	/* 
+	 * Currently only used by TCP
+	 */
+	tcp_osd_change(inp, osd);
+}

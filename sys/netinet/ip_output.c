@@ -377,6 +377,8 @@ again:
 			in_rtalloc_ign(ro, 0, fibnum);
 #endif
 			rte = ro->ro_rt;
+			if (inp)
+				rt_osd_change(inp, rte);
 		}
 		if (rte == NULL ||
 		    (rte->rt_flags & RTF_UP) == 0 ||
