@@ -4727,7 +4727,7 @@ iflib_add_device_sysctl_post(if_ctx_t ctx)
 				   &txq->ift_mbuf_defrag_failed, "# of times m_defrag failed");
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "no_desc_avail",
 				   CTLFLAG_RD,
-				   &txq->ift_mbuf_defrag_failed, "# of times no descriptors were available");
+				   &txq->ift_no_desc_avail, "# of times no descriptors were available");
 		SYSCTL_ADD_QUAD(ctx_list, queue_list, OID_AUTO, "tx_map_failed",
 				   CTLFLAG_RD,
 				   &txq->ift_map_failed, "# of times dma map failed");
