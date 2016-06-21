@@ -1211,18 +1211,21 @@ ixgbe_check_wol_support(struct adapter *adapter)
  *  Setup networking device structure and register an interface.
  *
  **********************************************************************/
+#define IXGBE_IFCAPABILITIES			\
+	(IFCAP_RXCSUM |  IFCAP_TXCSUM |  IFCAP_RXCSUM_IPV6 |  IFCAP_TXCSUM_IPV6 |  IFCAP_TSO4 |	\
+	 IFCAP_TSO6 |  IFCAP_LRO |  IFCAP_VLAN_HWTAGGING |  IFCAP_VLAN_HWTSO | IFCAP_VLAN_HWCSUM | \
+	 IFCAP_JUMBO_MTU | IFCAP_VLAN_MTU | IFCAP_HWSTATS)
+
 static int
 ixgbe_interface_setup(if_ctx_t ctx)
 {
 	struct ifnet   *ifp = iflib_get_ifp(ctx);
 	struct adapter *adapter = iflib_get_softc(ctx);
-	uint64_t cap = 0;
+	uint64_t cap;
 
 	INIT_DEBUGOUT("ixgbe_interface_setup: begin");
 
-	cap |= IFCAP_HWCSUM | IFCAP_TSO | IFCAP_VLAN_HWCSUM | IFCAP_JUMBO_MTU;
-	cap |= IFCAP_LRO | IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_HWTSO | IFCAP_VLAN_MTU;
-	cap |= IFCAP_HWSTATS;
+	cap = IXGBE_IFCAPABILITIES;
 
 	if_setifheaderlen(ifp, sizeof(struct ether_vlan_header));
 	if_setcapabilitiesbit(ifp, cap, 0);
@@ -2997,6 +3000,46 @@ ixgbe_if_crcstrip_set(if_ctx_t ctx, int onoff)
 
 
 
+/*
+ * Set the various hardware offload abilities.
+ *
+ * This takes the ifnet's if_capenable flags (e.g. set by the user using
+ * ifconfig) and indicates to the OS via the ifnet's if_hwassist field what
+ * mbuf offload flags the driver will understand.
+ */
+static void
+ixgbe_set_if_hwassist(struct adapter *adapter)
+{
+	struct ifnet *ifp = iflib_get_ifp(adapter->ctx);
+	struct ixgbe_hw *hw = &adapter->hw;
+
+	ifp->if_hwassist = 0;
+#if __FreeBSD_version >= 1000000
+	if (ifp->if_capenable & IFCAP_TSO4)
+		ifp->if_hwassist |= CSUM_IP_TSO;
+	if (ifp->if_capenable & IFCAP_TSO6)
+		ifp->if_hwassist |= CSUM_IP6_TSO;
+	if (ifp->if_capenable & IFCAP_TXCSUM) {
+		ifp->if_hwassist |= (CSUM_IP | CSUM_IP_UDP | CSUM_IP_TCP);
+		if (hw->mac.type != ixgbe_mac_82598EB)
+			ifp->if_hwassist |= CSUM_IP_SCTP;
+	}
+	if (ifp->if_capenable & IFCAP_TXCSUM_IPV6) {
+		ifp->if_hwassist |= (CSUM_IP6_UDP | CSUM_IP6_TCP);
+		if (hw->mac.type != ixgbe_mac_82598EB)
+			ifp->if_hwassist |= CSUM_IP6_SCTP;
+	}
+#else
+	if (ifp->if_capenable & IFCAP_TSO)
+		ifp->if_hwassist |= CSUM_TSO;
+	if (ifp->if_capenable & IFCAP_TXCSUM) {
+		ifp->if_hwassist |= (CSUM_TCP | CSUM_UDP);
+		if (hw->mac.type != ixgbe_mac_82598EB)
+			ifp->if_hwassist |= CSUM_SCTP;
+	}
+#endif
+}
+
 /*********************************************************************
  *  Init entry point
  *
@@ -3046,11 +3089,8 @@ ixgbe_if_init(if_ctx_t ctx)
 	ixgbe_set_rar(hw, 0, hw->mac.addr, adapter->pool, 1);
 	hw->addr_ctrl.rar_used_count = 1;
 
-#if __FreeBSD_version >= 800000
-		if (hw->mac.type != ixgbe_mac_82598EB)
-			ifp->if_hwassist |= CSUM_SCTP;
-#endif
-       ixgbe_init_hw(hw);
+	ixgbe_set_if_hwassist(adapter);
+	ixgbe_init_hw(hw);
 
 #ifdef PCI_IOV
 	ixgbe_initialize_iov(adapter);
