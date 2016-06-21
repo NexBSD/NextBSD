@@ -3082,7 +3082,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 		next = next->m_nextpkt;
 	} while (next != NULL);
 
-	if (count > 8)
+	if (count > nitems(marr))
 		if ((mp = malloc(count*sizeof(struct mbuf *), M_IFLIB, M_NOWAIT)) == NULL) {
 			/* XXX check nextpkt */
 			m_freem(m);
@@ -3108,6 +3108,8 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 #endif
 		ifmp_ring_check_drainage(txq->ift_br[0], TX_BATCH_SIZE);
 	}
+	if (count > nitems(marr))
+		free(mp, M_IFLIB);
 
 	return (err);
 }
@@ -3880,6 +3882,9 @@ iflib_queues_alloc(if_ctx_t ctx)
 	KASSERT(ntxqs > 0, ("number of queues per qset must be at least 1"));
 	KASSERT(nrxqs > 0, ("number of queues per qset must be at least 1"));
 
+	brscp = NULL;
+	rxq = NULL;
+
 /* Allocate the TX ring struct memory */
 	if (!(txq =
 	    (iflib_txq_t) malloc(sizeof(struct iflib_txq) *
@@ -3905,6 +3910,8 @@ iflib_queues_alloc(if_ctx_t ctx)
 
 	ctx->ifc_txqs = txq;
 	ctx->ifc_rxqs = rxq;
+	txq = NULL;
+	rxq = NULL;
 
 	/*
 	 * XXX handle allocation failure
@@ -3915,7 +3922,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 		if ((ifdip = malloc(sizeof(struct iflib_dma_info) * ntxqs, M_IFLIB, M_WAITOK|M_ZERO)) == NULL) {
 			device_printf(dev, "failed to allocate iflib_dma_info\n");
 			err = ENOMEM;
-			goto fail;
+			goto err_tx_desc;
 		}
 		txq->ift_ifdi = ifdip;
 		for (j = 0; j < ntxqs; j++, ifdip++) {
@@ -3957,7 +3964,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 			if (err) {
 				/* XXX free any allocated rings */
 				device_printf(dev, "Unable to allocate buf_ring\n");
-				goto fail;
+				goto err_tx_desc;
 			}
 		}
 	}
@@ -3968,7 +3975,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 		if ((ifdip = malloc(sizeof(struct iflib_dma_info) * nrxqs, M_IFLIB, M_WAITOK|M_ZERO)) == NULL) {
 			device_printf(dev, "failed to allocate iflib_dma_info\n");
 			err = ENOMEM;
-			goto fail;
+			goto err_tx_desc;
 		}
 
 		rxq->ifr_ifdi = ifdip;
@@ -3992,7 +3999,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 			  (iflib_fl_t) malloc(sizeof(struct iflib_fl) * nfree_lists, M_IFLIB, M_NOWAIT | M_ZERO))) {
 			device_printf(dev, "Unable to allocate free list memory\n");
 			err = ENOMEM;
-			goto fail;
+			goto err_tx_desc;
 		}
 		rxq->ifr_fl = fl;
 		for (j = 0; j < nfree_lists; j++) {
@@ -4059,10 +4066,16 @@ err_tx_desc:
 	if (ctx->ifc_rxqs != NULL)
 		free(ctx->ifc_rxqs, M_IFLIB);
 	ctx->ifc_rxqs = NULL;
-rx_fail:
 	if (ctx->ifc_txqs != NULL)
 		free(ctx->ifc_txqs, M_IFLIB);
 	ctx->ifc_txqs = NULL;
+rx_fail:
+	if (brscp != NULL)
+		free(brscp, M_IFLIB);
+	if (rxq != NULL)
+		free(rxq, M_IFLIB);
+	if (txq != NULL)
+		free(txq, M_IFLIB);
 fail:
 	return (err);
 }
