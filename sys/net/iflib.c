@@ -4667,6 +4667,10 @@ iflib_add_device_sysctl_pre(if_ctx_t ctx)
 						      CTLFLAG_RD, NULL, "IFLIB fields");
 	oid_list = SYSCTL_CHILDREN(node);
 
+	SYSCTL_ADD_STRING(ctx_list, oid_list, OID_AUTO, "driver_version",
+		       CTLFLAG_RD, ctx->ifc_sctx->isc_driver_version, 0,
+		       "driver version");
+
 	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_ntxqs",
 		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_ntxqs, 0,
 			"# of txqs to use, 0 => use default #");
@@ -4683,7 +4687,6 @@ iflib_add_device_sysctl_pre(if_ctx_t ctx)
 	SYSCTL_ADD_U16(ctx_list, oid_list, OID_AUTO, "override_nrxds",
 		       CTLFLAG_RWTUN, &ctx->ifc_sysctl_nrxds, 0,
 			"# of rx descriptors to use, 0 => use default #");
-
 }
 
 static void
