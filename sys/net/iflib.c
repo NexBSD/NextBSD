@@ -3099,14 +3099,16 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	DBG_COUNTER_INC(tx_seen);
 	err = ifmp_ring_enqueue(txq->ift_br[0], (void **)&m, 1, TX_BATCH_SIZE);
 
-	if (iflib_txq_can_drain(txq->ift_br[0]))
-		GROUPTASK_ENQUEUE(&txq->ift_task);
 	if (err) {
+		GROUPTASK_ENQUEUE(&txq->ift_task);
 		/* support forthcoming later */
 #ifdef DRIVER_BACKPRESSURE
 		txq->ift_closed = TRUE;
 #endif
 		ifmp_ring_check_drainage(txq->ift_br[0], TX_BATCH_SIZE);
+		m_freem(m);
+	} else if (TXQ_AVAIL(txq) < (txq->ift_size >> 1)) {
+		GROUPTASK_ENQUEUE(&txq->ift_task);
 	}
 
 	return (err);
