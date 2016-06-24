@@ -3553,6 +3553,7 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	}
 	*ctxp = ctx;
 
+	if_setgetcounterfn(ctx->ifc_ifp, iflib_if_get_counter);
 	iflib_add_device_sysctl_post(ctx);
 	return (0);
 fail_detach:
@@ -3834,7 +3835,6 @@ iflib_register(if_ctx_t ctx)
 	if_setioctlfn(ifp, iflib_if_ioctl);
 	if_settransmitfn(ifp, iflib_if_transmit);
 	if_setqflushfn(ifp, iflib_if_qflush);
-	if_setgetcounterfn(ifp, iflib_if_get_counter);
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
 
 	if_setcapabilities(ifp, 0);
