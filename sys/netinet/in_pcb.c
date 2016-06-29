@@ -1212,10 +1212,9 @@ in_pcb_safe_free(struct inpcb *inp)
 
 	pcbinfo = inp->inp_pcbinfo;
 	if (curthread->td_pflags & TDP_ITHREAD) {
-		if (ebr_epoch_entry_init(V_tcbinfo.ipi_epoch, inp->inp_ebr_entry, inp, false) == 0) {
-			ebr_epoch_defer(V_tcbinfo.ipi_epoch, inp->inp_ebr_entry, inp_deferred_free);
-			return;
-		}
+		ebr_epoch_entry_init(V_tcbinfo.ipi_epoch, inp->inp_ebr_entry, inp, false);
+		ebr_epoch_defer(V_tcbinfo.ipi_epoch, inp->inp_ebr_entry, inp_deferred_free);
+		return;
 	}
 
 	INP_INFO_EBR_SYNCHRONIZE(&V_tcbinfo);
