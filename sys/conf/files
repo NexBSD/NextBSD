@@ -3153,6 +3153,8 @@ geom/raid3/g_raid3.c		optional geom_raid3
 geom/raid3/g_raid3_ctl.c	optional geom_raid3
 geom/shsec/g_shsec.c		optional geom_shsec
 geom/stripe/g_stripe.c		optional geom_stripe
+contrib/ck/src/ck_epoch.c	standard \
+	compile-with "${NORMAL_C} -I$S/contrib/ck/include"
 contrib/xz-embedded/freebsd/xz_malloc.c	\
 	optional xz_embedded | geom_uzip \
 	compile-with "${NORMAL_C} -I$S/contrib/xz-embedded/freebsd/ -I$S/contrib/xz-embedded/linux/lib/xz/ -I$S/contrib/xz-embedded/linux/include/linux/"
@@ -3241,6 +3243,8 @@ kern/kern_context.c		standard
 kern/kern_descrip.c		standard
 kern/kern_dtrace.c		optional kdtrace_hooks
 kern/kern_dump.c		standard
+kern/kern_ebr.c			standard \
+	compile-with "${NORMAL_C} -I$S/contrib/ck/include"
 kern/kern_environment.c		standard
 kern/kern_et.c			standard
 kern/kern_event.c		standard
