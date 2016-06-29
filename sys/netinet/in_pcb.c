@@ -227,9 +227,12 @@ in_pcbinfo_init(struct inpcbinfo *pcbinfo, const char *name,
 	INP_INFO_LOCK_INIT(pcbinfo, name);
 	INP_HASH_LOCK_INIT(pcbinfo, "pcbinfohash");	/* XXXRW: argument? */
 	INP_LIST_LOCK_INIT(pcbinfo, "pcbinfolist");
+	pcbinfo->ipi_epoch = ebr_epoch_alloc(5);
+
 #ifdef VIMAGE
 	pcbinfo->ipi_vnet = curvnet;
 #endif
+	
 	pcbinfo->ipi_listhead = listhead;
 	LIST_INIT(pcbinfo->ipi_listhead);
 	pcbinfo->ipi_count = 0;
@@ -292,6 +295,11 @@ in_pcballoc(struct socket *so, struct inpcbinfo *pcbinfo)
 	inp = uma_zalloc(pcbinfo->ipi_zone, M_NOWAIT);
 	if (inp == NULL)
 		return (ENOBUFS);
+	if ((inp->inp_ebr_entry = ebr_epoch_entry_alloc(M_NOWAIT)) == NULL) {
+		uma_zfree(pcbinfo->ipi_zone, inp);
+		return (ENOBUFS);
+	}
+	
 	bzero(inp, inp_zero_size);
 	inp->inp_pcbinfo = pcbinfo;
 	inp->inp_socket = so;
@@ -332,6 +340,7 @@ in_pcballoc(struct socket *so, struct inpcbinfo *pcbinfo)
 	refcount_init(&inp->inp_refcount, 1);	/* Reference from inpcbinfo */
 	INP_LIST_WUNLOCK(pcbinfo);
 #if defined(IPSEC) || defined(MAC)
+
 out:
 	if (error != 0) {
 		crfree(inp->inp_cred);
@@ -1172,6 +1181,17 @@ in_pcbref(struct inpcb *inp)
 	refcount_acquire(&inp->inp_refcount);
 }
 
+static void
+inp_deferred_free(void *cookie)
+{
+	struct inpcb *inp = cookie;
+	struct inpcbinfo *pcbinfo;
+
+	pcbinfo = inp->inp_pcbinfo;
+	ebr_epoch_entry_free(inp->inp_ebr_entry);
+	uma_zfree(pcbinfo->ipi_zone, inp);
+}
+
 /*
  * Drop a refcount on an inpcb elevated using in_pcbref(); because a call to
  * in_pcbfree() may have been made between in_pcbref() and in_pcbrele(), we
@@ -1184,11 +1204,28 @@ in_pcbref(struct inpcb *inp)
  * need for the pcbinfo lock in in_pcbrele().  Deferring the free is entirely
  * about memory stability (and continued use of the write lock).
  */
-int
-in_pcbrele_rlocked(struct inpcb *inp)
+
+static inline void
+in_pcb_safe_free(struct inpcb *inp)
 {
 	struct inpcbinfo *pcbinfo;
 
+	pcbinfo = inp->inp_pcbinfo;
+	if (curthread->td_pflags & TDP_ITHREAD) {
+		if (ebr_epoch_entry_init(V_tcbinfo.ipi_epoch, inp->inp_ebr_entry, inp, false) == 0) {
+			ebr_epoch_defer(V_tcbinfo.ipi_epoch, inp->inp_ebr_entry, inp_deferred_free);
+			return;
+		}
+	}
+
+	INP_INFO_EBR_SYNCHRONIZE(&V_tcbinfo);
+	ebr_epoch_entry_free(inp->inp_ebr_entry);
+	uma_zfree(pcbinfo->ipi_zone, inp);
+}
+
+int
+in_pcbrele_rlocked(struct inpcb *inp)
+{
 	KASSERT(inp->inp_refcount > 0, ("%s: refcount 0", __func__));
 
 	INP_RLOCK_ASSERT(inp);
@@ -1208,15 +1245,13 @@ in_pcbrele_rlocked(struct inpcb *inp)
 	KASSERT(inp->inp_socket == NULL, ("%s: inp_socket != NULL", __func__));
 
 	INP_RUNLOCK(inp);
-	pcbinfo = inp->inp_pcbinfo;
-	uma_zfree(pcbinfo->ipi_zone, inp);
+	in_pcb_safe_free(inp);
 	return (1);
 }
 
 int
 in_pcbrele_wlocked(struct inpcb *inp)
 {
-	struct inpcbinfo *pcbinfo;
 
 	KASSERT(inp->inp_refcount > 0, ("%s: refcount 0", __func__));
 
@@ -1237,8 +1272,7 @@ in_pcbrele_wlocked(struct inpcb *inp)
 	KASSERT(inp->inp_socket == NULL, ("%s: inp_socket != NULL", __func__));
 
 	INP_WUNLOCK(inp);
-	pcbinfo = inp->inp_pcbinfo;
-	uma_zfree(pcbinfo->ipi_zone, inp);
+	in_pcb_safe_free(inp);
 	return (1);
 }
 

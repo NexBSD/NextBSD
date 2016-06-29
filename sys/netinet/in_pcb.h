@@ -45,6 +45,7 @@
 #include <net/route.h>
 
 #ifdef _KERNEL
+#include <sys/ebr.h>
 #include <sys/lock.h>
 #include <sys/rwlock.h>
 #include <net/vnet.h>
@@ -245,6 +246,8 @@ struct inpcb {
 		struct route inpu_route;
 		struct route_in6 inpu_route6;
 	} inp_rtu;
+	ebr_entry_t	inp_ebr_entry;
+
 #define inp_route inp_rtu.inpu_route
 #define inp_route6 inp_rtu.inpu_route6
 };
@@ -408,6 +411,7 @@ struct inpcbinfo {
 	 * Global lock protecting global inpcb list, inpcb count, etc.
 	 */
 	struct rwlock		 ipi_list_lock;
+	ebr_epoch_t		ipi_epoch;
 };
 
 #ifdef _KERNEL
@@ -492,7 +496,20 @@ short	inp_so_options(const struct inpcb *inp);
 
 #endif /* _KERNEL */
 
-#define INP_INFO_LOCK_INIT(ipi, d) \
+
+#define INP_INFO_EBR_RLOCK(info) do {				 \
+		cookie = ebr_epoch_read_lock((info)->ipi_epoch); \
+	} while (0)
+
+#define INP_INFO_EBR_RUNLOCK(info) do {				 \
+		ebr_epoch_read_unlock(cookie);			 \
+	} while (0)
+
+#define INP_INFO_EBR_SYNCHRONIZE(info)				 \
+	ebr_epoch_synchronize((info)->ipi_epoch) 
+
+
+#define INP_INFO_LOCK_INIT(ipi, d)				\
 	rw_init_flags(&(ipi)->ipi_lock, (d), RW_RECURSE)
 #define INP_INFO_LOCK_DESTROY(ipi)  rw_destroy(&(ipi)->ipi_lock)
 #define INP_INFO_RLOCK(ipi)	rw_rlock(&(ipi)->ipi_lock)

@@ -311,13 +311,14 @@ tcp_timer_2msl(void *xtp)
 {
 	struct tcpcb *tp = xtp;
 	struct inpcb *inp;
+	void *cookie;
 	CURVNET_SET(tp->t_vnet);
 #ifdef TCPDEBUG
 	int ostate;
 
 	ostate = tp->t_state;
 #endif
-	INP_INFO_RLOCK(&V_tcbinfo);
+	INP_INFO_EBR_RLOCK(&V_tcbinfo);
 	inp = tp->t_inpcb;
 	KASSERT(inp != NULL, ("%s: tp %p tp->t_inpcb == NULL", __func__, tp));
 	INP_WLOCK(inp);
@@ -325,14 +326,14 @@ tcp_timer_2msl(void *xtp)
 	if (callout_pending(&tp->t_timers->tt_2msl) ||
 	    !callout_active(&tp->t_timers->tt_2msl)) {
 		INP_WUNLOCK(tp->t_inpcb);
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 		CURVNET_RESTORE();
 		return;
 	}
 	callout_deactivate(&tp->t_timers->tt_2msl);
 	if ((inp->inp_flags & INP_DROPPED) != 0) {
 		INP_WUNLOCK(inp);
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 		CURVNET_RESTORE();
 		return;
 	}
@@ -355,7 +356,7 @@ tcp_timer_2msl(void *xtp)
 	 */
 	if ((inp->inp_flags & INP_TIMEWAIT) != 0) {
 		INP_WUNLOCK(inp);
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 		CURVNET_RESTORE();
 		return;
 	}
@@ -383,7 +384,7 @@ tcp_timer_2msl(void *xtp)
 
 	if (tp != NULL)
 		INP_WUNLOCK(inp);
-	INP_INFO_RUNLOCK(&V_tcbinfo);
+	INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 	CURVNET_RESTORE();
 }
 
@@ -393,27 +394,28 @@ tcp_timer_keep(void *xtp)
 	struct tcpcb *tp = xtp;
 	struct tcptemp *t_template;
 	struct inpcb *inp;
+	void *cookie;
 	CURVNET_SET(tp->t_vnet);
 #ifdef TCPDEBUG
 	int ostate;
 
 	ostate = tp->t_state;
 #endif
-	INP_INFO_RLOCK(&V_tcbinfo);
+	INP_INFO_EBR_RLOCK(&V_tcbinfo);
 	inp = tp->t_inpcb;
 	KASSERT(inp != NULL, ("%s: tp %p tp->t_inpcb == NULL", __func__, tp));
 	INP_WLOCK(inp);
 	if (callout_pending(&tp->t_timers->tt_keep) ||
 	    !callout_active(&tp->t_timers->tt_keep)) {
 		INP_WUNLOCK(inp);
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 		CURVNET_RESTORE();
 		return;
 	}
 	callout_deactivate(&tp->t_timers->tt_keep);
 	if ((inp->inp_flags & INP_DROPPED) != 0) {
 		INP_WUNLOCK(inp);
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 		CURVNET_RESTORE();
 		return;
 	}
@@ -468,7 +470,7 @@ tcp_timer_keep(void *xtp)
 #endif
 	TCP_PROBE2(debug__user, tp, PRU_SLOWTIMO);
 	INP_WUNLOCK(inp);
-	INP_INFO_RUNLOCK(&V_tcbinfo);
+	INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 	CURVNET_RESTORE();
 	return;
 
@@ -484,7 +486,7 @@ dropit:
 	TCP_PROBE2(debug__user, tp, PRU_SLOWTIMO);
 	if (tp != NULL)
 		INP_WUNLOCK(tp->t_inpcb);
-	INP_INFO_RUNLOCK(&V_tcbinfo);
+	INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 	CURVNET_RESTORE();
 }
 
@@ -493,27 +495,28 @@ tcp_timer_persist(void *xtp)
 {
 	struct tcpcb *tp = xtp;
 	struct inpcb *inp;
+	void *cookie;
 	CURVNET_SET(tp->t_vnet);
 #ifdef TCPDEBUG
 	int ostate;
 
 	ostate = tp->t_state;
 #endif
-	INP_INFO_RLOCK(&V_tcbinfo);
+	INP_INFO_EBR_RLOCK(&V_tcbinfo);
 	inp = tp->t_inpcb;
 	KASSERT(inp != NULL, ("%s: tp %p tp->t_inpcb == NULL", __func__, tp));
 	INP_WLOCK(inp);
 	if (callout_pending(&tp->t_timers->tt_persist) ||
 	    !callout_active(&tp->t_timers->tt_persist)) {
 		INP_WUNLOCK(inp);
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 		CURVNET_RESTORE();
 		return;
 	}
 	callout_deactivate(&tp->t_timers->tt_persist);
 	if ((inp->inp_flags & INP_DROPPED) != 0) {
 		INP_WUNLOCK(inp);
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 		CURVNET_RESTORE();
 		return;
 	}
@@ -563,7 +566,7 @@ out:
 	TCP_PROBE2(debug__user, tp, PRU_SLOWTIMO);
 	if (tp != NULL)
 		INP_WUNLOCK(inp);
-	INP_INFO_RUNLOCK(&V_tcbinfo);
+	INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 	CURVNET_RESTORE();
 }
 
@@ -575,27 +578,28 @@ tcp_timer_rexmt(void * xtp)
 	int rexmt;
 	int headlocked;
 	struct inpcb *inp;
+	void *cookie;
 #ifdef TCPDEBUG
 	int ostate;
 
 	ostate = tp->t_state;
 #endif
 
-	INP_INFO_RLOCK(&V_tcbinfo);
+	INP_INFO_EBR_RLOCK(&V_tcbinfo);
 	inp = tp->t_inpcb;
 	KASSERT(inp != NULL, ("%s: tp %p tp->t_inpcb == NULL", __func__, tp));
 	INP_WLOCK(inp);
 	if (callout_pending(&tp->t_timers->tt_rexmt) ||
 	    !callout_active(&tp->t_timers->tt_rexmt)) {
 		INP_WUNLOCK(inp);
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 		CURVNET_RESTORE();
 		return;
 	}
 	callout_deactivate(&tp->t_timers->tt_rexmt);
 	if ((inp->inp_flags & INP_DROPPED) != 0) {
 		INP_WUNLOCK(inp);
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 		CURVNET_RESTORE();
 		return;
 	}
@@ -622,7 +626,7 @@ tcp_timer_rexmt(void * xtp)
 		headlocked = 1;
 		goto out;
 	}
-	INP_INFO_RUNLOCK(&V_tcbinfo);
+	INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 	headlocked = 0;
 	if (tp->t_state == TCPS_SYN_SENT) {
 		/*
@@ -821,7 +825,7 @@ out:
 	if (tp != NULL)
 		INP_WUNLOCK(inp);
 	if (headlocked)
-		INP_INFO_RUNLOCK(&V_tcbinfo);
+		INP_INFO_EBR_RUNLOCK(&V_tcbinfo);
 	CURVNET_RESTORE();
 }
 
