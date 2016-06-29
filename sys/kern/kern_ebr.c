@@ -144,23 +144,26 @@ ebr_epoch_entry_free(ebr_entry_t entry)
 	free(entry, M_EBR);
 }
 
-int
+void
 ebr_epoch_entry_init(ebr_epoch_t eepoch, ebr_entry_t entry, void *cookie, bool cansleep)
 {
 	ck_epoch_t *epoch;
-	ck_epoch_record_t *record;
 
 	epoch = &eepoch->ee_epoch;
 	entry->ee_cookie = cookie;
-	if ((entry->ee_record = ck_epoch_recycle(epoch)) != NULL)
-		return (0);
-	if (!cansleep)
-		return (ENOMEM);
-	
-	record = malloc(sizeof *record, M_EBR, M_WAITOK|M_ZERO);
-	ck_epoch_register(epoch, record);
-	entry->ee_record = record;
-	return (0);
+	while ((entry->ee_record = ck_epoch_recycle(epoch)) != NULL) {
+		/*
+		 * Although this looks bad, we will only hit this
+		 * recycling extremely rapidly. If pcpu_count is 5
+		 * it would mean that every core is in a read section
+		 * and also has 4 outstanding synchronizes.
+		 */
+		if ((curthread->td_pflags & TDP_ITHREAD) || !cansleep)
+			DELAY(1);
+		else
+			pause("ebrinit", 1);
+	}
+
 }
 
 void *
@@ -189,17 +192,11 @@ ebr_epoch_read_unlock(void *cookie)
 void
 ebr_epoch_defer(ebr_epoch_t eepoch, ebr_entry_t entry, ebr_callback_t fn)
 {
-	ck_epoch_record_t *record;
 
-	while ((record = ck_epoch_recycle(&eepoch->ee_epoch)) == NULL) {
-		DELAY(1);
-		atomic_add_int(&ms_delayed, 1);
-	}
-
+	MPASS(entry->ee_record != NULL);
 	critical_enter();
 	entry->ee_fn = fn;
-	entry->ee_record = record;
-	ck_epoch_call(record, &entry->ee_entry, ebr_destroy_entry);
+	ck_epoch_call(entry->ee_record, &entry->ee_entry, ebr_destroy_entry);
 	TASK_INIT(&entry->ee_task, 0, ebr_cleaner_func, entry);
 	taskqueue_enqueue(taskqueue_fast, &entry->ee_task);
 	critical_exit();
