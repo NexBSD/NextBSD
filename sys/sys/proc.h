@@ -511,6 +511,11 @@ do {									\
 #define	TD_SET_RUNQ(td)		(td)->td_state = TDS_RUNQ
 #define	TD_SET_CAN_RUN(td)	(td)->td_state = TDS_CAN_RUN
 
+#define	TD_SBDRY_INTR(td) \
+    (((td)->td_flags & (TDF_SEINTR | TDF_SERESTART)) != 0)
+#define	TD_SBDRY_ERRNO(td) \
+    (((td)->td_flags & TDF_SEINTR) != 0 ? EINTR : ERESTART)
+
 /*
  * Process structure.
  */
@@ -611,7 +616,7 @@ struct proc {
 /* End area that is copied on creation. */
 #define	p_endcopy	p_xsig
 	struct pgrp	*p_pgrp;	/* (c + e) Pointer to process group. */
-	struct knlist	p_klist;	/* (c) Knotes attached to this proc. */
+	struct knlist	*p_klist;	/* (c) Knotes attached to this proc. */
 	int		p_numthreads;	/* (c) Number of threads. */
 	struct mdproc	p_md;		/* Any machine-dependent fields. */
 	struct callout	p_itcallout;	/* (h + c) Interval timer callout. */
