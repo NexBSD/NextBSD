@@ -301,8 +301,8 @@ tcp_timer_delack(void *xtp)
 
 	tp->t_flags |= TF_ACKNOW;
 	TCPSTAT_INC(tcps_delack);
-	(void) tp->t_fb->tfb_tcp_output(tp);
-	INP_WUNLOCK(inp);
+	if (__predict_true(tp->t_fb->tfb_tcp_output(tp) != EOWNERDEAD))
+		INP_WUNLOCK(inp);
 	CURVNET_RESTORE();
 }
 
@@ -552,9 +552,8 @@ tcp_timer_persist(void *xtp)
 	}
 	tcp_setpersist(tp);
 	tp->t_flags |= TF_FORCEDATA;
-	(void) tp->t_fb->tfb_tcp_output(tp);
-	tp->t_flags &= ~TF_FORCEDATA;
-
+	if (__predict_false(tp->t_fb->tfb_tcp_output(tp) == EOWNERDEAD))
+		tp = NULL;
 out:
 #ifdef TCPDEBUG
 	if (tp != NULL && tp->t_inpcb->inp_socket->so_options & SO_DEBUG)
@@ -809,8 +808,8 @@ tcp_timer_rexmt(void * xtp)
 
 	cc_cong_signal(tp, NULL, CC_RTO);
 
-	(void) tp->t_fb->tfb_tcp_output(tp);
-
+	if (__predict_false(tp->t_fb->tfb_tcp_output(tp) == EOWNERDEAD))
+		tp = NULL;
 out:
 #ifdef TCPDEBUG
 	if (tp != NULL && (tp->t_inpcb->inp_socket->so_options & SO_DEBUG))

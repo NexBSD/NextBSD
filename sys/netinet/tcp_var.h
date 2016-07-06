@@ -366,6 +366,9 @@ struct tcpcb {
 #define	TF2_PLPMTU_PMTUD	0x00000002 /* Allowed to attempt PLPMTUD. */
 #define	TF2_PLPMTU_MAXSEGSNT	0x00000004 /* Last seg sent was full seg. */
 
+#define TF2_TRANSMITTING	0x00000008 /* tcp_output is running */
+#define TF2_SENDALOT		0x00000010 /* tcp_output should continue running */
+
 /*
  * Structure to hold TCP options that are only used during segment
  * processing (in tcp_input), but not held in the tcpcb.
@@ -769,7 +772,7 @@ void	tcp_dropwithreset(struct mbuf *, struct tcphdr *,
 void	tcp_pulloutofband(struct socket *,
 		     struct tcphdr *, struct mbuf *, int);
 void	tcp_xmit_timer(struct tcpcb *, int);
-void	tcp_newreno_partial_ack(struct tcpcb *, struct tcphdr *);
+int	tcp_newreno_partial_ack(struct tcpcb *, struct tcphdr *);
 void	cc_ack_received(struct tcpcb *tp, struct tcphdr *th,
 			    uint16_t type);
 void 	cc_conn_init(struct tcpcb *tp);
@@ -851,7 +854,7 @@ void	 tcp_update_sack_list(struct tcpcb *tp, tcp_seq rcv_laststart, tcp_seq rcv_
 void	 tcp_clean_sackreport(struct tcpcb *tp);
 void	 tcp_sack_adjust(struct tcpcb *tp);
 struct sackhole *tcp_sack_output(struct tcpcb *tp, int *sack_bytes_rexmt);
-void	 tcp_sack_partialack(struct tcpcb *, struct tcphdr *);
+int	 tcp_sack_partialack(struct tcpcb *, struct tcphdr *);
 void	 tcp_free_sackholes(struct tcpcb *tp);
 int	 tcp_newreno(struct tcpcb *, struct tcphdr *);
 u_long	 tcp_seq_subtract(u_long, u_long );
