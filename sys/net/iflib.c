@@ -295,10 +295,11 @@ typedef struct iflib_sw_tx_desc_array {
 
 #define IFLIB_RESTART_BUDGET		8
 
-#define	IFC_LEGACY		0x1
-#define	IFC_QFLUSH		0x2
-#define	IFC_MULTISEG		0x4
-#define	IFC_DMAR		0x8
+#define	IFC_LEGACY		0x01
+#define	IFC_QFLUSH		0x02
+#define	IFC_MULTISEG		0x04
+#define	IFC_DMAR		0x08
+#define	IFC_SC_ALLOCATED	0x10
 
 #define CSUM_OFFLOAD		(CSUM_IP_TSO|CSUM_IP6_TSO|CSUM_IP| \
 				 CSUM_IP_UDP|CSUM_IP_TCP|CSUM_IP_SCTP| \
@@ -3431,6 +3432,7 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	if (sc == NULL) {
 		sc = malloc(sctx->isc_driver->size, M_IFLIB, M_WAITOK|M_ZERO);
 		device_set_softc(dev, ctx);
+		ctx->ifc_flags |= IFC_SC_ALLOCATED;
 	}
 
 	ctx->ifc_sctx = sctx;
@@ -3636,6 +3638,7 @@ iflib_device_deregister(if_ctx_t ctx)
 		taskqgroup_detach(tqg, &ctx->ifc_vflr_task);
 
 	IFDI_DETACH(ctx);
+	device_set_softc(ctx->ifc_dev, NULL);
 	if (ctx->ifc_softc_ctx.isc_intr != IFLIB_INTR_LEGACY) {
 		pci_release_msi(dev);
 	}
@@ -3653,6 +3656,9 @@ iflib_device_deregister(if_ctx_t ctx)
 
 	iflib_tx_structures_free(ctx);
 	iflib_rx_structures_free(ctx);
+	if (ctx->ifc_flags & IFC_SC_ALLOCATED)
+		free(ctx->ifc_softc, M_IFLIB);
+	free(ctx, M_IFLIB);
 	return (0);
 }
 
