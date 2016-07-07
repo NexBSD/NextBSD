@@ -113,7 +113,7 @@ static int	tcp_connect(struct tcpcb *, struct sockaddr *,
 static int	tcp6_connect(struct tcpcb *, struct sockaddr *,
 		    struct thread *td);
 #endif /* INET6 */
-static void	tcp_disconnect(struct tcpcb *);
+static int	tcp_disconnect(struct tcpcb *);
 static void	tcp_usrclosed(struct tcpcb *);
 static void	tcp_fill_info(struct tcpcb *, struct tcp_info *);
 
@@ -523,10 +523,12 @@ tcp_usr_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 #endif
 	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp));
 	error = tp->t_fb->tfb_tcp_output(tp);
+
 out:
 	TCPDEBUG2(PRU_CONNECT);
 	TCP_PROBE2(debug__user, tp, PRU_CONNECT);
-	INP_WUNLOCK(inp);
+	if (__predict_true(error != EOWNERDEAD))
+		INP_WUNLOCK(inp);
 	return (error);
 }
 #endif /* INET */
@@ -615,8 +617,10 @@ tcp6_usr_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 
 out:
 	TCPDEBUG2(PRU_CONNECT);
-	TCP_PROBE2(debug__user, tp, PRU_CONNECT);
-	INP_WUNLOCK(inp);
+	if (__predict_true(error != EOWNERDEAD)) {
+		TCP_PROBE2(debug__user, tp, PRU_CONNECT);
+		INP_WUNLOCK(inp);
+	}
 	return (error);
 }
 #endif /* INET6 */
@@ -652,11 +656,13 @@ tcp_usr_disconnect(struct socket *so)
 	}
 	tp = intotcpcb(inp);
 	TCPDEBUG1();
-	tcp_disconnect(tp);
+	error = tcp_disconnect(tp);
 out:
 	TCPDEBUG2(PRU_DISCONNECT);
-	TCP_PROBE2(debug__user, tp, PRU_DISCONNECT);
-	INP_WUNLOCK(inp);
+	if (__predict_true(error != EOWNERDEAD)) {
+		TCP_PROBE2(debug__user, tp, PRU_DISCONNECT);
+		INP_WUNLOCK(inp);
+	}
 	INP_INFO_RUNLOCK(&V_tcbinfo);
 	return (error);
 }
@@ -791,8 +797,10 @@ tcp_usr_shutdown(struct socket *so)
 
 out:
 	TCPDEBUG2(PRU_SHUTDOWN);
-	TCP_PROBE2(debug__user, tp, PRU_SHUTDOWN);
-	INP_WUNLOCK(inp);
+	if (__predict_true(error != EOWNERDEAD)) {
+		TCP_PROBE2(debug__user, tp, PRU_SHUTDOWN);
+		INP_WUNLOCK(inp);
+	}
 	INP_INFO_RUNLOCK(&V_tcbinfo);
 
 	return (error);
@@ -835,12 +843,14 @@ tcp_usr_rcvd(struct socket *so, int flags)
 		tcp_offload_rcvd(tp);
 	else
 #endif
-	tp->t_fb->tfb_tcp_output(tp);
+		error = tp->t_fb->tfb_tcp_output(tp);
 
 out:
 	TCPDEBUG2(PRU_RCVD);
-	TCP_PROBE2(debug__user, tp, PRU_RCVD);
-	INP_WUNLOCK(inp);
+	if (__predict_true(error != EOWNERDEAD)) {
+		TCP_PROBE2(debug__user, tp, PRU_RCVD);
+		INP_WUNLOCK(inp);
+	}
 	return (error);
 }
 
@@ -937,6 +947,8 @@ tcp_usr_send(struct socket *so, int flags, struct mbuf *m,
 			if (flags & PRUS_MORETOCOME)
 				tp->t_flags |= TF_MORETOCOME;
 			error = tp->t_fb->tfb_tcp_output(tp);
+			if (__predict_false(error == EOWNERDEAD))
+				goto err;
 			if (flags & PRUS_MORETOCOME)
 				tp->t_flags &= ~TF_MORETOCOME;
 		}
@@ -986,7 +998,8 @@ tcp_usr_send(struct socket *so, int flags, struct mbuf *m,
 		if (!(flags & PRUS_NOTREADY)) {
 			tp->t_flags |= TF_FORCEDATA;
 			error = tp->t_fb->tfb_tcp_output(tp);
-			tp->t_flags &= ~TF_FORCEDATA;
+			if (__predict_false(error == EOWNERDEAD))
+				goto err;
 		}
 	}
 out:
@@ -995,6 +1008,7 @@ out:
 	TCP_PROBE2(debug__user, tp, (flags & PRUS_OOB) ? PRU_SENDOOB :
 		   ((flags & PRUS_EOF) ? PRU_SEND_EOF : PRU_SEND));
 	INP_WUNLOCK(inp);
+err:
 	if (flags & PRUS_EOF)
 		INP_INFO_RUNLOCK(&V_tcbinfo);
 	return (error);
@@ -1022,8 +1036,8 @@ tcp_usr_ready(struct socket *so, struct mbuf *m, int count)
 	SOCKBUF_UNLOCK(&so->so_snd);
 	if (error == 0)
 		error = tp->t_fb->tfb_tcp_output(tp);
-	INP_WUNLOCK(inp);
-
+	if (__predict_true(error != EOWNERDEAD))
+		INP_WUNLOCK(inp);
 	return (error);
 }
 
@@ -1092,7 +1106,8 @@ tcp_usr_close(struct socket *so)
 	    !(inp->inp_flags & INP_DROPPED)) {
 		tp = intotcpcb(inp);
 		TCPDEBUG1();
-		tcp_disconnect(tp);
+		if(__predict_false(tcp_disconnect(tp) == EOWNERDEAD))
+			goto err;
 		TCPDEBUG2(PRU_CLOSE);
 		TCP_PROBE2(debug__user, tp, PRU_CLOSE);
 	}
@@ -1103,6 +1118,7 @@ tcp_usr_close(struct socket *so)
 		inp->inp_flags |= INP_SOCKREF;
 	}
 	INP_WUNLOCK(inp);
+err:
 	INP_INFO_RUNLOCK(&V_tcbinfo);
 }
 
@@ -1579,6 +1595,8 @@ unlock_and_done:
 				tp->t_flags &= ~TF_NOPUSH;
 				if (TCPS_HAVEESTABLISHED(tp->t_state))
 					error = tp->t_fb->tfb_tcp_output(tp);
+				if (__predict_false(error == EOWNERDEAD))
+					return (EOWNERDEAD);
 			}
 			goto unlock_and_done;
 
@@ -1898,14 +1916,16 @@ tcp_attach(struct socket *so)
  * current input data; switch states based on user close, and
  * send segment to peer (with FIN).
  */
-static void
+static int
 tcp_disconnect(struct tcpcb *tp)
 {
 	struct inpcb *inp = tp->t_inpcb;
 	struct socket *so = inp->inp_socket;
+	int error;
 
 	INP_INFO_RLOCK_ASSERT(&V_tcbinfo);
 	INP_WLOCK_ASSERT(inp);
+	error = 0;
 
 	/*
 	 * Neither tcp_close() nor tcp_drop() should return NULL, as the
@@ -1924,8 +1944,10 @@ tcp_disconnect(struct tcpcb *tp)
 		sbflush(&so->so_rcv);
 		tcp_usrclosed(tp);
 		if (!(inp->inp_flags & INP_DROPPED))
-			tp->t_fb->tfb_tcp_output(tp);
+			error = tp->t_fb->tfb_tcp_output(tp);
 	}
+
+	return (error);
 }
 
 /*

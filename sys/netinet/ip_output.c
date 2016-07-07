@@ -233,7 +233,7 @@ ip_output(struct mbuf *m, struct mbuf *opt, struct route *ro, int flags,
 	M_ASSERTPKTHDR(m);
 
 	if (inp != NULL) {
-		INP_LOCK_ASSERT(inp);
+		MPASS(inp->inp_refcount > 0);
 		M_SETFIB(m, inp->inp_inc.inc_fibnum);
 		if ((flags & IP_NODEFAULTFLOWID) == 0) {
 			m->m_pkthdr.flowid = inp->inp_flowid;

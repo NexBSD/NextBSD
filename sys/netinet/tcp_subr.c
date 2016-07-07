@@ -241,7 +241,7 @@ VNET_DEFINE(struct hhook_head *, tcp_hhh[HHOOK_TCP_LAST+1]);
 
 static struct inpcb *tcp_notify(struct inpcb *, int);
 static struct inpcb *tcp_mtudisc_notify(struct inpcb *, int);
-static void tcp_mtudisc(struct inpcb *, int);
+static int tcp_mtudisc(struct inpcb *, int);
 static char *	tcp_log_addr(struct in_conninfo *inc, struct tcphdr *th,
 		    void *ip4hdr, const void *ip6hdr);
 
@@ -794,7 +794,7 @@ tcpip_fillheaders(struct inpcb *inp, void *ip_ptr, void *tcp_ptr)
 {
 	struct tcphdr *th = (struct tcphdr *)tcp_ptr;
 
-	INP_WLOCK_ASSERT(inp);
+	MPASS(inp->inp_refcount > 0);
 
 #ifdef INET6
 	if ((inp->inp_vflag & INP_IPV6) != 0) {
@@ -1351,7 +1351,8 @@ tcp_drop(struct tcpcb *tp, int errno)
 
 	if (TCPS_HAVERCVDSYN(tp->t_state)) {
 		tcp_state_change(tp, TCPS_CLOSED);
-		(void) tp->t_fb->tfb_tcp_output(tp);
+		if (__predict_false(tp->t_fb->tfb_tcp_output(tp) == EOWNERDEAD))
+			return (NULL);
 		TCPSTAT_INC(tcps_drops);
 	} else
 		TCPSTAT_INC(tcps_conndrops);
@@ -2014,7 +2015,8 @@ tcp_ctlinput(int cmd, struct sockaddr *sa, void *vip)
 						inc.inc_fibnum =
 						    inp->inp_inc.inc_fibnum;
 						tcp_hc_updatemtu(&inc, mtu);
-						tcp_mtudisc(inp, mtu);
+						if (__predict_false(tcp_mtudisc(inp, mtu) == EOWNERDEAD))
+							inp = NULL;
 					}
 				} else
 					inp = (*notify)(inp,
@@ -2262,11 +2264,12 @@ static struct inpcb *
 tcp_mtudisc_notify(struct inpcb *inp, int error)
 {
 
-	tcp_mtudisc(inp, -1);
+	if (__predict_false(tcp_mtudisc(inp, -1) == EOWNERDEAD))
+		return (NULL);
 	return (inp);
 }
 
-static void
+static int
 tcp_mtudisc(struct inpcb *inp, int mtuoffer)
 {
 	struct tcpcb *tp;
@@ -2275,7 +2278,7 @@ tcp_mtudisc(struct inpcb *inp, int mtuoffer)
 	INP_WLOCK_ASSERT(inp);
 	if ((inp->inp_flags & INP_TIMEWAIT) ||
 	    (inp->inp_flags & INP_DROPPED))
-		return;
+		return (0);
 
 	tp = intotcpcb(inp);
 	KASSERT(tp != NULL, ("tcp_mtudisc: tp == NULL"));
@@ -2296,7 +2299,7 @@ tcp_mtudisc(struct inpcb *inp, int mtuoffer)
 	tp->snd_recover = tp->snd_max;
 	if (tp->t_flags & TF_SACK_PERMIT)
 		EXIT_FASTRECOVERY(tp->t_flags);
-	tp->t_fb->tfb_tcp_output(tp);
+	return (tp->t_fb->tfb_tcp_output(tp));
 }
 
 #ifdef INET

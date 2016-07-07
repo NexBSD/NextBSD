@@ -583,7 +583,7 @@ tcp_free_sackholes(struct tcpcb *tp)
  * the goal is to prevent the sender from bursting a large amount of data in
  * the midst of sack recovery.
  */
-void
+int
 tcp_sack_partialack(struct tcpcb *tp, struct tcphdr *th)
 {
 	int num_segs = 1;
@@ -599,7 +599,7 @@ tcp_sack_partialack(struct tcpcb *tp, struct tcphdr *th)
 	if (tp->snd_cwnd > tp->snd_ssthresh)
 		tp->snd_cwnd = tp->snd_ssthresh;
 	tp->t_flags |= TF_ACKNOW;
-	(void) tp->t_fb->tfb_tcp_output(tp);
+	return (tp->t_fb->tfb_tcp_output(tp));
 }
 
 #if 0
