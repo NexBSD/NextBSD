@@ -247,6 +247,7 @@ struct inpcb {
 	} inp_rtu;
 #define inp_route inp_rtu.inpu_route
 #define inp_route6 inp_rtu.inpu_route6
+	struct grouptask inp_gtask;
 };
 #define	inp_fport	inp_inc.inc_fport
 #define	inp_lport	inp_inc.inc_lport
@@ -616,6 +617,7 @@ short	inp_so_options(const struct inpcb *inp);
 #define	INP_RSS_BUCKET_SET	0x00000080 /* IP_RSS_LISTEN_BUCKET is set */
 #define	INP_RECVFLOWID		0x00000100 /* populate recv datagram with flow info */
 #define	INP_RECVRSSBUCKETID	0x00000200 /* populate recv datagram with bucket id */
+#define	INP_GTASK_INITED	0x00000400 /* grouptask has been initialized */
 
 /*
  * Flags passed to in_pcblookup*() functions.

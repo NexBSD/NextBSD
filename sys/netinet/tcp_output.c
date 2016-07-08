@@ -45,6 +45,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/lock.h>
 #include <sys/mbuf.h>
 #include <sys/mutex.h>
+#include <sys/proc.h>
 #include <sys/protosw.h>
 #include <sys/sdt.h>
 #include <sys/socket.h>
@@ -54,6 +55,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if.h>
 #include <net/route.h>
 #include <net/vnet.h>
+#include <net/iflib.h>
 
 #include <netinet/in.h>
 #include <netinet/in_kdtrace.h>
@@ -204,11 +206,91 @@ cc_after_idle(struct tcpcb *tp)
 		CC_ALGO(tp)->after_idle(tp->ccv);
 }
 
+#define TP_NEEDS_DEFER	 0x1
+#define TP_GTASK_CONTEXT 0x2
+
+#define ECONTINUE	512
+
+static void
+task_tcp_detach(struct inpcb *inp)
+{
+	inp->inp_flags2 &= ~INP_GTASK_INITED;
+	gtaskqueue_cancel(inp->inp_gtask.gt_taskqueue, &inp->inp_gtask.gt_task);
+	taskqgroup_detach(qgroup_if_io_tqg, &inp->inp_gtask);
+	in_pcbrele_wlocked(inp);
+}
+
+static inline int
+task_inpcb_check(struct inpcb *inp)
+{
+	if (__predict_false(inp->inp_flags2 & INP_FREED)) {
+		task_tcp_detach(inp);
+		return (EOWNERDEAD);
+	} 
+	return (0);
+}
+
+static void
+task_tcp_output(void *arg)
+{
+	struct inpcb *inp = arg;
+	struct tcpcb *tp = intotcpcb(inp);
+	int rc = 0;
+
+	INP_WLOCK(inp);
+	if (__predict_false(task_inpcb_check(inp) == EOWNERDEAD))
+		return;
+
+	rc = tcp_output_flags(tp, TP_GTASK_CONTEXT);
+
+	if (rc == ECONTINUE)
+		GROUPTASK_ENQUEUE(&inp->inp_gtask);
+	else if (__predict_false(rc == EOWNERDEAD)) {
+		INP_WLOCK(inp);
+		MPASS(inp->inp_flags2 & INP_FREED);
+		task_tcp_detach(inp);
+		return;
+	}
+	MPASS((inp->inp_flags2 & INP_FREED) == 0);
+	INP_WUNLOCK(inp);
+}
+
+static void
+tcp_defer(struct tcpcb *tp)
+{
+	struct inpcb *inp;
+
+	inp = tp->t_inpcb;
+	MPASS((inp->inp_flags2 & INP_FREED) == 0);
+	if (__predict_true(inp->inp_flags2 & INP_GTASK_INITED)) {
+		GROUPTASK_ENQUEUE(&inp->inp_gtask);
+		return;
+	}
+	GROUPTASK_INIT(&inp->inp_gtask, 0, task_tcp_output, inp);
+	taskqgroup_attach_cpu(qgroup_if_io_tqg, &inp->inp_gtask, tp,
+			      curcpu, -1, "tcp_defer");
+	inp->inp_flags2 |= INP_GTASK_INITED;
+	in_pcbref(inp);
+	GROUPTASK_ENQUEUE(&inp->inp_gtask);
+}
+
+int
+tcp_output(struct tcpcb *tp)
+{
+	struct thread *td = curthread;
+	int flags = 0;
+
+	if ((td->td_pflags & TDP_ITHREAD) || (td->td_proc == &proc0))
+		flags = TP_NEEDS_DEFER;
+
+	return (tcp_output_flags(tp, flags));
+}
+
 /*
  * Tcp output routine: figure out what should be sent and send it.
  */
 int
-tcp_output(struct tcpcb *tp)
+tcp_output_flags(struct tcpcb *tp, int ctx_flags)
 {
 	struct inpcb *inp = tp->t_inpcb;
 	struct socket *so = inp->inp_socket;
@@ -1039,6 +1121,7 @@ send:
 
 	tcpcb_snapshot(mtp, tp);
 	tp->t_flags &= ~TF_FORCEDATA;
+	tp->t_flags2 &= ~TF2_SENDALOT;
 	tp->t_flags2 |= TF2_TRANSMITTING;
 	in_pcbref(inp);
 	INP_WUNLOCK(inp);
@@ -1502,11 +1585,6 @@ out:
 		tp->t_flags2 &= ~TF2_PLPMTU_PMTUD;
 	if (tp->t_flags2 & TF2_SENDALOT) {
 		tp->t_flags2 &= ~TF2_SENDALOT;
-		/*
-		 * XXX  we really want to check for TDP_ITHREAD 
-		 * here to avoid starving other senders and delaying
-		 * acks
-		 */
 		sendalot = 1;
 	}
 
@@ -1693,8 +1771,15 @@ timer:
 	if (sendalot && --maxburst)
 		goto again;
 #endif
-	if (sendalot)
-		goto again;
+	if (sendalot) {
+		if (ctx_flags & TP_NEEDS_DEFER)
+			tcp_defer(tp);
+		else if (ctx_flags & TP_GTASK_CONTEXT)
+			return (ECONTINUE);
+		else
+			goto again;
+
+	}
 	return (0);
 }
 

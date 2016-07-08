@@ -804,6 +804,7 @@ struct inpcb *
 struct tcpcb *
 	 tcp_newtcpcb(struct inpcb *);
 int	 tcp_output(struct tcpcb *);
+int	 tcp_output_flags(struct tcpcb *tp, int ctx_flags);
 void	 tcp_state_change(struct tcpcb *, int);
 void	 tcp_respond(struct tcpcb *, void *,
 	    struct tcphdr *, struct mbuf *, tcp_seq, tcp_seq, int);
@@ -859,6 +860,7 @@ void	 tcp_free_sackholes(struct tcpcb *tp);
 int	 tcp_newreno(struct tcpcb *, struct tcphdr *);
 u_long	 tcp_seq_subtract(u_long, u_long );
 int	 tcp_compute_pipe(struct tcpcb *);
+int	 inp_to_cpuid(struct inpcb *);
 
 static inline void
 tcp_fields_to_host(struct tcphdr *th)

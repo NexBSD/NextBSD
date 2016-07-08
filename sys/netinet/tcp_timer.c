@@ -189,18 +189,9 @@ SYSCTL_INT(_net_inet_tcp, OID_AUTO, v6pmtud_blackhole_mss,
     "Path MTU Discovery IPv6 Black Hole Detection lowered MSS");
 #endif
 
-#ifdef	RSS
 static int	per_cpu_timers = 1;
-#else
-static int	per_cpu_timers = 0;
-#endif
 SYSCTL_INT(_net_inet_tcp, OID_AUTO, per_cpu_timers, CTLFLAG_RW,
     &per_cpu_timers , 0, "run tcp timers on all cpus");
-
-#if 0
-#define	INP_CPU(inp)	(per_cpu_timers ? (!CPU_ABSENT(((inp)->inp_flowid % (mp_maxid+1))) ? \
-		((inp)->inp_flowid % (mp_maxid+1)) : curcpu) : 0)
-#endif
 
 /*
  * Map the given inp to a CPU id.
@@ -208,7 +199,7 @@ SYSCTL_INT(_net_inet_tcp, OID_AUTO, per_cpu_timers, CTLFLAG_RW,
  * This queries RSS if it's compiled in, else it defaults to the current
  * CPU ID.
  */
-static inline int
+int
 inp_to_cpuid(struct inpcb *inp)
 {
 	u_int cpuid;

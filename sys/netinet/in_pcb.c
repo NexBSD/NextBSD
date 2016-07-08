@@ -77,6 +77,7 @@ __FBSDID("$FreeBSD$");
 #include <net/route.h>
 #include <net/rss_config.h>
 #include <net/vnet.h>
+#include <net/iflib.h>
 
 #if defined(INET) || defined(INET6)
 #include <netinet/in.h>
@@ -1206,6 +1207,7 @@ in_pcbrele_rlocked(struct inpcb *inp)
 	}
 
 	KASSERT(inp->inp_socket == NULL, ("%s: inp_socket != NULL", __func__));
+	MPASS(!(inp->inp_flags2 & INP_GTASK_INITED));
 
 	INP_RUNLOCK(inp);
 	pcbinfo = inp->inp_pcbinfo;
@@ -1235,6 +1237,7 @@ in_pcbrele_wlocked(struct inpcb *inp)
 	}
 
 	KASSERT(inp->inp_socket == NULL, ("%s: inp_socket != NULL", __func__));
+	MPASS(!(inp->inp_flags2 & INP_GTASK_INITED));
 
 	INP_WUNLOCK(inp);
 	pcbinfo = inp->inp_pcbinfo;
@@ -1264,6 +1267,7 @@ in_pcbrele(struct inpcb *inp)
 void
 in_pcbfree(struct inpcb *inp)
 {
+	int rc;
 	struct inpcbinfo *pcbinfo = inp->inp_pcbinfo;
 
 	KASSERT(inp->inp_socket == NULL, ("%s: inp_socket != NULL", __func__));
@@ -1312,7 +1316,13 @@ in_pcbfree(struct inpcb *inp)
 #ifdef MAC
 	mac_inpcb_destroy(inp);
 #endif
-	if (!in_pcbrele_wlocked(inp))
+	if (inp->inp_flags2 & INP_GTASK_INITED) {
+		rc = refcount_release(&inp->inp_refcount);
+		/* gtask should still hold a reference */
+		MPASS(rc == 0);
+		GROUPTASK_ENQUEUE(&inp->inp_gtask);
+		INP_WUNLOCK(inp);
+	} else if (!in_pcbrele_wlocked(inp))
 		INP_WUNLOCK(inp);
 }
 
