@@ -68,6 +68,7 @@ struct gtaskqueue {
 	TAILQ_HEAD(, gtaskqueue_busy) tq_active;
 	struct mtx		tq_mutex;
 	struct thread		**tq_threads;
+	struct thread		*tq_curthread;
 	int			tq_tcount;
 	int			tq_spin;
 	int			tq_flags;
@@ -191,6 +192,12 @@ gtaskqueue_task_nop_fn(void *context)
 {
 }
 
+int
+gtaskqueue_context(struct gtaskqueue *queue)
+{
+	return (curthread == queue->tq_curthread);
+}
+
 /*
  * Block until all currently queued tasks in this taskqueue
  * have begun execution.  Tasks queued during execution of
@@ -295,6 +302,7 @@ gtaskqueue_run_locked(struct gtaskqueue *queue)
 	TQ_ASSERT_LOCKED(queue);
 	tb.tb_running = NULL;
 
+	queue->tq_curthread = curthread;
 	while (STAILQ_FIRST(&queue->tq_queue)) {
 		TAILQ_INSERT_TAIL(&queue->tq_active, &tb, tb_link);
 
@@ -314,7 +322,8 @@ gtaskqueue_run_locked(struct gtaskqueue *queue)
 
 		TQ_LOCK(queue);
 		tb.tb_running = NULL;
-		wakeup(gtask);
+		if ((gtask->ta_flags & TASK_SKIP_WAKEUP) == 0)
+			wakeup(gtask);
 
 		TAILQ_REMOVE(&queue->tq_active, &tb, tb_link);
 		tb_first = TAILQ_FIRST(&queue->tq_active);
@@ -322,6 +331,7 @@ gtaskqueue_run_locked(struct gtaskqueue *queue)
 		    tb_first->tb_running == TB_DRAIN_WAITER)
 			wakeup(tb_first);
 	}
+	queue->tq_curthread = NULL;
 }
 
 static int
@@ -519,7 +529,8 @@ gtaskqueue_thread_enqueue(void *context)
 
 	tqp = context;
 	tq = *tqp;
-	wakeup_one(tq);
+	if (tq->tq_curthread != curthread)
+		wakeup_one(tq);
 }
 
 

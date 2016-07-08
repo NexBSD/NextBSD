@@ -49,6 +49,7 @@ void	gtaskqueue_unblock(struct gtaskqueue *queue);
 int	gtaskqueue_cancel(struct gtaskqueue *queue, struct gtask *gtask);
 void	gtaskqueue_drain(struct gtaskqueue *queue, struct gtask *task);
 void	gtaskqueue_drain_all(struct gtaskqueue *queue);
+int	gtaskqueue_context(struct gtaskqueue *queue);
 
 int grouptaskqueue_enqueue(struct gtaskqueue *queue, struct gtask *task);
 void	taskqgroup_attach(struct taskqgroup *qgroup, struct grouptask *grptask,
