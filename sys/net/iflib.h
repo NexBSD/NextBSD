@@ -36,7 +36,9 @@
 #include <sys/bus_dma.h>
 #include <sys/nv.h>
 #include <sys/gtaskqueue.h>
+#include <net/if_var.h>
 
+TASKQGROUP_DECLARE(if_io_tqg);
 
 /*
  * Most cards can handle much larger TSO requests
@@ -271,8 +273,9 @@ struct ifmedia *iflib_get_media(if_ctx_t ctx);
 if_softc_ctx_t iflib_get_softc_ctx(if_ctx_t ctx);
 if_shared_ctx_t iflib_get_sctx(if_ctx_t ctx);
 
+#ifdef ETHER_ADDR_LEN
 void iflib_set_mac(if_ctx_t ctx, uint8_t mac[ETHER_ADDR_LEN]);
-
+#endif
 
 
 
