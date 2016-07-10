@@ -8,8 +8,8 @@
 /*********************************************************************
  *  Local Function prototypes
  *********************************************************************/
-static void em_tso_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_lower);
-static void em_transmit_checksum_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_lower);
+static int em_tso_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_lower);
+static int em_transmit_checksum_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_lower);
 static int em_isc_txd_encap(void *arg, if_pkt_info_t pi);
 static void em_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx);
 static int em_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool clear);
@@ -42,12 +42,14 @@ extern if_shared_ctx_t em_sctx;
  *  adapters using advanced tx descriptors
  *
  **********************************************************************/
-static void
+static int
 em_tso_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_lower)
 {
+	if_softc_ctx_t scctx = adapter->shared;
         struct em_tx_queue *que = &adapter->tx_queues[pi->ipi_qsidx];
         struct tx_ring *txr = &que->txr;
-	struct e1000_context_desc *TXD; 
+	struct e1000_context_desc *TXD;
+	struct em_txbuffer  *tx_buffer;
         int cur, hdr_len;
 
 	hdr_len = pi->ipi_ehdrlen + pi->ipi_ip_hlen + pi->ipi_tcp_hlen;
@@ -59,7 +61,8 @@ em_tso_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_upper, u32 *txd
 	*txd_upper = (E1000_TXD_POPTS_IXSM | E1000_TXD_POPTS_TXSM) << 8;
 
 	cur = pi->ipi_pidx;
-        TXD = (struct e1000_context_desc *)&txr->tx_base[cur]; 
+        TXD = (struct e1000_context_desc *)&txr->tx_base[cur];
+        tx_buffer = &txr->tx_buffers[cur];
 	
 	 /*
 	 * Start offset for header checksum calculation.
@@ -94,16 +97,25 @@ em_tso_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_upper, u32 *txd
 				E1000_TXD_CMD_IP |	/* Do IP csum */
 				E1000_TXD_CMD_TCP |	/* Do TCP checksum */
 				      (pi->ipi_len - hdr_len)); /* Total len */
-	txr->tx_tso = TRUE; 
+	tx_buffer->eop = -1;
+	txr->tx_tso = TRUE;
+
+	if (++cur == scctx->isc_ntxd) {
+		cur = 0;
+	}
+	return cur;
 }
 
+#define TSO_WORKAROUND 4
 
-static void
+static int
 em_transmit_checksum_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_upper, u32 *txd_lower)
 {
         struct e1000_context_desc   *TXD = NULL;
+	if_softc_ctx_t              scctx = adapter->shared;
  	struct em_tx_queue          *que = &adapter->tx_queues[pi->ipi_qsidx];
-	struct tx_ring              *txr = &que->txr; 
+	struct tx_ring              *txr = &que->txr;
+	struct em_txbuffer          *tx_buffer;
 	int                         csum_flags = pi->ipi_csum_flags;
 	int                         ip_off = pi->ipi_ehdrlen; 
 	int                         cur, hdr_len;
@@ -159,11 +171,11 @@ em_transmit_checksum_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_u
  				    	txr->last_hw_ipcso == ipcso &&
  				    	txr->last_hw_tucss == tucss &&
  				    	txr->last_hw_tucso == tucso)
- 						return;
+						return 0;
  				} else {
  					if (txr->last_hw_tucss == tucss &&
  				    	txr->last_hw_tucso == tucso)
- 						return;
+						return 0;
  				}
   			}
  			txr->last_hw_offload = offload;
@@ -206,11 +218,11 @@ em_transmit_checksum_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_u
  				    	txr->last_hw_ipcso == ipcso &&
  				    	txr->last_hw_tucss == tucss &&
  				    	txr->last_hw_tucso == tucso)
- 						return;
- 				} else {
- 					if (txr->last_hw_tucss == tucss &&
- 				    	txr->last_hw_tucso == tucso)
- 						return;
+						return 0;
+				} else {
+					if (txr->last_hw_tucss == tucss &&
+					    txr->last_hw_tucso == tucso)
+						return 0;
  				}
  			}
  			txr->last_hw_offload = offload;
@@ -235,7 +247,15 @@ em_transmit_checksum_setup(struct adapter *adapter, if_pkt_info_t pi, u32 *txd_u
 
 	TXD->tcp_seg_setup.data = htole32(0);
 	TXD->cmd_and_length =
-	    htole32(adapter->txd_cmd | E1000_TXD_CMD_DEXT | cmd);
+		htole32(adapter->txd_cmd | E1000_TXD_CMD_DEXT | cmd);
+
+	tx_buffer = &txr->tx_buffers[cur];
+	tx_buffer->eop = -1;
+
+	if (++cur == scctx->isc_ntxd) {
+		cur = 0;
+	}
+	return cur;
 }
 
 static int
@@ -258,8 +278,7 @@ em_isc_txd_encap(void *arg, if_pkt_info_t pi)
 	i = first = pi->ipi_pidx;         
 	do_tso = (csum_flags & CSUM_TSO);
 	tso_desc = FALSE;
-
-        /*
+           /*
 	 * TSO Hardware workaround, if this packet is not
 	 * TSO, and is only a single descriptor long, and
 	 * it follows a TSO burst, then we need to add a
@@ -273,14 +292,10 @@ em_isc_txd_encap(void *arg, if_pkt_info_t pi)
 
 	/* Do hardware assists */
 	if (do_tso) {
-		em_tso_setup(sc, pi, &txd_upper, &txd_lower);
+		i = em_tso_setup(sc, pi, &txd_upper, &txd_lower);
 		tso_desc = TRUE;
 	} else if (csum_flags & CSUM_OFFLOAD) {
-		em_transmit_checksum_setup(sc, pi, &txd_upper, &txd_lower);
-	}
-
-	if (do_tso || (csum_flags & CSUM_OFFLOAD)) {
-		i++; 
+		i = em_transmit_checksum_setup(sc, pi, &txd_upper, &txd_lower);
 	}
 
 	if (pi->ipi_mflags & M_VLANTAG) {
@@ -306,25 +321,32 @@ em_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		** split it so we have a small final sentinel
 		*/
 		if (tso_desc && (j == (nsegs - 1)) && (seg_len > 8)) {
-			/*  seg_len -= TSO_WORKAROUND;  */
+			seg_len -= TSO_WORKAROUND;
 			ctxd->buffer_addr = htole64(seg_addr);
 			ctxd->lower.data = htole32(sc->txd_cmd | txd_lower | seg_len);
 			ctxd->upper.data = htole32(txd_upper);
+
+                        if (++i == scctx->isc_ntxd)
+				i = 0;
 
 			/* Now make the sentinel */
 			ctxd = &txr->tx_base[i];
 			tx_buffer = &txr->tx_buffers[i];
 			ctxd->buffer_addr = htole64(seg_addr + seg_len);
-			/*    ctxd->lower.data = htole32(adapter->txd_cmd | txd_lower | TSO_WORKAROUND); */
+			ctxd->lower.data = htole32(sc->txd_cmd | txd_lower | TSO_WORKAROUND);
 			ctxd->upper.data = htole32(txd_upper);
+			cidx_last = i;
+			if (++i == scctx-> isc_ntxd)
+				i = 0;
 		} else {
 			ctxd->buffer_addr = htole64(seg_addr);
 			ctxd->lower.data = htole32(sc->txd_cmd | txd_lower | seg_len);
 			ctxd->upper.data = htole32(txd_upper);
+			cidx_last = i;
+			if (++i == scctx-> isc_ntxd)
+				i = 0;
 		}
-		cidx_last = i;
-		if (++i == scctx->isc_ntxd)
-			i = 0;
+		tx_buffer->eop = -1;
 	}
 
 	/*
@@ -345,88 +367,98 @@ em_isc_txd_encap(void *arg, if_pkt_info_t pi)
 static void
 em_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx)
 {
-  struct adapter *adapter = arg;
-  struct em_tx_queue *que = &adapter->tx_queues[txqid];
-  struct tx_ring *txr = &que->txr;
+	struct adapter *adapter = arg;
+	struct em_tx_queue *que = &adapter->tx_queues[txqid];
+	struct tx_ring *txr = &que->txr;
 
-  E1000_WRITE_REG(&adapter->hw, E1000_TDT(txr->me), pidx);
+	E1000_WRITE_REG(&adapter->hw, E1000_TDT(txr->me), pidx);
 }
 
 static int
 em_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool clear)
 {
-  struct adapter *adapter = arg;
-  if_softc_ctx_t scctx = adapter->shared;
-  struct em_tx_queue *que = &adapter->tx_queues[txqid];
-  struct tx_ring *txr = &que->txr;
+	struct adapter *adapter = arg;
+	if_softc_ctx_t scctx = adapter->shared;
+	struct em_tx_queue *que = &adapter->tx_queues[txqid];
+	struct tx_ring *txr = &que->txr;
 
-  u32 cidx, processed = 0;
-  u32 limit = adapter->tx_process_limit; 
-  struct em_txbuffer *buf;
-  struct e1000_tx_desc *tx_desc;
+	u32 cidx, processed = 0;
+	int last, done;
+	struct em_txbuffer *buf;
+	struct e1000_tx_desc *tx_desc, *eop_desc;
 
-  cidx = cidx_init;
-  buf = &txr->tx_buffers[cidx];
-  tx_desc = &txr->tx_base[cidx];
+	cidx = cidx_init;
+	buf = &txr->tx_buffers[cidx];
+	tx_desc = &txr->tx_base[cidx];
+        last = buf->eop;
+	eop_desc = &txr->tx_base[last];
 
-  do {
-	  int eop = buf->eop;
-	  struct e1000_tx_desc *eop_desc;
-	  
-	  if (eop == -1) /* No work */
-		  break;
+	/*
+	 * What this does is get the index of the
+	 * first descriptor AFTER the EOP of the
+	 * first packet, that way we can do the
+	 * simple comparison on the inner while loop.
+	 */
+	if (++last == scctx->isc_ntxd)
+	     last = 0;
+	done = last;
 
-	  eop_desc = &txr->tx_base[eop]; 
-	  if ((eop_desc->upper.fields.status & E1000_TXD_STAT_DD) == 0)
-		  break;  /* I/O not complete */
-	  
-	  if (clear)
-		  eop = -1;  /* clear indicates processed */ 
-	  
-	  /* We clean the range of the packet */
-	  while (tx_desc != eop_desc) {
-		  tx_desc->upper.data = 0;
-		  tx_desc->lower.data = 0;
-		  tx_desc->buffer_addr = 0;
-		  tx_desc++;
-		  buf++;
-		  cidx++;
-		  processed++;
+
+	while (eop_desc->upper.fields.status & E1000_TXD_STAT_DD) {
+		/* We clean the range of the packet */
+		while (cidx != done) {
+			if (clear) {
+				tx_desc->upper.data = 0;
+				tx_desc->lower.data = 0;
+				tx_desc->buffer_addr = 0;
+				buf->eop = -1;
+			}
+			tx_desc++;
+			buf++;
+			processed++;
 		  
-		  /* wrap the ring ? */
-		  if (cidx == scctx->isc_ntxd) {
-			  buf = txr->tx_buffers;
-			  tx_desc = txr->tx_base;
-			  cidx = 0;
-		  }
-		  prefetch(tx_desc);
-		  prefetch(tx_desc+1); 
-	  }
-  } while (__predict_true(--limit) && cidx != cidx_init);
+			/* wrap the ring ? */
+			if (++cidx == scctx->isc_ntxd) {
+				cidx = 0;
+			}
+			buf = &txr->tx_buffers[cidx];
+			tx_desc = &txr->tx_base[cidx];
+		}
+		/* See if we can continue to the next packet */
+		last = buf->eop;
+		if (last == -1)
+			break;
+		eop_desc = &txr->tx_base[last];
+		/* Get new done point */
+		if (++last == scctx->isc_ntxd)
+			last = 0;
+		done = last;
+	}
   
-  return(processed); 
+	return(processed);
 }
 
 static void
 em_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count)
 {
-  struct adapter *sc = arg;
-  if_softc_ctx_t scctx = sc->shared;
-  struct em_rx_queue *que = &sc->rx_queues[rxqid];
-  struct rx_ring *rxr = &que->rxr;
-  union e1000_rx_desc_extended *rxd; 
-  int i;
-  uint32_t next_pidx;
+	struct adapter *sc = arg;
+	if_softc_ctx_t scctx = sc->shared;
+	struct em_rx_queue *que = &sc->rx_queues[rxqid];
+	struct rx_ring *rxr = &que->rxr;
+	union e1000_rx_desc_extended *rxd;
+	int i;
+	uint32_t next_pidx;
 
-  for (i = 0, next_pidx = pidx; i < count; i++) {
-        rxd = &rxr->rx_base[i];
-        rxd->read.buffer_addr = htole64(paddrs[i]); 
-        rxd->wb.upper.status_error = 0; 
+	for (i = 0, next_pidx = pidx; i < count; i++) {
+		rxd = &rxr->rx_base[i];
+		rxd->read.buffer_addr = htole64(paddrs[i]);
+		/* DD bits must be cleared */
+		rxd->wb.upper.status_error = 0;
 	
-	if (++next_pidx == scctx->isc_nrxd)
-	  next_pidx = 0;
-  }  
+		if (++next_pidx == scctx->isc_nrxd)
+			next_pidx = 0;
+	}
 }
 
 static void
@@ -472,7 +504,7 @@ static int
 em_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 {
       	struct adapter           *adapter = arg;
-	if_softc_ctx_t scctx = adapter->shared;
+	if_softc_ctx_t           scctx = adapter->shared;
 	struct em_rx_queue       *que = &adapter->rx_queues[ri->iri_qsidx];
 	struct rx_ring           *rxr = &que->rxr;
 	union e1000_rx_desc_extended *rxd;
@@ -482,8 +514,7 @@ em_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 	bool                     eop;
 	int                      i, cidx, vtag;
 
-	vtag = 0; 
-	i = 0;
+	i = vtag = 0;
 	cidx = ri->iri_cidx;
 
 	do {
@@ -501,24 +532,25 @@ em_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		/* Make sure bad packets are discarded */
 		if (staterr & E1000_RXDEXT_ERR_FRAME_ERR_MASK) {
 			adapter->dropped_pkts++;
-			return (EBADMSG); 
+			return EBADMSG;
 		}
 
 		ri->iri_frags[i].irf_flid = 0;
 		ri->iri_frags[i].irf_idx = cidx;
+
+		/* Zero out the receive descriptors status. */
+		rxd->wb.upper.status_error &= htole32(~0xFF);
+
 		if (++cidx == scctx->isc_nrxd)
 			cidx = 0;
 		i++;
-	} while (!eop);
+	}while (!eop);
 
 	em_receive_checksum(staterr, ri);
-	
+
 	if (staterr & E1000_RXD_STAT_VP) {
 		vtag = le16toh(rxd->wb.upper.vlan);
-	}
-
-	/* Zero out the receive descriptors status. */
-	rxd->wb.upper.status_error &= htole32(~0xFF);
+	} 
 	
 	ri->iri_vtag = vtag;
 	ri->iri_nfrags = i;

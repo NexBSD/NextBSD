@@ -84,7 +84,8 @@
  */
 #define EM_MIN_TXD		80
 #define EM_MAX_TXD		4096
-#define EM_DEFAULT_TXD		4096
+#define EM_DEFAULT_TXD          1024
+#define EM_DEFAULT_MULTI_TXD	4096
 
 /*
  * EM_RXD - Maximum number of receive Descriptors
@@ -101,7 +102,8 @@
  */
 #define EM_MIN_RXD		80
 #define EM_MAX_RXD		4096
-#define EM_DEFAULT_RXD		4096
+#define EM_DEFAULT_RXD          1024
+#define EM_DEFAULT_MULTI_RXD	4096
 
 /*
  * EM_TIDV - Transmit Interrupt Delay Value
@@ -332,18 +334,12 @@ struct em_int_delay_info {
 struct tx_ring {
         struct adapter          *adapter;
 	struct em_tx_queue      *que;
-        struct mtx              tx_mtx;
-        char                    mtx_name[16];
         u32                     me;
         u32                     msix;
 	u32			ims;
         int			busy;
 	struct e1000_tx_desc	*tx_base;
 	uint64_t                tx_paddr; 
-        struct task             tx_task;
-        struct taskqueue        *tq;
-        u32                     next_avail_desc;
-        u32                     next_to_clean;
         struct em_txbuffer	*tx_buffers;
         volatile u16            tx_avail;
 	u32			tx_tso;		/* last tx was tso */
@@ -352,11 +348,8 @@ struct tx_ring {
 	u8			last_hw_ipcss;
 	u8			last_hw_tucso;
 	u8			last_hw_tucss;
-#if __FreeBSD_version >= 800000
-	struct buf_ring         *br;
-#endif
+
 	/* Interrupt resources */
-        bus_dma_tag_t           txtag;
 	void                    *tag;
 	struct resource         *res;
         unsigned long		tx_irq;
@@ -375,8 +368,6 @@ struct rx_ring {
         u32                     payload;
         union e1000_rx_desc_extended	*rx_base;
         uint64_t                rx_paddr; 
-        u32			next_to_refresh;
-        u32			next_to_check;
 
         /* Interrupt resources */
         void                    *tag;
@@ -415,7 +406,6 @@ struct adapter {
 #define num_tx_queues shared->isc_ntxqsets
 #define num_rx_queues shared->isc_nrxqsets
 #define intr_type shared->isc_intr
-#define number_of_desc shared->isc_ntxd
 	/* FreeBSD operating-system-specific structures. */
 	struct e1000_osdep osdep;
 	struct device	*dev;
@@ -442,12 +432,11 @@ struct adapter {
 	bool		in_detach;
 
 	/* Task for FAST handling */
-	struct grouptask     link_task;
+	struct grouptask link_task;
 
 	u16	        num_vlans;
         u32		txd_cmd;
 
-        int             num_rx_desc;
         u32             tx_process_limit; 
         u32             rx_process_limit;
 	u32		rx_mbuf_sz;
@@ -512,20 +501,6 @@ struct em_txbuffer {
 	int		eop;  
 };
 
-/*
-** Find the number of unrefreshed RX descriptors
-*/
-static inline u16
-e1000_rx_unrefreshed(struct rx_ring *rxr)
-{
-	struct adapter	*adapter = rxr->adapter;
-
-	if (rxr->next_to_check > rxr->next_to_refresh)
-		return (rxr->next_to_check - rxr->next_to_refresh - 1);
-	else
-		return ((adapter->num_rx_desc + rxr->next_to_check) -
-		    rxr->next_to_refresh - 1); 
-}
 
 #define	EM_CORE_LOCK_INIT(_sc, _name) \
 	mtx_init(&(_sc)->core_mtx, _name, "EM Core Lock", MTX_DEF)
