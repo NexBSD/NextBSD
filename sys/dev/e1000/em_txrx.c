@@ -451,7 +451,7 @@ em_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 	uint32_t next_pidx;
 
 	for (i = 0, next_pidx = pidx; i < count; i++) {
-		rxd = &rxr->rx_base[i];
+		rxd = &rxr->rx_base[next_pidx];
 		rxd->read.buffer_addr = htole64(paddrs[i]);
 		/* DD bits must be cleared */
 		rxd->wb.upper.status_error = 0;
