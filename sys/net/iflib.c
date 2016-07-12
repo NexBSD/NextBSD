@@ -932,7 +932,7 @@ iflib_netmap_rxsync(struct netmap_kring *kring, int flags)
 			/*
 			 * XXX we should be batching this operation - TODO
 			 */
-			ctx->isc_rxd_refill(ctx->ifc_softc, rxq->ifr_id, fl->ifl_id, nic_i, &paddr, &vaddr, 1);
+			ctx->isc_rxd_refill(ctx->ifc_softc, rxq->ifr_id, fl->ifl_id, nic_i, &paddr, &vaddr, 1, fl->ifl_buf_size);
 			bus_dmamap_sync(fl->ifl_ifdi->idi_tag, fl->ifl_sds[nic_i].ifsd_map,
 			    BUS_DMASYNC_PREREAD);
 			nm_i = nm_next(nm_i, lim);
@@ -1024,7 +1024,7 @@ iflib_netmap_rxq_init(if_ctx_t ctx, iflib_rxq_t rxq)
 			vaddr = addr = PNMB(na, slot + sj, &paddr);
 			netmap_load_map(na, rxq->ifr_fl[0].ifl_ifdi->idi_tag, sd->ifsd_map, addr);
 			/* Update descriptor and the cached value */
-			ctx->isc_rxd_refill(ctx->ifc_softc, rxq->ifr_id, 0 /* fl_id */, i, &paddr, &vaddr, 1);
+			ctx->isc_rxd_refill(ctx->ifc_softc, rxq->ifr_id, 0 /* fl_id */, i, &paddr, &vaddr, 1, rxq->ifr_fl[0].ifl_buf_size);
 	}
 	/* preserve queue */
 	if (ctx->ifc_ifp->if_capenable & IFCAP_NETMAP) {
@@ -1391,7 +1391,7 @@ iflib_txsd_free(if_ctx_t ctx, iflib_txq_t txq, int i)
 		bus_dmamap_unload(txq->ift_desc_tag,
 				  txq->ift_sds.ifsd_map[i]);
 	}
-	m_freem(*mp);
+	m_free(*mp);
 	DBG_COUNTER_INC(tx_frees);
 	*mp = NULL;
 }
@@ -1628,7 +1628,7 @@ _iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 		}
 		if (n == 0 || i == IFLIB_MAX_RX_REFRESH) {
 			ctx->isc_rxd_refill(ctx->ifc_softc, fl->ifl_rxq->ifr_id, fl->ifl_id, pidx,
-								 fl->ifl_bus_addrs, fl->ifl_vm_addrs, i);
+								 fl->ifl_bus_addrs, fl->ifl_vm_addrs, i, fl->ifl_buf_size);
 			i = 0;
 			pidx = fl->ifl_pidx;
 		}
@@ -1991,13 +1991,24 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri)
 	caddr_t cl;
 
 	i = 0;
+	mh = NULL;
 	do {
 		sd = rxd_frag_to_sd(rxq, &ri->iri_frags[i], &cltype, TRUE);
 
 		MPASS(sd->ifsd_cl != NULL);
 		MPASS(sd->ifsd_m != NULL);
+
+		/* Don't include zero-length frags */
+		if (ri->iri_frags[i].irf_len == 0) {
+			/* XXX we can save the cluster here, but not the mbuf */
+			m_init(sd->ifsd_m, M_NOWAIT, MT_DATA, 0);
+			m_free(sd->ifsd_m);
+			sd->ifsd_m = NULL;
+			continue;
+		}
+
 		m = sd->ifsd_m;
-		if (i == 0) {
+		if (mh == NULL) {
 			flags = M_PKTHDR|M_EXT;
 			mh = mt = m;
 			padlen = ri->iri_pad;
@@ -2020,7 +2031,7 @@ assemble_segments(iflib_rxq_t rxq, if_rxd_info_t ri)
 		 */
 		m->m_data += padlen;
 		ri->iri_len -= padlen;
-		m->m_len = ri->iri_len;
+		m->m_len = ri->iri_frags[i].irf_len;
 	} while (++i < ri->iri_nfrags);
 
 	return (mh);
@@ -2036,13 +2047,14 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 	iflib_rxsd_t sd;
 
 	/* should I merge this back in now that the two paths are basically duplicated? */
-	if (ri->iri_len <= IFLIB_RX_COPY_THRESH) {
+	if (ri->iri_nfrags == 1 &&
+	    ri->iri_frags[0].irf_len <= IFLIB_RX_COPY_THRESH) {
 		sd = rxd_frag_to_sd(rxq, &ri->iri_frags[0], NULL, FALSE);
 		m = sd->ifsd_m;
 		sd->ifsd_m = NULL;
 		m_init(m, M_NOWAIT, MT_DATA, M_PKTHDR);
 		memcpy(m->m_data, sd->ifsd_cl, ri->iri_len);
-		m->m_len = ri->iri_len;
+		m->m_len = ri->iri_frags[0].irf_len;
        } else {
 		m = assemble_segments(rxq, ri);
 	}
@@ -2475,7 +2487,6 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			mp = &ifsd_m[next];
 			*mp = m;
 			m = m->m_next;
-			(*mp)->m_next = NULL;
 			if (__predict_false((*mp)->m_len == 0)) {
 				m_free(*mp);
 				*mp = NULL;
@@ -2526,7 +2537,6 @@ iflib_busdma_load_mbuf_sg(iflib_txq_t txq, bus_dma_tag_t tag, bus_dmamap_t map,
 			count++;
 			tmp = m;
 			m = m->m_next;
-			tmp->m_next = NULL;
 		} while (m != NULL);
 		*nsegs = i;
 	}
@@ -2757,7 +2767,7 @@ iflib_tx_desc_free(iflib_txq_t txq, int n)
 				/* XXX we don't support any drivers that batch packets yet */
 				MPASS(m->m_nextpkt == NULL);
 
-				m_freem(m);
+				m_free(m);
 				ifsd_m[cidx] = NULL;
 #if MEMORY_LOGGING
 				txq->ift_dequeued++;
@@ -2853,7 +2863,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 	if (__predict_false(ctx->ifc_flags & IFC_QFLUSH)) {
 		DBG_COUNTER_INC(txq_drain_flushing);
 		for (i = 0; i < avail; i++) {
-			m_freem(r->items[(cidx + i) & (r->size-1)]);
+			m_free(r->items[(cidx + i) & (r->size-1)]);
 			r->items[(cidx + i) & (r->size-1)] = NULL;
 		}
 		return (avail);
