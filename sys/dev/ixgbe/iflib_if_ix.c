@@ -440,6 +440,13 @@ static struct if_shared_ctx ixgbe_sctx_init = {
 	.isc_driver_version = ixgbe_driver_version,
 	.isc_txrx = &ixgbe_txrx,
 	.isc_driver = &ixgbe_if_driver,
+
+	.isc_nrxd_min = MIN_RXD,
+	.isc_ntxd_min = MIN_TXD,
+	.isc_nrxd_max = MAX_RXD,
+	.isc_ntxd_max = MAX_TXD,
+	.isc_nrxd_default = DEFAULT_RXD,
+	.isc_ntxd_default = DEFAULT_TXD,
 };
 
 if_shared_ctx_t ixgbe_sctx = &ixgbe_sctx_init;
@@ -976,20 +983,6 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 		hw->phy.smart_speed = ixgbe_smart_speed;
 		scctx->isc_tx_nsegments = IXGBE_82599_SCATTER;
 		scctx->isc_msix_bar = PCIR_BAR(MSIX_82599_BAR);
-	}
-	if (scctx->isc_ntxd == 0)
-		scctx->isc_ntxd = DEFAULT_TXD;
-	if (scctx->isc_nrxd == 0)
-		scctx->isc_nrxd = DEFAULT_RXD;
-	if (scctx->isc_nrxd < MIN_RXD || scctx->isc_nrxd > MAX_RXD) {
-		device_printf(dev, "nrxd: %d not within permitted range of %d-%d setting to default value: %d\n",
-			      scctx->isc_nrxd, MIN_RXD, MAX_RXD, DEFAULT_RXD);
-		scctx->isc_nrxd = DEFAULT_RXD;
-	}
-	if (scctx->isc_ntxd < MIN_TXD || scctx->isc_ntxd > MAX_TXD) {
-		device_printf(dev, "ntxd: %d not within permitted range of %d-%d setting to default value: %d\n",
-			      scctx->isc_ntxd, MIN_TXD, MAX_TXD, DEFAULT_TXD);
-		scctx->isc_ntxd = DEFAULT_TXD;
 	}
 	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc) + sizeof(u32), DBA_ALIGN),
 	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
