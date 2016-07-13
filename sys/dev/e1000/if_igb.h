@@ -108,7 +108,7 @@
  *   descriptors should meet the following condition.
  *      (num_tx_desc * sizeof(struct e1000_tx_desc)) % 128 == 0
  */
-#define IGB_MIN_TXD		256
+#define IGB_MIN_TXD		128
 #define IGB_DEFAULT_TXD		1024
 #define IGB_MAX_TXD		4096
 
@@ -123,7 +123,7 @@
  *   descriptors should meet the following condition.
  *      (num_rx_desc * sizeof(struct e1000_rx_desc)) % 128 == 0
  */
-#define IGB_MIN_RXD		256
+#define IGB_MIN_RXD		128
 #define IGB_DEFAULT_RXD 1024
 #define IGB_MAX_RXD		4096
 
