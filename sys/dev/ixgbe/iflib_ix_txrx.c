@@ -54,7 +54,7 @@ static void ixgbe_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx);
 static int ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx, bool clear);
 
 static void ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
-				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count);
+				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count, uint16_t buf_len);
 static void ixgbe_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx);
 static int ixgbe_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx);
 static int ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri);
@@ -99,8 +99,9 @@ static int
 ixgbe_tx_ctx_setup(struct ixgbe_adv_tx_context_desc *TXD, if_pkt_info_t pi)
 {
 	u32 vlan_macip_lens, type_tucmd_mlhl;
-	u32 olinfo_status, mss_l4len_idx, pktlen;
+	u32 olinfo_status, mss_l4len_idx, pktlen, offload;
 
+	offload = TRUE;
 	olinfo_status = mss_l4len_idx = vlan_macip_lens = type_tucmd_mlhl = 0;
 	/* VLAN MACLEN IPLEN */
 	vlan_macip_lens |= (htole16(pi->ipi_vtag) << IXGBE_ADVTXD_VLAN_SHIFT);
@@ -125,7 +126,7 @@ ixgbe_tx_ctx_setup(struct ixgbe_adv_tx_context_desc *TXD, if_pkt_info_t pi)
 	} else if (pi->ipi_flags & IPI_TX_IPV6)
 		type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_IPV6;
 	else
-		goto no_offloads;
+		offload = FALSE;
 
 	vlan_macip_lens |= pi->ipi_ip_hlen;
 
@@ -133,25 +134,29 @@ ixgbe_tx_ctx_setup(struct ixgbe_adv_tx_context_desc *TXD, if_pkt_info_t pi)
 	case IPPROTO_TCP:
 		if (pi->ipi_csum_flags & CSUM_TCP)
 			type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_L4T_TCP;
+		else
+			offload = FALSE;
 		break;
 	case IPPROTO_UDP:
 		if (pi->ipi_csum_flags & CSUM_UDP)
 			type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_L4T_UDP;
+		else
+			offload = FALSE;
 		break;
-#ifdef CSUM_SCTP
 	case IPPROTO_SCTP:
 		if (pi->ipi_csum_flags & CSUM_SCTP)
 			type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_L4T_SCTP;
+		else
+			offload = FALSE;
 		break;
-#endif
 	default:
-		goto no_offloads;
+		offload = FALSE;
 		break;
 	}
 /* Insert L4 checksum into data descriptors */
-	olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
+	if (offload)
+		olinfo_status |= IXGBE_TXD_POPTS_TXSM << 8;
 
-no_offloads:
 	type_tucmd_mlhl |= IXGBE_ADVTXD_DCMD_DEXT | IXGBE_ADVTXD_DTYP_CTXT;
 
 	/* Now copy bits into descriptor */
@@ -320,7 +325,7 @@ ixgbe_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool
 
 static void
 ixgbe_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
-				 uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count)
+				 uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count, uint16_t buf_len)
 {
 	struct adapter *sc       = arg;
 	struct ix_rx_queue *que     = &sc->rx_queues[rxqid];
@@ -431,6 +436,7 @@ ixgbe_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		}
 		ri->iri_frags[i].irf_flid = 0;
 		ri->iri_frags[i].irf_idx = cidx;
+		ri->iri_frags[i].irf_len = len;
 		if (++cidx == adapter->shared->isc_nrxd)
 			cidx = 0;
 		i++;
