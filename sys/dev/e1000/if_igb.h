@@ -105,7 +105,7 @@
  *   Increasing this value allows the driver to queue more transmits. Each
  *   descriptor is 16 bytes.
  *   Since TDLEN should be multiple of 128bytes, the number of transmit
- *   desscriptors should meet the following condition.
+ *   descriptors should meet the following condition.
  *      (num_tx_desc * sizeof(struct e1000_tx_desc)) % 128 == 0
  */
 #define IGB_MIN_TXD		256
@@ -120,8 +120,8 @@
  *   Each descriptor is 16 bytes.  A receive buffer is also allocated for each
  *   descriptor. The maximum MTU size is 16110.
  *   Since TDLEN should be multiple of 128bytes, the number of transmit
- *   desscriptors should meet the following condition.
- *      (num_tx_desc * sizeof(struct e1000_tx_desc)) % 128 == 0
+ *   descriptors should meet the following condition.
+ *      (num_rx_desc * sizeof(struct e1000_rx_desc)) % 128 == 0
  */
 #define IGB_MIN_RXD		256
 #define IGB_DEFAULT_RXD 1024
@@ -241,12 +241,12 @@
 					  ((hw->mac.type <= e1000_82576) ? 16 : 8))
 #define IGB_RX_HTHRESH			8
 #define IGB_RX_WTHRESH			((hw->mac.type == e1000_82576 && \
-					  adapter->msix_mem) ? 1 : 4)
+					  (adapter->intr_type == IFLIB_INTR_MSIX)) ? 1 : 4)
 
 #define IGB_TX_PTHRESH			((hw->mac.type == e1000_i354) ? 20 : 8)
 #define IGB_TX_HTHRESH			1
 #define IGB_TX_WTHRESH			((hw->mac.type != e1000_82575 && \
-                                          adapter->msix_mem) ? 1 : 16)
+                                          (adapter->msix_mem) ? 1 : 16)
 
 #define MAX_NUM_MULTICAST_ADDRESSES     128
 #define PCI_ANY_ID                      (~0U)
@@ -332,25 +332,19 @@ struct igb_dma_alloc {
         int                     dma_nseg;
 };
 
-
-
-
 /*
  * The transmit ring, one per queue
  */
 struct tx_ring {
 	struct adapter		*adapter;
-	struct igb_queue    *que;
+	struct igb_tx_queue     *que;
 	u32			me;
-	u32         tail; 
+	u32                     tail; 
 	int			watchdog_time;
 	union e1000_adv_tx_desc	*tx_base;
 	struct igb_tx_buf	*tx_buffers;
-	uint64_t            tx_paddr; 
+	uint64_t                tx_paddr; 
 	volatile u16		tx_avail;
-	u16			next_avail_desc;
-	u16			next_to_clean;
-	u16			num_desc;
 	enum {
 	    IGB_QUEUE_IDLE = 1,
 	    IGB_QUEUE_WORKING = 2,
@@ -358,12 +352,7 @@ struct tx_ring {
 	    IGB_QUEUE_DEPLETED = 8,
 	}			queue_status;
 	u32			txd_cmd;
-	bus_dma_tag_t		txtag;
-	char			mtx_name[16];
-#ifndef IGB_LEGACY_TX
-	struct buf_ring		*br;
-	struct task		txq_task;
-#endif
+
 	u32			bytes;  /* used for AIM */
 	u32			packets;
 	/* Soft Stats */
@@ -379,7 +368,7 @@ struct tx_ring {
  */
 struct rx_ring {
 	struct adapter		*adapter;
-	struct igb_queue    *que;
+	struct igb_rx_queue     *que;
 	u32			        me;
 	u32                 tail; 
 	union e1000_adv_rx_desc	*rx_base;
@@ -387,17 +376,7 @@ struct rx_ring {
 	struct lro_ctrl		lro;
 	bool			lro_enabled;
 	bool			hdr_split;
-	u32			next_to_refresh;
-	u32			next_to_check;
 	struct igb_rx_buf	*rx_buffers;
-	bus_dma_tag_t		htag;		/* dma tag for rx head */
-	bus_dma_tag_t		ptag;		/* dma tag for rx packet */
-	/*
-	 * First/last mbuf pointers, for
-	 * collecting multisegment RX packets.
-	 */
-	struct mbuf	       *fmp;
-	struct mbuf	       *lmp;
 
 	u32			bytes;
 	u32			packets;
@@ -415,18 +394,23 @@ struct rx_ring {
 ** Driver queue struct: this is the interrupt container
 **  for the associated tx and rx ring.
 */
-struct igb_queue {
+struct igb_tx_queue {
+	struct adapter		*adapter;
+	struct tx_ring		txr;
+	u32                     me;
+	u32			eims;
+	u32                     msix;
+};
+
+struct igb_rx_queue {
 	struct adapter		*adapter;
 	u32			msix;		/* This queue's MSIX vector */
 	u32			eims;		/* This queue's EIMS bit */
 	u32			eitr_setting;
-	u32         me; 
+	u32                     me; 
 	struct resource		*res;
 	void			*tag;
-	struct tx_ring		txr;
 	struct rx_ring		rxr;
-	struct task		que_task;
-	struct taskqueue	*tq;
 	u64			irqs;
 
 	struct if_irq           que_irq; 
@@ -435,7 +419,8 @@ struct igb_queue {
 struct adapter {
 	if_softc_ctx_t shared;
 	if_ctx_t ctx; 
-#define num_queues shared->isc_nqsets
+#define tx_num_queues shared->isc_ntxqsets
+#define rx_num_queues shared->isc_nrxqsets
 #define max_frame_size shared->isc_max_frame_size
 #define intr_type shared->isc_intr
 	struct ifnet		*ifp;
@@ -445,10 +430,12 @@ struct adapter {
 	struct device		*dev;
 	struct cdev		*led_dev;
 
-	struct if_irq    irq; 
+	struct if_irq           irq; 
 	struct resource		*pci_mem;
 	int			memrid;
 
+	struct igb_tx_queue     *tx_queues;
+	struct igb_rx_queue     *rx_queues; 
 	/*
 	 * Interrupt resources: this set is
 	 * either used for legacy, or for Link
@@ -458,19 +445,9 @@ struct adapter {
 	struct resource 	*res;
 
 	struct ifmedia		*media;
-	struct callout		timer;
-	int			msix;
 	int			if_flags;
 	int			pause_frames;
 
-	struct mtx		core_mtx;
-
-	eventhandler_tag 	vlan_attach;
-	eventhandler_tag 	vlan_detach;
-
-	u16			num_vlans;
-	u32         num_rx_desc;
-	u32         num_tx_desc;
 
 	/*
 	** Shadow VFTA table, this is needed because
@@ -484,11 +461,11 @@ struct adapter {
 	u32			optics;
 	u32			fc; /* local flow ctrl setting */
 	int			advertise;  /* link speeds */
-	bool		link_active;
+	bool		        link_active;
 	u16			num_segs;
 	u16			link_speed;
-	bool		link_up;
-	u32 		linkvec;
+	bool		        link_up;
+	u32 		        linkvec;
 	u16			link_duplex;
 	u32			dmac;
 	int			link_mask;
@@ -504,15 +481,7 @@ struct adapter {
 	struct grouptask link_task;  /* Link tasklet */
 	struct grouptask mod_task;   /* SFP tasklet */
 	struct grouptask msf_task;   /* Multispeed Fiber */
-	struct taskqueue *tq;
 
-	/*
-	** Queues: 
-	**   This is the irq holder, it has
-	**   and RX/TX pair or rings associated
-	**   with it.
-	*/
-	struct igb_queue	*queues;
 	u64			        que_mask;
 
 	/* Multicast array memory */
@@ -523,9 +492,6 @@ struct adapter {
 	unsigned long   	dropped_pkts;
 	unsigned long		eint_mask;
 	unsigned long		int_mask;
-	unsigned long		link_irq;
-	unsigned long   	mbuf_defrag_failed;
-	unsigned long		no_tx_dma_setup;
 	unsigned long		packet_buf_alloc_rx;
 	unsigned long		packet_buf_alloc_tx;
 	unsigned long		rx_control;
@@ -561,9 +527,7 @@ typedef struct _igb_vendor_info_t {
 } igb_vendor_info_t;
 
 struct igb_tx_buf {
-	union e1000_adv_tx_desc	*eop;
-	struct mbuf	*m_head;
-	bus_dmamap_t	map;
+  union e1000_adv_tx_desc *eop; 
 };
 
 struct igb_rx_buf {
@@ -573,20 +537,6 @@ struct igb_rx_buf {
 	bus_dmamap_t	pmap;	/* bus_dma map for packet */
 };
 
-/*
-** Find the number of unrefreshed RX descriptors
-*/
-static inline u16
-igb_rx_unrefreshed(struct rx_ring *rxr)
-{
-	struct adapter  *adapter = rxr->adapter;
- 
-	if (rxr->next_to_check > rxr->next_to_refresh)
-		return (rxr->next_to_check - rxr->next_to_refresh - 1);
-	else
-		return ((adapter->num_rx_desc + rxr->next_to_check) -
-		    rxr->next_to_refresh - 1);
-}
 
 #define	IGB_CORE_LOCK_INIT(_sc, _name) \
 	mtx_init(&(_sc)->core_mtx, _name, "IGB Core Lock", MTX_DEF)
