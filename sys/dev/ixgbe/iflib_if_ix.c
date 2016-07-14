@@ -116,7 +116,7 @@ static void ixgbe_if_stop(if_ctx_t ctx);
 static void ixgbe_if_init(if_ctx_t ctx);
 void ixgbe_if_enable_intr(if_ctx_t ctx);
 static void ixgbe_if_disable_intr(if_ctx_t ctx);
-static void ixgbe_if_queue_intr_enable(if_ctx_t ctx, uint16_t qid);
+static int ixgbe_if_queue_intr_enable(if_ctx_t ctx, uint16_t qid);
 static void ixgbe_if_media_status(if_ctx_t ctx, struct ifmediareq * ifmr);
 static int ixgbe_if_media_change(if_ctx_t ctx);
 static int ixgbe_if_msix_intr_assign(if_ctx_t, int);
@@ -3930,13 +3930,14 @@ ixgbe_if_disable_intr(if_ctx_t ctx)
 }
 
 
-static void
+static int
 ixgbe_if_queue_intr_enable(if_ctx_t ctx, uint16_t rxqid)
 {
 	struct adapter	*adapter = iflib_get_softc(ctx);
 	struct ix_rx_queue *que = &adapter->rx_queues[rxqid];
 
 	ixgbe_enable_queue(adapter, que->rxr.me);
+	return (0);
 }
  
 /*
