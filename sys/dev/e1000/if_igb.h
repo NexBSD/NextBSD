@@ -478,7 +478,7 @@ struct adapter {
 
 	/* Support for pluggable optics */
 	bool			 sfp_probe;
-	struct grouptask link_task;  /* Link tasklet */
+
 	struct grouptask mod_task;   /* SFP tasklet */
 	struct grouptask msf_task;   /* Multispeed Fiber */
 

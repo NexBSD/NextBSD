@@ -175,6 +175,8 @@ static void	igb_release_manageability(struct adapter *);
 static void     igb_get_hw_control(struct adapter *);
 static void     igb_release_hw_control(struct adapter *);
 static void     igb_enable_wakeup(device_t);
+static void     igb_enable_queue(struct adapter *adapter, struct igb_rx_queue *que);
+static int      igb_if_queue_intr_enable(if_ctx_t ctx, uint16_t rxqid);
 
 static int	igb_msix_que(void *);
 static int	igb_msix_link(void *);
@@ -241,7 +243,8 @@ static device_method_t igb_if_methods[] = {
 	DEVMETHOD(ifdi_timer, igb_if_timer),
 	DEVMETHOD(ifdi_vlan_register, igb_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, igb_if_vlan_unregister),
-	DEVMETHOD(ifdi_get_counter, igb_if_get_counter), 
+	DEVMETHOD(ifdi_get_counter, igb_if_get_counter),
+	DEVMETHOD(ifdi_queue_intr_enable, igb_if_queue_intr_enable), 
 	DEVMETHOD_END
 };
 
@@ -517,8 +520,6 @@ igb_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxq
 		 txr->tx_paddr = paddrs[i*ntxqs];
 	}		 
 
-	iflib_config_gtask_init(ctx, &adapter->link_task, igb_handle_link, "link_task");
-	
 	device_printf(iflib_get_dev(ctx), "allocated for %d queues\n", adapter->tx_num_queues);
 	return (0);
 
@@ -1041,9 +1042,6 @@ igb_if_init(if_ctx_t ctx)
 	/* Don't lose promiscuous settings */
 	igb_if_set_promisc(ctx, if_getflags(ifp));
 
-	ifp->if_drv_flags |= IFF_DRV_RUNNING;
-	ifp->if_drv_flags &= ~IFF_DRV_OACTIVE;
-
 	e1000_clear_hw_cntrs_base_generic(&adapter->hw);
 
 	if (adapter->intr_type == IFLIB_INTR_MSIX) /* Set up queue routing */
@@ -1111,6 +1109,24 @@ igb_intr(void *arg)
 	return (FILTER_SCHEDULE_THREAD); 
 }
 
+static int
+igb_if_queue_intr_enable(if_ctx_t ctx, uint16_t rxqid)
+{
+        struct adapter	*adapter = iflib_get_softc(ctx);
+	struct igb_rx_queue *que = &adapter->rx_queues[rxqid];
+
+	igb_enable_queue(adapter, que);
+	return (0);
+}
+
+static void
+igb_enable_queue(struct adapter *adapter, struct igb_rx_queue *que)
+{
+	E1000_WRITE_REG(&adapter->hw, E1000_EIMS, que->eims);
+	device_printf(iflib_get_dev(adapter->ctx), "eims %x\n", que->eims);
+}
+
+
 /*********************************************************************
  *
  *  MSIX Que Interrupt Service routine
@@ -1122,19 +1138,12 @@ igb_msix_que(void *arg)
 	struct igb_rx_queue *que = arg;
 	struct adapter *adapter = que->adapter;
 	
-	struct ifnet   *ifp = iflib_get_ifp(adapter->ctx); 
 	struct rx_ring *rxr = &que->rxr;
 	u32		newitr = 0;
 
-	/* Ignore spurious interrupts */
-	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0)
-		return 0;
-
-	E1000_WRITE_REG(&adapter->hw, E1000_EIMC, que->eims);
 	++que->irqs;
-
 	if (adapter->enable_aim == FALSE)
-		return (FILTER_HANDLED); 
+		return (FILTER_SCHEDULE_THREAD);
 	/*
 	** Do Adaptive Interrupt Moderation:
         **  - Write out last calculated setting
@@ -1147,9 +1156,6 @@ igb_msix_que(void *arg)
  
         que->eitr_setting = 0;
 
-	 /* Idle, do nothing */
-        if (rxr->bytes == 0)
-                return (FILTER_STRAY); 
                                 
         /* Used half Default if sub-gig */
         if (adapter->link_speed != 1000)
@@ -1180,8 +1186,6 @@ igb_msix_que(void *arg)
          rxr->bytes = 0;
 		rxr->rx_bytes = 0; 
         rxr->packets = 0;
-
-
 	return (FILTER_SCHEDULE_THREAD); 
 }
 
@@ -1655,7 +1659,7 @@ igb_if_msix_intr_assign(if_ctx_t ctx, int msix)
 	E1000_WRITE_REG(&adapter->hw, E1000_IMC, ~0);
 	E1000_WRITE_FLUSH(&adapter->hw);
 
-	for (i = 0; i < adapter->rx_num_queues; i++, vector++, rx_que++, tx_que++) {
+	for (i = 0; i < adapter->rx_num_queues; i++, vector++, rx_que++) {
 		rid = vector +1;
 		printf("rx_que->me=%d\n", rx_que->me);
 		snprintf(buf, sizeof(buf), "rxq%d", i); 
@@ -1668,19 +1672,22 @@ igb_if_msix_intr_assign(if_ctx_t ctx, int msix)
 		}
 	
 		rx_que->msix = vector;
-		if (adapter->hw.mac.type == e1000_82575) {
-			rx_que->eims = E1000_EICR_TX_QUEUE0 << i;
-			tx_que->eims = E1000_EICR_TX_QUEUE0 << i;
-		} else {
+		if (adapter->hw.mac.type == e1000_82575)
+			rx_que->eims = E1000_EICR_TX_QUEUE0 << vector;
+		else
 			rx_que->eims = 1 << vector;
-			tx_que->eims = 1 << vector;
-		}
 	}
 
-	for (i = 0; i < adapter->tx_num_queues; i++) {
+	for (i = 0; i < adapter->tx_num_queues; i++, tx_que++) {
 		snprintf(buf, sizeof(buf), "txq%d", i);
-		tx_que = &adapter->tx_queues[i];
+
 		iflib_softirq_alloc_generic(ctx, rid, IFLIB_INTR_TX, tx_que, tx_que->txr.me, buf); 
+
+		if (adapter->hw.mac.type == e1000_82575)
+			tx_que->eims = E1000_EICR_TX_QUEUE0 << (i %  adapter->rx_num_queues);
+		else
+			tx_que->eims = 1 << (i %  adapter->rx_num_queues);
+
 	}
 	
 	rid = vector + 1;
