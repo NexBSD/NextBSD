@@ -259,14 +259,6 @@ static driver_t igb_if_driver = {
 
 static SYSCTL_NODE(_hw, OID_AUTO, igb, CTLFLAG_RD, 0, "IGB driver parameters");
 
-/* Descriptor defaults */
-static int igb_rxd = IGB_DEFAULT_RXD;
-static int igb_txd = IGB_DEFAULT_TXD;
-SYSCTL_INT(_hw_igb, OID_AUTO, rxd, CTLFLAG_RDTUN, &igb_rxd, 0,
-    "Number of receive descriptors per queue");
-SYSCTL_INT(_hw_igb, OID_AUTO, txd, CTLFLAG_RDTUN, &igb_txd, 0,
-    "Number of transmit descriptors per queue");
-
 /*
 ** AIM: Adaptive Interrupt Moderation
 ** which means that the interrupt rate
@@ -340,6 +332,13 @@ static struct if_shared_ctx igb_sctx_init = {
 	.isc_driver_version = igb_driver_version,
 	.isc_txrx = &igb_txrx,
 	.isc_driver = &igb_if_driver,
+
+	.isc_nrxd_min = IGB_MIN_RXD,
+	.isc_ntxd_min = IGB_MIN_TXD,
+	.isc_nrxd_max = IGB_MAX_RXD,
+	.isc_ntxd_max = IGB_MAX_TXD,
+	.isc_nrxd_default = IGB_DEFAULT_RXD,
+	.isc_ntxd_default = IGB_DEFAULT_TXD,
 };
 
 if_shared_ctx_t igb_sctx = &igb_sctx_init; 
@@ -412,15 +411,17 @@ static int igb_get_regs(SYSCTL_HANDLER_ARGS)
 	regs_buff[19] = E1000_READ_REG(hw, E1000_TDFT);
 	regs_buff[20] = E1000_READ_REG(hw, E1000_TDFHS);
 	regs_buff[21] = E1000_READ_REG(hw, E1000_TDFPC);
+
+	regs_buff[22] = E1000_READ_REG(hw, E1000_EICS);
+	regs_buff[23] = E1000_READ_REG(hw, E1000_EIAM);
+	regs_buff[24] = E1000_READ_REG(hw, E1000_EIMS);
+	regs_buff[25] = E1000_READ_REG(hw, E1000_IMS);
 	
 	sbuf_printf(sb, "General Registers\n");
 	sbuf_printf(sb, "\tCTRL\t %08x\n", regs_buff[0]); 
 	sbuf_printf(sb, "\tSTATUS\t %08x\n", regs_buff[1]);
 	sbuf_printf(sb, "\tCTRL_EXIT\t %08x\n\n", regs_buff[2]);
 
-	sbuf_printf(sb, "Interrupt Registers\n");
-	sbuf_printf(sb, "\tICR\t %08x\n\n", regs_buff[3]); 
-	
 	sbuf_printf(sb, "RX Registers\n");
 	sbuf_printf(sb, "\tRCTL\t %08x\n", regs_buff[4]); 
 	sbuf_printf(sb, "\tRDLEN\t %08x\n", regs_buff[5]);
@@ -443,10 +444,18 @@ static int igb_get_regs(SYSCTL_HANDLER_ARGS)
 	sbuf_printf(sb, "\tTDFHS\t %08x\n", regs_buff[20]);
 	sbuf_printf(sb, "\tTDFPC\t %08x\n\n", regs_buff[21]);
 
+	sbuf_printf(sb, "Interrupt Registers\n");
+	sbuf_printf(sb, "\tICR\t %08x\n\n", regs_buff[3]);
+        sbuf_printf(sb, "\tE1000_EICS\t %08x\n", regs_buff[22]);
+	sbuf_printf(sb, "\tE1000_EIAM\t %08x\n", regs_buff[23]);
+	sbuf_printf(sb, "\tE1000_EIMS\t %08x\n", regs_buff[24]);
+	sbuf_printf(sb, "\tE1000_IMS\t %08x\n", regs_buff[25]);
+
         for (j = 0; j < min(nrxd, 128); j++) {
 		u32 staterr = le32toh(rxr->rx_base[j].wb.upper.status_error);
 		u32 length =  le32toh(rxr->rx_base[j].wb.upper.length);
-		sbuf_printf(sb, "\tReceive Descriptor Address %d: %08lx  Error:%d  Length:%d\n", j, rxr->rx_base[j].read.pkt_addr, staterr, length);
+		sbuf_printf(sb, "\tRXD addr %d: %09lx  Error:%04x DD: %d EOP: %d Length:%04d\n", j,
+			    rxr->rx_base[j].read.pkt_addr, staterr, staterr & E1000_RXD_STAT_DD, !!(staterr & E1000_RXD_STAT_EOP), length);
 	}
 
 	for (j = 0; j < min(ntxd, 128); j++) {
@@ -620,21 +629,6 @@ igb_if_attach_pre(if_ctx_t ctx)
 	scctx = adapter->shared = iflib_get_softc_ctx(ctx);
 	adapter->media = iflib_get_media(ctx);
 
-	if (scctx->isc_ntxd == 0)
-		scctx->isc_ntxd = IGB_DEFAULT_TXD;
-	if (scctx->isc_nrxd == 0)
-		scctx->isc_nrxd = IGB_DEFAULT_RXD;
-	if (scctx->isc_nrxd < IGB_MIN_RXD || scctx->isc_nrxd > IGB_MAX_RXD) {
-		device_printf(dev, "nrxd: %d not within permitted range of %d-%d setting to default value: %d\n",
-			      scctx->isc_nrxd, IGB_MIN_RXD, IGB_MAX_RXD, IGB_DEFAULT_RXD);
-		scctx->isc_nrxd = IGB_DEFAULT_RXD;
-	}
-	if (scctx->isc_ntxd < IGB_MIN_TXD || scctx->isc_ntxd > IGB_MAX_TXD) {
-		device_printf(dev, "ntxd: %d not within permitted range of %d-%d setting to default value: %d\n",
-			      scctx->isc_ntxd, IGB_MIN_TXD, IGB_MAX_TXD, IGB_DEFAULT_TXD);
-		scctx->isc_ntxd = IGB_DEFAULT_TXD;
-	}
-	
 	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd * sizeof(union e1000_adv_tx_desc), IGB_DBA_ALIGN),
 	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd * sizeof(union e1000_adv_rx_desc), IGB_DBA_ALIGN);
 
@@ -785,11 +779,12 @@ igb_if_attach_pre(if_ctx_t ctx)
 
 	iflib_set_mac(ctx, hw->mac.addr); 
 
-	adapter->shared->isc_msix_bar = PCIR_BAR(IGB_MSIX_BAR);
-	adapter->shared->isc_tx_nsegments = IGB_MAX_SCATTER;
-	adapter->shared->isc_tx_tso_segments_max = adapter->shared->isc_tx_nsegments;
-	adapter->shared->isc_tx_tso_size_max = IGB_TSO_SIZE;
-	adapter->shared->isc_tx_tso_segsize_max = IGB_TSO_SEG_SIZE;
+	scctx->isc_msix_bar = PCIR_BAR(IGB_MSIX_BAR);
+	scctx->isc_tx_nsegments = IGB_MAX_SCATTER;
+	scctx->isc_tx_tso_segments_max = adapter->shared->isc_tx_nsegments;
+	scctx->isc_tx_tso_size_max = IGB_TSO_SIZE;
+	scctx->isc_tx_tso_segsize_max = IGB_TSO_SEG_SIZE;
+	scctx->isc_nrxqsets_max = scctx->isc_ntxqsets_max = igb_set_num_queues(ctx);
 	
 	return(0);
 
@@ -1743,7 +1738,7 @@ igb_configure_queues(struct adapter *adapter)
 				ivar &= 0xFFFFFF00;
 				ivar |= rx_que->msix | E1000_IVAR_VALID;
 			}
-			printf("RX ivar %d\n", ivar); 
+			printf("RX ivar %x\n", ivar);
 			E1000_WRITE_REG_ARRAY(hw, E1000_IVAR0, index, ivar);
 		}
 		/* TX entries */
@@ -1759,7 +1754,7 @@ igb_configure_queues(struct adapter *adapter)
 				ivar &= 0xFFFF00FF;
 				ivar |= (tx_que->msix | E1000_IVAR_VALID) << 8;
 			}
-			printf("tx ivar %d\n", ivar); 
+			printf("TX ivar %x\n", ivar);
 			E1000_WRITE_REG_ARRAY(hw, E1000_IVAR0, index, ivar);
 			adapter->que_mask |= tx_que->eims;
 		}
@@ -2634,7 +2629,8 @@ igb_if_enable_intr(if_ctx_t ctx)
 	/* With RSS set up what to auto clear */
 	if (adapter->intr_type == IFLIB_INTR_MSIX) {
 		u32 mask = (adapter->que_mask | adapter->link_mask);
-		device_printf(iflib_get_dev(ctx), "que mask %lu\n", adapter->que_mask);
+
+		device_printf(iflib_get_dev(ctx), "enable_mask:%x\n", mask);
 		E1000_WRITE_REG(&adapter->hw, E1000_EIAC, mask);
 		E1000_WRITE_REG(&adapter->hw, E1000_EIAM, mask);
 		E1000_WRITE_REG(&adapter->hw, E1000_EIMS, mask);

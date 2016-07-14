@@ -383,9 +383,9 @@ static void igb_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 	uint32_t next_pidx;
 
 	for (i = 0, next_pidx = pidx; i < count; i++) {
-	  rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
-	  if (++next_pidx == scctx->isc_nrxd)
-	    next_pidx = 0;
+		rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
+		if (++next_pidx == scctx->isc_nrxd)
+			next_pidx = 0;
 	}
 }
 
@@ -406,9 +406,9 @@ static int igb_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 	struct rx_ring *rxr      = &que->rxr;
 	union e1000_adv_rx_desc *rxd;
 	u32                      staterr = 0;
-	int                      cnt, i;
+	int                      cnt, i, iter;
 
-	for (cnt = 0, i = idx; cnt < scctx->isc_nrxd;) {
+	for (iter = cnt = 0, i = idx; iter < scctx->isc_nrxd;) {
 		rxd = &rxr->rx_base[i];
 		staterr = le32toh(rxd->wb.upper.status_error);	
 		
@@ -421,9 +421,9 @@ static int igb_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx)
 
 		if (staterr & E1000_RXD_STAT_EOP)
 			cnt++;
-
+		iter++;
 	}
-
+	device_printf(iflib_get_dev(sc->ctx), "sidx:%d eidx:%d iter=%d pktcnt=%d\n", idx, i, iter, cnt);
 	return (cnt);
 }
 
@@ -462,7 +462,7 @@ igb_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		len = le16toh(rxd->wb.upper.length);
 		ptype = le32toh(rxd->wb.lower.lo_dword.data) &  IGB_PKTTYPE_MASK;
 
-		ri->iri_len = len;
+		ri->iri_len += len;
 		rxr->bytes += ri->iri_len;
 		rxr->rx_bytes += ri->iri_len; 
 
@@ -484,6 +484,7 @@ igb_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		}
 		ri->iri_frags[i].irf_flid = 0;
 		ri->iri_frags[i].irf_idx = cidx;
+		ri->iri_frags[i].irf_len = len;
 	
 		if (++cidx == scctx->isc_nrxd)
 			cidx = 0;
