@@ -3484,34 +3484,42 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	if (ctx->ifc_sysctl_nrxqs != 0)
 		scctx->isc_nrxqsets = ctx->ifc_sysctl_nrxqs;
 
-	if (ctx->ifc_sysctl_ntxds != 0)
-		scctx->isc_ntxd = ctx->ifc_sysctl_ntxds;
-	else
-		scctx->isc_ntxd = sctx->isc_ntxd_default;
-	if (ctx->ifc_sysctl_nrxds != 0)
-		scctx->isc_nrxd = ctx->ifc_sysctl_nrxds;
-	else
-		scctx->isc_nrxd = sctx->isc_nrxd_default;
+	/* XXX change for per-queue sizes */
+	for (i = 0; i < sctx->isc_ntxqs; i++) {
+		if (ctx->ifc_sysctl_ntxds != 0)
+			scctx->isc_ntxd[i] = ctx->ifc_sysctl_ntxds;
+		else
+			scctx->isc_ntxd[i] = sctx->isc_ntxd_default;
+		if (ctx->ifc_sysctl_nrxds != 0)
+			scctx->isc_nrxd[i] = ctx->ifc_sysctl_nrxds;
+		else
+			scctx->isc_nrxd[i] = sctx->isc_nrxd_default;
+	}
 
-	if (scctx->isc_nrxd < sctx->isc_nrxd_min) {
-		device_printf(dev, "nrxd: %d less than nrxd_min %d - resetting to min\n",
-			      scctx->isc_nrxd, sctx->isc_nrxd_min);
-		scctx->isc_nrxd = sctx->isc_nrxd_min;
+	for (i = 0; i < sctx->isc_nrxqs; i++) {
+		if (scctx->isc_nrxd[i] < sctx->isc_nrxd_min) {
+			device_printf(dev, "nrxd: %d less than nrxd_min %d - resetting to min\n",
+				      scctx->isc_nrxd[i], sctx->isc_nrxd_min);
+			scctx->isc_nrxd[i] = sctx->isc_nrxd_min;
+		}
+		if (scctx->isc_nrxd[i] > sctx->isc_nrxd_max) {
+			device_printf(dev, "nrxd: %d greater than nrxd_max %d - resetting to max\n",
+				      scctx->isc_nrxd[i], sctx->isc_nrxd_max);
+			scctx->isc_nrxd[i] = sctx->isc_nrxd_max;
+		}
 	}
-	if (scctx->isc_nrxd > sctx->isc_nrxd_max) {
-		device_printf(dev, "nrxd: %d greater than nrxd_max %d - resetting to max\n",
-			      scctx->isc_nrxd, sctx->isc_nrxd_max);
-		scctx->isc_nrxd = sctx->isc_nrxd_max;
-	}
-	if (scctx->isc_ntxd < sctx->isc_ntxd_min) {
-		device_printf(dev, "ntxd: %d less than ntxd_min %d - resetting to min\n",
-			      scctx->isc_ntxd, sctx->isc_ntxd_min);
-		scctx->isc_ntxd = sctx->isc_ntxd_min;
-	}
-	if (scctx->isc_ntxd > sctx->isc_ntxd_max) {
-		device_printf(dev, "ntxd: %d greater than ntxd_max %d - resetting to max\n",
-			      scctx->isc_ntxd, sctx->isc_ntxd_max);
-		scctx->isc_ntxd = sctx->isc_ntxd_max;
+
+	for (i = 0; i < sctx->isc_ntxqs; i++) {
+		if (scctx->isc_ntxd[i] < sctx->isc_ntxd_min) {
+			device_printf(dev, "ntxd: %d less than ntxd_min %d - resetting to min\n",
+				      scctx->isc_ntxd[i], sctx->isc_ntxd_min);
+			scctx->isc_ntxd[i] = sctx->isc_ntxd_min;
+		}
+		if (scctx->isc_ntxd[i] > sctx->isc_ntxd_max) {
+			device_printf(dev, "ntxd: %d greater than ntxd_max %d - resetting to max\n",
+				      scctx->isc_ntxd[i], sctx->isc_ntxd_max);
+			scctx->isc_ntxd[i] = sctx->isc_ntxd_max;
+		}
 	}
 
 	if ((err = IFDI_ATTACH_PRE(ctx)) != 0) {
@@ -3956,11 +3964,7 @@ iflib_queues_alloc(if_ctx_t ctx)
 	iflib_txq_t txq;
 	iflib_rxq_t rxq;
 	iflib_fl_t fl = NULL;
-<<<<<<< HEAD
-	int i, j, cpu, err, txconf, rxconf, fl_ifdi_offset;
-=======
-	int i, j, err, txconf, rxconf;
->>>>>>> 094508a... Allow TX and RX CQs to be separately enabled and different sizes
+	int i, j, cpu, err, txconf, rxconf;
 	iflib_dma_info_t ifdip;
 	uint32_t *rxqsizes = scctx->isc_rxqsizes;
 	uint32_t *txqsizes = scctx->isc_txqsizes;
