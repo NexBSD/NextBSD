@@ -2947,6 +2947,7 @@ _task_fn_rx(void *context)
 	iflib_rxq_t rxq = context;
 	if_ctx_t ctx = rxq->ifr_ctx;
 	bool more;
+	int rc;
 
 	DBG_COUNTER_INC(task_fn_rxs);
 	if (__predict_false(!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING)))
@@ -2957,7 +2958,8 @@ _task_fn_rx(void *context)
 			IFDI_INTR_ENABLE(ctx);
 		else {
 			DBG_COUNTER_INC(rx_intr_enables);
-			IFDI_QUEUE_INTR_ENABLE(ctx, rxq->ifr_id);
+			rc = IFDI_QUEUE_INTR_ENABLE(ctx, rxq->ifr_id);
+			KASSERT(rc != ENOTSUP, ("MSI-X support requires queue_intr_enable, but not implemented in driver"));
 		}
 	}
 	if (__predict_false(!(if_getdrvflags(ctx->ifc_ifp) & IFF_DRV_RUNNING)))
