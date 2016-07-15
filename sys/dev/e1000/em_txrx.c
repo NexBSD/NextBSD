@@ -17,7 +17,7 @@ static void em_isc_txd_flush(void *arg, uint16_t txqid, uint32_t pidx);
 static int em_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool clear);
 
 static void em_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
-				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count);
+			      uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count, uint16_t buflen __unused);
 static void em_isc_rxd_flush(void *arg, uint16_t rxqid, uint8_t flid __unused, uint32_t pidx);
 static int em_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx);
 static int em_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri);
@@ -443,7 +443,7 @@ em_isc_txd_credits_update(void *arg, uint16_t txqid, uint32_t cidx_init, bool cl
 
 static void
 em_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
-				   uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count)
+		  uint32_t pidx, uint64_t *paddrs, caddr_t *vaddrs __unused, uint16_t count, uint16_t buflen __unused)
 {
 	struct adapter *sc = arg;
 	if_softc_ctx_t scctx = sc->shared;
