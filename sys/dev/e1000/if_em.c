@@ -3,7 +3,7 @@
 #endif
 
 #ifdef IFLIB
-#include <dev/em/iflib_if_em.c>
+#include <dev/e1000/iflib_if_em.c>
 #else
-#include <dev/em/legacy_if_em.c>
+#include <dev/e1000/legacy_if_em.c>
 #endif
