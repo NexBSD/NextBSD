@@ -3,7 +3,7 @@
 .PATH:  ${.CURDIR}/../../../dev/e1000
 KMOD    = if_em
 SRCS    = device_if.h bus_if.h pci_if.h opt_ddb.h opt_em.h opt_inet.h \
-	  opt_inet6.h 
+	  opt_inet6.h ifdi_if.h
 SRCS    += $(CORE_SRC) $(LEGACY_SRC)
 SRCS	+= $(COMMON_SHARED) $(LEGACY_SHARED) $(PCIE_SHARED)
 CORE_SRC = if_em.c e1000_osdep.c
@@ -16,6 +16,7 @@ PCIE_SHARED = e1000_80003es2lan.c e1000_ich8lan.c e1000_82571.c e1000_82575.c
 LEGACY_SHARED = e1000_82540.c e1000_82542.c e1000_82541.c e1000_82543.c
 
 CFLAGS += -I${.CURDIR}/../../../dev/e1000
+CFLAGS += -DIFLIB
 
 # DEVICE_POLLING for a non-interrupt-driven method
 #CFLAGS  += -DDEVICE_POLLING
