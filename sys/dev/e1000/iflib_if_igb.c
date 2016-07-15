@@ -1207,7 +1207,7 @@ igb_msix_link(void *arg)
 	++que->irqs;
 	MPASS(hw->back != NULL); 
 
-	icr = E1000_READ_REG(&adapter->hw, E1000_ICR);
+	icr = E1000_READ_REG(hw, E1000_ICR);
 	if (!(icr & E1000_ICR_LSC))
 		goto spurious;
 
@@ -1216,8 +1216,8 @@ igb_msix_link(void *arg)
 
 spurious:
 	/* Rearm */
-	E1000_WRITE_REG(&adapter->hw, E1000_IMS, E1000_IMS_LSC);
-	E1000_WRITE_REG(&adapter->hw, E1000_EIMS, adapter->link_mask);
+	E1000_WRITE_REG(hw, E1000_IMS, E1000_IMS_LSC);
+	E1000_WRITE_REG(hw, E1000_EIMS, adapter->link_mask);
 	return (FILTER_HANDLED); 
 }
 
