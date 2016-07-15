@@ -6,6 +6,7 @@ SYSDIR?=${.CURDIR}/../..
 
 
 SUBDIR = \
-        em_legacy
+        em_legacy \
+	em_iflib
 
 .include <bsd.subdir.mk>
