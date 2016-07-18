@@ -323,6 +323,8 @@ tcp_output(struct tcpcb *tp)
 
 	if ((td->td_pflags & TDP_ITHREAD) || (td->td_proc == &proc0))
 		flags = TP_NEEDS_DEFER;
+	if (tp->t_state != TCPS_ESTABLISHED)
+		tp->t_flags2 |= TF2_BLOCKING;
 
 	return (tcp_output_flags(tp, flags));
 }
@@ -364,8 +366,12 @@ tcp_output_flags(struct tcpcb *tp, int ctx_flags)
 #endif
 
 	if (tp->t_flags2 & TF2_TRANSMITTING) {
-		tp->t_flags2 |= TF2_SENDALOT;
-		return (0);
+		if (tp->t_flags2 & TF2_BLOCKING) {
+			msleep(tp, &inp->inp_lock, PSOCK, "tcpblk", 0);
+		} else {
+			tp->t_flags2 |= TF2_SENDALOT;
+			return (0);
+		}
 	}
 	INP_WLOCK_ASSERT(inp);
 	mtp = &mtp_stack;
@@ -1611,6 +1617,11 @@ out:
 	if (tp->t_flags2 & TF2_SENDALOT) {
 		tp->t_flags2 &= ~TF2_SENDALOT;
 		sendalot = 1;
+	}
+	if (tp->t_flags2 & TF2_BLOCKING) {
+		sendalot = 0;
+		tp->t_flags2 &= ~TF2_BLOCKING;
+		wakeup(tp);
 	}
 
 	/*

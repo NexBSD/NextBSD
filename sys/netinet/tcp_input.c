@@ -1534,7 +1534,6 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		    "SYN/FIN/RST/!EST", __func__, ti_locked));
 		INP_INFO_RLOCK_ASSERT(&V_tcbinfo);
 	} else {
-#ifdef INVARIANTS
 		if (ti_locked == TI_RLOCKED)
 			INP_INFO_RLOCK_ASSERT(&V_tcbinfo);
 		else {
@@ -1542,7 +1541,6 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			    "ti_locked: %d", __func__, ti_locked));
 			INP_INFO_UNLOCK_ASSERT(&V_tcbinfo);
 		}
-#endif
 	}
 	INP_WLOCK_ASSERT(tp->t_inpcb);
 	KASSERT(tp->t_state > TCPS_LISTEN, ("%s: TCPS_LISTEN",
@@ -3228,6 +3226,7 @@ dropafterack:
 	ti_locked = TI_UNLOCKED;
 
 	tp->t_flags |= TF_ACKNOW;
+	tp->t_flags2 |= TF2_BLOCKING;
 	if (__predict_true(tp->t_fb->tfb_tcp_output(tp) != EOWNERDEAD))
 		INP_WUNLOCK(tp->t_inpcb);
 	m_freem(m);

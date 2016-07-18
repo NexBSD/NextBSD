@@ -140,6 +140,7 @@ struct tcp_function_block {
 	uint32_t  tfb_flags;
 };
 
+
 struct tcp_function {
 	TAILQ_ENTRY(tcp_function) tf_next;
 	struct tcp_function_block *tf_fb;
@@ -368,6 +369,7 @@ struct tcpcb {
 
 #define TF2_TRANSMITTING	0x00000008 /* tcp_output is running */
 #define TF2_SENDALOT		0x00000010 /* tcp_output should continue running */
+#define TF2_BLOCKING		0x00000020 /* caller will sleep if transmit in progress */
 
 /*
  * Structure to hold TCP options that are only used during segment
