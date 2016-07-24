@@ -316,8 +316,6 @@ FBSD_1.2 {
 	pthread_getthreadid_np;
 };
 
-<<<<<<< HEAD
-
 FBSD_1.3 {
   _pthread_workqueue_additem_np;
   _pthread_workqueue_atfork_child;
