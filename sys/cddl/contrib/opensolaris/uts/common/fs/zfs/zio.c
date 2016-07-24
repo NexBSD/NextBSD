@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2011, 2015 by Delphix. All rights reserved.
+ * Copyright (c) 2011, 2016 by Delphix. All rights reserved.
  * Copyright (c) 2011 Nexenta Systems, Inc. All rights reserved.
  * Copyright (c) 2014 Integros [integros.com]
  */
@@ -128,10 +128,12 @@ SYSCTL_INT(_vfs_zfs, OID_AUTO, sync_pass_rewrite, CTLFLAG_RDTUN,
 
 boolean_t	zio_requeue_io_start_cut_in_line = B_TRUE;
 
+#ifdef illumos
 #ifdef ZFS_DEBUG
 int zio_buf_debug_limit = 16384;
 #else
 int zio_buf_debug_limit = 0;
+#endif
 #endif
 
 void
@@ -154,7 +156,7 @@ zio_init(void)
 		size_t size = (c + 1) << SPA_MINBLOCKSHIFT;
 		size_t p2 = size;
 		size_t align = 0;
-		size_t cflags = (size > zio_buf_debug_limit) ? KMC_NODEBUG : 0;
+		int cflags = zio_exclude_metadata ? KMC_NODEBUG : 0;
 
 		while (!ISP2(p2))
 			p2 &= p2 - 1;
@@ -764,9 +766,10 @@ zio_read(zio_t *pio, spa_t *spa, const blkptr_t *bp,
 zio_t *
 zio_write(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
     void *data, uint64_t size, const zio_prop_t *zp,
-    zio_done_func_t *ready, zio_done_func_t *physdone, zio_done_func_t *done,
-    void *private,
-    zio_priority_t priority, enum zio_flag flags, const zbookmark_phys_t *zb)
+    zio_done_func_t *ready, zio_done_func_t *children_ready,
+    zio_done_func_t *physdone, zio_done_func_t *done,
+    void *private, zio_priority_t priority, enum zio_flag flags,
+    const zbookmark_phys_t *zb)
 {
 	zio_t *zio;
 
@@ -785,6 +788,7 @@ zio_write(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
 	    ZIO_DDT_CHILD_WRITE_PIPELINE : ZIO_WRITE_PIPELINE);
 
 	zio->io_ready = ready;
+	zio->io_children_ready = children_ready;
 	zio->io_physdone = physdone;
 	zio->io_prop = *zp;
 
@@ -1181,6 +1185,16 @@ zio_write_bp_init(zio_t *zio)
 
 	if (!IO_IS_ALLOCATING(zio))
 		return (ZIO_PIPELINE_CONTINUE);
+
+	if (zio->io_children_ready != NULL) {
+		/*
+		 * Now that all our children are ready, run the callback
+		 * associated with this zio in case it wants to modify the
+		 * data to be written.
+		 */
+		ASSERT3U(zp->zp_level, >, 0);
+		zio->io_children_ready(zio);
+	}
 
 	ASSERT(zio->io_child_type != ZIO_CHILD_DDT);
 
@@ -2111,9 +2125,9 @@ zio_write_gang_block(zio_t *pio)
 
 		zio_nowait(zio_write(zio, spa, txg, &gbh->zg_blkptr[g],
 		    (char *)pio->io_data + (pio->io_size - resid), lsize, &zp,
-		    zio_write_gang_member_ready, NULL, NULL, &gn->gn_child[g],
-		    pio->io_priority, ZIO_GANG_CHILD_FLAGS(pio),
-		    &pio->io_bookmark));
+		    zio_write_gang_member_ready, NULL, NULL, NULL,
+		    &gn->gn_child[g], pio->io_priority,
+		    ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark));
 	}
 
 	/*
@@ -2502,7 +2516,7 @@ zio_ddt_write(zio_t *zio)
 
 		dio = zio_write(zio, spa, txg, bp, zio->io_orig_data,
 		    zio->io_orig_size, &czp, NULL, NULL,
-		    zio_ddt_ditto_write_done, dde, zio->io_priority,
+		    NULL, zio_ddt_ditto_write_done, dde, zio->io_priority,
 		    ZIO_DDT_CHILD_FLAGS(zio), &zio->io_bookmark);
 
 		zio_push_transform(dio, zio->io_data, zio->io_size, 0, NULL);
@@ -2523,7 +2537,8 @@ zio_ddt_write(zio_t *zio)
 		ddt_phys_addref(ddp);
 	} else {
 		cio = zio_write(zio, spa, txg, bp, zio->io_orig_data,
-		    zio->io_orig_size, zp, zio_ddt_child_write_ready, NULL,
+		    zio->io_orig_size, zp,
+		    zio_ddt_child_write_ready, NULL, NULL,
 		    zio_ddt_child_write_done, dde, zio->io_priority,
 		    ZIO_DDT_CHILD_FLAGS(zio), &zio->io_bookmark);
 
@@ -2775,19 +2790,10 @@ zio_vdev_io_start(zio_t *zio)
 			(void) atomic_cas_64(&spa->spa_last_io, old, new);
 	}
 
-#ifdef illumos
 	align = 1ULL << vd->vdev_top->vdev_ashift;
 
 	if (!(zio->io_flags & ZIO_FLAG_PHYSICAL) &&
 	    P2PHASE(zio->io_size, align) != 0) {
-#else
-	if (zio->io_flags & ZIO_FLAG_PHYSICAL)
-		align = 1ULL << vd->vdev_top->vdev_logical_ashift;
-	else
-		align = 1ULL << vd->vdev_top->vdev_ashift;
-
-	if (P2PHASE(zio->io_size, align) != 0) {
-#endif
 		/* Transform logical writes to be a full physical block size. */
 		uint64_t asize = P2ROUNDUP(zio->io_size, align);
 		char *abuf = NULL;
@@ -2803,7 +2809,6 @@ zio_vdev_io_start(zio_t *zio)
 		    zio_subblock);
 	}
 
-#ifdef illumos
 	/*
 	 * If this is not a physical io, make sure that it is properly aligned
 	 * before proceeding.
@@ -2813,16 +2818,14 @@ zio_vdev_io_start(zio_t *zio)
 		ASSERT0(P2PHASE(zio->io_size, align));
 	} else {
 		/*
-		 * For physical writes, we allow 512b aligned writes and assume
-		 * the device will perform a read-modify-write as necessary.
+		 * For the physical io we allow alignment
+		 * to a logical block size.
 		 */
-		ASSERT0(P2PHASE(zio->io_offset, SPA_MINBLOCKSIZE));
-		ASSERT0(P2PHASE(zio->io_size, SPA_MINBLOCKSIZE));
+		uint64_t log_align =
+		    1ULL << vd->vdev_top->vdev_logical_ashift;
+		ASSERT0(P2PHASE(zio->io_offset, log_align));
+		ASSERT0(P2PHASE(zio->io_size, log_align));
 	}
-#else
-	ASSERT0(P2PHASE(zio->io_offset, align));
-	ASSERT0(P2PHASE(zio->io_size, align));
-#endif
 
 	VERIFY(zio->io_type == ZIO_TYPE_READ || spa_writeable(spa));
 

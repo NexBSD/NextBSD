@@ -66,6 +66,7 @@ __FBSDID("$FreeBSD$");
 static struct ofw_compat_data compat_data[] = {
 	{"allwinner,sun4i-a10-i2c", 1},
 	{"allwinner,sun6i-a31-i2c", 1},
+	{"allwinner,sun8i-a83t-i2c", 1},
 	{NULL, 0},
 };
 
@@ -94,7 +95,7 @@ a10_twsi_attach(device_t dev)
 	sc = device_get_softc(dev);
 
 	/* De-assert reset */
-	if (hwreset_get_by_ofw_idx(dev, 0, &rst) == 0) {
+	if (hwreset_get_by_ofw_idx(dev, 0, 0, &rst) == 0) {
 		error = hwreset_deassert(rst);
 		if (error != 0) {
 			device_printf(dev, "could not de-assert reset\n");
@@ -103,7 +104,7 @@ a10_twsi_attach(device_t dev)
 	}
 
 	/* Activate clock */
-	error = clk_get_by_ofw_index(dev, 0, &clk);
+	error = clk_get_by_ofw_index(dev, 0, 0, &clk);
 	if (error != 0) {
 		device_printf(dev, "could not find clock\n");
 		return (error);
@@ -152,6 +153,8 @@ DEFINE_CLASS_1(iichb, a10_twsi_driver, a10_twsi_methods,
 
 static devclass_t a10_twsi_devclass;
 
-DRIVER_MODULE(a10_twsi, simplebus, a10_twsi_driver, a10_twsi_devclass, 0, 0);
-DRIVER_MODULE(iicbus, a10_twsi, iicbus_driver, iicbus_devclass, 0, 0);
+EARLY_DRIVER_MODULE(a10_twsi, simplebus, a10_twsi_driver, a10_twsi_devclass,
+    0, 0, BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE);
+EARLY_DRIVER_MODULE(iicbus, a10_twsi, iicbus_driver, iicbus_devclass,
+    0, 0, BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE);
 MODULE_DEPEND(a10_twsi, iicbus, 1, 1, 1);

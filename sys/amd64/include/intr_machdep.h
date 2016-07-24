@@ -143,8 +143,13 @@ struct nmi_pcpu {
 	register_t	__padding;	/* pad to 16 bytes */
 };
 
+#ifdef SMP
+extern cpuset_t intr_cpus;
+#endif
 extern struct mtx icu_lock;
 extern int elcr_found;
+
+extern int msix_disable_migration;
 
 #ifndef DEV_ATPIC
 void	atpic_reset(void);

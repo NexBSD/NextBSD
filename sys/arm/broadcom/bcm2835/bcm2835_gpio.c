@@ -53,7 +53,7 @@ __FBSDID("$FreeBSD$");
 
 #include "gpio_if.h"
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 #include "pic_if.h"
 #endif
 
@@ -67,8 +67,16 @@ __FBSDID("$FreeBSD$");
 #define	BCM_GPIO_IRQS		4
 #define	BCM_GPIO_PINS		54
 #define	BCM_GPIO_PINS_PER_BANK	32
+
+#ifdef INTRNG
+#define	BCM_GPIO_DEFAULT_CAPS	(GPIO_PIN_INPUT | GPIO_PIN_OUTPUT |	\
+    GPIO_PIN_PULLUP | GPIO_PIN_PULLDOWN | GPIO_INTR_LEVEL_LOW |		\
+    GPIO_INTR_LEVEL_HIGH | GPIO_INTR_EDGE_RISING |			\
+    GPIO_INTR_EDGE_FALLING | GPIO_INTR_EDGE_BOTH)
+#else
 #define	BCM_GPIO_DEFAULT_CAPS	(GPIO_PIN_INPUT | GPIO_PIN_OUTPUT |	\
     GPIO_PIN_PULLUP | GPIO_PIN_PULLDOWN)
+#endif
 
 static struct resource_spec bcm_gpio_res_spec[] = {
 	{ SYS_RES_MEMORY, 0, RF_ACTIVE },
@@ -84,11 +92,11 @@ struct bcm_gpio_sysctl {
 	uint32_t		pin;
 };
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 struct bcm_gpio_irqsrc {
 	struct intr_irqsrc	bgi_isrc;
 	uint32_t		bgi_irq;
-	uint32_t		bgi_reg;
+	uint32_t		bgi_mode;
 	uint32_t		bgi_mask;
 };
 #endif
@@ -105,11 +113,11 @@ struct bcm_gpio_softc {
 	int			sc_ro_npins;
 	int			sc_ro_pins[BCM_GPIO_PINS];
 	struct gpio_pin		sc_gpio_pins[BCM_GPIO_PINS];
-#ifndef ARM_INTRNG
+#ifndef INTRNG
 	struct intr_event *	sc_events[BCM_GPIO_PINS];
 #endif
 	struct bcm_gpio_sysctl	sc_sysctl[BCM_GPIO_PINS];
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 	struct bcm_gpio_irqsrc	sc_isrcs[BCM_GPIO_PINS];
 #else
 	enum intr_trigger	sc_irq_trigger[BCM_GPIO_PINS];
@@ -153,7 +161,7 @@ enum bcm_gpio_pud {
 
 static struct bcm_gpio_softc *bcm_gpio_sc = NULL;
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 static int bcm_gpio_intr_bank0(void *arg);
 static int bcm_gpio_intr_bank1(void *arg);
 static int bcm_gpio_pic_attach(struct bcm_gpio_softc *sc);
@@ -624,7 +632,7 @@ bcm_gpio_get_ro_pins(struct bcm_gpio_softc *sc, phandle_t node,
 	if (npins < 0)
 		return (-1);
 	if (npins == 0) {
-		free(pins, M_OFWPROP);
+		OF_prop_free(pins);
 		return (0);
 	}
 	for (i = 0; i < npins; i++)
@@ -652,7 +660,7 @@ bcm_gpio_get_ro_pins(struct bcm_gpio_softc *sc, phandle_t node,
 		printf("%d-%d.\n", range_start, range_stop);
 	else
 		printf("%d.\n", range_start);
-	free(pins, M_OFWPROP);
+	OF_prop_free(pins);
 
 	return (0);
 }
@@ -678,7 +686,7 @@ bcm_gpio_get_reserved_pins(struct bcm_gpio_softc *sc)
 			return (-1);
 		if (strcmp(name, "reserved") == 0)
 			reserved = node;
-		free(name, M_OFWPROP);
+		OF_prop_free(name);
 		node = OF_peer(node);
 	}
 	if (reserved == 0)
@@ -691,7 +699,7 @@ bcm_gpio_get_reserved_pins(struct bcm_gpio_softc *sc)
 	return (0);
 }
 
-#ifndef ARM_INTRNG
+#ifndef INTRNG
 static int
 bcm_gpio_intr(void *arg)
 {
@@ -741,7 +749,7 @@ bcm_gpio_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 static int
 bcm_gpio_intr_attach(device_t dev)
 {
@@ -862,7 +870,7 @@ bcm_gpio_attach(device_t dev)
 		sc->sc_gpio_pins[i].gp_pin = j;
 		sc->sc_gpio_pins[i].gp_caps = BCM_GPIO_DEFAULT_CAPS;
 		sc->sc_gpio_pins[i].gp_flags = bcm_gpio_func_flag(func);
-#ifndef ARM_INTRNG
+#ifndef INTRNG
 		/* The default is active-low interrupts. */
 		sc->sc_irq_trigger[i] = INTR_TRIGGER_LEVEL;
 		sc->sc_irq_polarity[i] = INTR_POLARITY_LOW;
@@ -892,7 +900,18 @@ bcm_gpio_detach(device_t dev)
 	return (EBUSY);
 }
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
+static inline void
+bcm_gpio_modify(struct bcm_gpio_softc *sc, uint32_t reg, uint32_t mask,
+    bool set_bits)
+{
+
+	if (set_bits)
+		BCM_GPIO_SET_BITS(sc, reg, mask);
+	else
+		BCM_GPIO_CLEAR_BITS(sc, reg, mask);
+}
+
 static inline void
 bcm_gpio_isrc_eoi(struct bcm_gpio_softc *sc, struct bcm_gpio_irqsrc *bgi)
 {
@@ -906,28 +925,64 @@ bcm_gpio_isrc_eoi(struct bcm_gpio_softc *sc, struct bcm_gpio_irqsrc *bgi)
 static inline bool
 bcm_gpio_isrc_is_level(struct bcm_gpio_irqsrc *bgi)
 {
-	uint32_t bank;
 
-	bank = BCM_GPIO_BANK(bgi->bgi_irq);
-	return (bgi->bgi_reg == BCM_GPIO_GPHEN(bank) ||
-	    bgi->bgi_reg == BCM_GPIO_GPLEN(bank));
+	return (bgi->bgi_mode ==  GPIO_INTR_LEVEL_LOW ||
+	    bgi->bgi_mode == GPIO_INTR_LEVEL_HIGH);
 }
 
 static inline void
 bcm_gpio_isrc_mask(struct bcm_gpio_softc *sc, struct bcm_gpio_irqsrc *bgi)
 {
+	uint32_t bank;
 
+	bank = BCM_GPIO_BANK(bgi->bgi_irq);
 	BCM_GPIO_LOCK(sc);
-	BCM_GPIO_CLEAR_BITS(sc, bgi->bgi_reg, bgi->bgi_mask);
-	BCM_GPIO_UNLOCK(bcm_gpio_sc);
+	switch (bgi->bgi_mode) {
+	case GPIO_INTR_LEVEL_LOW:
+		BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPLEN(bank), bgi->bgi_mask);
+		break;
+	case GPIO_INTR_LEVEL_HIGH:
+		BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPHEN(bank), bgi->bgi_mask);
+		break;
+	case GPIO_INTR_EDGE_RISING:
+		BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPREN(bank), bgi->bgi_mask);
+		break;
+	case GPIO_INTR_EDGE_FALLING:
+		BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPFEN(bank), bgi->bgi_mask);
+		break;
+	case GPIO_INTR_EDGE_BOTH:
+		BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPREN(bank), bgi->bgi_mask);
+		BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPFEN(bank), bgi->bgi_mask);
+		break;
+	}
+	BCM_GPIO_UNLOCK(sc);
 }
 
 static inline void
 bcm_gpio_isrc_unmask(struct bcm_gpio_softc *sc, struct bcm_gpio_irqsrc *bgi)
 {
+	uint32_t bank;
 
+	bank = BCM_GPIO_BANK(bgi->bgi_irq);
 	BCM_GPIO_LOCK(sc);
-	BCM_GPIO_SET_BITS(sc, bgi->bgi_reg, bgi->bgi_mask);
+	switch (bgi->bgi_mode) {
+	case GPIO_INTR_LEVEL_LOW:
+		BCM_GPIO_SET_BITS(sc, BCM_GPIO_GPLEN(bank), bgi->bgi_mask);
+		break;
+	case GPIO_INTR_LEVEL_HIGH:
+		BCM_GPIO_SET_BITS(sc, BCM_GPIO_GPHEN(bank), bgi->bgi_mask);
+		break;
+	case GPIO_INTR_EDGE_RISING:
+		BCM_GPIO_SET_BITS(sc, BCM_GPIO_GPREN(bank), bgi->bgi_mask);
+		break;
+	case GPIO_INTR_EDGE_FALLING:
+		BCM_GPIO_SET_BITS(sc, BCM_GPIO_GPFEN(bank), bgi->bgi_mask);
+		break;
+	case GPIO_INTR_EDGE_BOTH:
+		BCM_GPIO_SET_BITS(sc, BCM_GPIO_GPREN(bank), bgi->bgi_mask);
+		BCM_GPIO_SET_BITS(sc, BCM_GPIO_GPFEN(bank), bgi->bgi_mask);
+		break;
+	}
 	BCM_GPIO_UNLOCK(sc);
 }
 
@@ -983,15 +1038,18 @@ bcm_gpio_pic_attach(struct bcm_gpio_softc *sc)
 	for (irq = 0; irq < BCM_GPIO_PINS; irq++) {
 		sc->sc_isrcs[irq].bgi_irq = irq;
 		sc->sc_isrcs[irq].bgi_mask = BCM_GPIO_MASK(irq);
-		sc->sc_isrcs[irq].bgi_reg = 0;
+		sc->sc_isrcs[irq].bgi_mode = GPIO_INTR_CONFORM;
 
 		error = intr_isrc_register(&sc->sc_isrcs[irq].bgi_isrc,
 		    sc->sc_dev, 0, "%s,%u", name, irq);
 		if (error != 0)
 			return (error); /* XXX deregister ISRCs */
 	}
-	return (intr_pic_register(sc->sc_dev,
-	    OF_xref_from_node(ofw_bus_get_node(sc->sc_dev))));
+	if (intr_pic_register(sc->sc_dev,
+	    OF_xref_from_node(ofw_bus_get_node(sc->sc_dev))) == NULL)
+		return (ENXIO);
+
+	return (0);
 }
 
 static int
@@ -1004,6 +1062,26 @@ bcm_gpio_pic_detach(struct bcm_gpio_softc *sc)
 	 */
 	device_printf(sc->sc_dev, "%s: not implemented yet\n", __func__);
 	return (EBUSY);
+}
+
+static void
+bcm_gpio_pic_config_intr(struct bcm_gpio_softc *sc, struct bcm_gpio_irqsrc *bgi,
+    uint32_t mode)
+{
+	uint32_t bank;
+
+	bank = BCM_GPIO_BANK(bgi->bgi_irq);
+	BCM_GPIO_LOCK(sc);
+	bcm_gpio_modify(sc, BCM_GPIO_GPREN(bank), bgi->bgi_mask,
+	    mode == GPIO_INTR_EDGE_RISING || mode == GPIO_INTR_EDGE_BOTH);
+	bcm_gpio_modify(sc, BCM_GPIO_GPFEN(bank), bgi->bgi_mask,
+	    mode == GPIO_INTR_EDGE_FALLING || mode == GPIO_INTR_EDGE_BOTH);
+	bcm_gpio_modify(sc, BCM_GPIO_GPHEN(bank), bgi->bgi_mask,
+	    mode == GPIO_INTR_LEVEL_HIGH);
+	bcm_gpio_modify(sc, BCM_GPIO_GPLEN(bank), bgi->bgi_mask,
+	    mode == GPIO_INTR_LEVEL_LOW);
+	bgi->bgi_mode = mode;
+	BCM_GPIO_UNLOCK(sc);
 }
 
 static void
@@ -1026,11 +1104,11 @@ bcm_gpio_pic_enable_intr(device_t dev, struct intr_irqsrc *isrc)
 }
 
 static int
-bcm_gpio_pic_map_fdt(struct bcm_gpio_softc *sc, u_int ncells, pcell_t *cells,
-    u_int *irqp, uint32_t *regp)
+bcm_gpio_pic_map_fdt(struct bcm_gpio_softc *sc, struct intr_map_data_fdt *daf,
+    u_int *irqp, uint32_t *modep)
 {
 	u_int irq;
-	uint32_t reg, bank;
+	uint32_t mode, bank;
 
 	/*
 	 * The first cell is the interrupt number.
@@ -1041,35 +1119,72 @@ bcm_gpio_pic_map_fdt(struct bcm_gpio_softc *sc, u_int ncells, pcell_t *cells,
 	 *		4 = active high level-sensitive.
 	 *		8 = active low level-sensitive.
 	 */
-	if (ncells != 2)
+	if (daf->ncells != 2)
 		return (EINVAL);
 
-	irq = cells[0];
+	irq = daf->cells[0];
 	if (irq >= BCM_GPIO_PINS || bcm_gpio_pin_is_ro(sc, irq))
 		return (EINVAL);
 
-	/*
-	 * All interrupt types could be set for an interrupt at one moment.
-	 * At least, the combination of 'low-to-high' and 'high-to-low' edge
-	 * triggered interrupt types can make a sense. However, no combo is
-	 * supported now.
-	 */
+	/* Only reasonable modes are supported. */
 	bank = BCM_GPIO_BANK(irq);
-	if (cells[1] == 1)
-		reg = BCM_GPIO_GPREN(bank);
-	else if (cells[1] == 2)
-		reg = BCM_GPIO_GPFEN(bank);
-	else if (cells[1] == 4)
-		reg = BCM_GPIO_GPHEN(bank);
-	else if (cells[1] == 8)
-		reg = BCM_GPIO_GPLEN(bank);
+	if (daf->cells[1] == 1)
+		mode = GPIO_INTR_EDGE_RISING;
+	else if (daf->cells[1] == 2)
+		mode = GPIO_INTR_EDGE_FALLING;
+	else if (daf->cells[1] == 3)
+		mode = GPIO_INTR_EDGE_BOTH;
+	else if (daf->cells[1] == 4)
+		mode = GPIO_INTR_LEVEL_HIGH;
+	else if (daf->cells[1] == 8)
+		mode = GPIO_INTR_LEVEL_LOW;
 	else
 		return (EINVAL);
 
 	*irqp = irq;
-	if (regp != NULL)
-		*regp = reg;
+	if (modep != NULL)
+		*modep = mode;
 	return (0);
+}
+
+static int
+bcm_gpio_pic_map_gpio(struct bcm_gpio_softc *sc, struct intr_map_data_gpio *dag,
+    u_int *irqp, uint32_t *modep)
+{
+	u_int irq;
+	uint32_t mode;
+
+	irq = dag->gpio_pin_num;
+	if (irq >= BCM_GPIO_PINS || bcm_gpio_pin_is_ro(sc, irq))
+		return (EINVAL);
+
+	mode = dag->gpio_intr_mode;
+	if (mode != GPIO_INTR_LEVEL_LOW && mode != GPIO_INTR_LEVEL_HIGH &&
+	    mode != GPIO_INTR_EDGE_RISING && mode != GPIO_INTR_EDGE_FALLING &&
+	    mode != GPIO_INTR_EDGE_BOTH)
+		return (EINVAL);
+
+	*irqp = irq;
+	if (modep != NULL)
+		*modep = mode;
+	return (0);
+}
+
+static int
+bcm_gpio_pic_map(struct bcm_gpio_softc *sc, struct intr_map_data *data,
+    u_int *irqp, uint32_t *modep)
+{
+
+	switch (data->type) {
+	case INTR_MAP_DATA_FDT:
+		return (bcm_gpio_pic_map_fdt(sc,
+		    (struct intr_map_data_fdt *)data, irqp, modep));
+	case INTR_MAP_DATA_GPIO:
+		return (bcm_gpio_pic_map_gpio(sc,
+		    (struct intr_map_data_gpio *)data, irqp, modep));
+	default:
+		return (ENOTSUP);
+	}
 }
 
 static int
@@ -1078,14 +1193,9 @@ bcm_gpio_pic_map_intr(device_t dev, struct intr_map_data *data,
 {
 	int error;
 	u_int irq;
-	struct bcm_gpio_softc *sc;
+	struct bcm_gpio_softc *sc = device_get_softc(dev);
 
-	if (data->type != INTR_MAP_DATA_FDT)
-		return (ENOTSUP);
-
-	sc = device_get_softc(dev);
-	error = bcm_gpio_pic_map_fdt(sc, data->fdt.ncells, data->fdt.cells,
-	    &irq, NULL);
+	error = bcm_gpio_pic_map(sc, data, &irq, NULL);
 	if (error == 0)
 		*isrcp = &sc->sc_isrcs[irq].bgi_isrc;
 	return (error);
@@ -1124,19 +1234,18 @@ bcm_gpio_pic_setup_intr(device_t dev, struct intr_irqsrc *isrc,
     struct resource *res, struct intr_map_data *data)
 {
 	u_int irq;
-	uint32_t bank, reg;
+	uint32_t mode;
 	struct bcm_gpio_softc *sc;
 	struct bcm_gpio_irqsrc *bgi;
 
-	if (data == NULL || data->type != INTR_MAP_DATA_FDT)
+	if (data == NULL)
 		return (ENOTSUP);
 
 	sc = device_get_softc(dev);
 	bgi = (struct bcm_gpio_irqsrc *)isrc;
 
 	/* Get and check config for an interrupt. */
-	if (bcm_gpio_pic_map_fdt(sc, data->fdt.ncells, data->fdt.cells, &irq,
-	    &reg) != 0 || bgi->bgi_irq != irq)
+	if (bcm_gpio_pic_map(sc, data, &irq, &mode) != 0 || bgi->bgi_irq != irq)
 		return (EINVAL);
 
 	/*
@@ -1144,17 +1253,9 @@ bcm_gpio_pic_setup_intr(device_t dev, struct intr_irqsrc *isrc,
 	 * only check that its configuration match.
 	 */
 	if (isrc->isrc_handlers != 0)
-		return (bgi->bgi_reg == reg ? 0 : EINVAL);
+		return (bgi->bgi_mode == mode ? 0 : EINVAL);
 
-	bank = BCM_GPIO_BANK(irq);
-	BCM_GPIO_LOCK(sc);
-	BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPREN(bank), bgi->bgi_mask);
-	BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPFEN(bank), bgi->bgi_mask);
-	BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPHEN(bank), bgi->bgi_mask);
-	BCM_GPIO_CLEAR_BITS(sc, BCM_GPIO_GPLEN(bank), bgi->bgi_mask);
-	bgi->bgi_reg = reg;
-	BCM_GPIO_SET_BITS(sc, reg, bgi->bgi_mask);
-	BCM_GPIO_UNLOCK(sc);
+	bcm_gpio_pic_config_intr(sc, bgi, mode);
 	return (0);
 }
 
@@ -1165,12 +1266,8 @@ bcm_gpio_pic_teardown_intr(device_t dev, struct intr_irqsrc *isrc,
 	struct bcm_gpio_softc *sc = device_get_softc(dev);
 	struct bcm_gpio_irqsrc *bgi = (struct bcm_gpio_irqsrc *)isrc;
 
-	if (isrc->isrc_handlers == 0) {
-		BCM_GPIO_LOCK(sc);
-		BCM_GPIO_CLEAR_BITS(sc, bgi->bgi_reg, bgi->bgi_mask);
-		bgi->bgi_reg = 0;
-		BCM_GPIO_UNLOCK(sc);
-	}
+	if (isrc->isrc_handlers == 0)
+		bcm_gpio_pic_config_intr(sc, bgi, GPIO_INTR_CONFORM);
 	return (0);
 }
 
@@ -1372,7 +1469,7 @@ static device_method_t bcm_gpio_methods[] = {
 	DEVMETHOD(gpio_pin_set,		bcm_gpio_pin_set),
 	DEVMETHOD(gpio_pin_toggle,	bcm_gpio_pin_toggle),
 
-#ifdef ARM_INTRNG
+#ifdef INTRNG
 	/* Interrupt controller interface */
 	DEVMETHOD(pic_disable_intr,	bcm_gpio_pic_disable_intr),
 	DEVMETHOD(pic_enable_intr,	bcm_gpio_pic_enable_intr),

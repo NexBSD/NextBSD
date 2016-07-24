@@ -114,6 +114,11 @@ CWARNFLAGS+=	-Wno-format
 CWARNFLAGS+=	-Wno-error=unused-function -Wno-error=enum-compare -Wno-error=logical-not-parentheses -Wno-error=bool-compare -Wno-error=uninitialized -Wno-error=array-bounds -Wno-error=clobbered -Wno-error=cast-align -Wno-error=extra -Wno-error=attributes -Wno-error=inline -Wno-error=unused-but-set-variable -Wno-error=unused-value -Wno-error=strict-aliasing -Wno-error=address
 .endif
 
+# GCC 6.1.0
+.if ${COMPILER_TYPE} == "gcc" && ${COMPILER_VERSION} >= 60100
+CWARNFLAGS+=	-Wno-error=unused-const-variable= -Wno-error=nonnull-compare -Wno-error=shift-negative-value -Wno-error=misleading-indentation -Wno-error=tautological-compare
+.endif
+
 # How to handle FreeBSD custom printf format specifiers.
 .if ${COMPILER_TYPE} == "clang" && ${COMPILER_VERSION} >= 30600
 FORMAT_EXTENSIONS=	-D__printf__=__freebsd_kprintf__
@@ -174,9 +179,17 @@ CFLAGS+=	${CWARNFLAGS.${.IMPSRC:T}}
 CFLAGS+=	 ${CFLAGS.${COMPILER_TYPE}}
 CXXFLAGS+=	 ${CXXFLAGS.${COMPILER_TYPE}}
 
+AFLAGS+=	${AFLAGS.${.IMPSRC:T}}
 ACFLAGS+=	${ACFLAGS.${.IMPSRC:T}}
 CFLAGS+=	${CFLAGS.${.IMPSRC:T}}
 CXXFLAGS+=	${CXXFLAGS.${.IMPSRC:T}}
+
+.if defined(SRCTOP)
+# Prevent rebuilding during install to support read-only objdirs.
+.if !make(all) && make(install) && empty(.MAKE.MODE:Mmeta)
+CFLAGS+=	ERROR-tried-to-rebuild-during-make-install
+.endif
+.endif
 
 # Tell bmake not to mistake standard targets for things to be searched for
 # or expect to ever be up-to-date.
@@ -297,3 +310,10 @@ STAGE_SYMLINKS.links= ${SYMLINKS}
 .endif
 .endif
 
+.if defined(META_TARGETS)
+.for _tgt in ${META_TARGETS}
+.if target(${_tgt})
+${_tgt}: ${META_DEPS}
+.endif
+.endfor
+.endif

@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2011, 2015 by Delphix. All rights reserved.
+ * Copyright (c) 2011, 2016 by Delphix. All rights reserved.
  */
 /* Copyright (c) 2013 by Saso Kiselkov. All rights reserved. */
 /* Copyright (c) 2013, Joyent, Inc. All rights reserved. */
@@ -458,9 +458,10 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 		dbp[i] = &db->db;
 	}
 
-	if ((flags & DMU_READ_NO_PREFETCH) == 0 && read &&
-	    length <= zfetch_array_rd_sz) {
-		dmu_zfetch(&dn->dn_zfetch, blkid, nblks);
+	if ((flags & DMU_READ_NO_PREFETCH) == 0 &&
+	    DNODE_META_IS_CACHEABLE(dn) && length <= zfetch_array_rd_sz) {
+		dmu_zfetch(&dn->dn_zfetch, blkid, nblks,
+		    read && DNODE_IS_CACHEABLE(dn));
 	}
 	rw_exit(&dn->dn_struct_rwlock);
 
@@ -1091,8 +1092,13 @@ dmu_read_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size)
 			else
 				XUIOSTAT_BUMP(xuiostat_rbuf_copied);
 		} else {
+#ifdef illumos
 			err = uiomove((char *)db->db_data + bufoff, tocpy,
 			    UIO_READ, uio);
+#else
+			err = vn_io_fault_uiomove((char *)db->db_data + bufoff,
+			    tocpy, uio);
+#endif
 		}
 		if (err)
 			break;
@@ -1186,6 +1192,7 @@ dmu_write_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size, dmu_tx_t *tx)
 		else
 			dmu_buf_will_dirty(db, tx);
 
+#ifdef illumos
 		/*
 		 * XXX uiomove could block forever (eg. nfs-backed
 		 * pages).  There needs to be a uiolockdown() function
@@ -1194,6 +1201,10 @@ dmu_write_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size, dmu_tx_t *tx)
 		 */
 		err = uiomove((char *)db->db_data + bufoff, tocpy,
 		    UIO_WRITE, uio);
+#else
+		err = vn_io_fault_uiomove((char *)db->db_data + bufoff, tocpy,
+		    uio);
+#endif
 
 		if (tocpy == db->db_size)
 			dmu_buf_fill_done(db, tx);
@@ -1596,10 +1607,11 @@ dmu_sync_late_arrival(zio_t *pio, objset_t *os, dmu_sync_cb_t *done, zgd_t *zgd,
 	dsa->dsa_zgd = zgd;
 	dsa->dsa_tx = tx;
 
-	zio_nowait(zio_write(pio, os->os_spa, dmu_tx_get_txg(tx), zgd->zgd_bp,
-	    zgd->zgd_db->db_data, zgd->zgd_db->db_size, zp,
-	    dmu_sync_late_arrival_ready, NULL, dmu_sync_late_arrival_done, dsa,
-	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, zb));
+	zio_nowait(zio_write(pio, os->os_spa, dmu_tx_get_txg(tx),
+	    zgd->zgd_bp, zgd->zgd_db->db_data, zgd->zgd_db->db_size,
+	    zp, dmu_sync_late_arrival_ready, NULL,
+	    NULL, dmu_sync_late_arrival_done, dsa, ZIO_PRIORITY_SYNC_WRITE,
+	    ZIO_FLAG_CANFAIL, zb));
 
 	return (0);
 }
@@ -1752,8 +1764,8 @@ dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
 	zio_nowait(arc_write(pio, os->os_spa, txg,
 	    bp, dr->dt.dl.dr_data, DBUF_IS_L2CACHEABLE(db),
 	    DBUF_IS_L2COMPRESSIBLE(db), &zp, dmu_sync_ready,
-	    NULL, dmu_sync_done, dsa, ZIO_PRIORITY_SYNC_WRITE,
-	    ZIO_FLAG_CANFAIL, &zb));
+	    NULL, NULL, dmu_sync_done, dsa,
+	    ZIO_PRIORITY_SYNC_WRITE, ZIO_FLAG_CANFAIL, &zb));
 
 	return (0);
 }

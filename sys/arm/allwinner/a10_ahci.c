@@ -158,7 +158,7 @@ ahci_a10_phy_reset(device_t dev)
 	struct ahci_controller *ctlr = device_get_softc(dev);
 
 	/*
-	 * Here start the the magic -- most of the comments are based
+	 * Here starts the magic -- most of the comments are based
 	 * on guesswork, names of routines and printf error
 	 * messages.  The code works, but it will do that even if the
 	 * comments are 100% BS.
@@ -313,12 +313,12 @@ ahci_a10_attach(device_t dev)
 		return (ENXIO);
 
 	/* Enable clocks */
-	error = clk_get_by_ofw_index(dev, 0, &clk_pll);
+	error = clk_get_by_ofw_index(dev, 0, 0, &clk_pll);
 	if (error != 0) {
 		device_printf(dev, "Cannot get PLL clock\n");
 		goto fail;
 	}
-	error = clk_get_by_ofw_index(dev, 1, &clk_gate);
+	error = clk_get_by_ofw_index(dev, 0, 1, &clk_gate);
 	if (error != 0) {
 		device_printf(dev, "Cannot get gate clock\n");
 		goto fail;

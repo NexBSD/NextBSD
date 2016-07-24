@@ -304,7 +304,7 @@ SYSCTL_INT(_hw_igb, OID_AUTO, buf_ring_size, CTLFLAG_RDTUN,
 
 /*
 ** Header split causes the packet header to
-** be dma'd to a seperate mbuf from the payload.
+** be dma'd to a separate mbuf from the payload.
 ** this can have memory alignment benefits. But
 ** another plus is that small packets often fit
 ** into the header and thus use no cluster. Its
@@ -659,7 +659,8 @@ igb_attach(device_t dev)
 	return (0);
 
 err_late:
-	igb_detach(dev);
+	if (igb_detach(dev) == 0) /* igb_detach() already did the cleanup */
+		return(error);
 	igb_free_transmit_structures(adapter);
 	igb_free_receive_structures(adapter);
 	igb_release_hw_control(adapter);
@@ -1105,7 +1106,8 @@ igb_ioctl(struct ifnet *ifp, u_long command, caddr_t data)
 		ifp->if_mtu = ifr->ifr_mtu;
 		adapter->max_frame_size =
 		    ifp->if_mtu + ETHER_HDR_LEN + ETHER_CRC_LEN;
-		igb_init_locked(adapter);
+		if (ifp->if_drv_flags & IFF_DRV_RUNNING)
+			igb_init_locked(adapter);
 		IGB_CORE_UNLOCK(adapter);
 		break;
 	    }
@@ -1887,7 +1889,7 @@ retry:
 	}
 
 	/* Make certain there are enough descriptors */
-	if (nsegs > txr->tx_avail - 2) {
+	if (txr->tx_avail < (nsegs + 2)) {
 		txr->no_desc_avail++;
 		bus_dmamap_unload(txr->txtag, map);
 		return (ENOBUFS);
@@ -4482,7 +4484,7 @@ skip_head:
 	** Now set up the LRO interface, we
 	** also only do head split when LRO
 	** is enabled, since so often they
-	** are undesireable in similar setups.
+	** are undesirable in similar setups.
 	*/
 	if (ifp->if_capenable & IFCAP_LRO) {
 		error = tcp_lro_init(lro);
@@ -5153,7 +5155,7 @@ igb_rxeof(struct igb_queue *que, int count, int *done)
 					default:
 						/* XXX fallthrough */
 						M_HASHTYPE_SET(rxr->fmp,
-						    M_HASHTYPE_OPAQUE);
+						    M_HASHTYPE_OPAQUE_HASH);
 				}
 			} else {
 #ifndef IGB_LEGACY_TX

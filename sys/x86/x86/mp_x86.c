@@ -649,12 +649,10 @@ cpu_mp_announce(void)
 	TOPO_FOREACH(node, &topo_root) {
 		switch (node->type) {
 		case TOPO_TYPE_PKG:
-			printf("Package HW ID = %u (%#x)\n",
-			    node->hwid, node->hwid);
+			printf("Package HW ID = %u\n", node->hwid);
 			break;
 		case TOPO_TYPE_CORE:
-			printf("\tCore HW ID = %u (%#x)\n",
-			    node->hwid, node->hwid);
+			printf("\tCore HW ID = %u\n", node->hwid);
 			break;
 		case TOPO_TYPE_PU:
 			if (cpu_info[node->hwid].cpu_hyperthread)
@@ -663,16 +661,14 @@ cpu_mp_announce(void)
 				hyperthread = "";
 
 			if (node->subtype == 0)
-				printf("\t\tCPU (AP%s): APIC ID: %u (%#x)"
-				    "(disabled)\n", hyperthread, node->hwid,
-				    node->hwid);
+				printf("\t\tCPU (AP%s): APIC ID: %u"
+				    "(disabled)\n", hyperthread, node->hwid);
 			else if (node->id == 0)
-				printf("\t\tCPU0 (BSP): APIC ID: %u (%#x)\n",
-				    node->hwid, node->hwid);
-			else
-				printf("\t\tCPU%u (AP%s): APIC ID: %u (%#x)\n",
-				    node->id, hyperthread, node->hwid,
+				printf("\t\tCPU0 (BSP): APIC ID: %u\n",
 				    node->hwid);
+			else
+				printf("\t\tCPU%u (AP%s): APIC ID: %u\n",
+				    node->id, hyperthread, node->hwid);
 			break;
 		default:
 			/* ignored */
@@ -933,8 +929,10 @@ init_secondary_tail(void)
 	while (atomic_load_acq_int(&smp_started) == 0)
 		ia32_pause();
 
+#ifndef EARLY_AP_STARTUP
 	/* Start per-CPU event timers. */
 	cpu_initclocks_ap();
+#endif
 
 	sched_throw(NULL);
 

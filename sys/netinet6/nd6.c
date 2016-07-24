@@ -85,6 +85,8 @@ __FBSDID("$FreeBSD$");
 
 #define SIN6(s) ((const struct sockaddr_in6 *)(s))
 
+MALLOC_DEFINE(M_IP6NDP, "ip6ndp", "IPv6 Neighbor Discovery");
+
 /* timer values */
 VNET_DEFINE(int, nd6_prune)	= 1;	/* walk list every 1 seconds */
 VNET_DEFINE(int, nd6_delay)	= 5;	/* delay first probe time 5 second */
@@ -134,7 +136,7 @@ static void nd6_llinfo_settimer_locked(struct llentry *, long);
 static void clear_llinfo_pqueue(struct llentry *);
 static void nd6_rtrequest(int, struct rtentry *, struct rt_addrinfo *);
 static int nd6_resolve_slow(struct ifnet *, int, struct mbuf *,
-    const struct sockaddr_in6 *, u_char *, uint32_t *);
+    const struct sockaddr_in6 *, u_char *, uint32_t *, struct llentry **);
 static int nd6_need_cache(struct ifnet *);
  
 
@@ -290,8 +292,19 @@ nd6_ifattach(struct ifnet *ifp)
 }
 
 void
-nd6_ifdetach(struct nd_ifinfo *nd)
+nd6_ifdetach(struct ifnet *ifp, struct nd_ifinfo *nd)
 {
+	struct ifaddr *ifa, *next;
+
+	IF_ADDR_RLOCK(ifp);
+	TAILQ_FOREACH_SAFE(ifa, &ifp->if_addrhead, ifa_link, next) {
+		if (ifa->ifa_addr->sa_family != AF_INET6)
+			continue;
+
+		/* stop DAD processing */
+		nd6_dad_stop(ifa);
+	}
+	IF_ADDR_RUNLOCK(ifp);
 
 	free(nd, M_IP6NDP);
 }
@@ -479,7 +492,7 @@ nd6_options(union nd_opts *ndopts)
 		default:
 			/*
 			 * Unknown options must be silently ignored,
-			 * to accomodate future extension to the protocol.
+			 * to accommodate future extension to the protocol.
 			 */
 			nd6log((LOG_DEBUG,
 			    "nd6_options: unsupported option %d - "
@@ -894,9 +907,6 @@ nd6_timer(void *arg)
 	struct nd_prefix *pr, *npr;
 	struct in6_ifaddr *ia6, *nia6;
 
-	callout_reset(&V_nd6_timer_ch, V_nd6_prune * hz,
-	    nd6_timer, curvnet);
-
 	TAILQ_INIT(&drq);
 
 	/* expire default router list */
@@ -1023,6 +1033,10 @@ nd6_timer(void *arg)
 			prelist_remove(pr);
 		}
 	}
+
+	callout_reset(&V_nd6_timer_ch, V_nd6_prune * hz,
+	    nd6_timer, curvnet);
+
 	CURVNET_RESTORE();
 }
 
@@ -1097,8 +1111,8 @@ regen_tmpaddr(struct in6_ifaddr *ia6)
 }
 
 /*
- * Nuke neighbor cache/prefix/default router management table, right before
- * ifp goes away.
+ * Remove prefix and default router list entries corresponding to ifp. Neighbor
+ * cache entries are freed in in6_domifdetach().
  */
 void
 nd6_purge(struct ifnet *ifp)
@@ -1147,14 +1161,6 @@ nd6_purge(struct ifnet *ifp)
 			 */
 			pr->ndpr_refcnt = 0;
 
-			/*
-			 * Previously, pr->ndpr_addr is removed as well,
-			 * but I strongly believe we don't have to do it.
-			 * nd6_purge() is only called from in6_ifdetach(),
-			 * which removes all the associated interface addresses
-			 * by itself.
-			 * (jinmei@kame.net 20010129)
-			 */
 			prelist_remove(pr);
 		}
 	}
@@ -1167,14 +1173,6 @@ nd6_purge(struct ifnet *ifp)
 		/* Refresh default router list. */
 		defrouter_select();
 	}
-
-	/* XXXXX
-	 * We do not nuke the neighbor cache entries here any more
-	 * because the neighbor cache is kept in if_afdata[AF_INET6].
-	 * nd6_purge() is invoked by in6_ifdetach() which is called
-	 * from if_detach() where everything gets purged. So let
-	 * in6_domifdetach() do the actual L2 table purging work.
-	 */
 }
 
 /* 
@@ -1604,7 +1602,7 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 	case SIOCSIFINFO_IN6:
 		/*
 		 * used to change host variables from userland.
-		 * intented for a use on router to reflect RA configurations.
+		 * intended for a use on router to reflect RA configurations.
 		 */
 		/* 0 means 'unspecified' */
 		if (ND.linkmtu != 0) {
@@ -2189,7 +2187,8 @@ nd6_output_ifp(struct ifnet *ifp, struct ifnet *origifp, struct mbuf *m,
  */
 int
 nd6_resolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
-    const struct sockaddr *sa_dst, u_char *desten, uint32_t *pflags)
+    const struct sockaddr *sa_dst, u_char *desten, uint32_t *pflags,
+    struct llentry **plle)
 {
 	struct llentry *ln = NULL;
 	const struct sockaddr_in6 *dst6;
@@ -2223,7 +2222,8 @@ nd6_resolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
 	}
 
 	IF_AFDATA_RLOCK(ifp);
-	ln = nd6_lookup(&dst6->sin6_addr, LLE_UNLOCKED, ifp);
+	ln = nd6_lookup(&dst6->sin6_addr, plle ? LLE_EXCLUSIVE : LLE_UNLOCKED,
+	    ifp);
 	if (ln != NULL && (ln->r_flags & RLLE_VALID) != 0) {
 		/* Entry found, let's copy lle info */
 		bcopy(ln->r_linkdata, desten, ln->r_hdrlen);
@@ -2236,12 +2236,18 @@ nd6_resolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
 			ln->lle_hittime = time_uptime;
 			LLE_REQ_UNLOCK(ln);
 		}
+		if (plle) {
+			LLE_ADDREF(ln);
+			*plle = ln;
+			LLE_WUNLOCK(ln);
+		}
 		IF_AFDATA_RUNLOCK(ifp);
 		return (0);
-	}
+	} else if (plle && ln)
+		LLE_WUNLOCK(ln);
 	IF_AFDATA_RUNLOCK(ifp);
 
-	return (nd6_resolve_slow(ifp, 0, m, dst6, desten, pflags));
+	return (nd6_resolve_slow(ifp, 0, m, dst6, desten, pflags, plle));
 }
 
 
@@ -2258,7 +2264,8 @@ nd6_resolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
  */
 static __noinline int
 nd6_resolve_slow(struct ifnet *ifp, int flags, struct mbuf *m,
-    const struct sockaddr_in6 *dst, u_char *desten, uint32_t *pflags)
+    const struct sockaddr_in6 *dst, u_char *desten, uint32_t *pflags,
+    struct llentry **plle)
 {
 	struct llentry *lle = NULL, *lle_tmp;
 	struct in6_addr *psrc, src;
@@ -2345,6 +2352,10 @@ nd6_resolve_slow(struct ifnet *ifp, int flags, struct mbuf *m,
 		bcopy(lladdr, desten, ll_len);
 		if (pflags != NULL)
 			*pflags = lle->la_flags;
+		if (plle) {
+			LLE_ADDREF(lle);
+			*plle = lle;
+		}
 		LLE_WUNLOCK(lle);
 		return (0);
 	}
@@ -2352,8 +2363,7 @@ nd6_resolve_slow(struct ifnet *ifp, int flags, struct mbuf *m,
 	/*
 	 * There is a neighbor cache entry, but no ethernet address
 	 * response yet.  Append this latest packet to the end of the
-	 * packet queue in the mbuf, unless the number of the packet
-	 * does not exceed nd6_maxqueuelen.  When it exceeds nd6_maxqueuelen,
+	 * packet queue in the mbuf.  When it exceeds nd6_maxqueuelen,
 	 * the oldest packet in the queue will be removed.
 	 */
 
@@ -2420,7 +2430,7 @@ nd6_resolve_addr(struct ifnet *ifp, int flags, const struct sockaddr *dst,
 
 	flags |= LLE_ADDRONLY;
 	error = nd6_resolve_slow(ifp, flags, NULL,
-	    (const struct sockaddr_in6 *)dst, desten, pflags);
+	    (const struct sockaddr_in6 *)dst, desten, pflags, NULL);
 	return (error);
 }
 
@@ -2563,13 +2573,16 @@ clear_llinfo_pqueue(struct llentry *ln)
 
 static int nd6_sysctl_drlist(SYSCTL_HANDLER_ARGS);
 static int nd6_sysctl_prlist(SYSCTL_HANDLER_ARGS);
-#ifdef SYSCTL_DECL
+
 SYSCTL_DECL(_net_inet6_icmp6);
-#endif
-SYSCTL_NODE(_net_inet6_icmp6, ICMPV6CTL_ND6_DRLIST, nd6_drlist,
-	CTLFLAG_RD, nd6_sysctl_drlist, "");
-SYSCTL_NODE(_net_inet6_icmp6, ICMPV6CTL_ND6_PRLIST, nd6_prlist,
-	CTLFLAG_RD, nd6_sysctl_prlist, "");
+SYSCTL_PROC(_net_inet6_icmp6, ICMPV6CTL_ND6_DRLIST, nd6_drlist,
+	CTLTYPE_OPAQUE | CTLFLAG_RD | CTLFLAG_MPSAFE,
+	NULL, 0, nd6_sysctl_drlist, "S,in6_defrouter",
+	"NDP default router list");
+SYSCTL_PROC(_net_inet6_icmp6, ICMPV6CTL_ND6_PRLIST, nd6_prlist,
+	CTLTYPE_OPAQUE | CTLFLAG_RD | CTLFLAG_MPSAFE,
+	NULL, 0, nd6_sysctl_prlist, "S,in6_prefix",
+	"NDP prefix list");
 SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_MAXQLEN, nd6_maxqueuelen,
 	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(nd6_maxqueuelen), 1, "");
 SYSCTL_INT(_net_inet6_icmp6, OID_AUTO, nd6_gctimer,
@@ -2625,15 +2638,17 @@ nd6_sysctl_prlist(SYSCTL_HANDLER_ARGS)
 	if (req->newptr)
 		return (EPERM);
 
+	error = sysctl_wire_old_buffer(req, 0);
+	if (error != 0)
+		return (error);
+
 	bzero(&p, sizeof(p));
 	p.origin = PR_ORIG_RA;
 	bzero(&s6, sizeof(s6));
 	s6.sin6_family = AF_INET6;
 	s6.sin6_len = sizeof(s6);
 
-	/*
-	 * XXX locking
-	 */
+	ND6_RLOCK();
 	LIST_FOREACH(pr, &V_nd_prefix, ndpr_entry) {
 		p.prefix = pr->ndpr_prefix;
 		if (sa6_recoverscope(&p.prefix)) {
@@ -2666,7 +2681,7 @@ nd6_sysctl_prlist(SYSCTL_HANDLER_ARGS)
 			p.advrtrs++;
 		error = SYSCTL_OUT(req, &p, sizeof(p));
 		if (error != 0)
-			return (error);
+			break;
 		LIST_FOREACH(pfr, &pr->ndpr_advrtrs, pfr_entry) {
 			s6.sin6_addr = pfr->router->rtaddr;
 			if (sa6_recoverscope(&s6))
@@ -2675,8 +2690,9 @@ nd6_sysctl_prlist(SYSCTL_HANDLER_ARGS)
 				    ip6_sprintf(ip6buf, &pfr->router->rtaddr));
 			error = SYSCTL_OUT(req, &s6, sizeof(s6));
 			if (error != 0)
-				return (error);
+				break;
 		}
 	}
-	return (0);
+	ND6_RUNLOCK();
+	return (error);
 }

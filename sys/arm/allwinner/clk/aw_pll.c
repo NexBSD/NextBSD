@@ -49,6 +49,8 @@ __FBSDID("$FreeBSD$");
 
 #include <dt-bindings/clock/sun4i-a10-pll2.h>
 
+#include <arm/allwinner/allwinner_machdep.h>
+
 #include "clkdev_if.h"
 
 #define	AW_PLL_ENABLE			(1 << 31)
@@ -101,6 +103,22 @@ __FBSDID("$FreeBSD$");
 
 #define	A10_PLL2_POST_DIV		(0xf << 26)
 
+#define	A13_PLL2_POST_DIV		(0xf << 26)
+#define	A13_PLL2_POST_DIV_SHIFT		26
+#define	A13_PLL2_FACTOR_N		(0x7f << 8)
+#define	A13_PLL2_FACTOR_N_SHIFT		8
+#define	A13_PLL2_PRE_DIV		(0x1f << 0)
+#define	A13_PLL2_PRE_DIV_SHIFT		0
+
+#define	A23_PLL1_FACTOR_N		(0x1f << 8)
+#define	A23_PLL1_FACTOR_N_SHIFT		8
+#define	A23_PLL1_FACTOR_K		(0x3 << 4)
+#define	A23_PLL1_FACTOR_K_SHIFT		4
+#define	A23_PLL1_FACTOR_M		(0x3 << 0)
+#define	A23_PLL1_FACTOR_M_SHIFT		0
+#define	A23_PLL1_FACTOR_P		(0x3 << 16)
+#define	A23_PLL1_FACTOR_P_SHIFT		16
+
 #define	A31_PLL1_LOCK			(1 << 28)
 #define	A31_PLL1_CPU_SIGMA_DELTA_EN	(1 << 24)
 #define	A31_PLL1_FACTOR_N		(0x1f << 8)
@@ -124,6 +142,12 @@ __FBSDID("$FreeBSD$");
 #define	A31_PLL6_DEFAULT_K		0x1
 #define	A31_PLL6_TIMEOUT		10
 
+#define	A80_PLL4_CLK_OUT_EN		(1 << 20)
+#define	A80_PLL4_PLL_DIV2		(1 << 18)
+#define	A80_PLL4_PLL_DIV1		(1 << 16)
+#define	A80_PLL4_FACTOR_N		(0xff << 8)
+#define	A80_PLL4_FACTOR_N_SHIFT		8
+
 #define	CLKID_A10_PLL3_1X		0
 #define	CLKID_A10_PLL3_2X		1
 
@@ -144,8 +168,11 @@ enum aw_pll_type {
 	AWPLL_A10_PLL3,
 	AWPLL_A10_PLL5,
 	AWPLL_A10_PLL6,
+	AWPLL_A13_PLL2,
+	AWPLL_A23_PLL1,
 	AWPLL_A31_PLL1,
 	AWPLL_A31_PLL6,
+	AWPLL_A80_PLL4,
 };
 
 struct aw_pll_sc {
@@ -445,6 +472,100 @@ a10_pll6_set_freq(struct aw_pll_sc *sc, uint64_t fin, uint64_t *fout,
 }
 
 static int
+a13_pll2_recalc(struct aw_pll_sc *sc, uint64_t *freq)
+{
+	uint32_t val, post_div, n, pre_div;
+
+	DEVICE_LOCK(sc);
+	PLL_READ(sc, &val);
+	DEVICE_UNLOCK(sc);
+
+	post_div = ((val & A13_PLL2_POST_DIV) >> A13_PLL2_POST_DIV_SHIFT) + 1;
+	if (post_div == 0)
+		post_div = 1;
+	n = (val & A13_PLL2_FACTOR_N) >> A13_PLL2_FACTOR_N_SHIFT;
+	if (n == 0)
+		n = 1;
+	pre_div = ((val & A13_PLL2_PRE_DIV) >> A13_PLL2_PRE_DIV_SHIFT) + 1;
+	if (pre_div == 0)
+		pre_div = 1;
+
+	switch (sc->id) {
+	case SUN4I_A10_PLL2_1X:
+		*freq = (*freq * 2 * n) / pre_div / post_div / 2;
+		break;
+	case SUN4I_A10_PLL2_2X:
+		*freq = (*freq * 2 * n) / pre_div / 4;
+		break;
+	case SUN4I_A10_PLL2_4X:
+		*freq = (*freq * 2 * n) / pre_div / 2;
+		break;
+	case SUN4I_A10_PLL2_8X:
+		*freq = (*freq * 2 * n) / pre_div;
+		break;
+	default:
+		return (EINVAL);
+	}
+
+	return (0);
+}
+
+static int
+a13_pll2_set_freq(struct aw_pll_sc *sc, uint64_t fin, uint64_t *fout,
+    int flags)
+{
+	uint32_t val, post_div, n, pre_div;
+
+	if (sc->id != SUN4I_A10_PLL2_1X)
+		return (ENXIO);
+
+	/*
+	 * Audio Codec needs PLL2-1X to be either 24576000 or 22579200.
+	 *
+	 * PLL2-1X output frequency is (48MHz * n) / pre_div / post_div / 2.
+	 * To get as close as possible to the desired rate, we use a
+	 * pre-divider of 21 and a post-divider of 4. With these values,
+	 * a multiplier of 86 or 79 gets us close to the target rates.
+	 */
+	if (*fout != 24576000 && *fout != 22579200)
+		return (EINVAL);
+
+	pre_div = 21;
+	post_div = 4;
+	n = (*fout * pre_div * post_div * 2) / (2 * fin);
+
+	DEVICE_LOCK(sc);
+	PLL_READ(sc, &val);
+	val &= ~(A13_PLL2_POST_DIV | A13_PLL2_FACTOR_N | A13_PLL2_PRE_DIV);
+	val |= ((post_div - 1) << A13_PLL2_POST_DIV_SHIFT);
+	val |= (n << A13_PLL2_FACTOR_N_SHIFT);
+	val |= ((pre_div - 1) << A13_PLL2_PRE_DIV_SHIFT);
+	PLL_WRITE(sc, val);
+	DEVICE_UNLOCK(sc);
+
+	return (0);
+}
+
+static int
+a23_pll1_recalc(struct aw_pll_sc *sc, uint64_t *freq)
+{
+	uint32_t val, m, n, k, p;
+
+	DEVICE_LOCK(sc);
+	PLL_READ(sc, &val);
+	DEVICE_UNLOCK(sc);
+
+	m = ((val & A23_PLL1_FACTOR_M) >> A23_PLL1_FACTOR_M_SHIFT) + 1;
+	k = ((val & A23_PLL1_FACTOR_K) >> A23_PLL1_FACTOR_K_SHIFT) + 1;
+	n = ((val & A23_PLL1_FACTOR_N) >> A23_PLL1_FACTOR_N_SHIFT) + 1;
+	p = ((val & A23_PLL1_FACTOR_P) >> A23_PLL1_FACTOR_P_SHIFT) + 1;
+
+	*freq = (*freq * n * k) / (m * p);
+
+	return (0);
+}
+
+static int
 a31_pll1_recalc(struct aw_pll_sc *sc, uint64_t *freq)
 {
 	uint32_t val, m, n, k;
@@ -524,6 +645,24 @@ a31_pll6_recalc(struct aw_pll_sc *sc, uint64_t *freq)
 	return (0);
 }
 
+static int
+a80_pll4_recalc(struct aw_pll_sc *sc, uint64_t *freq)
+{
+	uint32_t val, n, div1, div2;
+
+	DEVICE_LOCK(sc);
+	PLL_READ(sc, &val);
+	DEVICE_UNLOCK(sc);
+
+	n = (val & A80_PLL4_FACTOR_N) >> A80_PLL4_FACTOR_N_SHIFT;
+	div1 = (val & A80_PLL4_PLL_DIV1) == 0 ? 1 : 2;
+	div2 = (val & A80_PLL4_PLL_DIV2) == 0 ? 1 : 2;
+
+	*freq = (*freq * n) / div1 / div2;
+
+	return (0);
+}
+
 #define	PLL(_type, _recalc, _set_freq, _init)	\
 	[(_type)] = {				\
 		.recalc = (_recalc),		\
@@ -537,8 +676,11 @@ static struct aw_pll_funcs aw_pll_func[] = {
 	PLL(AWPLL_A10_PLL3, a10_pll3_recalc, a10_pll3_set_freq, a10_pll3_init),
 	PLL(AWPLL_A10_PLL5, a10_pll5_recalc, NULL, NULL),
 	PLL(AWPLL_A10_PLL6, a10_pll6_recalc, a10_pll6_set_freq, a10_pll6_init),
+	PLL(AWPLL_A13_PLL2, a13_pll2_recalc, a13_pll2_set_freq, NULL),
+	PLL(AWPLL_A23_PLL1, a23_pll1_recalc, NULL, NULL),
 	PLL(AWPLL_A31_PLL1, a31_pll1_recalc, NULL, NULL),
 	PLL(AWPLL_A31_PLL6, a31_pll6_recalc, NULL, a31_pll6_init),
+	PLL(AWPLL_A80_PLL4, a80_pll4_recalc, NULL, NULL),
 };
 
 static struct ofw_compat_data compat_data[] = {
@@ -547,8 +689,11 @@ static struct ofw_compat_data compat_data[] = {
 	{ "allwinner,sun4i-a10-pll3-clk",	AWPLL_A10_PLL3 },
 	{ "allwinner,sun4i-a10-pll5-clk",	AWPLL_A10_PLL5 },
 	{ "allwinner,sun4i-a10-pll6-clk",	AWPLL_A10_PLL6 },
+	{ "allwinner,sun5i-a13-pll2-clk",	AWPLL_A13_PLL2 },
 	{ "allwinner,sun6i-a31-pll1-clk",	AWPLL_A31_PLL1 },
 	{ "allwinner,sun6i-a31-pll6-clk",	AWPLL_A31_PLL6 },
+	{ "allwinner,sun8i-a23-pll1-clk",	AWPLL_A23_PLL1 },
+	{ "allwinner,sun9i-a80-pll4-clk",	AWPLL_A80_PLL4 },
 	{ NULL, 0 }
 };
 
@@ -665,7 +810,7 @@ aw_pll_create(device_t dev, bus_addr_t paddr, struct clkdom *clkdom,
 
 	clknode_register(clkdom, clk);
 
-	free(__DECONST(char *, clkdef.parent_names), M_OFWPROP);
+	OF_prop_free(__DECONST(char *, clkdef.parent_names));
 
 	return (0);
 }
@@ -711,7 +856,7 @@ aw_pll_attach(device_t dev)
 		goto fail;
 	}
 
-	if (clk_get_by_ofw_index(dev, 0, &clk_parent) != 0)
+	if (clk_get_by_ofw_index(dev, 0, 0, &clk_parent) != 0)
 		clk_parent = NULL;
 
 	for (index = 0; index < nout; index++) {

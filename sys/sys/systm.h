@@ -74,9 +74,9 @@ extern int vm_guest;		/* Running as virtual machine guest? */
  * Keep in sync with vm_guest_sysctl_names[].
  */
 enum VM_GUEST { VM_GUEST_NO = 0, VM_GUEST_VM, VM_GUEST_XEN, VM_GUEST_HV,
-		VM_GUEST_VMWARE, VM_LAST };
+		VM_GUEST_VMWARE, VM_GUEST_KVM, VM_LAST };
 
-#if defined(WITNESS) || defined(INVARIANTS)
+#if defined(WITNESS) || defined(INVARIANT_SUPPORT)
 void	kassert_panic(const char *fmt, ...)  __printflike(1, 2);
 #endif
 
@@ -189,6 +189,8 @@ void	*hashinit_flags(int count, struct malloc_type *type,
 #define	HASH_WAITOK	0x00000002
 
 void	*phashinit(int count, struct malloc_type *type, u_long *nentries);
+void	*phashinit_flags(int count, struct malloc_type *type, u_long *nentries,
+    int flags);
 void	g_waitidle(void);
 
 void	panic(const char *, ...) __dead2 __printflike(1, 2);
@@ -322,6 +324,8 @@ int	getenv_uint(const char *name, unsigned int *data);
 int	getenv_long(const char *name, long *data);
 int	getenv_ulong(const char *name, unsigned long *data);
 int	getenv_string(const char *name, char *data, int size);
+int	getenv_int64(const char *name, int64_t *data);
+int	getenv_uint64(const char *name, uint64_t *data);
 int	getenv_quad(const char *name, quad_t *data);
 int	kern_setenv(const char *name, const char *value);
 int	kern_unsetenv(const char *name);
@@ -442,5 +446,7 @@ void free_unr(struct unrhdr *uh, u_int item);
 void	intr_prof_stack_use(struct thread *td, struct trapframe *frame);
 
 extern void (*softdep_ast_cleanup)(void);
+
+void counted_warning(unsigned *counter, const char *msg);
 
 #endif /* !_SYS_SYSTM_H_ */

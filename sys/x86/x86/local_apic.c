@@ -170,7 +170,7 @@ vm_paddr_t lapic_paddr;
 int x2apic_mode;
 int lapic_eoi_suppression;
 static int lapic_timer_tsc_deadline;
-static u_long lapic_timer_divisor;
+static u_long lapic_timer_divisor, count_freq;
 static struct eventtimer lapic_et;
 #ifdef SMP
 static uint64_t lapic_ipi_wait_mult;
@@ -499,8 +499,7 @@ native_lapic_init(vm_paddr_t addr)
 	ver = lapic_read32(LAPIC_VERSION);
 	if ((ver & APIC_VER_EOI_SUPPRESSION) != 0) {
 		lapic_eoi_suppression = 1;
-		if (vm_guest == VM_GUEST_VM &&
-		    !strcmp(hv_vendor, "KVMKVMKVM")) {
+		if (vm_guest == VM_GUEST_KVM) {
 			if (bootverbose)
 				printf(
 		       "KVM -- disabling lapic eoi suppression\n");
@@ -511,7 +510,7 @@ native_lapic_init(vm_paddr_t addr)
 	}
 
 #ifdef SMP
-#define	LOOPS	1000000
+#define	LOOPS	100000
 	/*
 	 * Calibrate the busy loop waiting for IPI ack in xAPIC mode.
 	 * lapic_ipi_wait_mult contains the number of iterations which
@@ -525,19 +524,21 @@ native_lapic_init(vm_paddr_t addr)
 	 */
 	KASSERT((cpu_feature & CPUID_TSC) != 0 && tsc_freq != 0,
 	    ("TSC not initialized"));
-	r = rdtsc();
-	for (rx = 0; rx < LOOPS; rx++) {
-		(void)lapic_read_icr_lo();
-		ia32_pause();
-	}
-	r = rdtsc() - r;
-	r1 = tsc_freq * LOOPS;
-	r2 = r * 1000000;
-	lapic_ipi_wait_mult = r1 >= r2 ? r1 / r2 : 1;
-	if (bootverbose) {
-		printf("LAPIC: ipi_wait() us multiplier %ju (r %ju tsc %ju)\n",
-		    (uintmax_t)lapic_ipi_wait_mult, (uintmax_t)r,
-		    (uintmax_t)tsc_freq);
+	if (!x2apic_mode) {
+		r = rdtsc();
+		for (rx = 0; rx < LOOPS; rx++) {
+			(void)lapic_read_icr_lo();
+			ia32_pause();
+		}
+		r = rdtsc() - r;
+		r1 = tsc_freq * LOOPS;
+		r2 = r * 1000000;
+		lapic_ipi_wait_mult = r1 >= r2 ? r1 / r2 : 1;
+		if (bootverbose) {
+			printf("LAPIC: ipi_wait() us multiplier %ju (r %ju "
+			    "tsc %ju)\n", (uintmax_t)lapic_ipi_wait_mult,
+			    (uintmax_t)r, (uintmax_t)tsc_freq);
+		}
 	}
 #undef LOOPS
 #endif /* SMP */
@@ -704,7 +705,7 @@ native_lapic_setup(int boot)
 		lapic_write32(LAPIC_LVT_CMCI, lvt_mode(la, APIC_LVT_CMCI,
 		    lapic_read32(LAPIC_LVT_CMCI)));
 	}
-	    
+
 	intr_restore(saveintr);
 }
 
@@ -749,6 +750,10 @@ native_lapic_enable_pmc(void)
 
 	lvts[APIC_LVT_PMC].lvt_masked = 0;
 
+#ifdef EARLY_AP_STARTUP
+	MPASS(mp_ncpus == 1 || smp_started);
+	smp_rendezvous(NULL, lapic_update_pmc, NULL, NULL);
+#else
 #ifdef SMP
 	/*
 	 * If hwpmc was loaded at boot time then the APs may not be
@@ -760,6 +765,7 @@ native_lapic_enable_pmc(void)
 	else
 #endif
 		lapic_update_pmc(NULL);
+#endif
 	return (1);
 #else
 	return (0);
@@ -814,18 +820,44 @@ lapic_calibrate_initcount(struct eventtimer *et, struct lapic *la)
 		printf("lapic: Divisor %lu, Frequency %lu Hz\n",
 		    lapic_timer_divisor, value);
 	}
-	et->et_frequency = value;
+	count_freq = value;
 }
 
 static void
 lapic_calibrate_deadline(struct eventtimer *et, struct lapic *la __unused)
 {
 
-	et->et_frequency = tsc_freq;
 	if (bootverbose) {
 		printf("lapic: deadline tsc mode, Frequency %ju Hz\n",
-		    (uintmax_t)et->et_frequency);
+		    (uintmax_t)tsc_freq);
 	}
+}
+
+static void
+lapic_change_mode(struct eventtimer *et, struct lapic *la,
+    enum lat_timer_mode newmode)
+{
+
+	if (la->la_timer_mode == newmode)
+		return;
+	switch (newmode) {
+	case LAT_MODE_PERIODIC:
+		lapic_timer_set_divisor(lapic_timer_divisor);
+		et->et_frequency = count_freq;
+		break;
+	case LAT_MODE_DEADLINE:
+		et->et_frequency = tsc_freq;
+		break;
+	case LAT_MODE_ONESHOT:
+		lapic_timer_set_divisor(lapic_timer_divisor);
+		et->et_frequency = count_freq;
+		break;
+	default:
+		panic("lapic_change_mode %d", newmode);
+	}
+	la->la_timer_mode = newmode;
+	et->et_min_period = (0x00000002LLU << 32) / et->et_frequency;
+	et->et_max_period = (0xfffffffeLLU << 32) / et->et_frequency;
 }
 
 static int
@@ -835,28 +867,21 @@ lapic_et_start(struct eventtimer *et, sbintime_t first, sbintime_t period)
 
 	la = &lapics[PCPU_GET(apic_id)];
 	if (et->et_frequency == 0) {
+		lapic_calibrate_initcount(et, la);
 		if (lapic_timer_tsc_deadline)
 			lapic_calibrate_deadline(et, la);
-		else
-			lapic_calibrate_initcount(et, la);
-		et->et_min_period = (0x00000002LLU << 32) / et->et_frequency;
-		et->et_max_period = (0xfffffffeLLU << 32) / et->et_frequency;
 	}
 	if (period != 0) {
-		if (la->la_timer_mode == LAT_MODE_UNDEF)
-			lapic_timer_set_divisor(lapic_timer_divisor);
-		la->la_timer_mode = LAT_MODE_PERIODIC;
+		lapic_change_mode(et, la, LAT_MODE_PERIODIC);
 		la->la_timer_period = ((uint32_t)et->et_frequency * period) >>
 		    32;
 		lapic_timer_periodic(la);
 	} else if (lapic_timer_tsc_deadline) {
-		la->la_timer_mode = LAT_MODE_DEADLINE;
+		lapic_change_mode(et, la, LAT_MODE_DEADLINE);
 		la->la_timer_period = (et->et_frequency * first) >> 32;
 		lapic_timer_deadline(la);
 	} else {
-		if (la->la_timer_mode == LAT_MODE_UNDEF)
-			lapic_timer_set_divisor(lapic_timer_divisor);
-		la->la_timer_mode = LAT_MODE_ONESHOT;
+		lapic_change_mode(et, la, LAT_MODE_ONESHOT);
 		la->la_timer_period = ((uint32_t)et->et_frequency * first) >>
 		    32;
 		lapic_timer_oneshot(la);
@@ -1164,8 +1189,8 @@ lapic_timer_set_divisor(u_int divisor)
 {
 
 	KASSERT(powerof2(divisor), ("lapic: invalid divisor %u", divisor));
-	KASSERT(ffs(divisor) <= sizeof(lapic_timer_divisors) /
-	    sizeof(u_int32_t), ("lapic: invalid divisor %u", divisor));
+	KASSERT(ffs(divisor) <= nitems(lapic_timer_divisors),
+		("lapic: invalid divisor %u", divisor));
 	lapic_write32(LAPIC_DCR_TIMER, lapic_timer_divisors[ffs(divisor) - 1]);
 }
 
@@ -1699,7 +1724,7 @@ static void
 apic_setup_local(void *dummy __unused)
 {
 	int retval;
- 
+
 	if (best_enum == NULL)
 		return;
 

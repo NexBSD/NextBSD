@@ -266,7 +266,7 @@ static int
 aw_lcdclk_recalc_freq(struct clknode *clk, uint64_t *freq)
 {
 	struct aw_lcdclk_softc *sc;
-	uint32_t val, m;
+	uint32_t val, m, src_sel;
 
 	sc = clknode_get_softc(clk);
 
@@ -281,7 +281,8 @@ aw_lcdclk_recalc_freq(struct clknode *clk, uint64_t *freq)
 	*freq = *freq / m;
 
 	if (sc->id == CLK_IDX_CH1_SCLK1) {
-		if ((val & CH1_SCLK1_SEL) == CH1_SCLK1_SEL_SCLK2_DIV2)
+		src_sel = (val & CH1_SCLK1_SEL) >> CH1_SCLK1_SEL_SHIFT;
+		if (src_sel == CH1_SCLK1_SEL_SCLK2_DIV2)
 			*freq /= 2;
 	}
 
@@ -492,7 +493,7 @@ aw_lcdclk_attach(device_t dev)
 
 	parent_names = malloc(sizeof(char *) * ncells, M_OFWPROP, M_WAITOK);
 	for (i = 0; i < ncells; i++) {
-		error = clk_get_by_ofw_index(dev, i, &clk_parent);
+		error = clk_get_by_ofw_index(dev, 0, i, &clk_parent);
 		if (error != 0) {
 			device_printf(dev, "cannot get clock %d\n", i);
 			goto fail;
@@ -528,11 +529,11 @@ aw_lcdclk_attach(device_t dev)
 	if (sc->type == AW_LCD_CH0)
 		hwreset_register_ofw_provider(dev);
 
-	free(parent_names, M_OFWPROP);
+	OF_prop_free(parent_names);
 	return (0);
 
 fail:
-	free(parent_names, M_OFWPROP);
+	OF_prop_free(parent_names);
 	return (error);
 }
 

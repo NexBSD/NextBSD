@@ -160,7 +160,7 @@ struct sctp_idata {
 	union {
 		uint32_t protocol_id;
 		uint32_t fsn;	/* Fragment Sequence Number */
-	};
+	}     ppid_fsn;
 	/* user data follows */
 }          SCTP_PACKED;
 
@@ -397,7 +397,7 @@ struct sctp_strseq {
 
 struct sctp_strseq_mid {
 	uint16_t stream;
-	uint16_t reserved;
+	uint16_t flags;
 	uint32_t msg_id;
 };
 
