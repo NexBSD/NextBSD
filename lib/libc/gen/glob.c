@@ -753,8 +753,8 @@ glob3(Char *pathbuf, Char *pathend, Char *pathend_last,
 {
 	struct dirent *dp;
 	DIR *dirp;
-	int err;
-	char buf[MAXPATHLEN];
+	int err, too_long, saverrno;
+	char buf[MAXPATHLEN + MB_LEN_MAX - 1];
 	int (*errfunc)(const char *, int);
 
 	struct dirent *(*readdirfunc)(DIR *);
