@@ -310,6 +310,8 @@ struct ifnet {
 	 * that structure can be enhanced without changing the kernel
 	 * binary interface.
 	 */
+	void	*if_pspare[4];		/* packet pacing / general use */
+	int	if_ispare[4];		/* packet pacing / general use */
 };
 
 /* for compatibility with other BSDs */
@@ -534,7 +536,6 @@ void	if_dead(struct ifnet *);
 int	if_delmulti(struct ifnet *, struct sockaddr *);
 void	if_delmulti_ifma(struct ifmultiaddr *);
 void	if_detach(struct ifnet *);
-void	if_vmove(struct ifnet *, struct vnet *);
 void	if_purgeaddrs(struct ifnet *);
 void	if_delallmulti(struct ifnet *);
 void	if_down(struct ifnet *);

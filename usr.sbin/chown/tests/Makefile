@@ -2,11 +2,7 @@
 
 .include <bsd.own.mk>
 
-PACKAGE=	tests
-FILESGROUPS=	TESTS
-TESTSPACKAGE=	${PACKAGE}
-
-TESTSDIR=	${TESTSBASE}/bin/chown
+TESTSDIR=	${TESTSBASE}/usr.sbin/chown
 
 TAP_TESTS_SH=			chown-f_test
 

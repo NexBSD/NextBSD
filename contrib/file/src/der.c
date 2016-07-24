@@ -35,7 +35,7 @@
 #include "file.h"
 
 #ifndef lint
-FILE_RCSID("@(#)$File: der.c,v 1.4 2016/03/21 23:04:40 christos Exp $")
+FILE_RCSID("@(#)$File: der.c,v 1.7 2016/06/01 22:01:15 christos Exp $")
 #endif
 #endif
 
@@ -44,7 +44,6 @@ FILE_RCSID("@(#)$File: der.c,v 1.4 2016/03/21 23:04:40 christos Exp $")
 #include <sys/mman.h>
 
 #include <stdio.h>
-#include <err.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +52,8 @@ FILE_RCSID("@(#)$File: der.c,v 1.4 2016/03/21 23:04:40 christos Exp $")
 #ifndef TEST_DER
 #include "magic.h"
 #include "der.h"
+#else
+#include <err.h>
 #endif
 
 #define DER_BAD	((uint32_t)-1)
@@ -61,11 +62,15 @@ FILE_RCSID("@(#)$File: der.c,v 1.4 2016/03/21 23:04:40 christos Exp $")
 #define	DER_CLASS_APPLICATION	1
 #define	DER_CLASS_CONTEXT	2
 #define	DER_CLASS_PRIVATE	3
+#ifdef DEBUG_DER
 static const char der_class[] = "UACP";
+#endif
 
 #define DER_TYPE_PRIMITIVE	0
 #define DER_TYPE_CONSTRUCTED	1
+#ifdef DEBUG_DER
 static const char der_type[] = "PC";
+#endif
 
 #define	DER_TAG_EOC			0x00
 #define	DER_TAG_BOOLEAN			0x01
@@ -216,7 +221,7 @@ int32_t
 der_offs(struct magic_set *ms, struct magic *m, size_t nbytes)
 {
 	const uint8_t *b = CAST(const void *, ms->search.s);
-	size_t offs = 0, len = ms->search.rm_len ? ms->search.rm_len : nbytes;
+	size_t offs = 0, len = ms->search.s_len ? ms->search.s_len : nbytes;
 
 	if (gettag(b, &offs, len) == DER_BAD)
 		return -1;

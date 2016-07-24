@@ -127,16 +127,19 @@ _taskqueue_create(const char *name, int mflags,
 		 int mtxflags, const char *mtxname __unused)
 {
 	struct taskqueue *queue;
-	char *tq_name = NULL;
+	char *tq_name;
 
-	if (name != NULL)
-		tq_name = strndup(name, 32, M_TASKQUEUE);
+	tq_name = malloc(TASKQUEUE_NAMELEN, M_TASKQUEUE, mflags | M_ZERO);
 	if (tq_name == NULL)
-		tq_name = "taskqueue";
+		return (NULL);
 
 	queue = malloc(sizeof(struct taskqueue), M_TASKQUEUE, mflags | M_ZERO);
-	if (!queue)
-		return NULL;
+	if (queue == NULL) {
+		free(tq_name, M_TASKQUEUE);
+		return (NULL);
+	}
+
+	snprintf(tq_name, TASKQUEUE_NAMELEN, "%s", (name) ? name : "taskqueue");
 
 	STAILQ_INIT(&queue->tq_queue);
 	TAILQ_INIT(&queue->tq_active);
@@ -152,7 +155,7 @@ _taskqueue_create(const char *name, int mflags,
 		queue->tq_flags |= TQ_FLAGS_UNLOCKED_ENQUEUE;
 	mtx_init(&queue->tq_mutex, tq_name, NULL, mtxflags);
 
-	return queue;
+	return (queue);
 }
 
 struct taskqueue *
@@ -254,6 +257,22 @@ taskqueue_enqueue_locked(struct taskqueue *queue, struct task *task)
 		TQ_UNLOCK(queue);
 
 	/* Return with lock released. */
+	return (0);
+}
+
+int
+grouptaskqueue_enqueue(struct taskqueue *queue, struct task *task)
+{
+	TQ_LOCK(queue);
+	if (task->ta_pending) {
+		TQ_UNLOCK(queue);
+		return (0);
+	}
+	STAILQ_INSERT_TAIL(&queue->tq_queue, task, ta_link);
+	task->ta_pending = 1;
+	TQ_UNLOCK(queue);
+	if ((queue->tq_flags & TQ_FLAGS_BLOCKED) == 0)
+		queue->tq_enqueue(queue->tq_context);
 	return (0);
 }
 
@@ -708,7 +727,6 @@ taskqueue_thread_loop(void *arg)
 		TQ_SLEEP(tq, tq, &tq->tq_mutex, 0, "-", 0);
 	}
 	taskqueue_run_locked(tq);
-
 	/*
 	 * This thread is on its way out, so just drop the lock temporarily
 	 * in order to call the shutdown callback.  This allows the callback
@@ -732,7 +750,6 @@ taskqueue_thread_enqueue(void *context)
 
 	tqp = context;
 	tq = *tqp;
-
 	wakeup_one(tq);
 }
 
@@ -815,6 +832,7 @@ static void
 taskqgroup_cpu_create(struct taskqgroup *qgroup, int idx)
 {
 	struct taskqgroup_cpu *qcpu;
+	int i, j;
 
 	qcpu = &qgroup->tqg_queue[idx];
 	LIST_INIT(&qcpu->tgc_tasks);
@@ -822,7 +840,15 @@ taskqgroup_cpu_create(struct taskqgroup *qgroup, int idx)
 	    taskqueue_thread_enqueue, &qcpu->tgc_taskq);
 	taskqueue_start_threads(&qcpu->tgc_taskq, 1, PI_SOFT,
 	    "%s_%d", qgroup->tqg_name, idx);
-	qcpu->tgc_cpu = idx * qgroup->tqg_stride;
+
+	for (i = CPU_FIRST(), j = 0; j < idx * qgroup->tqg_stride;
+	    j++, i = CPU_NEXT(i)) {
+		/*
+		 * Wait: evaluate the idx * qgroup->tqg_stride'th CPU,
+		 * potentially wrapping the actual count
+		 */
+	}
+	qcpu->tgc_cpu = i;
 }
 
 static void
@@ -885,6 +911,7 @@ taskqgroup_attach(struct taskqgroup *qgroup, struct grouptask *gtask,
 	gtask->gt_uniq = uniq;
 	gtask->gt_name = name;
 	gtask->gt_irq = irq;
+	gtask->gt_cpu = -1;
 	mtx_lock(&qgroup->tqg_lock);
 	qid = taskqgroup_find(qgroup, uniq);
 	qgroup->tqg_queue[qid].tgc_cnt++;
@@ -910,16 +937,20 @@ taskqgroup_attach_cpu(struct taskqgroup *qgroup, struct grouptask *gtask,
 	gtask->gt_uniq = uniq;
 	gtask->gt_name = name;
 	gtask->gt_irq = irq;
+	gtask->gt_cpu = cpu;
 	mtx_lock(&qgroup->tqg_lock);
-	for (i = 0; i < qgroup->tqg_cnt; i++)
-		if (qgroup->tqg_queue[i].tgc_cpu == cpu) {
-			qid = i;
-			break;
+	if (smp_started) {
+		for (i = 0; i < qgroup->tqg_cnt; i++)
+			if (qgroup->tqg_queue[i].tgc_cpu == cpu) {
+				qid = i;
+				break;
+			}
+		if (qid == -1) {
+			mtx_unlock(&qgroup->tqg_lock);
+			return (EINVAL);
 		}
-	if (qid == -1) {
-		mtx_unlock(&qgroup->tqg_lock);
-		return (EINVAL);
-	}
+	} else
+		qid = 0;
 	qgroup->tqg_queue[qid].tgc_cnt++;
 	LIST_INSERT_HEAD(&qgroup->tqg_queue[qid].tgc_tasks, gtask, gt_list);
 	gtask->gt_taskqueue = qgroup->tqg_queue[qid].tgc_taskq;
@@ -960,6 +991,10 @@ taskqgroup_binder(void *ctx, int pending)
 	CPU_ZERO(&mask);
 	CPU_SET(task->bt_cpuid, &mask);
 	error = cpuset_setthread(curthread->td_tid, &mask);
+	thread_lock(curthread);
+	sched_bind(curthread, task->bt_cpuid);
+	thread_unlock(curthread);
+
 	if (error)
 		printf("taskqgroup_binder: setaffinity failed: %d\n",
 		    error);
@@ -991,13 +1026,14 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
 	LIST_HEAD(, grouptask) gtask_head = LIST_HEAD_INITIALIZER(NULL);
 	cpuset_t mask;
 	struct grouptask *gtask;
-	int i, old_cnt, qid;
+	int i, k, old_cnt, qid, cpu;
 
 	mtx_assert(&qgroup->tqg_lock, MA_OWNED);
 
 	if (cnt < 1 || cnt * stride > mp_ncpus || !smp_started) {
-		printf("taskqgroup_adjust failed cnt: %d stride: %d mp_ncpus: %d smp_started: %d\n",
-			   cnt, stride, mp_ncpus, smp_started);
+		printf("taskqgroup_adjust failed cnt: %d stride: %d "
+		    "mp_ncpus: %d smp_started: %d\n", cnt, stride, mp_ncpus,
+		    smp_started);
 		return (EINVAL);
 	}
 	if (qgroup->tqg_adjusting) {
@@ -1038,7 +1074,15 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
 
 	while ((gtask = LIST_FIRST(&gtask_head))) {
 		LIST_REMOVE(gtask, gt_list);
-		qid = taskqgroup_find(qgroup, gtask->gt_uniq);
+		if (gtask->gt_cpu == -1)
+			qid = taskqgroup_find(qgroup, gtask->gt_uniq);
+		else {
+			for (i = 0; i < qgroup->tqg_cnt; i++)
+				if (qgroup->tqg_queue[i].tgc_cpu == gtask->gt_cpu) {
+					qid = i;
+					break;
+				}
+		}
 		qgroup->tqg_queue[qid].tgc_cnt++;
 		LIST_INSERT_HEAD(&qgroup->tqg_queue[qid].tgc_tasks, gtask,
 		    gt_list);
@@ -1047,8 +1091,11 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
 	/*
 	 * Set new CPU and IRQ affinity
 	 */
+	cpu = CPU_FIRST();
 	for (i = 0; i < cnt; i++) {
-		qgroup->tqg_queue[i].tgc_cpu = i * qgroup->tqg_stride;
+		qgroup->tqg_queue[i].tgc_cpu = cpu;
+		for (k = 0; k < qgroup->tqg_stride; k++)
+			cpu = CPU_NEXT(cpu);
 		CPU_ZERO(&mask);
 		CPU_SET(qgroup->tqg_queue[i].tgc_cpu, &mask);
 		LIST_FOREACH(gtask, &qgroup->tqg_queue[i].tgc_tasks, gt_list) {

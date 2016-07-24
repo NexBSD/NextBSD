@@ -35,7 +35,7 @@
 #include "file.h"
 
 #ifndef lint
-FILE_RCSID("@(#)$File: compress.c,v 1.93 2016/03/31 17:51:12 christos Exp $")
+FILE_RCSID("@(#)$File: compress.c,v 1.97 2016/05/13 23:02:28 christos Exp $")
 #endif
 
 #include "magic.h"
@@ -62,10 +62,9 @@ typedef void (*sig_t)(int);
 #if defined(HAVE_SYS_TIME_H)
 #include <sys/time.h>
 #endif
-#if defined(HAVE_ZLIB_H) && defined(HAVE_LIBZ)
+#if defined(HAVE_ZLIB_H)
 #define BUILTIN_DECOMPRESS
 #include <zlib.h>
-#define ZLIBSUPPORT
 #endif
 #ifdef DEBUG
 int tty = -1;
@@ -187,7 +186,7 @@ file_zmagic(struct magic_set *ms, int fd, const char *name,
 	size_t i, nsz;
 	char *rbuf;
 	file_pushbuf_t *pb;
-	int rv = 0;
+	int urv, prv, rv = 0;
 	int mime = ms->flags & MAGIC_MIME;
 #ifdef HAVE_SIGNAL_H
 	sig_t osigpipe;
@@ -214,22 +213,22 @@ file_zmagic(struct magic_set *ms, int fd, const char *name,
 		if (!zm)
 			continue;
 		nsz = nbytes;
-		rv = uncompressbuf(fd, ms->bytes_max, i, buf, &newbuf, &nsz);
-		DPRINTF("uncompressbuf = %d, %s, %zu\n", rv, (char *)newbuf,
+		urv = uncompressbuf(fd, ms->bytes_max, i, buf, &newbuf, &nsz);
+		DPRINTF("uncompressbuf = %d, %s, %zu\n", urv, (char *)newbuf,
 		    nsz);
-		switch (rv) {
+		switch (urv) {
 		case OKDATA:
 		case ERRDATA:
 			
 			ms->flags &= ~MAGIC_COMPRESS;
-			if (rv == ERRDATA)
-				rv = file_printf(ms, "%s ERROR: %s",
+			if (urv == ERRDATA)
+				prv = file_printf(ms, "%s ERROR: %s",
 				    methodname(i), newbuf);
 			else
-				rv = file_buffer(ms, -1, name, newbuf, nsz);
-			if (rv == -1)
+				prv = file_buffer(ms, -1, name, newbuf, nsz);
+			if (prv == -1)
 				goto error;
-			DPRINTF("rv = %d\n", rv);
+			rv = 1;
 			if ((ms->flags & MAGIC_COMPRESS_TRANSP) != 0)
 				goto out;
 			if (mime != MAGIC_MIME && mime != 0)
@@ -239,6 +238,10 @@ file_zmagic(struct magic_set *ms, int fd, const char *name,
 				goto error;
 			if ((pb = file_push_buffer(ms)) == NULL)
 				goto error;
+			/*
+			 * XXX: If file_buffer fails here, we overwrite
+			 * the compressed text. FIXME.
+			 */
 			if (file_buffer(ms, -1, NULL, buf, nbytes) == -1)
 				goto error;
 			if ((rbuf = file_pop_buffer(ms, pb)) != NULL) {
@@ -250,16 +253,20 @@ file_zmagic(struct magic_set *ms, int fd, const char *name,
 			}
 			if (!mime && file_printf(ms, ")") == -1)
 				goto error;
-			goto out;
+			/*FALLTHROUGH*/
 		case NODATA:
-			goto out;
+			break;
 		default:
 			abort();
+			/*NOTREACHED*/
+		error:
+			rv = -1;
+			break;
 		}
 	}
 out:
-	rv = 1;
-error:
+	DPRINTF("rv = %d\n", rv);
+
 #ifdef HAVE_SIGNAL_H
 	(void)signal(SIGPIPE, osigpipe);
 #endif

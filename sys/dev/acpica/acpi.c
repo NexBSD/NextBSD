@@ -280,14 +280,6 @@ TUNABLE_INT("debug.acpi.default_register_width", &acpi_ignore_reg_width);
 SYSCTL_INT(_debug_acpi, OID_AUTO, default_register_width, CTLFLAG_RDTUN,
     &acpi_ignore_reg_width, 1, "Ignore register widths set by FADT");
 
-#ifdef __amd64__
-/* Reset system clock while resuming.  XXX Remove once tested. */
-static int acpi_reset_clock = 1;
-TUNABLE_INT("debug.acpi.reset_clock", &acpi_reset_clock);
-SYSCTL_INT(_debug_acpi, OID_AUTO, reset_clock, CTLFLAG_RW,
-    &acpi_reset_clock, 1, "Reset system clock while resuming.");
-#endif
-
 /* Allow users to override quirks. */
 TUNABLE_INT("debug.acpi.quirks", &acpi_quirks);
 
@@ -1077,78 +1069,80 @@ acpi_hint_device_unit(device_t acdev, device_t child, const char *name,
     }
 }
 
-int
-acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, cpuset_t *cpuset)
+/*
+ * Fetch the NUMA domain for a device by mapping the value returned by
+ * _PXM to a NUMA domain.  If the device does not have a _PXM method,
+ * -2 is returned.  If any other error occurs, -1 is returned.
+ */
+static int
+acpi_parse_pxm(device_t dev)
 {
-	int rc, d, error;
+#ifdef DEVICE_NUMA
+	ACPI_HANDLE handle;
+	ACPI_STATUS status;
+	int pxm;
 
-	if ((rc = acpi_get_domain(dev, child, &d)) != 0)
-		return (rc);
+	handle = acpi_get_handle(dev);
+	if (handle == NULL)
+		return (-2);
+	status = acpi_GetInteger(handle, "_PXM", &pxm);
+	if (ACPI_SUCCESS(status))
+		return (acpi_map_pxm_to_vm_domainid(pxm));
+	if (status == AE_NOT_FOUND)
+		return (-2);
+#endif
+	return (-1);
+}
+
+int
+acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, size_t setsize,
+    cpuset_t *cpuset)
+{
+	int d, error;
+
+	d = acpi_parse_pxm(child);
+	if (d < 0)
+		return (bus_generic_get_cpus(dev, child, op, setsize, cpuset));
 
 	switch (op) {
 	case LOCAL_CPUS:
+		if (setsize != sizeof(cpuset_t))
+			return (EINVAL);
 		*cpuset = cpuset_domain[d];
 		return (0);
 	case INTR_CPUS:
-		if ((error = bus_generic_get_cpus(dev, child, op, cpuset)))
+		error = bus_generic_get_cpus(dev, child, op, setsize, cpuset);
+		if (error != 0)
 			return (error);
+		if (setsize != sizeof(cpuset_t))
+			return (EINVAL);
 		CPU_AND(cpuset, &cpuset_domain[d]);
 		return (0);
 	default:
-		return (bus_generic_get_cpus(dev, child, op, cpuset));
+		return (bus_generic_get_cpus(dev, child, op, setsize, cpuset));
 	}
 }
 
 /*
- * Fetch the NUMA domain for the given device.
+ * Fetch the NUMA domain for the given device 'dev'.
  *
  * If a device has a _PXM method, map that to a NUMA domain.
- * Fetch the VM domain for the given device 'dev'.
- *
- * Return 1 + domain if there's a domain, 0 if not found;
- * -1 upon an error.
- */
-int
-acpi_parse_pxm(device_t dev, int *domain)
-{
-#ifdef DEVICE_NUMA
-	ACPI_HANDLE h;
-	int d, pxm;
-
-	if ((h = acpi_get_handle(dev)) == NULL)
-		return (ENOENT);
-
-	if (ACPI_SUCCESS(acpi_GetInteger(h, "_PXM", &pxm))) {
-		d = acpi_map_pxm_to_vm_domainid(pxm);
-		if (d < 0)
-			return (-1);
-		*domain = d;
-		return (1);
-	}
-#endif
-	return (0);
-}
-
-/*
- * Fetch the NUMA domain for the given device.
- *
- * If a device has a _PXM method, map that to a NUMA domain.
- *
- * If none is found, then it'll call the parent method.
- * If there's no domain, return ENOENT.
+ * Otherwise, pass the request up to the parent.
+ * If there's no matching domain or the domain cannot be
+ * determined, return ENOENT.
  */
 int
 acpi_get_domain(device_t dev, device_t child, int *domain)
 {
-	int ret;
+	int d;
 
-	ret = acpi_parse_pxm(child, domain);
-	/* Error */
-	if (ret == -1)
-		return (ENOENT);
-	/* Found */
-	if (ret == 1)
+	d = acpi_parse_pxm(child);
+	if (d >= 0) {
+		*domain = d;
 		return (0);
+	}
+	if (d == -1)
+		return (ENOENT);
 
 	/* No _PXM node; go up a level */
 	return (bus_generic_get_domain(dev, child, domain));
@@ -1991,7 +1985,7 @@ acpi_probe_child(ACPI_HANDLE handle, UINT32 level, void *context, void **status)
 	     * Since we scan from \, be sure to skip system scope objects.
 	     * \_SB_ and \_TZ_ are defined in ACPICA as devices to work around
 	     * BIOS bugs.  For example, \_SB_ is to allow \_SB_._INI to be run
-	     * during the intialization and \_TZ_ is to support Notify() on it.
+	     * during the initialization and \_TZ_ is to support Notify() on it.
 	     */
 	    if (strcmp(handle_str, "\\_SB_") == 0 ||
 		strcmp(handle_str, "\\_TZ_") == 0)
@@ -2854,11 +2848,18 @@ acpi_EnterSleepState(struct acpi_softc *sc, int state)
     stop_all_proc();
     EVENTHANDLER_INVOKE(power_suspend);
 
+#ifdef EARLY_AP_STARTUP
+    MPASS(mp_ncpus == 1 || smp_started);
+    thread_lock(curthread);
+    sched_bind(curthread, 0);
+    thread_unlock(curthread);
+#else
     if (smp_started) {
 	thread_lock(curthread);
 	sched_bind(curthread, 0);
 	thread_unlock(curthread);
     }
+#endif
 
     /*
      * Be sure to hold Giant across DEVICE_SUSPEND/RESUME since non-MPSAFE
@@ -2989,11 +2990,17 @@ backout:
 
     mtx_unlock(&Giant);
 
+#ifdef EARLY_AP_STARTUP
+    thread_lock(curthread);
+    sched_unbind(curthread);
+    thread_unlock(curthread);
+#else
     if (smp_started) {
 	thread_lock(curthread);
 	sched_unbind(curthread);
 	thread_unlock(curthread);
     }
+#endif
 
     resume_all_proc();
 
@@ -3012,9 +3019,6 @@ backout:
 static void
 acpi_resync_clock(struct acpi_softc *sc)
 {
-#ifdef __amd64__
-    if (!acpi_reset_clock)
-	return;
 
     /*
      * Warm up timecounter again and reset system clock.
@@ -3022,7 +3026,6 @@ acpi_resync_clock(struct acpi_softc *sc)
     (void)timecounter->tc_get_timecount(timecounter);
     (void)timecounter->tc_get_timecount(timecounter);
     inittodr(time_second + sc->acpi_sleep_delay);
-#endif
 }
 
 /* Enable or disable the device's wake GPE. */

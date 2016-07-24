@@ -195,7 +195,7 @@ clk_fixed_init_fixed_factor(struct clk_fixed_softc *sc, phandle_t node,
 	if (rv <= 0)
 		return (ENXIO);
 	/* Get name of parent clock */
-	rv = clk_get_by_ofw_index(sc->dev, 0, &parent);
+	rv = clk_get_by_ofw_index(sc->dev, 0, 0, &parent);
 	if (rv != 0)
 		return (ENXIO);
 	def->clkdef.parent_names = malloc(sizeof(char *), M_OFWPROP, M_WAITOK);
@@ -254,13 +254,13 @@ clk_fixed_attach(device_t dev)
 #ifdef CLK_DEBUG
 	clkdom_dump(sc->clkdom);
 #endif
-	free(__DECONST(char *, def.clkdef.name), M_OFWPROP);
-	free(def.clkdef.parent_names, M_OFWPROP);
+	OF_prop_free(__DECONST(char *, def.clkdef.name));
+	OF_prop_free(def.clkdef.parent_names);
 	return (bus_generic_attach(dev));
 
 fail:
-	free(__DECONST(char *, def.clkdef.name), M_OFWPROP);
-	free(def.clkdef.parent_names, M_OFWPROP);
+	OF_prop_free(__DECONST(char *, def.clkdef.name));
+	OF_prop_free(def.clkdef.parent_names);
 	return (rv);
 }
 

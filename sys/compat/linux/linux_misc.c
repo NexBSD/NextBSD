@@ -149,6 +149,7 @@ linux_sysinfo(struct thread *td, struct linux_sysinfo_args *args)
 	int i, j;
 	struct timespec ts;
 
+	bzero(&sysinfo, sizeof(sysinfo));
 	getnanouptime(&ts);
 	if (ts.tv_nsec != 0)
 		ts.tv_sec++;
@@ -199,7 +200,7 @@ linux_alarm(struct thread *td, struct linux_alarm_args *args)
 #endif
 	secs = args->secs;
 	/*
-	 * Linux alarm() is always successfull. Limit secs to INT32_MAX / 2
+	 * Linux alarm() is always successful. Limit secs to INT32_MAX / 2
 	 * to match kern_setitimer()'s limit to avoid error from it.
 	 *
 	 * XXX. Linux limit secs to INT_MAX on 32 and does not limit on 64-bit
@@ -1199,15 +1200,23 @@ linux_mknodat(struct thread *td, struct linux_mknodat_args *args)
 int
 linux_personality(struct thread *td, struct linux_personality_args *args)
 {
+	struct linux_pemuldata *pem;
+	struct proc *p = td->td_proc;
+	uint32_t old;
+
 #ifdef DEBUG
 	if (ldebug(personality))
-		printf(ARGS(personality, "%lu"), (unsigned long)args->per);
+		printf(ARGS(personality, "%u"), args->per);
 #endif
-	if (args->per != 0)
-		return (EINVAL);
 
-	/* Yes Jim, it's still a Linux... */
-	td->td_retval[0] = 0;
+	PROC_LOCK(p);
+	pem = pem_find(p);
+	old = pem->persona;
+	if (args->per != 0xffffffff)
+		pem->persona = args->per;
+	PROC_UNLOCK(p);
+
+	td->td_retval[0] = old;
 	return (0);
 }
 

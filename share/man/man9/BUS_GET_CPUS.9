@@ -1,6 +1,6 @@
 .\" -*- nroff -*-
 .\"
-.\" Copyright (c) 2015 John H. Baldwin <jhb@FreeBSD.org>
+.\" Copyright (c) 2016 John H. Baldwin <jhb@FreeBSD.org>
 .\" All rights reserved.
 .\"
 .\" Redistribution and use in source and binary forms, with or without
@@ -26,7 +26,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd March 7, 2015
+.Dd March 1, 2016
 .Dt BUS_GET_CPUS 9
 .Os
 .Sh NAME
@@ -36,12 +36,16 @@
 .Sh SYNOPSIS
 .In sys/param.h
 .In sys/bus.h
+.In sys/cpuset.h
 .Ft int
 .Fo BUS_GET_CPUS
-.Fa "device_t dev" "device_t child" "enum cpu_sets op" "cpuset_t *cpuset"
+.Fa "device_t dev" "device_t child" "enum cpu_sets op" "size_t setsize"
+.Fa "cpuset_t *cpuset"
 .Fc
 .Ft int
-.Fn bus_get_cpus "device_t dev" "enum cpu_sets op" "cpuset_t *cpuset"
+.Fo bus_get_cpus
+.Fa "device_t dev" "enum cpu_sets op" "size_t setsize" "cpuset_t *cpuset"
+.Fc
 .Sh DESCRIPTION
 The
 .Fn BUS_GET_CPUS
@@ -52,17 +56,20 @@ argument specifies which set of CPUs to retrieve.
 If successful,
 the requested set of CPUs are returned in
 .Fa cpuset .
-.Pp
 The
+.Fa setsize
+argument specifies the size in bytes of the set passed in
+.Fa cpuset .
+.Pp
 .Fn BUS_GET_CPUS
-method supports querying different types of CPU sets via the the
+supports querying different types of CPU sets via the
 .Fa op argument.
-Some set types may not be supported for every device.
+Not all set types are supported for every device.
 If a set type is not supported,
 .Fn BUS_GET_CPUS
-will fail with
+fails with
 .Er EINVAL .
-The following set types are supported:
+These set types are supported:
 .Bl -tag -width ".Dv LOCAL_CPUS"
 .It Dv LOCAL_CPUS
 The set of CPUs that are local to the device.
@@ -90,5 +97,5 @@ The
 .Fn BUS_GET_CPUS
 method and
 .Fn bus_get_cpus
-functions first appeared in
+function first appeared in
 .Fx 11.0 .

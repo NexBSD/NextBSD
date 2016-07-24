@@ -316,6 +316,7 @@ FBSD_1.2 {
 	pthread_getthreadid_np;
 };
 
+<<<<<<< HEAD
 
 FBSD_1.3 {
   _pthread_workqueue_additem_np;
@@ -347,4 +348,10 @@ FBSD_1.3 {
   pthread_workqueue_getovercommit_np;
   pthread_workqueue_init_np;
   pthread_workqueue_requestconcurrency_np;
+};
+
+FBSD_1.4 {
+	 pthread_mutex_consistent;
+	 pthread_mutexattr_getrobust;
+	 pthread_mutexattr_setrobust;
 };

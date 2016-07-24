@@ -453,7 +453,16 @@ sleepq_catch_signals(void *wchan, int pri)
 	ps = p->p_sigacts;
 	mtx_lock(&ps->ps_mtx);
 	sig = cursig(td);
-	if (sig == 0) {
+	if (sig == -1) {
+		mtx_unlock(&ps->ps_mtx);
+		KASSERT((td->td_flags & TDF_SBDRY) != 0, ("lost TDF_SBDRY"));
+		KASSERT(TD_SBDRY_INTR(td),
+		    ("lost TDF_SERESTART of TDF_SEINTR"));
+		KASSERT((td->td_flags & (TDF_SEINTR | TDF_SERESTART)) !=
+		    (TDF_SEINTR | TDF_SERESTART),
+		    ("both TDF_SEINTR and TDF_SERESTART"));
+		ret = TD_SBDRY_ERRNO(td);
+	} else if (sig == 0) {
 		mtx_unlock(&ps->ps_mtx);
 		ret = thread_suspend_check(1);
 		MPASS(ret == 0 || ret == EINTR || ret == ERESTART);
@@ -591,7 +600,7 @@ sleepq_check_timeout(void)
 	 * another CPU, so synchronize with it to avoid having it
 	 * accidentally wake up a subsequent sleep.
 	 */
-	else if (_callout_stop_safe(&td->td_slpcallout, CS_MIGRBLOCK, NULL)
+	else if (_callout_stop_safe(&td->td_slpcallout, CS_EXECUTING, NULL)
 	    == 0) {
 		td->td_flags |= TDF_TIMEOUT;
 		TD_SET_SLEEPING(td);
@@ -865,7 +874,7 @@ int
 sleepq_broadcast(void *wchan, int flags, int pri, int queue)
 {
 	struct sleepqueue *sq;
-	struct thread *td, *tdn;
+	struct thread *td;
 	int wakeup_swapper;
 
 	CTR2(KTR_PROC, "sleepq_broadcast(%p, %d)", wchan, flags);
@@ -879,10 +888,9 @@ sleepq_broadcast(void *wchan, int flags, int pri, int queue)
 
 	/* Resume all blocked threads on the sleep queue. */
 	wakeup_swapper = 0;
-	TAILQ_FOREACH_SAFE(td, &sq->sq_blocked[queue], td_slpq, tdn) {
+	while ((td = TAILQ_FIRST(&sq->sq_blocked[queue])) != NULL) {
 		thread_lock(td);
-		if (sleepq_resume_thread(sq, td, pri))
-			wakeup_swapper = 1;
+		wakeup_swapper |= sleepq_resume_thread(sq, td, pri);
 		thread_unlock(td);
 	}
 	return (wakeup_swapper);

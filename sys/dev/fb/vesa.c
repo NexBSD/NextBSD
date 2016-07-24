@@ -79,6 +79,7 @@ struct adp_state {
 typedef struct adp_state adp_state_t;
 
 static struct mtx vesa_lock;
+MTX_SYSINIT(vesa_lock, &vesa_lock, "VESA lock", MTX_DEF);
 
 static int vesa_state;
 static void *vesa_state_buf;
@@ -1025,7 +1026,8 @@ vesa_bios_init(void)
 
 		++modes;
 	}
-	vesa_vmode[modes].vi_mode = EOT;
+	if (vesa_vmode != NULL)
+		vesa_vmode[modes].vi_mode = EOT;
 
 	if (bootverbose)
 		printf("VESA: %d mode(s) found\n", modes);
@@ -1581,7 +1583,7 @@ vesa_set_origin(video_adapter_t *adp, off_t offset)
 	regs.R_DX = offset / adp->va_window_gran;
 	x86bios_intr(&regs, 0x10);
 
-	adp->va_window_orig = (offset/adp->va_window_gran)*adp->va_window_gran;
+	adp->va_window_orig = rounddown(offset, adp->va_window_gran);
 	return (0);			/* XXX */
 }
 
@@ -1913,8 +1915,6 @@ vesa_load(void)
 	if (vesa_init_done)
 		return (0);
 
-	mtx_init(&vesa_lock, "VESA lock", NULL, MTX_DEF);
-
 	/* locate a VGA adapter */
 	vesa_adp = NULL;
 	error = vesa_configure(0);
@@ -1953,7 +1953,6 @@ vesa_unload(void)
 	}
 
 	vesa_bios_uninit();
-	mtx_destroy(&vesa_lock);
 
 	return (error);
 }

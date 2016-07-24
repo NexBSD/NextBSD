@@ -13,7 +13,6 @@ SUBDIR=	${_colldef} \
 	${_examples} \
 	${_i18n} \
 	keys \
-	${_locale-links} \
 	${_man} \
 	${_me} \
 	misc \
@@ -60,7 +59,6 @@ _i18n=		i18n
 .if ${MK_LOCALES} != "no"
 _colldef=	colldef
 _ctypedef=	ctypedef
-_locale-links=	locale-links
 _monetdef=	monetdef
 _msgdef=	msgdef
 _numericdef=	numericdef

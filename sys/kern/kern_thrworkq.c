@@ -284,7 +284,7 @@ twq_set_upcall(struct threadlist *tl, int which, void *item)
 		panic("twq_set_upcall: unknown upcall type");
 	}
 
-	cpu_set_upcall_kse(tl->th_thread, func, item, &tl->th_stack);
+	cpu_set_upcall(tl->th_thread, func, item, &tl->th_stack);
 }
 
 static void
@@ -838,7 +838,7 @@ twq_addnewthread(struct thrworkq *wq)
 	    __rangeof(struct thread, td_startcopy, td_endcopy));
 	newtd->td_proc = p;
 
-	cpu_set_upcall(newtd, td);
+	cpu_copy_thread(newtd, td);
 
 	/*
 	 * Allocate thread list and init.
@@ -934,7 +934,7 @@ twq_init_workqueue(struct proc *p, struct twq_param *arg)
 	else
 		cpuset_setthread(newtd->td_tid, cpuset_root);
 	newtd->td_proc = p;
-	cpu_set_upcall(newtd, td);
+	cpu_copy_thread(newtd, td);
 
 	PROC_LOCK(p);
 	p->p_flag |= P_HADTHREADS;

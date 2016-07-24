@@ -391,11 +391,11 @@ mcast:
 	switch (dst_in->sa_family) {
 	case AF_INET:
 		error = arpresolve(ifp, is_gw, NULL,
-		    is_gw ? rte->rt_gateway : dst_in, edst, NULL);
+		    is_gw ? rte->rt_gateway : dst_in, edst, NULL, NULL);
 		break;
 	case AF_INET6:
 		error = nd6_resolve(ifp, is_gw, NULL,
-		    is_gw ? rte->rt_gateway : dst_in, edst, NULL);
+		    is_gw ? rte->rt_gateway : dst_in, edst, NULL, NULL);
 		break;
 	default:
 		KASSERT(0, ("rdma_addr_resolve: Unreachable"));

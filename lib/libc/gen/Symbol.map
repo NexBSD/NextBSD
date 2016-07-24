@@ -413,7 +413,12 @@ FBSD_1.4 {
 	err_set_exit_b;
 	fts_open_b;
 	glob_b;
+	getnetgrent_r;
+	pthread_mutex_consistent;
+	pthread_mutexattr_getrobust;
+	pthread_mutexattr_setrobust;
 	scandir_b;
+	stravis;
 };
 
 FBSDprivate_1.0 {

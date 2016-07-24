@@ -165,7 +165,7 @@ kmem_alloc_attr(vmem_t *vmem, vm_size_t size, int flags, vm_paddr_t low,
 	vm_offset_t addr, i;
 	vm_ooffset_t offset;
 	vm_page_t m;
-	int pflags, level;
+	int pflags, tries;
 
 	size = round_page(size);
 	if (vmem_alloc(vmem, size, M_BESTFIT | flags, &addr))
@@ -174,17 +174,19 @@ kmem_alloc_attr(vmem_t *vmem, vm_size_t size, int flags, vm_paddr_t low,
 	pflags = malloc2vm_flags(flags) | VM_ALLOC_NOBUSY | VM_ALLOC_WIRED;
 	VM_OBJECT_WLOCK(object);
 	for (i = 0; i < size; i += PAGE_SIZE) {
-		level = 0;
+		tries = 0;
 retry:
 		m = vm_page_alloc_contig(object, OFF_TO_IDX(offset + i),
 		    pflags, 1, low, high, PAGE_SIZE, 0, memattr);
 		if (m == NULL) {
 			VM_OBJECT_WUNLOCK(object);
-			if (level < ((flags & M_NOWAIT) != 0 ? 1 : 3)) {
-				vm_pageout_reclaim_contig(1, low, high,
-				    PAGE_SIZE, 0, level);
+			if (tries < ((flags & M_NOWAIT) != 0 ? 1 : 3)) {
+				if (!vm_page_reclaim_contig(pflags, 1,
+				    low, high, PAGE_SIZE, 0) &&
+				    (flags & M_WAITOK) != 0)
+					VM_WAIT;
 				VM_OBJECT_WLOCK(object);
-				level++;
+				tries++;
 				goto retry;
 			}
 			kmem_unback(object, addr, i);
@@ -218,27 +220,28 @@ kmem_alloc_contig(struct vmem *vmem, vm_size_t size, int flags, vm_paddr_t low,
 	vm_offset_t addr, tmp;
 	vm_ooffset_t offset;
 	vm_page_t end_m, m;
-	int pflags, level;
 	u_long npages;
-
+	int pflags, tries;
+ 
 	size = round_page(size);
-	npages = atop(size);
 	if (vmem_alloc(vmem, size, flags | M_BESTFIT, &addr))
 		return (0);
 	offset = addr - VM_MIN_KERNEL_ADDRESS;
 	pflags = malloc2vm_flags(flags) | VM_ALLOC_NOBUSY | VM_ALLOC_WIRED;
+	npages = atop(size);
 	VM_OBJECT_WLOCK(object);
-	level = 0;
+	tries = 0;
 retry:
 	m = vm_page_alloc_contig(object, OFF_TO_IDX(offset), pflags,
 	    npages, low, high, alignment, boundary, memattr);
 	if (m == NULL) {
 		VM_OBJECT_WUNLOCK(object);
-		if (level < ((flags & M_NOWAIT) != 0 ? 1 : 3)) {
-			vm_pageout_reclaim_contig(atop(size), low, high,
-			    alignment, boundary, level);
+		if (tries < ((flags & M_NOWAIT) != 0 ? 1 : 3)) {
+			if (!vm_page_reclaim_contig(pflags, npages, low, high,
+			    alignment, boundary) && (flags & M_WAITOK) != 0)
+				VM_WAIT;
 			VM_OBJECT_WLOCK(object);
-			level++;
+			tries++;
 			goto retry;
 		}
 		vmem_free(vmem, addr, size);

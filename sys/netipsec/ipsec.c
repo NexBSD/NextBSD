@@ -290,7 +290,7 @@ key_allocsp_default(const char* where, int tag)
  *		0	: bypass
  *		EACCES	: discard packet.
  *		ENOENT	: ipsec_acquire() in progress, maybe.
- *		others	: error occured.
+ *		others	: error occurred.
  *	others:	a pointer to SP
  *
  * NOTE: IPv6 mapped adddress concern is implemented here.
@@ -318,7 +318,7 @@ ipsec_getpolicy(struct tdb_ident *tdbi, u_int dir)
  *		0	: bypass
  *		EACCES	: discard packet.
  *		ENOENT	: ipsec_acquire() in progress, maybe.
- *		others	: error occured.
+ *		others	: error occurred.
  *	others:	a pointer to SP
  *
  * NOTE: IPv6 mapped adddress concern is implemented here.
@@ -425,7 +425,7 @@ ipsec_getpolicybysock(const struct mbuf *m, u_int dir, struct inpcb *inp,
  *		0	: bypass
  *		EACCES	: discard packet.
  *		ENOENT	: ipsec_acquire() in progress, maybe.
- *		others	: error occured.
+ *		others	: error occurred.
  */
 struct secpolicy *
 ipsec_getpolicybyaddr(const struct mbuf *m, u_int dir, int *error)
@@ -977,6 +977,7 @@ fail:
 		ipsec_delisr(p);
 		p = NULL;
 	}
+	KEY_FREESP(&dst);
 	return (NULL);
 }
 
@@ -1714,7 +1715,7 @@ def_policy_init(const void *unused __unused)
 	V_def_policy.policy = IPSEC_POLICY_NONE;
 	V_def_policy.refcnt = 1;
 }
-VNET_SYSINIT(def_policy_init, SI_SUB_PROTO_DOMAININIT, SI_ORDER_ANY,
+VNET_SYSINIT(def_policy_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_FIRST,
     def_policy_init, NULL);
 
 
