@@ -394,7 +394,7 @@ ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx, int budget)
 	int cnt, i, mask;
 
 	mask = vsi->shared->isc_nrxd-1;
-	for (cnt = 0, i = idx; cnt < vsi->shared->isc_nrxd && cnt < budget;) {
+	for (cnt = 0, i = idx; cnt < vsi->shared->isc_nrxd && cnt <= budget;) {
 		cur = &rxr->rx_base[i];
 		qword = le64toh(cur->wb.qword1.status_error_len);
 		status = (qword & I40E_RXD_QW1_STATUS_MASK)
