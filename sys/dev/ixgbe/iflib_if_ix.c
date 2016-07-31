@@ -441,12 +441,12 @@ static struct if_shared_ctx ixgbe_sctx_init = {
 	.isc_txrx = &ixgbe_txrx,
 	.isc_driver = &ixgbe_if_driver,
 
-	.isc_nrxd_min = MIN_RXD,
-	.isc_ntxd_min = MIN_TXD,
-	.isc_nrxd_max = MAX_RXD,
-	.isc_ntxd_max = MAX_TXD,
-	.isc_nrxd_default = DEFAULT_RXD,
-	.isc_ntxd_default = DEFAULT_TXD,
+	.isc_nrxd_min = {MIN_RXD},
+	.isc_ntxd_min = {MIN_TXD},
+	.isc_nrxd_max = {MAX_RXD},
+	.isc_ntxd_max = {MAX_TXD},
+	.isc_nrxd_default = {DEFAULT_RXD},
+	.isc_ntxd_default = {DEFAULT_TXD},
 };
 
 if_shared_ctx_t ixgbe_sctx = &ixgbe_sctx_init;
@@ -484,7 +484,7 @@ ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nt
 	for (i = 0, que = adapter->tx_queues; i < ntxqsets; i++, que++) {
 		struct tx_ring		*txr = &que->txr;
 
-		if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * scctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+		if (!(txr->tx_buffers = (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) * scctx->isc_ntxd[0], M_DEVBUF, M_NOWAIT | M_ZERO))) {
 			device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
 			error = ENOMEM;
 			goto fail;
@@ -504,7 +504,7 @@ ixgbe_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int nt
 		txr->tx_paddr = paddrs[i];
 
 		txr->que = que;
-		for (j = 0; j < scctx->isc_ntxd; j++) {
+		for (j = 0; j < scctx->isc_ntxd[0]; j++) {
 			txr->tx_buffers[j].eop = -1;
 		}
 		txr->bytes = 0;
@@ -795,7 +795,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 			       (rdba & 0x00000000ffffffffULL));
 		IXGBE_WRITE_REG(hw, IXGBE_RDBAH(j), (rdba >> 32));
 		IXGBE_WRITE_REG(hw, IXGBE_RDLEN(j),
-		     scctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc));
+		     scctx->isc_nrxd[0] * sizeof(union ixgbe_adv_rx_desc));
 
 		/* Set up the SRRCTL register */
 		srrctl = IXGBE_READ_REG(hw, IXGBE_SRRCTL(j));
@@ -880,7 +880,7 @@ ixgbe_initialize_transmit_units(if_ctx_t ctx)
 		       (tdba & 0x00000000ffffffffULL));
 		IXGBE_WRITE_REG(hw, IXGBE_TDBAH(j), (tdba >> 32));
 		IXGBE_WRITE_REG(hw, IXGBE_TDLEN(j),
-		    scctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc));
+		    scctx->isc_ntxd[0] * sizeof(union ixgbe_adv_tx_desc));
 
 		/* Setup the HW Tx Head and Tail descriptor pointers */
 		IXGBE_WRITE_REG(hw, IXGBE_TDH(j), 0);
@@ -984,8 +984,8 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 		scctx->isc_tx_nsegments = IXGBE_82599_SCATTER;
 		scctx->isc_msix_bar = PCIR_BAR(MSIX_82599_BAR);
 	}
-	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd * sizeof(union ixgbe_adv_tx_desc) + sizeof(u32), DBA_ALIGN),
-	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd * sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
+	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd[0] * sizeof(union ixgbe_adv_tx_desc) + sizeof(u32), DBA_ALIGN),
+	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd[0] * sizeof(union ixgbe_adv_rx_desc), DBA_ALIGN);
 
 	scctx->isc_tx_tso_segments_max = scctx->isc_tx_nsegments;
 	scctx->isc_tx_tso_size_max = IXGBE_TSO_SIZE;

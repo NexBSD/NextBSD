@@ -174,8 +174,8 @@ typedef struct if_softc_ctx {
 	int isc_ntxqsets;
 	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
-	int isc_ntxd;
-	int isc_nrxd;
+	int isc_ntxd[8];
+	int isc_nrxd[8];
 
 	uint32_t isc_txqsizes[8];
 	uint32_t isc_rxqsizes[8];
@@ -223,12 +223,12 @@ struct if_shared_ctx {
 /* optional function to transform the read values to match the table*/
 	void (*isc_parse_devinfo) (uint16_t *device_id, uint16_t *subvendor_id,
 				   uint16_t *subdevice_id, uint16_t *rev_id);
-	int isc_nrxd_min;
-	int isc_nrxd_default;
-	int isc_nrxd_max;
-	int isc_ntxd_min;
-	int isc_ntxd_default;
-	int isc_ntxd_max;
+	int isc_nrxd_min[8];
+	int isc_nrxd_default[8];
+	int isc_nrxd_max[8];
+	int isc_ntxd_min[8];
+	int isc_ntxd_default[8];
+	int isc_ntxd_max[8];
 };
 
 typedef struct iflib_dma_info {
@@ -254,9 +254,9 @@ typedef enum {
 
 
 /*
- * Interface has a separate command queue
+ * Interface has a separate command queue for RX
  */
-#define IFLIB_HAS_CQ		0x1
+#define IFLIB_HAS_RXCQ		0x1
 /*
  * Driver has already allocated vectors
  */
@@ -266,6 +266,10 @@ typedef enum {
  * Interface is a virtual function
  */
 #define IFLIB_IS_VF		0x4
+/*
+ * Interface has a separate command queue for TX
+ */
+#define IFLIB_HAS_TXCQ		0x8
 
 
 /*
