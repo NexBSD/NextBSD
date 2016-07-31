@@ -198,7 +198,7 @@ ixl_tso_setup(struct tx_ring *txr, if_pkt_info_t pi)
 
 	TXD->tunneling_params = htole32(0);
 
-	return ((idx + 1) & (scctx->isc_ntxd-1));
+	return ((idx + 1) & (scctx->isc_ntxd[0]-1));
 }
 
 /*********************************************************************
@@ -245,7 +245,7 @@ ixl_isc_txd_encap(void *arg, if_pkt_info_t pi)
 		cmd |= I40E_TX_DESC_CMD_IL2TAG1;
 
 	cmd |= I40E_TX_DESC_CMD_ICRC;
-	mask = scctx->isc_ntxd-1;
+	mask = scctx->isc_ntxd[0]-1;
 	for (j = 0; j < nsegs; j++) {
 		bus_size_t seglen;
 
@@ -298,7 +298,7 @@ ixl_init_tx_ring(struct ixl_vsi *vsi, struct ixl_tx_queue *que)
 
 	/* Clear the old ring contents */
 	bzero((void *)txr->tx_base,
-	      (sizeof(struct i40e_tx_desc)) * scctx->isc_ntxd);
+	      (sizeof(struct i40e_tx_desc)) * scctx->isc_ntxd[0]);
 
 #ifdef IXL_FDIR
 	/* Initialize flow director */
@@ -318,7 +318,7 @@ ixl_get_tx_head(struct ixl_tx_queue *que)
 {
 	if_softc_ctx_t		scctx = que->vsi->shared;
 	struct tx_ring  *txr = &que->txr;
-	void *head = &txr->tx_base[scctx->isc_ntxd];
+	void *head = &txr->tx_base[scctx->isc_ntxd[0]];
 
 	return LE32_TO_CPU(*(volatile __le32 *)head);
 }
@@ -344,7 +344,7 @@ ixl_isc_txd_credits_update(void *arg, uint16_t qid, uint32_t cidx, bool clear)
 
 	credits = head - cidx;
 	if (credits < 0)
-		credits += scctx->isc_ntxd;
+		credits += scctx->isc_ntxd[0];
 	return (credits);
 }
 
@@ -367,7 +367,7 @@ ixl_isc_rxd_refill(void *arg, uint16_t rxqid, uint8_t flid __unused,
 	int			i, mask;
 	uint32_t next_pidx;
 
-	mask = vsi->shared->isc_nrxd-1;
+	mask = vsi->shared->isc_nrxd[0]-1;
 	for (i = 0, next_pidx = pidx; i < count; i++) {
 		rxr->rx_base[next_pidx].read.pkt_addr = htole64(paddrs[i]);
 		next_pidx = (next_pidx + 1) & mask;
@@ -393,8 +393,8 @@ ixl_isc_rxd_available(void *arg, uint16_t rxqid, uint32_t idx, int budget)
 	uint32_t status;
 	int cnt, i, mask;
 
-	mask = vsi->shared->isc_nrxd-1;
-	for (cnt = 0, i = idx; cnt < vsi->shared->isc_nrxd && cnt < budget;) {
+	mask = vsi->shared->isc_nrxd[0]-1;
+	for (cnt = 0, i = idx; cnt < vsi->shared->isc_nrxd[0] && cnt < budget;) {
 		cur = &rxr->rx_base[i];
 		qword = le64toh(cur->wb.qword1.status_error_len);
 		status = (qword & I40E_RXD_QW1_STATUS_MASK)
@@ -528,7 +528,7 @@ ixl_isc_rxd_pkt_get(void *arg, if_rxd_info_t ri)
 		ri->iri_frags[i].irf_flid = 0;
 		ri->iri_frags[i].irf_idx = cidx;
 		ri->iri_frags[i].irf_len = plen;
-		if (++cidx == scctx->isc_ntxd)
+		if (++cidx == scctx->isc_ntxd[0])
 			cidx = 0;
 		i++;
 		/* even a 16K packet shouldn't consume more than 8 clusters */

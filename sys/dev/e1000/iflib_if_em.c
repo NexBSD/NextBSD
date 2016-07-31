@@ -313,12 +313,12 @@ static struct if_shared_ctx em_sctx_init = {
 	.isc_txrx = &em_txrx,
 	.isc_driver = &em_if_driver,
 
-	.isc_nrxd_min = EM_MIN_RXD,
-	.isc_ntxd_min = EM_MIN_TXD,
-	.isc_nrxd_max = EM_MAX_RXD,
-	.isc_ntxd_max = EM_MAX_TXD,
-	.isc_nrxd_default = EM_DEFAULT_RXD,
-	.isc_ntxd_default = EM_DEFAULT_TXD,
+	.isc_nrxd_min = {EM_MIN_RXD},
+	.isc_ntxd_min = {EM_MIN_TXD},
+	.isc_nrxd_max = {EM_MAX_RXD},
+	.isc_ntxd_max = {EM_MAX_TXD},
+	.isc_nrxd_default = {EM_DEFAULT_RXD},
+	.isc_ntxd_default = {EM_DEFAULT_TXD},
 };
   
 if_shared_ctx_t em_sctx = &em_sctx_init;
@@ -350,8 +350,8 @@ static int em_get_regs(SYSCTL_HANDLER_ARGS)
 	struct em_rx_queue *rx_que = &adapter->rx_queues[0];
 	struct rx_ring *rxr = &rx_que->rxr;
 	struct tx_ring *txr = &tx_que->txr;
-	int ntxd = scctx->isc_ntxd;
-	int nrxd = scctx->isc_nrxd;
+	int ntxd = scctx->isc_ntxd[0];
+	int nrxd = scctx->isc_nrxd[0];
 	int j;
 
 	struct sbuf *sb;
@@ -460,7 +460,7 @@ em_init_tx_ring(struct em_tx_queue *que)
 	struct em_txbuffer *tx_buffer;
 
 	tx_buffer = txr->tx_buffers;
-	for (int i = 0; i < scctx->isc_ntxd; i++, tx_buffer++) {
+	for (int i = 0; i < scctx->isc_ntxd[0]; i++, tx_buffer++) {
 		tx_buffer->eop = -1;
 	}
 }
@@ -499,19 +499,19 @@ em_if_attach_pre(if_ctx_t ctx)
 	adapter->media = iflib_get_media(ctx);
         hw = &adapter->hw; 
 
-	scctx->isc_ntxd = 128;
-	scctx->isc_nrxd = 128;
+	scctx->isc_ntxd[0] = 128;
+	scctx->isc_nrxd[0] = 128;
 
         if (adapter->num_tx_queues > 1)
-		scctx->isc_ntxd = EM_DEFAULT_MULTI_TXD;
+		scctx->isc_ntxd[0] = EM_DEFAULT_MULTI_TXD;
 
 	if (adapter->num_rx_queues > 1)
-		scctx->isc_nrxd = EM_DEFAULT_MULTI_RXD;
+		scctx->isc_nrxd[0] = EM_DEFAULT_MULTI_RXD;
 
-	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd * sizeof(struct e1000_tx_desc), EM_DBA_ALIGN),
-	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd * sizeof(union e1000_rx_desc_extended), EM_DBA_ALIGN);
+	scctx->isc_txqsizes[0] = roundup2(scctx->isc_ntxd[0] * sizeof(struct e1000_tx_desc), EM_DBA_ALIGN),
+	scctx->isc_rxqsizes[0] = roundup2(scctx->isc_nrxd[0] * sizeof(union e1000_rx_desc_extended), EM_DBA_ALIGN);
 
-	adapter->tx_process_limit = scctx->isc_ntxd;
+	adapter->tx_process_limit = scctx->isc_ntxd[0];
 
 	/* SYSCTL stuff */
 	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
@@ -1790,7 +1790,7 @@ em_setup_interface(if_ctx_t ctx)
 
 	/* Single Queue */
         if (adapter->num_tx_queues == 1) {
-	  if_setsendqlen(ifp, scctx->isc_ntxd - 1);
+	  if_setsendqlen(ifp, scctx->isc_ntxd[0] - 1);
 	  if_setsendqready(ifp);
 	}
 
@@ -1872,7 +1872,7 @@ em_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs, int ntxqs
 	     que->me = txr->me =  i;
 
 	     /* Allocate transmit buffer memory */
-	  if (!(txr->tx_buffers = (struct em_txbuffer *) malloc(sizeof(struct em_txbuffer) * scctx->isc_ntxd, M_DEVBUF, M_NOWAIT | M_ZERO))) {
+	  if (!(txr->tx_buffers = (struct em_txbuffer *) malloc(sizeof(struct em_txbuffer) * scctx->isc_ntxd[0], M_DEVBUF, M_NOWAIT | M_ZERO))) {
 	       device_printf(iflib_get_dev(ctx), "failed to allocate tx_buffer memory\n");
 	       error = ENOMEM;
 	       goto fail; 
@@ -1997,7 +1997,7 @@ em_initialize_transmit_unit(if_ctx_t ctx)
 
 		/* Base and Len of TX Ring */
 		E1000_WRITE_REG(hw, E1000_TDLEN(i),
-		    scctx->isc_ntxd * sizeof(struct e1000_tx_desc));
+		    scctx->isc_ntxd[0] * sizeof(struct e1000_tx_desc));
 		E1000_WRITE_REG(hw, E1000_TDBAH(i),
 	    	    (u32)(bus_addr >> 32));
 		E1000_WRITE_REG(hw, E1000_TDBAL(i),
@@ -2244,7 +2244,7 @@ em_initialize_receive_unit(if_ctx_t ctx)
 #endif		
 
 		E1000_WRITE_REG(hw, E1000_RDLEN(i),
-		    scctx->isc_nrxd * sizeof(union e1000_rx_desc_extended));
+		    scctx->isc_nrxd[0] * sizeof(union e1000_rx_desc_extended));
 		E1000_WRITE_REG(hw, E1000_RDBAH(i), (u32)(bus_addr >> 32));
 		E1000_WRITE_REG(hw, E1000_RDBAL(i), (u32)bus_addr);
 		/* Setup the Head and Tail Descriptor Pointers */
