@@ -1,6 +1,7 @@
 
 #include "if_em.h"
 #include <sys/sbuf.h>
+#include <machine/_inttypes.h>
 
 /*********************************************************************
  *  Driver version:
@@ -323,16 +324,6 @@ static struct if_shared_ctx em_sctx_init = {
   
 if_shared_ctx_t em_sctx = &em_sctx_init;
 
-#define IGB_READ_REG(a, reg) igb_read_reg(a, reg)
-
-inline u32
-em_read_reg(struct e1000_hw *hw, u32 reg)
-{
-	return bus_space_read_4(((struct adapter *)hw->back)->osdep.mem_bus_space_tag,
-	    ((struct adapter *)hw->back)->osdep.mem_bus_space_handle,
-	    reg);
-}
-
 /*****************************************************************
  *
  * Dump Registers
@@ -427,7 +418,7 @@ static int em_get_regs(SYSCTL_HANDLER_ARGS)
 	for (j = 0; j < nrxd; j++) {
 		u32 staterr = le32toh(rxr->rx_base[j].wb.upper.status_error);
 		u32 length =  le32toh(rxr->rx_base[j].wb.upper.length);
-		sbuf_printf(sb, "\tReceive Descriptor Address %d: %08lx  Error:%d  Length:%d\n", j, rxr->rx_base[j].read.buffer_addr, staterr, length);
+		sbuf_printf(sb, "\tReceive Descriptor Address %d: %08" PRIx64 "  Error:%d  Length:%d\n", j, rxr->rx_base[j].read.buffer_addr, staterr, length);
 	}
 
 	for (j = 0; j < min(ntxd, 256); j++) {
